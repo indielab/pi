@@ -25,13 +25,10 @@ import (
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
-	"github.com/sky-valley/pi/ai/providers"
 	"github.com/sky-valley/pi/coding"
 )
 
 func main() {
-	providers.RegisterBuiltins()
-
 	args := os.Args[1:]
 	if len(args) > 0 && args[0] == "models" {
 		listModels(args[1:])

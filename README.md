@@ -57,11 +57,9 @@ catalog. API keys are resolved from the same environment variables pi uses
 ```go
 import (
     "github.com/sky-valley/pi/ai"
-    "github.com/sky-valley/pi/ai/providers"
     "github.com/sky-valley/pi/coding"
 )
 
-providers.RegisterBuiltins()
 model, _ := coding.ResolveModel("anthropic/claude-sonnet-4-5")
 sess := coding.NewSession(coding.SessionOptions{
     Model:  model,
@@ -70,6 +68,12 @@ sess := coding.NewSession(coding.SessionOptions{
 text, err := sess.RunPrint(ctx, os.Stdout, "list the Go files and summarize them")
 ```
 
+The built-in API providers (Anthropic, OpenAI Chat Completions + Responses,
+Google) register themselves when the `coding` package is imported — the same
+import side effect upstream pi has when importing `@earendil-works/pi-ai`. If
+you use the `ai` package directly without `coding`, blank-import the providers:
+`import _ "github.com/sky-valley/pi/ai/providers"`.
+
 ### SDK usage (embedding pi in your app, e.g. with OpenAI)
 
 `coding.NewSession` is the SDK facade (modeled on pi's `createAgentSession`). It
@@ -77,7 +81,6 @@ returns a structured `RunResult` rather than writing to a writer, supports custo
 tools, streaming via `Subscribe`, and exposes the full provider control surface.
 
 ```go
-providers.RegisterBuiltins()
 model, _ := coding.ResolveModel("openai/gpt-5")            // uses the Responses API
 
 sess := coding.NewSession(coding.SessionOptions{
