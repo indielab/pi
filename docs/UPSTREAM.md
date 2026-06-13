@@ -10,8 +10,8 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `3f44d3e2` — "fix(ai): remove stale OpenRouter Kimi free model assertion" (2026-06-12); previous pin `130ae577` (2026-06-07) |
-| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.1** (request goldens re-verified 6/6 + 2 zai scenarios); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
+| TS source fully reviewed/ported | `6f29450e` — "fix(ai): update adaptive thinking model expectations" (2026-06-13); previous pin `3f44d3e2` (2026-06-12) |
+| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.3** (request goldens re-verified 6/6 + 2 zai scenarios against the 0.79.3 build); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
 | Parity proofs at the pin | requests 6/6 · session tree 8/8 · image decisions 8/8 byte/decision-identical |
 | Reviewed via | initial port + parity sweep 1 + parity sweep 2 (`3be3911`), registration fix (`b09cb46`) |
 
@@ -32,12 +32,30 @@ agent-session-runtime (session reload + /new flow).
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
 
-## Drift at last sync check (2026-06-12)
+## Drift at last sync check (2026-06-13)
+
+**Caught up to `6f29450e`.** Ledger 3f44d3e2 → 6f29450e fully processed (22
+main-line changes: 4 ported, 18 n/a, 0 escalations). Reviewed via an adversarial
+multi-agent workflow: 4/4 parity-faithful, idiomatic go-review pass, request
+diff 6/6 against the 0.79.3 build, completeness critic mutation-tested every
+ported change (each fix is load-bearing). Shipped as v0.2.1.
+
+- Ports: `a455f62f` (anthropic refusal details), `1fc80f4f` (resolve fallback
+  Reasoning flip), `daab056a` (agent late-tool-update guard), `f2585c4c`
+  (catalog → npm 0.79.3).
+- **Fable-5 disabled-thinking gate went LIVE.** The 0.79.3 catalog ships
+  `off:null` for `claude-fable-5` (anthropic + cloudflare-ai-gateway + bedrock
+  variants), activating the latent 9ccfcd7c gate ported on 2026-06-12. The
+  former latency tripwire is now `TestFable5DisabledThinkingGateLive`, which
+  drives the omit behavior end-to-end through the catalog-resolved model and
+  fails loudly if a future regen drops `off:null`.
+
+### Prior — 130ae577 → 3f44d3e2 (2026-06-12)
 
 **Caught up.** Ledger 130ae577 → 3f44d3e2 fully processed (52 main-line
 changes: 9 ported, 43 n/a, 0 open). Releases v0.79.0 + v0.79.1 ingested; the
 9ccfcd7c disabled-thinking gate is latent pending upstream's next catalog
-regen (tripwire: TestFable5DisabledThinkingGateLatency).
+regen (tripwire: TestFable5DisabledThinkingGateLive).
 
 ## Sync pipeline
 
@@ -67,6 +85,33 @@ only by comparison against real pi.
 Upstream reference clone: `$PI_UPSTREAM_DIR`, default `~/.cache/pi-upstream`.
 When the delta crosses a release tag, the npm reference build is refreshed to
 that version before parity review.
+
+## Ledger — 3f44d3e2 → 6f29450e
+
+| Upstream | Date | Subject | Hint | Status | Go commit | Notes |
+|---|---|---|---|---|---|---|
+| `1c243365` | 2026-06-12 | fix(tui): keep WezTerm Kitty images visible | likely-n/a | n/a | — | TUI image rendering |
+| `a455f62f` | 2026-06-12 | fix(ai): preserve Anthropic refusal details (#5666) | review | ported | `e0a362f` | parse `stop_details.explanation` in message_delta; refusal→errorMessage (or "The model refused to complete the request" fallback); throw path uses errorMessage; tests for both branches |
+| `be7d5cf5` | 2026-06-12 | fix(ai): relax Codex SSE header timeout | likely-n/a | n/a | — | Codex provider (unported) |
+| `1fc80f4f` | 2026-06-12 | fix(coding-agent): preserve custom fallback thinking | review | ported | `c82663e` | buildFallbackModel sets Reasoning:true when surfaced thinking level present and != "off"; fb is freshly cloned (no shared-catalog mutation); resolve_test :high(reasoning=true)/:off(stays false) on non-reasoning mistral template |
+| `6102dd20` | 2026-06-12 | fix(coding-agent): handle missing export themes | likely-n/a | n/a | — | export-themes (settings) |
+| `0caca6cf` | 2026-06-12 | fix(tui): support slash-separated fuzzy filter tokens | likely-n/a | n/a | — | TUI fuzzy filter |
+| `1b2c32c6` | 2026-06-12 | fix(coding-agent): resolve authenticated slash model ids | review | n/a | — | no auth-aware resolution in Go |
+| `adf567c1` | 2026-06-12 | fix(coding-agent): rechain fork paths without labels | review | n/a | — | fork/label runtime unported |
+| `daab056a` | 2026-06-12 | fix(agent): ignore late tool progress updates | review | ported | `009dae7` | acceptingUpdates bool guarded by existing updateMu; flipped false right after Execute settles; onUpdate drops late calls under lock; ToolUpdateFunc doc updated; race-locked test |
+| `17721d5e` | 2026-06-12 | fix(tui): preserve unordered user list markers (closes #5657) | likely-n/a | n/a | — | TUI markdown rendering |
+| `a7cdc679` | 2026-06-12 | fix(ai): correct GPT-5 context window metadata | review | n/a | — | captured by 0.79.3 regen; nets to no change |
+| `b4bff7f0` | 2026-06-12 | fix(coding-agent): avoid project trust prompt for update (#5674) | review | n/a | — | trust ruling (2026-06-12) |
+| `7a3cb631` | 2026-06-13 | fix(ai): normalize generated model costs (#5634) | review | n/a | — | captured by 0.79.3 regen |
+| `121f0edb` | 2026-06-13 | fix(ai): detect parenthesized context overflow errors | review | n/a | — | no overflow module in Go |
+| `e320f096` | 2026-06-13 | docs: update unreleased changelogs | likely-n/a | n/a | — | docs only |
+| `f21f3c4b` | 2026-06-13 | Release v0.79.2 | review | n/a | — | v0.79.2 superseded by 0.79.3 |
+| `032c01c1` | 2026-06-13 | Add [Unreleased] section for next cycle | likely-n/a | n/a | — | changelog cycle header |
+| `aa3a5233` | 2026-06-13 | fix(ai): restore Codex context limits | review | n/a | — | captured by 0.79.3 regen |
+| `57b6bdce` | 2026-06-13 | docs(coding-agent): update Codex context limit changelog | likely-n/a | n/a | — | docs only |
+| `f2585c4c` | 2026-06-13 | Release v0.79.3 | review | ported | `c12fa7d` | catalog regenerated from npm 0.79.3 (re-derived + endpoint-pinned, request diff 6/6). Adds `off:null` to claude-fable-5 thinkingLevelMap → the 9ccfcd7c disabled-thinking gate is now LIVE; tripwire converted to TestFable5DisabledThinkingGateLive (end-to-end via catalog model) |
+| `b15148fe` | 2026-06-13 | Add [Unreleased] section for next cycle | likely-n/a | n/a | — | changelog cycle header |
+| `6f29450e` | 2026-06-13 | fix(ai): update adaptive thinking model expectations | review | n/a | — | test-only, captured by regen |
 
 ## Ledger — 130ae577 → 3f44d3e2
 
