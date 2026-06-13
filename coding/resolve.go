@@ -170,6 +170,15 @@ func ResolveModelPattern(spec string) (ResolvedModel, error) {
 			}
 		}
 		if fb := buildFallbackModel(provider, fallbackPattern, availableModels); fb != nil {
+			// pi 1fc80f4f (#5552): when a thinking level was requested but the
+			// provider's template model doesn't advertise reasoning, mark the
+			// fallback as reasoning-capable so the requested level is preserved.
+			// fb is freshly cloned by buildFallbackModel, so this never mutates a
+			// shared catalog entry. requestedThinking == fallbackThinking here
+			// (ResolveModelPattern has no separate --thinking input).
+			if fallbackThinking != "" && fallbackThinking != "off" {
+				fb.Reasoning = true
+			}
 			fbWarning := fmt.Sprintf("Model %q not found for provider %q. Using custom model id.", fallbackPattern, provider)
 			if warning != "" {
 				fbWarning = warning + " " + fbWarning

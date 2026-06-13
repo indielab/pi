@@ -121,6 +121,38 @@ func TestResolveModelCustomIDFallbackThinkingSuffix(t *testing.T) {
 	}
 }
 
+// pi 1fc80f4f (#5552): a requested thinking level on a custom-id fallback must
+// set reasoning:true even when the provider's template model is non-reasoning,
+// so the level is honored. mistral's fallback template is non-reasoning, so the
+// flip is observable here.
+func TestResolveModelCustomIDFallbackThinkingSuffixSetsReasoning(t *testing.T) {
+	r, err := ResolveModelPattern("mistral/my-custom-model-id:high")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Model.ID != "my-custom-model-id" || r.ThinkingLevel != "high" {
+		t.Fatalf("suffix parse wrong: id=%s level=%q", r.Model.ID, r.ThinkingLevel)
+	}
+	if !r.Model.Reasoning {
+		t.Fatalf("requested thinking level must set reasoning:true on the fallback model")
+	}
+}
+
+// The :off level is not a request to think: reasoning must stay false on a
+// non-reasoning fallback template (pi gates on requestedThinking !== "off").
+func TestResolveModelCustomIDFallbackThinkingOffKeepsReasoningFalse(t *testing.T) {
+	r, err := ResolveModelPattern("mistral/my-custom-model-id:off")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Model.ID != "my-custom-model-id" || r.ThinkingLevel != "off" {
+		t.Fatalf("suffix parse wrong: id=%s level=%q", r.Model.ID, r.ThinkingLevel)
+	}
+	if r.Model.Reasoning {
+		t.Fatalf(":off must not enable reasoning on a non-reasoning fallback template")
+	}
+}
+
 // All valid thinking levels work in the fallback path (upstream test parity).
 func TestResolveModelCustomIDFallbackAllLevels(t *testing.T) {
 	for _, level := range []string{"off", "minimal", "low", "medium", "high", "xhigh"} {
