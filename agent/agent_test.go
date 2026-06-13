@@ -1027,6 +1027,68 @@ func TestAgentForwardsMetadataAndWebSocketTimeout(t *testing.T) {
 	}
 }
 
+// TestAgentIgnoresLateToolUpdates mirrors pi agent.test.ts "should ignore tool
+// updates after the tool execution settles" (daab056a, #5573). A tool fires one
+// in-flight update (which must emit) and leaks its onUpdate callback to a
+// goroutine that fires AFTER Execute returns; the late call must be dropped, so
+// exactly one tool_execution_update is emitted. Run under -race.
+func TestAgentIgnoresLateToolUpdates(t *testing.T) {
+	var captured ToolUpdateFunc
+	tool := AgentTool{
+		Name:        "delayed_tool",
+		Description: "captures progress callbacks",
+		Parameters:  ai.Object(),
+		Execute: func(ctx context.Context, id string, p map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			captured = onUpdate
+			onUpdate(AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "running"}}})
+			return AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "ok"}}, Terminate: true}, nil
+		},
+	}
+
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
+		StreamFn: scriptedStream(
+			assistantWithToolCall("call-1", "delayed_tool", map[string]any{}),
+		),
+	})
+
+	var mu sync.Mutex
+	var updateCount int
+	a.Subscribe(func(ctx context.Context, e AgentEvent) error {
+		if e.Type == EvToolExecutionUpdate {
+			mu.Lock()
+			updateCount++
+			mu.Unlock()
+		}
+		return nil
+	})
+
+	if err := a.Prompt(context.Background(), "run tool"); err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	afterPrompt := updateCount
+	mu.Unlock()
+	if afterPrompt != 1 {
+		t.Fatalf("expected exactly 1 tool_execution_update during execute, got %d", afterPrompt)
+	}
+
+	// Fire the captured callback after Execute has long since returned: it must
+	// be dropped (guarded by acceptingUpdates under the update mutex).
+	if captured == nil {
+		t.Fatal("tool did not capture its onUpdate callback")
+	}
+	captured(AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "late"}}})
+
+	mu.Lock()
+	final := updateCount
+	mu.Unlock()
+	if final != 1 {
+		t.Fatalf("late onUpdate must be ignored: expected 1 update, got %d", final)
+	}
+}
+
 func textOf(m *ai.AssistantMessage) string {
 	for _, c := range m.Content {
 		if t, ok := c.(ai.TextContent); ok {

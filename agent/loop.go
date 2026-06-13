@@ -615,7 +615,19 @@ func executePreparedToolCall(ctx context.Context, prepared preparedToolCall, emi
 	// emitPanic) once Execute has finished.
 	var updateMu sync.Mutex
 	var updateEmitErr error
+	// pi daab056a (#5573): the onUpdate callback is scoped to the current
+	// execute() invocation. Updates fired after execute settles (e.g. from a
+	// goroutine the tool spawned) are dropped instead of emitting stale
+	// tool_execution_update events. acceptingUpdates is guarded by updateMu so
+	// the check and the post-settlement flip are race-free.
+	acceptingUpdates := true
 	onUpdate := func(partial AgentToolResult) {
+		updateMu.Lock()
+		if !acceptingUpdates {
+			updateMu.Unlock()
+			return
+		}
+		updateMu.Unlock()
 		err := emit(AgentEvent{
 			Type:          EvToolExecutionUpdate,
 			ToolCallID:    prepared.toolCall.ID,
@@ -652,6 +664,12 @@ func executePreparedToolCall(ctx context.Context, prepared preparedToolCall, emi
 		}
 		return immediateOutcome{result: result, isError: false}
 	}()
+
+	// pi daab056a (#5573): stop accepting updates the moment execute() settles
+	// (success, error, or panic-recovered above), so late callbacks are dropped.
+	updateMu.Lock()
+	acceptingUpdates = false
+	updateMu.Unlock()
 
 	// pi's `await Promise.all(updateEvents)` runs in both the try and catch
 	// paths, so a listener rejection wins over the tool outcome either way.

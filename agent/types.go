@@ -61,6 +61,9 @@ type AgentToolResult struct {
 }
 
 // ToolUpdateFunc streams partial tool results during execution.
+//
+// The callback is scoped to the current Execute invocation. Calls made after
+// Execute returns are ignored.
 type ToolUpdateFunc func(partial AgentToolResult)
 
 // AgentTool is a tool available to the agent. It mirrors pi's AgentTool object:
