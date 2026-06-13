@@ -46,6 +46,12 @@ semantics; grep the repo for IDs the regen removed (orphaned defaults/tests);
 run the consuming package's tests under -race; confirm which upstream version
 generated it. Cite findings by JSON path, not file:line.
 
+## Working-tree safety (hard rule)
+The uncommitted working tree is the only copy of the port. NEVER mutate it:
+no `git checkout`/`restore`/`reset`/`stash`, no edits to reviewed files. To
+mutation-test, mutate a COPY in a throwaway dir or a `git worktree`, never the
+live file; discard it after. If you dirty the tree, restore it and report it.
+
 ## Mandatory checks
 `gofmt -l`, `go vet ./...`, and the changed packages' tests under `-race`.
 

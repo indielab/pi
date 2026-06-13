@@ -11,6 +11,15 @@ proves otherwise. Self-authored tests are circular — they pin what the porter
 believed, not what pi does. Every sweep of this project found real bugs ONLY
 via comparison against real pi.
 
+## Working-tree safety (hard rule)
+You are reviewing the UNCOMMITTED working tree — it is the only copy of the
+port. NEVER mutate it: no `git checkout`/`restore`/`reset`/`stash`/`clean`, no
+edits to ported files. To mutation-test (disable a fix and confirm its test
+fails), copy the file to a scratch path, mutate the COPY in a throwaway dir
+(or `git worktree add` a detached checkout), run tests there, and discard it —
+never touch the live file. If you ever do dirty the tree, restore it exactly
+and say so loudly in your report.
+
 ## References
 - Upstream TS: `$PI_UPSTREAM_DIR` (default `~/.cache/pi-upstream`), checked out
   at the relevant sha (`git -C dir show <sha>:<path>` reads without checkout).
