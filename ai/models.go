@@ -56,10 +56,13 @@ func GetModels(provider string) []*Model {
 // CalculateCost computes per-bucket dollar cost for usage and stores it in
 // usage.Cost (mutating in place), returning the breakdown.
 func CalculateCost(model *Model, usage *Usage) CostBreakdown {
+	// Anthropic charges 2x base input for 1h cache writes.
+	longWrite := usage.CacheWrite1h
+	shortWrite := usage.CacheWrite - longWrite
 	usage.Cost.Input = model.Cost.Input / 1_000_000 * float64(usage.Input)
 	usage.Cost.Output = model.Cost.Output / 1_000_000 * float64(usage.Output)
 	usage.Cost.CacheRead = model.Cost.CacheRead / 1_000_000 * float64(usage.CacheRead)
-	usage.Cost.CacheWrite = model.Cost.CacheWrite / 1_000_000 * float64(usage.CacheWrite)
+	usage.Cost.CacheWrite = (model.Cost.CacheWrite*float64(shortWrite) + model.Cost.Input*2*float64(longWrite)) / 1_000_000
 	usage.Cost.Total = usage.Cost.Input + usage.Cost.Output + usage.Cost.CacheRead + usage.Cost.CacheWrite
 	return usage.Cost
 }

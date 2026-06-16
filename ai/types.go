@@ -236,12 +236,15 @@ type CostBreakdown struct {
 
 // Usage holds token counts and cost for a request.
 type Usage struct {
-	Input       int           `json:"input"`
-	Output      int           `json:"output"`
-	CacheRead   int           `json:"cacheRead"`
-	CacheWrite  int           `json:"cacheWrite"`
-	TotalTokens int           `json:"totalTokens"`
-	Cost        CostBreakdown `json:"cost"`
+	Input      int `json:"input"`
+	Output     int `json:"output"`
+	CacheRead  int `json:"cacheRead"`
+	CacheWrite int `json:"cacheWrite"`
+	// CacheWrite1h is the subset of CacheWrite written with 1h retention. Only
+	// Anthropic reports this split (pi: Usage.cacheWrite1h, optional).
+	CacheWrite1h int           `json:"cacheWrite1h,omitempty"`
+	TotalTokens  int           `json:"totalTokens"`
+	Cost         CostBreakdown `json:"cost"`
 }
 
 // ---------------------------------------------------------------------------

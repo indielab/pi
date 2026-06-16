@@ -904,3 +904,97 @@ func TestAnthropicRefusalWithoutExplanationFallback(t *testing.T) {
 		t.Fatalf("expected fallback refusal message, got %q", final.ErrorMessage)
 	}
 }
+
+// TestAnthropic1hCacheWriteCost mirrors upstream 0be5bb6c
+// (anthropic-cache-write-1h-cost): the 1h slice of cacheWrite is priced at 2x the
+// model's input rate, the remaining (5m) slice at the normal cacheWrite rate.
+// Driven through the catalog-resolved claude-opus-4-8 (input 5, cacheWrite 6.25
+// per Mtok), so a catalog regen that shifts those rates trips this test.
+func TestAnthropic1hCacheWriteCost(t *testing.T) {
+	cacheWrite1hSSE := func(cacheCreation string) string {
+		startUsage := `"input_tokens":100,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":1000000`
+		if cacheCreation != "" {
+			startUsage += "," + cacheCreation
+		}
+		return `event: message_start
+data: {"type":"message_start","message":{"id":"msg_test","usage":{` + startUsage + `}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hi"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":100,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":1000000}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+	}
+
+	closeEnough := func(got, want float64) bool {
+		d := got - want
+		if d < 0 {
+			d = -d
+		}
+		return d < 1e-9
+	}
+
+	t.Run("prices the 1h portion at 2x input and the rest at the 5m rate", func(t *testing.T) {
+		m := ai.GetModel("anthropic", "claude-opus-4-8")
+		if m == nil {
+			t.Fatal("claude-opus-4-8 missing from catalog")
+		}
+		sse := cacheWrite1hSSE(`"cache_creation":{"ephemeral_5m_input_tokens":600000,"ephemeral_1h_input_tokens":400000}`)
+		final := streamAnthropicSSE(t, m, sse)
+		if final.Usage.CacheWrite != 1000000 {
+			t.Fatalf("cacheWrite = %d, want 1000000", final.Usage.CacheWrite)
+		}
+		if final.Usage.CacheWrite1h != 400000 {
+			t.Fatalf("cacheWrite1h = %d, want 400000", final.Usage.CacheWrite1h)
+		}
+		// 600k * 6.25/Mtok + 400k * (5*2)/Mtok = 3.75 + 4.0 = 7.75
+		if !closeEnough(final.Usage.Cost.CacheWrite, 7.75) {
+			t.Fatalf("cost.cacheWrite = %v, want 7.75", final.Usage.Cost.CacheWrite)
+		}
+	})
+
+	t.Run("falls back to the 5m rate when no breakdown is reported", func(t *testing.T) {
+		m := ai.GetModel("anthropic", "claude-opus-4-8")
+		if m == nil {
+			t.Fatal("claude-opus-4-8 missing from catalog")
+		}
+		final := streamAnthropicSSE(t, m, cacheWrite1hSSE(""))
+		if final.Usage.CacheWrite != 1000000 {
+			t.Fatalf("cacheWrite = %d, want 1000000", final.Usage.CacheWrite)
+		}
+		if final.Usage.CacheWrite1h != 0 {
+			t.Fatalf("cacheWrite1h = %d, want 0", final.Usage.CacheWrite1h)
+		}
+		// 1M * 6.25/Mtok = 6.25
+		if !closeEnough(final.Usage.Cost.CacheWrite, 6.25) {
+			t.Fatalf("cost.cacheWrite = %v, want 6.25", final.Usage.Cost.CacheWrite)
+		}
+	})
+}
+
+// streamAnthropicSSE runs the anthropic stream against a test server returning a
+// fixed SSE body and returns the final assistant message.
+func streamAnthropicSSE(t *testing.T, model *ai.Model, sse string) *ai.AssistantMessage {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		w.WriteHeader(200)
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+	clone := *model
+	clone.BaseURL = server.URL
+	return StreamAnthropic(context.Background(), &clone, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+}

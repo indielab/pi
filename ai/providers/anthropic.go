@@ -860,6 +860,12 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	r.Header.Set("anthropic-version", anthropicVersion)
 	r.Header.Set("anthropic-dangerous-direct-browser-access", "true")
 
+	// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution bundle at
+	// the bottom of the precedence stack: emit session + default attribution
+	// first so the provider auth headers, model.Headers, and opts.Headers all
+	// override them.
+	applyAttributionDefaults(r.Header.Set, model, opts.SessionID)
+
 	compat := getAnthropicCompat(model)
 	var betas []string
 	if hasTools && !compat.supportsEagerToolInputStreaming {
@@ -918,6 +924,8 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 			r.Header.Set(k, v)
 		}
 	}
+	// pi options.headers (consumer) are spread last and win over everything
+	// above, including model.Headers and the attribution defaults.
 	for k, v := range opts.Headers {
 		r.Header.Set(k, v)
 	}
@@ -960,6 +968,9 @@ type anthropicUsage struct {
 	OutputTokens             *int `json:"output_tokens"`
 	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
+	CacheCreation            *struct {
+		Ephemeral1hInputTokens *int `json:"ephemeral_1h_input_tokens"`
+	} `json:"cache_creation"`
 }
 
 type anthropicStreamEvent struct {
@@ -1097,6 +1108,9 @@ func applyUsage(usage *ai.Usage, u anthropicUsage, isStart bool) {
 		usage.Output = derefOr(u.OutputTokens, 0)
 		usage.CacheRead = derefOr(u.CacheReadInputTokens, 0)
 		usage.CacheWrite = derefOr(u.CacheCreationInputTokens, 0)
+		if u.CacheCreation != nil {
+			usage.CacheWrite1h = derefOr(u.CacheCreation.Ephemeral1hInputTokens, 0)
+		}
 	} else {
 		if u.InputTokens != nil {
 			usage.Input = *u.InputTokens
