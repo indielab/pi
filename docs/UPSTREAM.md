@@ -10,8 +10,8 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `93b3b7c1` — "fix(tui): preserve WezTerm Kitty images on full redraw" (2026-06-14); previous pins `6f29450e` (06-13), `3f44d3e2` (06-12) |
-| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.3** (request goldens re-verified 6/6 + 2 zai scenarios against the 0.79.3 build); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
+| TS source fully reviewed/ported | `f8a77f47` — "feat(coding-agent): add Vercel AI Gateway attribution" (2026-06-16); previous pins `93b3b7c1` (06-14), `6f29450e` (06-13) |
+| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.4** (request goldens re-verified 6/6 + 2 zai scenarios against the 0.79.4 build); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
 | Parity proofs at the pin | requests 6/6 · session tree 8/8 · image decisions 8/8 byte/decision-identical |
 | Reviewed via | initial port + parity sweep 1 + parity sweep 2 (`3be3911`), registration fix (`b09cb46`) |
 
@@ -23,6 +23,10 @@ agent-session-runtime (session reload + /new flow).
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
 
+- **2026-06-16 — provider-attribution ported faithfully** (port-it ruling); SDK
+  sends pi's default attribution headers (http-referer/x-title/...) on the
+  providers pi does.
+
 - **2026-06-12 — project trust stays excluded** (re: `718215bd`, `d8aef0fe`,
   and the wider upstream trust push). Criteria set by the owner: not an SDK
   use case (host apps control what loads), postponable (purely additive
@@ -32,7 +36,29 @@ agent-session-runtime (session reload + /new flow).
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
 
-## Drift at last sync check (2026-06-14)
+## Drift at last sync check (2026-06-16)
+
+**Caught up to `f8a77f47`.** Ledger 93b3b7c1 → f8a77f47 fully processed (20
+main-line changes: 6 ported, 14 n/a, 1 decide resolved). Reviewed via an
+adversarial multi-agent workflow: 5/6 parity-faithful + go-review pass +
+request diff 6/6 against the 0.79.4 build; the review caught a real attribution
+header-precedence divergence (model.Headers must override the attribution
+defaults — pi merges them at the bottom of the stack) which was fixed and
+re-verified. Shipped as v0.2.2.
+
+- Ports: `0be5bb6c` (anthropic 1h cache-write cost = 2× input), `3fa40956`
+  (bash stdout drain past exit — re-armed idle grace), `0369bdb8` (deepseek
+  off:null thinking gate — logic; catalog data deferred), `b0c8f65f`
+  (gemini-flash-latest alias → MINIMAL thinking — logic; data deferred),
+  `bba6af2c` (catalog → npm 0.79.4), and `f8a77f47` + the `provider-attribution`
+  module (see ruling).
+- **Decide → ruling:** provider-attribution **ported faithfully** (owner call,
+  2026-06-16). The SDK now sends pi's attribution headers on the providers pi
+  does, gated on `PI_TELEMETRY` (default enabled), at the bottom of the header
+  precedence so `model.Headers`/`opts.Headers` override them. Closed a
+  pre-existing header parity gap the body-diff never covered.
+
+### Prior — 6f29450e → 93b3b7c1 (2026-06-14)
 
 **Caught up to `93b3b7c1` — no-op cycle (pin advance only, no version bump).**
 Ledger 6f29450e → 93b3b7c1: 12 main-line changes, **0 ported, 12 n/a, 0
@@ -98,6 +124,31 @@ only by comparison against real pi.
 Upstream reference clone: `$PI_UPSTREAM_DIR`, default `~/.cache/pi-upstream`.
 When the delta crosses a release tag, the npm reference build is refreshed to
 that version before parity review.
+
+## Ledger — 93b3b7c1 → f8a77f47
+
+| Upstream | Date | Subject | Hint | Status | Go commit | Notes |
+|---|---|---|---|---|---|---|
+| `b5e13bcd` | 2026-06-15 | docs(coding-agent): clarify active tools docs | likely-n/a | n/a | — | docs only |
+| `ba0ec615` | 2026-06-15 | fix(coding-agent): restore terminal on SIGTERM | review | n/a | — | TUI/terminal SIGTERM handling (unported) |
+| `5b6058c3` | 2026-06-15 | fix(tui): align overlays over CJK wide cells | likely-n/a | n/a | — | TUI overlay rendering |
+| `24053eab` | 2026-06-15 | fix(tui): update tab overlay boundary expectation | likely-n/a | n/a | — | TUI test-only |
+| `bb959aae` | 2026-06-15 | fix(coding-agent): wrap tree help on narrow terminals | likely-n/a | n/a | — | TUI tree-help rendering |
+| `a8519681` | 2026-06-15 | docs(coding-agent): reorder containerization patterns | likely-n/a | n/a | — | docs only |
+| `0be5bb6c` | 2026-06-15 | fix(ai): price anthropic 1h cache writes at 2x input (#5738) | review | ported | `eadac1a` | added `Usage.CacheWrite1h` (`json:"cacheWrite1h,omitempty"`); anthropic parses `cache_creation.ephemeral_1h_input_tokens` at message_start only (mirrors upstream); `CalculateCost` prices the 1h slice at 2×input and the 5m slice at `cacheWrite`, both /1e6; TestAnthropic1hCacheWriteCost (catalog claude-opus-4-8: 7.75 split / 6.25 fallback) |
+| `28b3af5d` | 2026-06-15 | chore: approve contributor Mearman | n/a | n/a | — | contributor meta |
+| `408ac103` | 2026-06-15 | fix(ai): update Copilot Claude thinking metadata | review | n/a | — | captured by 0.79.4 regen (github-copilot opus-4.7/4.8 +minimal:low, sonnet-4.6 +minimal:low/xhigh:max) |
+| `3fa40956` | 2026-06-15 | fix: drain stdout before resolving when a child holds the pipe past exit (#5753) | review | ported | `e56f1f9` | replaced fixed `cmd.WaitDelay=100ms` drain with manual `runBashCommand`: merged stdout+stderr on one `os.Pipe`, reader goroutine feeds the updater, post-exit idle grace re-armed per chunk (100ms), releases on idle OR pipe EOF; `WaitDelay=1s` backstops cancel/kill. Tests: TestBashCapturesOutputPastExit (late TICK6 captured), TestBashReleasesPromptlyOnQuietHeldPipe (quiet sleeper releases <2s). Race-clean |
+| `8a7ad60f` | 2026-06-15 | feat(coding-agent): add binary release checksums | n/a | n/a | — | CI/release |
+| `b1ad469b` | 2026-06-15 | docs: audit changelog entries | likely-n/a | n/a | — | changelog only |
+| `bba6af2c` | 2026-06-15 | Release v0.79.4 | review | ported | `ded439c` | catalog regenerated from npm 0.79.4 (Go catalog == npm 0.79.4). Diff 0.79.3→0.79.4: +5 (gemma-4-E2B-it, gemma-4-E4B-it, together Kimi-K2.7-Code, zai/zai-coding-cn glm-5.2), 0 removed, 11 changed (copilot thinking overrides 408ac103; opencode/* compat +supportsLongCacheRetention:false; openrouter deepseek-v4-flash & kimi-k2.7-code cost+maxTokens). claude-fable-5 thinkingLevelMap unchanged (`off:null` intact) → TestFable5DisabledThinkingGateLive safe |
+| `1aa3c02d` | 2026-06-15 | Add [Unreleased] section for next cycle | likely-n/a | n/a | — | changelog cycle header |
+| `0369bdb8` | 2026-06-15 | fix(ai): add Moonshot CN Kimi K2.7 metadata | review | ported (logic; data deferred) | `62fa1e3` | ported the openai-completions deepseek gate: no effort → send `thinking:{type:disabled}` only when `thinkingLevelMap.off !== null` (reuses `offEffortOrDefault` send flag); off:null omits the key. Catalog data (kimi-k2.7-code off:null) is post-0.79.4, deferred. Tests: TestDiffDeepseekThinkingOffGate (on/absent/null/string), TestDeepseekCatalogNoOffNull tripwire |
+| `431d88f4` | 2026-06-15 | meta: Link to rfcs | n/a | n/a | — | repo meta |
+| `bee8e9c8` | 2026-06-15 | feat(coding-agent): mark experimental sessions in footer | likely-n/a | n/a | — | TUI footer |
+| `7cfd1af3` | 2026-06-16 | fix(coding-agent): keep empty session selector open | likely-n/a | n/a | — | TUI session selector |
+| `b0c8f65f` | 2026-06-16 | fix(ai): update Google Vertex Gemini models | review | ported (logic; data deferred) | `62fa1e3` | ported the google.ts `isGemini3Flash` change only: also match `gemini-flash-latest` / `gemini-flash-lite-latest` (lowercased) → MINIMAL disabled-thinking config. google-vertex provider + catalog data deferred. Test: TestGoogleDisabledThinkingPerFamily +2 alias cases |
+| `f8a77f47` | 2026-06-16 | feat(coding-agent): add Vercel AI Gateway attribution (#5798) | review | ported | `78f6687` | provider-attribution module ported faithfully per 2026-06-16 ruling; +vercel branch. New `ai/providers/attribution.go` (host/provider detection + per-provider header sets gated on install telemetry; PI_TELEMETRY env honored, default enabled per pi `getEnableInstallTelemetry() ?? true`). Wired into openai/openai_responses/anthropic/google at the BOTTOM of the header precedence (session-attribution then default-attribution emitted first, so model.Headers and opts.Headers both override them — matching pi's mergeProviderAttributionHeaders merge order; review caught and fixed an initial wrong-way precedence). Headers byte-exact: OpenRouter `HTTP-Referer:https://pi.dev`/`X-OpenRouter-Title:pi`/`X-OpenRouter-Categories:cli-agent`; NVIDIA `X-BILLING-INVOKE-ORIGIN:Pi`; Cloudflare `User-Agent:pi-coding-agent`; Vercel `http-referer:https://pi.dev`/`x-title:pi`; OpenCode session `x-opencode-session`/`x-opencode-client:pi`. Tests in `attribution_test.go`: all 4 APIs, vercel+openrouter+nvidia+cloudflare+opencode, telemetry gate, model.Headers+opts.Headers precedence, host detection |
 
 ## Ledger — 3f44d3e2 → 6f29450e
 
