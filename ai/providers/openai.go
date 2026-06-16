@@ -108,6 +108,11 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			if model.Provider != "cloudflare-ai-gateway" {
 				r.Header.Set("authorization", "Bearer "+opts.APIKey)
 			}
+			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
+			// bundle at the bottom of the precedence stack: emit session +
+			// default attribution first so model.headers and options.headers
+			// override them.
+			applyAttributionDefaults(r.Header.Set, model, opts.SessionID)
 			// pi createClient header precedence (openai-completions.ts:458-477):
 			// model.headers first, then copilot dynamic headers, then session
 			// affinity (overrides model headers), with options.headers merged last.
@@ -126,6 +131,9 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				r.Header.Set("x-client-request-id", opts.SessionID)
 				r.Header.Set("x-session-affinity", opts.SessionID)
 			}
+			// pi options.headers (consumer) are spread last and win over
+			// everything above, including model.headers and the attribution
+			// defaults.
 			for k, v := range opts.Headers {
 				r.Header.Set(k, v)
 			}
@@ -868,11 +876,16 @@ func applyReasoningFormat(params map[string]any, model *ai.Model, compat openAIC
 	case compat.ThinkingFormat == "qwen-chat-template" && model.Reasoning:
 		params["chat_template_kwargs"] = map[string]any{"enable_thinking": enabled, "preserve_thinking": true}
 	case compat.ThinkingFormat == "deepseek" && model.Reasoning:
-		t := "disabled"
+		// pi (0369bdb8 / #5760): when no effort, only send thinking:{disabled}
+		// if the model's thinkingLevelMap.off is not present-null. Kimi K2.7 Code
+		// is always-thinking (off:null) and rejects a disabled payload, so the
+		// thinking key is omitted entirely. offEffortOrDefault's send flag is
+		// exactly pi's `thinkingLevelMap?.off !== null`.
 		if enabled {
-			t = "enabled"
+			params["thinking"] = map[string]any{"type": "enabled"}
+		} else if _, send := offEffortOrDefault(model, ""); send {
+			params["thinking"] = map[string]any{"type": "disabled"}
 		}
-		params["thinking"] = map[string]any{"type": t}
 		if enabled && compat.SupportsReasoningEffort {
 			params["reasoning_effort"] = effortValue(model, level)
 		}

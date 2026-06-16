@@ -173,6 +173,10 @@ func TestGoogleDisabledThinkingPerFamily(t *testing.T) {
 		{"gemini-3-pro-preview", "thinkingLevel", "LOW"},
 		{"gemini-3-flash-preview", "thinkingLevel", "MINIMAL"},
 		{"gemma-4-12b", "thinkingLevel", "MINIMAL"},
+		// pi b0c8f65f / #5761: the rolling flash aliases route to the MINIMAL
+		// flash disabled-thinking config like the gemini-3 flash family.
+		{"gemini-flash-latest", "thinkingLevel", "MINIMAL"},
+		{"gemini-flash-lite-latest", "thinkingLevel", "MINIMAL"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.id, func(t *testing.T) {

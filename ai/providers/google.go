@@ -88,8 +88,15 @@ var (
 	gemma4Re       = regexp.MustCompile(`gemma-?4`)
 )
 
-func isGemini3Pro(id string) bool   { return gemini3ProRe.MatchString(strings.ToLower(id)) }
-func isGemini3Flash(id string) bool { return gemini3FlashRe.MatchString(strings.ToLower(id)) }
+func isGemini3Pro(id string) bool { return gemini3ProRe.MatchString(strings.ToLower(id)) }
+
+// isGemini3Flash matches the gemini-3.x flash family plus the rolling
+// gemini-flash-latest / gemini-flash-lite-latest aliases (pi b0c8f65f / #5761),
+// routing them to the MINIMAL disabled-thinking config.
+func isGemini3Flash(id string) bool {
+	lower := strings.ToLower(id)
+	return gemini3FlashRe.MatchString(lower) || lower == "gemini-flash-latest" || lower == "gemini-flash-lite-latest"
+}
 func isGemini3(id string) bool {
 	return isGemini3Pro(id) || isGemini3Flash(id)
 }
@@ -310,9 +317,17 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 			}
 			r.Header.Set("content-type", "application/json")
 			r.Header.Set("x-goog-api-key", opts.APIKey)
+			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
+			// bundle at the bottom of the precedence stack: emit session +
+			// default attribution first so model.Headers and opts.Headers
+			// override them.
+			applyAttributionDefaults(r.Header.Set, model, opts.SessionID)
 			for k, v := range model.Headers {
 				r.Header.Set(k, v)
 			}
+			// pi options.headers (consumer) are spread last and win over
+			// everything above, including model.headers and the attribution
+			// defaults.
 			for k, v := range opts.Headers {
 				r.Header.Set(k, v)
 			}

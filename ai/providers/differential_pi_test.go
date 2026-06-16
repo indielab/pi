@@ -549,6 +549,68 @@ func TestDiffStringThinkingFormat(t *testing.T) {
 	}
 }
 
+func TestDiffDeepseekThinkingOffGate(t *testing.T) {
+	// deepseek format (pi 0369bdb8 / #5760): with an effort, thinking:{enabled}.
+	// With no effort, thinking:{disabled} UNLESS thinkingLevelMap.off is present-
+	// null, in which case the thinking key is omitted entirely (always-thinking
+	// models like Kimi K2.7 Code reject a disabled payload). The data (kimi-k2.7
+	// off:null) is post-0.79.4 and deferred; this pins the provider mechanic.
+	mk := func(tm ai.ThinkingLevelMap) *ai.Model {
+		return openAIModel(func(m *ai.Model) {
+			m.ID = "kimi-like"
+			m.Provider = "moonshotai-cn"
+			m.BaseURL = "https://proxy.example.com/v1"
+			m.Reasoning = true
+			m.ThinkingLevelMap = tm
+			m.Compat = json.RawMessage(`{"thinkingFormat":"deepseek"}`)
+		})
+	}
+	// on -> thinking:{type:enabled}.
+	bOn := buildOpenAIParams(mk(nil), baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	if tm, _ := bOn["thinking"].(map[string]any); tm["type"] != "enabled" {
+		t.Fatalf("deepseek on: thinking = %v, want {type:enabled}", bOn["thinking"])
+	}
+	// off, off absent -> thinking:{type:disabled}.
+	bAbsent := buildOpenAIParams(mk(nil), baseReq(), &OpenAIOptions{})
+	if tm, _ := bAbsent["thinking"].(map[string]any); tm["type"] != "disabled" {
+		t.Fatalf("deepseek off (off absent): thinking = %v, want {type:disabled}", bAbsent["thinking"])
+	}
+	// off, off present-null -> omit thinking entirely.
+	bNull := buildOpenAIParams(mk(ai.ThinkingLevelMap{"off": nil}), baseReq(), &OpenAIOptions{})
+	if has(bNull, "thinking") {
+		t.Fatalf("deepseek off (off:null) should omit thinking, got %v", bNull["thinking"])
+	}
+	// off, off mapped to a string -> still send {type:disabled} (off !== null).
+	bStr := buildOpenAIParams(mk(ai.ThinkingLevelMap{"off": strPtr("none")}), baseReq(), &OpenAIOptions{})
+	if tm, _ := bStr["thinking"].(map[string]any); tm["type"] != "disabled" {
+		t.Fatalf("deepseek off (off mapped non-null): thinking = %v, want {type:disabled}", bStr["thinking"])
+	}
+}
+
+// TestDeepseekCatalogNoOffNull is a tripwire: until upstream ships the kimi-k2.7
+// off:null catalog data (post-0.79.4, deferred), no deepseek-format catalog model
+// should carry off:null. If a regen introduces one, this fails — the signal to
+// confirm the always-thinking data landed and add a live gate test like
+// TestFable5DisabledThinkingGateLive.
+func TestDeepseekCatalogNoOffNull(t *testing.T) {
+	for _, provider := range ai.GetProviders() {
+		for _, m := range ai.GetModels(provider) {
+			if m.Api != ai.APIOpenAICompletions {
+				continue
+			}
+			compat := getOpenAICompat(m)
+			if compat.ThinkingFormat != "deepseek" {
+				continue
+			}
+			if v, ok := m.ThinkingLevelMap["off"]; ok && v == nil {
+				t.Fatalf("deepseek-format model %s/%s carries off:null — the always-thinking "+
+					"data landed; add a live disabled-thinking gate test and re-confirm the deferred port",
+					provider, m.ID)
+			}
+		}
+	}
+}
+
 func TestDiffQwenThinkingFormat(t *testing.T) {
 	// qwen format: enable_thinking boolean reflecting whether reasoning was requested.
 	model := openAIModel(func(m *ai.Model) {
