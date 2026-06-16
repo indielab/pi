@@ -660,9 +660,10 @@ func bashTool(cwd string) agent.AgentTool {
 			// tree so backgrounded grandchildren don't survive (port of pi).
 			setProcessGroup(cmd)
 			cmd.Cancel = func() error { return killProcessTree(cmd) }
-			// EXIT_STDIO_GRACE_MS: stop waiting on inherited stdio 100ms after the
-			// process exits (child-process.ts).
-			cmd.WaitDelay = 100 * time.Millisecond
+			// WaitDelay backstops the manual drain: if killProcessTree fires on
+			// cancel/timeout and a descendant still pins the pipe, os/exec force-
+			// closes the inherited fds shortly after Wait returns so we never hang.
+			cmd.WaitDelay = time.Second
 
 			// Stream output through the rolling OutputAccumulator (bounded memory,
 			// incremental temp-file writes) with throttled partial onUpdate emits
@@ -672,11 +673,7 @@ func bashTool(cwd string) agent.AgentTool {
 				// pi emits an initial empty update before spawning (bash.ts:332-334).
 				onUpdate(agent.AgentToolResult{Content: ai.ContentList{}, Details: nil})
 			}
-			// The same writer pointer for stdout+stderr keeps os/exec on a single
-			// pipe (2>&1-style interleaving) like pi's shared onData handler.
-			cmd.Stdout = u
-			cmd.Stderr = u
-			runErr := cmd.Run()
+			runErr := runBashCommand(cmd, u)
 
 			snap := u.finish()
 			formatOutput := func(emptyText string) (string, map[string]any) {
@@ -743,6 +740,91 @@ func bashTool(cwd string) agent.AgentTool {
 }
 
 const bashUpdateThrottle = 100 * time.Millisecond
+
+// bashExitStdioGrace is the idle window we keep reading merged stdout/stderr
+// after the process exits. A detached descendant can hold the pipe open and keep
+// writing past exit; we must not destroy the stream on a fixed deadline measured
+// from exit or its tail is silently lost (port of pi#5303 / 3fa40956). Instead
+// the timer is re-armed on every chunk, so an actively writing pipe keeps us
+// reading while a quiet held-open handle still releases after the grace elapses.
+const bashExitStdioGrace = 100 * time.Millisecond
+
+// runBashCommand starts cmd with stdout+stderr merged onto a single pipe (2>&1
+// interleaving, like pi's shared onData handler), streams the merged output into
+// u, and waits for the process. After exit it drains the pipe on a re-arming
+// idle grace rather than a fixed deadline so output a detached descendant writes
+// past exit is captured (port of 3fa40956). It returns the same error cmd.Wait
+// would: nil or *exec.ExitError on a non-zero/​signalled exit.
+func runBashCommand(cmd *exec.Cmd, u *bashUpdater) error {
+	pr, pw, err := os.Pipe()
+	if err != nil {
+		return err
+	}
+	// Same *os.File on both keeps the child on one pipe so stderr interleaves
+	// with stdout in write order.
+	cmd.Stdout = pw
+	cmd.Stderr = pw
+	if err := cmd.Start(); err != nil {
+		pw.Close()
+		pr.Close()
+		return err
+	}
+	// The parent must drop its write end or pr never sees EOF.
+	pw.Close()
+
+	// The reader goroutine feeds u and reports each chunk (and final EOF) on
+	// chunks. Closing pr unblocks a read parked on a pipe a descendant still
+	// holds open.
+	chunks := make(chan struct{}, 1)
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		buf := make([]byte, 32*1024)
+		for {
+			n, rerr := pr.Read(buf)
+			if n > 0 {
+				u.Write(buf[:n])
+			}
+			select {
+			case chunks <- struct{}{}:
+			default:
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+
+	waitErr := cmd.Wait()
+
+	// Process has exited. Drain any output still arriving, re-arming the idle
+	// grace per chunk; release on idle-grace OR pipe EOF (reader done).
+	timer := time.NewTimer(bashExitStdioGrace)
+	defer timer.Stop()
+drain:
+	for {
+		select {
+		case <-readDone:
+			break drain
+		case <-chunks:
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			timer.Reset(bashExitStdioGrace)
+		case <-timer.C:
+			break drain
+		}
+	}
+	// Stop tracking the (possibly still-open) inherited handle and unblock the
+	// reader. The reader appends only what it has already read, so output isn't
+	// double-counted.
+	pr.Close()
+	<-readDone
+	return waitErr
+}
 
 func argFloat(params map[string]any, key string) (float64, bool) {
 	switch v := params[key].(type) {
