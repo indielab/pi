@@ -24,7 +24,7 @@ func TestResolveCloudflareBaseURLSubstitutesEnv(t *testing.T) {
 	t.Setenv("CLOUDFLARE_GATEWAY_ID", "gw-456")
 
 	model := &ai.Model{Provider: "cloudflare-ai-gateway", BaseURL: cloudflareAIGatewayCompatBaseURL}
-	got, err := resolveCloudflareBaseURL(model)
+	got, err := resolveCloudflareBaseURL(model, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -34,7 +34,7 @@ func TestResolveCloudflareBaseURLSubstitutesEnv(t *testing.T) {
 	}
 
 	model = &ai.Model{Provider: "cloudflare-workers-ai", BaseURL: cloudflareWorkersAIBaseURL}
-	got, err = resolveCloudflareBaseURL(model)
+	got, err = resolveCloudflareBaseURL(model, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -49,7 +49,7 @@ func TestResolveCloudflareBaseURLMissingEnvErrors(t *testing.T) {
 	t.Setenv("CLOUDFLARE_GATEWAY_ID", "") // unset/empty
 
 	model := &ai.Model{Provider: "cloudflare-ai-gateway", BaseURL: cloudflareAIGatewayOpenAIBaseURL}
-	_, err := resolveCloudflareBaseURL(model)
+	_, err := resolveCloudflareBaseURL(model, nil)
 	if err == nil {
 		t.Fatal("expected error for missing CLOUDFLARE_GATEWAY_ID")
 	}
@@ -60,10 +60,42 @@ func TestResolveCloudflareBaseURLMissingEnvErrors(t *testing.T) {
 	}
 }
 
+// pi 7f29e7a3: provider-scoped env overrides win over the OS environment and can
+// satisfy a placeholder the OS env leaves unset. An empty override value falls
+// through to os.Getenv (pi resolves with `||`).
+func TestResolveCloudflareBaseURLScopedEnvOverride(t *testing.T) {
+	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "os-acct")
+	t.Setenv("CLOUDFLARE_GATEWAY_ID", "") // unset in OS env
+
+	model := &ai.Model{Provider: "cloudflare-ai-gateway", BaseURL: cloudflareAIGatewayCompatBaseURL}
+	env := map[string]string{
+		"CLOUDFLARE_ACCOUNT_ID": "scoped-acct", // overrides the OS value
+		"CLOUDFLARE_GATEWAY_ID": "scoped-gw",   // supplies what the OS env lacks
+	}
+	got, err := resolveCloudflareBaseURL(model, env)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want := "https://gateway.ai.cloudflare.com/v1/scoped-acct/scoped-gw/compat"
+	if got != want {
+		t.Fatalf("resolved = %q, want %q", got, want)
+	}
+
+	// An empty override value falls through to the OS environment.
+	got, err = resolveCloudflareBaseURL(model, map[string]string{"CLOUDFLARE_ACCOUNT_ID": "", "CLOUDFLARE_GATEWAY_ID": "scoped-gw"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	want = "https://gateway.ai.cloudflare.com/v1/os-acct/scoped-gw/compat"
+	if got != want {
+		t.Fatalf("empty override should fall through to OS env: resolved = %q, want %q", got, want)
+	}
+}
+
 func TestResolveCloudflareBaseURLPassthroughWithoutPlaceholders(t *testing.T) {
 	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
 	model := &ai.Model{Provider: "openai", BaseURL: "https://api.openai.com/v1"}
-	got, err := resolveCloudflareBaseURL(model)
+	got, err := resolveCloudflareBaseURL(model, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

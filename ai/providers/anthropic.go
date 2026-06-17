@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"regexp"
 	"strings"
 
@@ -129,12 +128,13 @@ func setBool(dst *bool, v *bool) {
 	}
 }
 
-func resolveCacheRetention(r ai.CacheRetention) ai.CacheRetention {
+func resolveCacheRetention(r ai.CacheRetention, env map[string]string) ai.CacheRetention {
 	if r != "" {
 		return r
 	}
 	// Match pi: PI_CACHE_RETENTION=long opts the default into long retention.
-	if os.Getenv("PI_CACHE_RETENTION") == "long" {
+	// Provider-scoped env overrides win over the OS environment (pi 7f29e7a3).
+	if getProviderEnvValue("PI_CACHE_RETENTION", env) == "long" {
 		return ai.CacheLong
 	}
 	return ai.CacheShort
@@ -145,8 +145,8 @@ type cacheControl struct {
 	TTL  string `json:"ttl,omitempty"`
 }
 
-func getCacheControl(model *ai.Model, retention ai.CacheRetention) (ai.CacheRetention, *cacheControl) {
-	r := resolveCacheRetention(retention)
+func getCacheControl(model *ai.Model, retention ai.CacheRetention, env map[string]string) (ai.CacheRetention, *cacheControl) {
+	r := resolveCacheRetention(retention, env)
 	if r == ai.CacheNone {
 		return r, nil
 	}
@@ -329,7 +329,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 		if model.Provider == "cloudflare-ai-gateway" {
 			// pi: resolveCloudflareBaseUrl(model) throws on a missing env var,
 			// which surfaces as a failed stream.
-			resolved, rerr := resolveCloudflareBaseURL(model)
+			resolved, rerr := resolveCloudflareBaseURL(model, opts.Env)
 			if rerr != nil {
 				fail(rerr)
 				return
@@ -554,10 +554,12 @@ func (b *blockBuilder) toContent() ai.Content {
 
 func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *AnthropicOptions) map[string]any {
 	retention := ai.CacheRetention("")
+	var env map[string]string
 	if opts != nil {
 		retention = opts.CacheRetention
+		env = opts.Env
 	}
-	_, cc := getCacheControl(model, retention)
+	_, cc := getCacheControl(model, retention, env)
 	compat := getAnthropicCompat(model)
 
 	maxTokens := model.MaxTokens
@@ -909,7 +911,7 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 		// pi anthropic.ts:496-497: cacheSessionId is dropped when the effective
 		// cacheRetention is "none", so no session-affinity header is sent.
 		if opts.SessionID != "" && compat.sendSessionAffinityHeaders &&
-			resolveCacheRetention(opts.CacheRetention) != ai.CacheNone {
+			resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone {
 			r.Header.Set("x-session-affinity", opts.SessionID)
 		}
 	}

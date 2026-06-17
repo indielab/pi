@@ -234,7 +234,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			baseURL = "https://api.openai.com/v1"
 		}
 		if isCloudflareProvider(model.Provider) {
-			resolved, cfErr := resolveCloudflareBaseURL(model)
+			resolved, cfErr := resolveCloudflareBaseURL(model, opts.Env)
 			if cfErr != nil {
 				fail(cfErr)
 				return
@@ -294,7 +294,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			}
 			// Session cache headers (pi openai-responses.ts:200-205); the
 			// sessionId is zeroed when cacheRetention is "none" (:115).
-			if opts.SessionID != "" && resolveCacheRetention(opts.CacheRetention) != ai.CacheNone {
+			if opts.SessionID != "" && resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone {
 				if getResponsesCompat(model).SendSessionIDHeader {
 					r.Header.Set("session_id", opts.SessionID)
 				}
@@ -602,7 +602,7 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 		"stream": true,
 		"store":  false,
 	}
-	retention := resolveCacheRetention(opts.CacheRetention)
+	retention := resolveCacheRetention(opts.CacheRetention, opts.Env)
 	// Prompt caching: route same-session requests to a stable cache key so OpenAI
 	// can reuse the cached system-prompt + tool prefix (latency/cost win).
 	if retention != ai.CacheNone && opts.SessionID != "" {

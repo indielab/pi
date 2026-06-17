@@ -74,7 +74,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			baseURL = "https://api.openai.com/v1"
 		}
 		if isCloudflareProvider(model.Provider) {
-			resolved, cfErr := resolveCloudflareBaseURL(model)
+			resolved, cfErr := resolveCloudflareBaseURL(model, opts.Env)
 			if cfErr != nil {
 				fail(cfErr)
 				return
@@ -125,7 +125,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				}
 			}
 			// Session-affinity headers for cache-routing providers (e.g. Fireworks).
-			if opts.SessionID != "" && resolveCacheRetention(opts.CacheRetention) != ai.CacheNone &&
+			if opts.SessionID != "" && resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone &&
 				getOpenAICompat(model).SendSessionAffinityHeaders {
 				r.Header.Set("session_id", opts.SessionID)
 				r.Header.Set("x-client-request-id", opts.SessionID)
@@ -694,7 +694,7 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 	// Prompt caching (OpenAI native, and long-retention compatible providers).
 	// pi (openai-completions.ts:510-515): prompt_cache_key needs a sessionId,
 	// but prompt_cache_retention is sent independently of any sessionId.
-	retention := resolveCacheRetention(opts.CacheRetention)
+	retention := resolveCacheRetention(opts.CacheRetention, opts.Env)
 	if opts.SessionID != "" &&
 		((strings.Contains(model.BaseURL, "api.openai.com") && retention != ai.CacheNone) ||
 			(retention == ai.CacheLong && compat.SupportsLongCacheRetention)) {
@@ -741,7 +741,7 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 	}
 
 	// Anthropic-style cache_control markers (e.g. OpenRouter routing an anthropic/ model).
-	if cc := compatCacheControl(compat, resolveCacheRetention(opts.CacheRetention)); cc != nil {
+	if cc := compatCacheControl(compat, resolveCacheRetention(opts.CacheRetention, opts.Env)); cc != nil {
 		applyAnthropicCacheControl(messages, params["tools"], cc)
 	}
 

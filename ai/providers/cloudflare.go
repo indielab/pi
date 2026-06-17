@@ -2,7 +2,6 @@ package providers
 
 import (
 	"fmt"
-	"os"
 	"regexp"
 	"strings"
 
@@ -36,7 +35,8 @@ var cloudflarePlaceholderRe = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
 // resolveCloudflareBaseURL substitutes `{VAR}` placeholders in a Cloudflare
 // baseUrl from the environment (cloudflare.ts resolveCloudflareBaseUrl). It
 // errors with pi's exact message when a referenced variable is unset or empty.
-func resolveCloudflareBaseURL(model *ai.Model) (string, error) {
+// Provider-scoped env overrides win over the OS environment (pi 7f29e7a3).
+func resolveCloudflareBaseURL(model *ai.Model, env map[string]string) (string, error) {
 	url := model.BaseURL
 	if !strings.Contains(url, "{") {
 		return url, nil
@@ -44,7 +44,7 @@ func resolveCloudflareBaseURL(model *ai.Model) (string, error) {
 	var missing string
 	resolved := cloudflarePlaceholderRe.ReplaceAllStringFunc(url, func(match string) string {
 		name := match[1 : len(match)-1]
-		value := os.Getenv(name)
+		value := getProviderEnvValue(name, env)
 		if value == "" {
 			if missing == "" {
 				missing = name

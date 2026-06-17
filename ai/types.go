@@ -482,6 +482,11 @@ type StreamOptions struct {
 	MaxRetries                int
 	MaxRetryDelayMs           *int
 	Metadata                  map[string]any
+	// Env holds provider-scoped environment overrides. When set, a non-empty
+	// value here takes precedence over os.Getenv for provider configuration such
+	// as PI_CACHE_RETENTION and Cloudflare base-URL placeholders (pi 7f29e7a3).
+	// Defaults to nil, in which case lookups fall through to the OS environment.
+	Env map[string]string
 }
 
 // SimpleStreamOptions extends StreamOptions with unified reasoning controls.
