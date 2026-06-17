@@ -1059,3 +1059,71 @@ func TestOpenAIUserContentStringForm(t *testing.T) {
 		t.Fatalf("array-form user content must be an array of parts, got %#v", msgs[0]["content"])
 	}
 }
+
+func TestDiffZaiGLM52ReasoningEffort(t *testing.T) {
+	// pi 75b0d723: GLM-5.2 sends thinking:{type} AND a native reasoning_effort,
+	// mapped through thinkingLevelMap (minimal:null, low/medium/high:"high",
+	// xhigh:"max"). minimal maps to null -> omit reasoning_effort (thinking still
+	// enabled); an unmapped level falls back to the raw level.
+	glm52 := func() *ai.Model {
+		return openAIModel(func(m *ai.Model) {
+			m.ID = "glm-5.2"
+			m.Provider = "zai"
+			m.BaseURL = "https://api.z.ai/api/coding/paas/v4"
+			m.Reasoning = true
+			m.ThinkingLevelMap = ai.ThinkingLevelMap{
+				"minimal": nil,
+				"low":     strPtr("high"),
+				"medium":  strPtr("high"),
+				"high":    strPtr("high"),
+				"xhigh":   strPtr("max"),
+			}
+			m.Compat = json.RawMessage(`{"thinkingFormat":"zai","supportsReasoningEffort":true,"zaiToolStream":true}`)
+		})
+	}
+	if !getOpenAICompat(glm52()).SupportsReasoningEffort {
+		t.Fatalf("expected supportsReasoningEffort override to apply for zai glm-5.2")
+	}
+	// effort -> thinking:enabled + mapped reasoning_effort.
+	for _, c := range []struct{ level, want string }{
+		{"low", "high"},
+		{"high", "high"},
+		{"xhigh", "max"},
+	} {
+		body := buildOpenAIParams(glm52(), baseReq(), &OpenAIOptions{ReasoningEffort: c.level})
+		if tm, _ := body["thinking"].(map[string]any); tm["type"] != "enabled" {
+			t.Fatalf("%s: thinking = %v, want {type:enabled}", c.level, body["thinking"])
+		}
+		if body["reasoning_effort"] != c.want {
+			t.Fatalf("%s: reasoning_effort = %v, want %q", c.level, body["reasoning_effort"], c.want)
+		}
+	}
+	// minimal maps to null -> thinking:enabled, reasoning_effort omitted.
+	bMin := buildOpenAIParams(glm52(), baseReq(), &OpenAIOptions{ReasoningEffort: "minimal"})
+	if tm, _ := bMin["thinking"].(map[string]any); tm["type"] != "enabled" {
+		t.Fatalf("minimal: thinking = %v, want {type:enabled}", bMin["thinking"])
+	}
+	if has(bMin, "reasoning_effort") {
+		t.Fatalf("minimal maps to null -> reasoning_effort must be omitted, got %v", bMin["reasoning_effort"])
+	}
+	// no effort -> thinking:disabled, no reasoning_effort.
+	bOff := buildOpenAIParams(glm52(), baseReq(), &OpenAIOptions{})
+	if tm, _ := bOff["thinking"].(map[string]any); tm["type"] != "disabled" {
+		t.Fatalf("off: thinking = %v, want {type:disabled}", bOff["thinking"])
+	}
+	if has(bOff, "reasoning_effort") {
+		t.Fatalf("off must not send reasoning_effort, got %v", bOff["reasoning_effort"])
+	}
+	// A zai model WITHOUT supportsReasoningEffort never sends reasoning_effort.
+	glm46 := openAIModel(func(m *ai.Model) {
+		m.ID = "glm-4.6"
+		m.Provider = "zai"
+		m.BaseURL = "https://api.z.ai/api/coding/paas/v4"
+		m.Reasoning = true
+		m.Compat = json.RawMessage(`{"thinkingFormat":"zai"}`)
+	})
+	b46 := buildOpenAIParams(glm46, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	if has(b46, "reasoning_effort") {
+		t.Fatalf("zai without supportsReasoningEffort must not send reasoning_effort, got %v", b46["reasoning_effort"])
+	}
+}

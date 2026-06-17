@@ -871,6 +871,15 @@ func applyReasoningFormat(params map[string]any, model *ai.Model, compat openAIC
 			t = "enabled"
 		}
 		params["thinking"] = map[string]any{"type": t}
+		// pi (75b0d723): GLM-5.2 also accepts a native reasoning_effort. When an
+		// effort was requested and the model opts in via supportsReasoningEffort,
+		// send the thinkingLevelMap-mapped effort (raw level if unmapped, omitted
+		// if mapped to null — e.g. GLM-5.2's minimal:null).
+		if enabled && compat.SupportsReasoningEffort {
+			if effort, ok := mappedEffortOrRaw(model, level); ok {
+				params["reasoning_effort"] = effort
+			}
+		}
 	case compat.ThinkingFormat == "qwen" && model.Reasoning:
 		params["enable_thinking"] = enabled
 	case compat.ThinkingFormat == "qwen-chat-template" && model.Reasoning:
@@ -929,6 +938,28 @@ func offOrMapped(model *ai.Model, level string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// mappedEffortOrRaw ports pi's zai reasoning_effort lookup (75b0d723):
+//
+//	const mapped = thinkingLevelMap?.[effort];
+//	const value = mapped === undefined ? effort : mapped;
+//	if (typeof value === "string") send value;
+//
+// so a level ABSENT from the map (undefined) falls back to the raw level, a
+// present-null mapping omits the field (ok=false), and a present string uses the
+// mapped value. This differs from effortValue, which returns the raw level for a
+// present-null mapping rather than omitting.
+func mappedEffortOrRaw(model *ai.Model, level string) (string, bool) {
+	if model.ThinkingLevelMap != nil {
+		if v, ok := model.ThinkingLevelMap[ai.ModelThinkingLevel(level)]; ok {
+			if v == nil {
+				return "", false
+			}
+			return *v, true
+		}
+	}
+	return level, true
 }
 
 // openAIUserContent maps user content to OpenAI parts. pi always emits
