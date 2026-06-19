@@ -16,6 +16,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.2.5`](#v025) | 2026-06-19 | `d5f2c73` | `56b22768` | pi-ai 0.79.8 | Catalog 0.79.8 (GLM-5.2 opencode-go, openrouter/fusion, Mistral prompt-caching data); no behavior change vs v0.2.4 |
 | [`v0.2.4`](#v024) | 2026-06-17 | `a9b7e5c` | `29c1504c` | pi-ai 0.79.6 | GLM-5.2 reasoning_effort; null Responses content; provider-scoped env overrides; deepseek gate live |
 | [`v0.2.3`](#v023) | 2026-06-16 | `c655c5a` | `f8a77f47` | pi-ai 0.79.4 | Docs-only: disclose default provider-attribution headers (no code change vs v0.2.2) |
 | [`v0.2.2`](#v022) | 2026-06-16 | `39b3879` | `f8a77f47` | pi-ai 0.79.4 | 1h cache-write 2×; bash stdout drain; deepseek/gemini thinking gates; provider-attribution headers |
@@ -25,6 +26,28 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.2.5
+Upstream sync `29c1504c → 56b22768` — 32 main-line changes, **0 behavior
+ports, 32 n/a, 0 decides**. npm reference build advanced 0.79.6 → **0.79.8**
+(two release tags crossed; v0.79.7 superseded by v0.79.8).
+
+- **Catalog → 0.79.8** (`8eb9704b`) — endpoint-pinned byte-identical both ends
+  (old ≡ 0.79.6 build, new ≡ 0.79.8 build, integrity-verified). +9/−3 ids
+  (opencode-go GLM-5.2, openrouter/fusion alias, fireworks glm-5p2,
+  poolside/qwen/cohere/gemini-3-pro-image/liquid; pruned glm-5/raptor-mini/
+  xiaomi-mimo); 44 changed entries are data churn (Mistral prompt-caching cost
+  fields, fireworks/openrouter/vercel metadata). `off:null` gates intact.
+- **No behavior change vs v0.2.4.** The substantive upstream changes landed on
+  unported surface: the compaction trio (overflow-retry recovery, empty-summary
+  guard, post-compaction token estimates) edits the agent-session-runtime
+  auto-compaction orchestration + event lifecycle the Go port doesn't have;
+  RPC unknown-command id (`modes/rpc`), Mistral prompt-caching (Mistral
+  provider), and the `CONFIG_DIR_NAME`/edit-diff SDK exports are all out of
+  scope.
+
+Reviewed via an independent adversarial parity review (catalog endpoint-pinned;
+schema-drift, tripwire, and orphaned-id checks passed); `-race` suite green.
 
 ### v0.2.4
 Upstream sync `f8a77f47 → 29c1504c` — 20 main-line changes (3 ported, 16 n/a,
