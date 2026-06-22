@@ -10,10 +10,10 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `56b22768` — "Add [Unreleased] section for next cycle" (2026-06-19); previous pins `29c1504c` (06-17), `f8a77f47` (06-16), `93b3b7c1` (06-14), `6f29450e` (06-13) |
-| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.8** (catalog endpoint-pinned both sides: old ≡ 0.79.6 build, new ≡ 0.79.8 build, lock integrity verified against the registry on each); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
-| Parity proofs at the pin | catalog regen endpoint-pinned byte-identical · session tree 8/8 · image decisions 8/8 (unchanged this cycle — no provider code changed) |
-| Reviewed via | initial port + parity sweep 1 + parity sweep 2 (`3be3911`), registration fix (`b09cb46`) |
+| TS source fully reviewed/ported | `2417adb4` — "fix(coding-agent): preserve startup extension UI" (2026-06-21); previous pins `56b22768` (06-19), `29c1504c` (06-17), `f8a77f47` (06-16), `93b3b7c1` (06-14) |
+| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.9** (catalog endpoint-pinned both sides: old ≡ 0.79.8 build, new ≡ 0.79.9 build, lock integrity verified against the registry on each); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
+| Parity proofs at the pin | catalog regen endpoint-pinned byte-identical · session tree 8/8 · image decisions 8/8 (unchanged this cycle — session-branch port is behavior-neutral) |
+| Reviewed via | initial port + parity sweep 1 + parity sweep 2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 cycle independent go-review (ship) + adversarial parity review (5/5 faithful) |
 
 Deliberately not ported (out of scope for the ledger unless a commit changes
 that decision): TUI, extensions runtime, OAuth token acquisition, project-trust
@@ -52,6 +52,48 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   extension resource-loader; `skills.ts` untouched). Future trust commits are
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
+
+## Drift at last sync check (2026-06-22)
+
+**Caught up to `2417adb4`.** Ledger 56b22768 → 2417adb4 fully processed (22
+main-line changes: **4 behavior/perf ports + 1 catalog regen, 17 n/a, 0
+decides**). One release tag crossed (v0.79.9); npm reference build advanced
+0.79.8 → **0.79.9**. Reviewed via an independent idiomatic go-review (ship, one
+cosmetic nit applied) + adversarial parity review (5/5 faithful; catalog
+endpoint-pinned byte-identical on both ends; tripwire + orphaned-id checks
+passed). Build/vet/`-race` green.
+
+- **Catalog → npm 0.79.9** (`615bf2f8`, Go `5d8b72d`): endpoint-pinned
+  byte-identical (old ≡ 0.79.8 build, new ≡ 0.79.9, integrity-verified). 0
+  added, **2 removed** (`google/gemma-4-E2B-it`, `gemma-4-E4B-it`; no Go refs),
+  20 changed. Subsumes the two data-only commits `8597ebaf` (openrouter
+  z-ai/glm-5.2 `xhigh:xhigh`) and `500b568b` (fireworks glm-5p2 →
+  api openai-completions, `/inference/v1`, compat, thinkingLevelMap); rest is
+  cost/metadata churn. `off:null` tripwires intact (fable-5; moonshotai/-cn
+  kimi-k2.7-code[-highspeed]).
+- **chat-template thinking compat** (`8b97e75c`, Go `3c30dd2`+`56c73b7`): new
+  openai-completions `thinkingFormat:"chat-template"` emitting configurable
+  `chat_template_kwargs` ($var/omitWhenOff/scalar). **Latent** — no 0.79.9
+  catalog model sets it (reachable only via custom model config); key order
+  preserved for byte-exact request bodies. Golden surface: request body
+  (unexercised by the 6-scenario diff until a model adopts it). Host-side
+  model-registry schema + mergeCompat stay unported.
+- **fuzzy edit preserves untouched lines** (`128330e3`, Go `18ef9eb`): fuzzy
+  edits no longer globally normalize the file — only touched line-blocks are
+  rewritten, other lines copied back verbatim. Golden surface: edit-tool file
+  output.
+- **legacy WSL bash via stdin** (`1287b69f`, Go `9f452a1`): System32/Sysnative
+  `bash.exe` → `bash -s` + command on stdin (mishandles `-c` quoting). Windows
+  legacy-WSL only; resolve-config-value half is host-side (n/a).
+- **session branch traversal linear** (`a1da88ae`, Go `a88ef3b`): O(n²) prepend
+  → append+reverse. Behavior-neutral.
+- **n/a (17):** issue-triage automation/.github (`783571a6`, `47d1d90a`,
+  `226a3168`, `416c673d`, `350ac3f3`); TUI (`3095977d`, `373cd6ae`,
+  `d93b92ba`); changelog (`1aa79b9b`, `b4f31408`); examples (`542683b2`);
+  catalog data folded into the 0.79.9 regen (`8597ebaf`, `500b568b`); OAuth +
+  host model-registry (`6e6ce70c` Copilot account-availability filtering);
+  extensions runtime (`5505316e`); packaging/self-update (`bc0db643`);
+  agent-session-runtime reload + TUI (`2417adb4`). No new boundary questions.
 
 ## Drift at last sync check (2026-06-19)
 
@@ -196,6 +238,33 @@ only by comparison against real pi.
 Upstream reference clone: `$PI_UPSTREAM_DIR`, default `~/.cache/pi-upstream`.
 When the delta crosses a release tag, the npm reference build is refreshed to
 that version before parity review.
+
+## Ledger — 56b22768 → 2417adb4
+
+| Upstream | Date | Subject | Hint | Status | Go commit | Notes |
+|---|---|---|---|---|---|---|
+| `783571a6` | 2026-06-19 | feat: track auto-closed issue triage | likely-n/a | n/a | — | .github issue-triage workflows |
+| `47d1d90a` | 2026-06-19 | fix: close no-action issues as not planned | likely-n/a | n/a | — | .github issue-triage workflow |
+| `373cd6ae` | 2026-06-19 | fix(coding-agent): prioritize provider matches in model selector | review | n/a | — | modes/interactive model-selector/model-search (TUI) — unported |
+| `226a3168` | 2026-06-19 | fix: mark auto-closed issues not planned | likely-n/a | n/a | — | .github issue-gate workflow |
+| `6e6ce70c` | 2026-06-19 | fix(ai): filter Copilot models by account availability | review | n/a | — | `ai/utils/oauth/github-copilot.ts` (OAuth, unported) + host model-registry; only model-registry *test* changed, not the registry |
+| `1287b69f` | 2026-06-19 | fix(coding-agent): run legacy WSL bash commands via stdin | review | ported | `9f452a1` | tools.go getShellConfig: detect System32/Sysnative bash.exe (isLegacyWslBashPath) → `bash -s` + command on stdin; else `bash -c`. resolve-config-value half host-side (n/a). Test: TestLegacyWslBashDetection |
+| `128330e3` | 2026-06-19 | fix(coding-agent): preserve untouched lines in fuzzy edit | review | ported | `18ef9eb` | editmatch.go: fuzzy edits overlay only touched line-blocks onto the LF-normalized original (splitLinesWithEndings/getLineSpans/getReplacementLineRange/applyReplacementsPreservingUnchangedLines). Golden: edit-tool output. Tests: single + multi preserve |
+| `8b97e75c` | 2026-06-19 | feat(ai): add chat-template thinking compat | review | ported | `3c30dd2` | openai-completions `thinkingFormat:"chat-template"` → configurable `chat_template_kwargs` (openai_chat_template.go). Latent (no catalog model). Golden: request body. Host-side model-registry schema/mergeCompat unported. Cosmetic follow-up `56c73b7`. Tests: openai_chat_template_test.go |
+| `3095977d` | 2026-06-20 | fix(tui): stabilize streaming code fence rendering (#5846) | likely-n/a | n/a | — | tui/markdown |
+| `416c673d` | 2026-06-20 | fix: skip no-action for to-discuss issues | likely-n/a | n/a | — | .github issue-triage workflow |
+| `8597ebaf` | 2026-06-20 | fix(ai): expose OpenRouter GLM-5.2 xhigh effort | review | n/a (data) | — | generate-models.ts + models.generated.ts; lands via 0.79.9 catalog regen (`5d8b72d`, openrouter/z-ai/glm-5.2 thinkingLevelMap xhigh:xhigh) |
+| `a1da88ae` | 2026-06-20 | fix(coding-agent): make session path traversal linear | review | ported | `a88ef3b` | session_tree.go Branch: O(n²) prepend → append+reverse. Behavior-neutral (covered by session-tree parity tests) |
+| `5505316e` | 2026-06-20 | fix(coding-agent): cache extension imports for session switches | review | n/a | — | core/extensions/loader.ts + resource-loader.ts — extensions runtime unported |
+| `500b568b` | 2026-06-20 | fix(ai): use OpenAI endpoint for Fireworks GLM-5.2 | review | n/a (data) | — | generate-models.ts + models.generated.ts; lands via 0.79.9 regen (`5d8b72d`, fireworks glm-5p2 → api openai-completions, /inference/v1 baseUrl, compat, thinkingLevelMap) |
+| `350ac3f3` | 2026-06-20 | fix: remove inprogress from auto-closed issues | likely-n/a | n/a | — | .github issue-triage workflow |
+| `1aa79b9b` | 2026-06-20 | docs: update unreleased changelog audit | likely-n/a | n/a | — | changelog |
+| `615bf2f8` | 2026-06-20 | Release v0.79.9 | review | ported | `5d8b72d` | ai/models_catalog.json regenerated from npm 0.79.9 (endpoint-pinned both sides, integrity-verified). 0 added, 2 removed (google gemma-4-E2B-it/E4B-it; no Go refs), 20 changed. Subsumes 8597ebaf/500b568b data + cost/metadata churn. off:null tripwires intact. Independent parity review: faithful |
+| `b4f31408` | 2026-06-20 | Add [Unreleased] section for next cycle | likely-n/a | n/a | — | changelog cycle header |
+| `d93b92ba` | 2026-06-20 | fix(coding-agent): show changelog URL in update notice | review | n/a | — | modes/interactive interactive-mode (TUI update notice) |
+| `bc0db643` | 2026-06-21 | fix(coding-agent): install checked pi update version | review | n/a | — | config.ts (bin-dir) + package-manager-cli.ts — self-update/packaging unported |
+| `542683b2` | 2026-06-21 | fix(coding-agent): fix plan-mode example | likely-n/a | n/a | — | examples/extensions/plan-mode |
+| `2417adb4` | 2026-06-21 | fix(coding-agent): preserve startup extension UI | review | n/a | — | agent-session.ts `reload()` gains a beforeSessionStart hook (agent-session-runtime reload, unported) + interactive-mode (TUI) |
 
 ## Ledger — 29c1504c → 56b22768
 
