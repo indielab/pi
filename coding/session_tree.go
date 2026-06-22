@@ -136,11 +136,16 @@ func (t *SessionTree) Branch(fromID ...string) []*SessionEntry {
 	}
 	leaf := t.resolveLeaf(id)
 	var path []*SessionEntry
+	// Walk leaf→root appending, then reverse once, for linear traversal (pi
+	// a1da88ae: push + reverse instead of an O(n²) prepend per ancestor).
 	for cur := leaf; cur != nil; cur = t.byID[cur.ParentID] {
-		path = append([]*SessionEntry{cur}, path...)
+		path = append(path, cur)
 		if cur.ParentID == "" {
 			break
 		}
+	}
+	for i, j := 0, len(path)-1; i < j; i, j = i+1, j-1 {
+		path[i], path[j] = path[j], path[i]
 	}
 	return path
 }
