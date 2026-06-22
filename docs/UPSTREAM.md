@@ -10,10 +10,10 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `2417adb4` — "fix(coding-agent): preserve startup extension UI" (2026-06-21); previous pins `56b22768` (06-19), `29c1504c` (06-17), `f8a77f47` (06-16), `93b3b7c1` (06-14) |
-| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.9** (catalog endpoint-pinned both sides: old ≡ 0.79.8 build, new ≡ 0.79.9 build, lock integrity verified against the registry on each); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
-| Parity proofs at the pin | catalog regen endpoint-pinned byte-identical · session tree 8/8 · image decisions 8/8 (unchanged this cycle — session-branch port is behavior-neutral) |
-| Reviewed via | initial port + parity sweep 1 + parity sweep 2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 cycle independent go-review (ship) + adversarial parity review (5/5 faithful) |
+| TS source fully reviewed/ported | `3b561346` — "fix(tui): bind ctrl+j as newline by default" (2026-06-22); previous pins `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17), `f8a77f47` (06-16) |
+| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.10** (catalog endpoint-pinned both sides: old ≡ 0.79.9 build, new ≡ 0.79.10 build, lock integrity verified against the registry on each — `sha512-9jR23…ORuew==`); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
+| Parity proofs at the pin | catalog regen endpoint-pinned byte-identical · session tree 8/8 · image decisions 8/8 (unchanged this cycle) · differential request diff 14/14 (reasoning-details change is response-parse only — request bytes unchanged) |
+| Reviewed via | initial port + parity sweep 1 + parity sweep 2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 v0.79.10 cycle independent go-review (ship) + adversarial parity review (caught a missing validation-tightening on the reasoning-details port → fixed in `62981f1`; re-verified faithful) |
 
 Deliberately not ported (out of scope for the ledger unless a commit changes
 that decision): TUI, extensions runtime, OAuth token acquisition, project-trust
@@ -52,6 +52,61 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   extension resource-loader; `skills.ts` untouched). Future trust commits are
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
+
+## Drift at last sync check (2026-06-22, v0.79.10 cycle)
+
+**Caught up to `3b561346`.** Ledger 2417adb4 → 3b561346 fully processed (14
+main-line changes: **2 behavior ports + 1 catalog regen, 11 n/a, 0 decides**).
+One release tag crossed (v0.79.10); npm reference build advanced 0.79.9 →
+**0.79.10**. Reviewed via an independent idiomatic go-review (ship, three LOW
+nits, no action) + adversarial parity review — which caught a real divergence:
+the reasoning-details port adopted the buffering but not the same commit's
+validation tightening; fixed in `62981f1` and re-verified faithful. Catalog
+endpoint-pinned byte-identical both ends; build/vet/`-race` green; differential
+request diff 14/14.
+
+- **Catalog → npm 0.79.10** (`8e190066`, Go `c50acfc`): endpoint-pinned
+  byte-identical (old ≡ 0.79.9 build, new ≡ 0.79.10, integrity-verified
+  `sha512-9jR23…ORuew==`). **+1** (`vercel-ai-gateway/sakana/fugu-ultra`),
+  **−1** (`openrouter/anthropic/claude-3.5-haiku`), 17 openrouter entries churn
+  cost/maxTokens/contextWindow. `off:null` tripwires intact (fable-5 across
+  anthropic/bedrock/cloudflare; moonshotai[-cn]/kimi-k2.7-code[-highspeed]).
+  The dropped openrouter id was a resolve-fallback fixture; it now lives only
+  under vercel-ai-gateway, so `TestResolveModelProviderPrefixFallsBackToFullID`
+  updated to that provider (resolution logic unchanged — pi's registry `.find()`
+  lands on the same sole remaining copy).
+- **preserve early reasoning details** (`7d0497fd`, Go `4e60155`+`62981f1`):
+  openai-completions buffers an encrypted `reasoning_detail` arriving before its
+  tool-call block (`pendingReasoningDetails` keyed by id, drained in
+  `ensureToolCallBlock` via `applyPendingReasoningDetail`), matching the tool
+  call by the byID map instead of an order scan — no longer dropped (#5114).
+  `62981f1` ports the same commit's `isEncryptedReasoningDetail` tightening
+  (data must be a non-empty string). Response-parse only; request bytes
+  unchanged. Golden surface: request body (reasoning_details round-trip,
+  unexercised since no request change). Tests: early-arrival + non-string-data.
+- **respect nested repo ignore boundaries in find** (`756a4e8f`, Go `46302ad`):
+  the pure-Go fd reimplementation now stops outer repo-specific ignore sources
+  (.git/info/exclude, ancestor + per-dir .gitignore) at a nested `.git`
+  boundary, while the nested repo's own rules still apply and global
+  core.excludesFile carries across (boundaryExempt); active only when the
+  search root is inside a repo (preserving --no-require-git outside) (#5960).
+  grep/rg path unchanged (respectNestedRepos=false). Golden surface: find-tool
+  output. Test: TestFindRespectsNestedRepoBoundaries. **Known minor under-reach**
+  (pre-existing, flagged by parity review, out of this commit's scope): a
+  *nested* repo's own `.git/info/exclude` is not re-rooted (only the outer
+  repoRoot's is read) — the nested repo's `.gitignore` IS honored; worth a
+  follow-up.
+- **n/a (11):** docs (`a61137a6`, `b7908b49`, `5df5a1ce`); changelog cycle
+  headers (`329dceb5`); `.github` (`08457404` contributor approval, `5641d6ba`
+  issue-triage workflow); `5b9b70d2` adds `reason`/`willRetry` to
+  SessionBeforeCompact/SessionCompact **extension events** (agent-session-runtime
+  + extensions/types.ts — unported event lifecycle, per the compaction-trio
+  rulings); `717a8f95` reverts the selective pi-ai base entrypoints (packaging/
+  test, reverting the n/a `0d89a333`); `4f71b2d3` ZAI "Coding Plan (Global)"
+  label in provider-display-names (no Go equivalent — display/TUI) + cli/args
+  help text; `71ca9b2b` OpenCode-Go GLM-5.2 xhigh effort (data-only, lands
+  **post-0.79.10** so deferred to the next regen); `3b561346` tui ctrl+j newline
+  default (TUI). No new boundary questions.
 
 ## Drift at last sync check (2026-06-22)
 
@@ -238,6 +293,25 @@ only by comparison against real pi.
 Upstream reference clone: `$PI_UPSTREAM_DIR`, default `~/.cache/pi-upstream`.
 When the delta crosses a release tag, the npm reference build is refreshed to
 that version before parity review.
+
+## Ledger — 2417adb4 → 3b561346
+
+| Upstream | Date | Subject | Hint | Status | Go commit | Notes |
+|---|---|---|---|---|---|---|
+| `a61137a6` | 2026-06-22 | docs(coding-agent): fix plan-mode docs links | likely-n/a | n/a | — | docs/tui.md + changelog |
+| `08457404` | 2026-06-22 | chore: approve contributor any-victor | n/a | n/a | — | .github contributor meta |
+| `7d0497fd` | 2026-06-22 | fix(ai): preserve early reasoning details | review | ported | `4e60155`+`62981f1` | openai.go: encrypted reasoning_details arriving before their tool-call block are buffered (pendingReasoningDetails by id) and drained in ensureToolCallBlock (applyPendingReasoningDetail); match via toolBuildersByID not order-scan; no longer dropped (#5114). `62981f1` ports the same commit's isEncryptedReasoningDetail tightening (data must be a non-empty string), replacing the old jsonValueTruthy gate. Response-parse only (request bytes unchanged). Tests: TestOpenAIReasoningDetailsEarlyArrival, TestOpenAIReasoningDetailsNonStringDataIgnored |
+| `5b9b70d2` | 2026-06-22 | feat(coding-agent): add compaction reason and willRetry to extension compact events (#5962) | review | n/a | — | agent-session.ts + core/extensions/types.ts: `reason`/`willRetry` on SessionBeforeCompact/SessionCompact extension events — unported event lifecycle (compaction-trio rulings) |
+| `b7908b49` | 2026-06-22 | docs(coding-agent): document slash command table | likely-n/a | n/a | — | README + docs/usage |
+| `5641d6ba` | 2026-06-22 | fix: clear untriaged when no-action is added | likely-n/a | n/a | — | .github issue-triage workflow |
+| `756a4e8f` | 2026-06-22 | fix(coding-agent): respect nested repo ignore boundaries in find | review | ported | `46302ad` | glob.go ignoreStack: new `boundaries` axis (respectNestedRepos) + crossesNestedBoundary/hasGitDir — outer repo-specific ignore sources stop at a nested `.git`; nested repo's own rules still apply; global excludesFile carries across (boundaryExempt); active only inside a repo. grep/rg unchanged (false). Pure-Go fd reimplementation, validated vs git oracle (#5960). Known minor under-reach: nested repo's own info/exclude not re-rooted (follow-up). Test: TestFindRespectsNestedRepoBoundaries |
+| `5df5a1ce` | 2026-06-22 | docs(coding-agent): audit unreleased changelog | likely-n/a | n/a | — | changelog |
+| `8e190066` | 2026-06-22 | Release v0.79.10 | review | ported | `c50acfc` | ai/models_catalog.json regenerated from npm 0.79.10 (endpoint-pinned both sides, integrity-verified). +1 (vercel-ai-gateway/sakana/fugu-ultra), −1 (openrouter/anthropic/claude-3.5-haiku), 17 openrouter cost/window churn. off:null tripwires intact. Dropped id was a resolve-fallback fixture → TestResolveModelProviderPrefixFallsBackToFullID updated to vercel-ai-gateway (sole remaining copy; logic unchanged). Independent parity review: faithful |
+| `329dceb5` | 2026-06-22 | Add [Unreleased] section for next cycle | likely-n/a | n/a | — | changelog cycle header |
+| `717a8f95` | 2026-06-22 | fix(ai): revert selective pi-ai base entrypoints | review | n/a | — | reverts the n/a `0d89a333` — test import paths + tsconfig/vitest/scripts (packaging only) |
+| `4f71b2d3` | 2026-06-22 | fix(coding-agent): clarify ZAI Coding Plan label | review | n/a | — | provider-display-names.ts "ZAI" → "ZAI Coding Plan (Global)" (no Go equivalent — display/TUI) + cli/args help text; Go envkeys.go maps only provider→ENV_KEY (unchanged) |
+| `71ca9b2b` | 2026-06-22 | fix(ai): expose OpenCode Go GLM-5.2 xhigh effort | review | n/a (data) | — | generate-models.ts + models.generated.ts (opencode-go/zai-org glm-5.2 thinkingLevelMap xhigh:max); lands **post-0.79.10** → deferred to the next catalog regen |
+| `3b561346` | 2026-06-22 | fix(tui): bind ctrl+j as newline by default | likely-n/a | n/a | — | tui/keybindings.ts (TUI) |
 
 ## Ledger — 56b22768 → 2417adb4
 
