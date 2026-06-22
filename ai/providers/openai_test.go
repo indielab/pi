@@ -570,6 +570,35 @@ data: [DONE]
 	}
 }
 
+// upstream 7d0497fd (#5114): an encrypted reasoning_detail can stream in a
+// delta BEFORE the tool-call block carrying its id is created. It must be
+// buffered and attached on block creation, not dropped.
+func TestOpenAIReasoningDetailsEarlyArrival(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","id":"call_1","data":"ENC"}]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"f","arguments":"{}"}}]}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+	_, final := collectOpenAIEvents(t, sse, nil)
+	if final.StopReason != ai.StopToolUse {
+		t.Fatalf("stop: %s (%s)", final.StopReason, final.ErrorMessage)
+	}
+	var tc *ai.ToolCall
+	for _, c := range final.Content {
+		if v, ok := c.(ai.ToolCall); ok {
+			tc = &v
+		}
+	}
+	wantSig := `{"type":"reasoning.encrypted","id":"call_1","data":"ENC"}`
+	if tc == nil || tc.ThoughtSignature != wantSig {
+		t.Fatalf("early reasoning detail not attached: thoughtSignature = %#v, want %q", tc, wantSig)
+	}
+}
+
 func TestOpenAIReasoningDetailsNoMatchIgnored(t *testing.T) {
 	sse := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"f"}}]}}]}
 

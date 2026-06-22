@@ -180,6 +180,11 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 		// thoughtSignature captured from streamed reasoning_details, keyed by
 		// builder (blockBuilder itself has no thoughtSignature field).
 		toolThoughtSigs := map[*blockBuilder]string{}
+		// pi pendingReasoningDetailsByToolCallId (openai-completions.ts:200): an
+		// encrypted reasoning_detail can arrive in a delta BEFORE the tool-call
+		// block carrying its id exists. Buffer it by id and attach it when the
+		// block is registered, instead of dropping it.
+		pendingReasoningDetails := map[string]string{}
 		var order []*blockBuilder
 		materialize := func() {
 			content := make(ai.ContentList, len(order))
@@ -202,6 +207,19 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				}
 			}
 			return -1
+		}
+		// pi applyPendingReasoningDetail (openai-completions.ts:256): once a
+		// block's id is known, drain any reasoning_detail buffered under it. Keyed
+		// on the block's id exactly like pi (an index-only block whose id has not
+		// yet arrived is skipped, matching pi).
+		applyPendingReasoningDetail := func(b *blockBuilder) {
+			if b.toolID == "" {
+				return
+			}
+			if sig, ok := pendingReasoningDetails[b.toolID]; ok {
+				toolThoughtSigs[b] = sig
+				delete(pendingReasoningDetails, b.toolID)
+			}
 		}
 		ensureToolCallBlock := func(tcDelta openAIToolCallDelta) *blockBuilder {
 			var b *blockBuilder
@@ -234,6 +252,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			if tcDelta.ID != "" {
 				toolBuildersByID[tcDelta.ID] = b
 			}
+			applyPendingReasoningDetail(b)
 			return b
 		}
 
@@ -358,17 +377,22 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				if detail.Type != "reasoning.encrypted" || detail.ID == "" || !jsonValueTruthy(detail.Data) {
 					continue
 				}
-				for _, b := range order {
-					if b.kind == "toolCall" && b.toolID == detail.ID {
-						// pi stores JSON.stringify(detail); compacting the raw entry
-						// preserves field order and unknown fields.
-						var buf bytes.Buffer
-						if json.Compact(&buf, []byte(rawDetail)) == nil {
-							toolThoughtSigs[b] = buf.String()
-							materialize()
-						}
-						break
-					}
+				// pi stores JSON.stringify(detail); compacting the raw entry
+				// preserves field order and unknown fields.
+				var buf bytes.Buffer
+				if json.Compact(&buf, []byte(rawDetail)) != nil {
+					continue
+				}
+				serialized := buf.String()
+				// pi looks the tool call up by id (toolCallBlocksById), not by
+				// scanning content order. When the matching block has not been
+				// created yet, buffer the detail and attach it on block creation
+				// instead of dropping it (upstream 7d0497fd).
+				if b := toolBuildersByID[detail.ID]; b != nil {
+					toolThoughtSigs[b] = serialized
+					materialize()
+				} else {
+					pendingReasoningDetails[detail.ID] = serialized
 				}
 			}
 			return nil
