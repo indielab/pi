@@ -374,7 +374,16 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				if json.Unmarshal(rawDetail, &detail) != nil {
 					continue
 				}
-				if detail.Type != "reasoning.encrypted" || detail.ID == "" || !jsonValueTruthy(detail.Data) {
+				// pi isEncryptedReasoningDetail (7d0497fd): type must be
+				// "reasoning.encrypted" and both id and data non-empty strings.
+				// A non-string id fails the typed unmarshal above; data is checked
+				// here (a number/object/null detail.data is rejected, matching
+				// typeof data === "string").
+				if detail.Type != "reasoning.encrypted" || detail.ID == "" {
+					continue
+				}
+				var data string
+				if json.Unmarshal(detail.Data, &data) != nil || data == "" {
 					continue
 				}
 				// pi stores JSON.stringify(detail); compacting the raw entry
@@ -470,16 +479,6 @@ func openRouterErrorRaw(body []byte) string {
 		return ""
 	}
 	return parsed.Error.Metadata.Raw
-}
-
-// jsonValueTruthy reports JS truthiness for a raw JSON value (used for the
-// reasoning_details `detail.data` check, which pi gates on truthiness).
-func jsonValueTruthy(raw json.RawMessage) bool {
-	switch strings.TrimSpace(string(raw)) {
-	case "", "null", "false", "0", `""`:
-		return false
-	}
-	return true
 }
 
 func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map[string]any {

@@ -599,6 +599,27 @@ data: [DONE]
 	}
 }
 
+// upstream 7d0497fd tightened the guard to isEncryptedReasoningDetail: data
+// must be a non-empty STRING. A numeric/object/null data is rejected even when
+// type and id are valid.
+func TestOpenAIReasoningDetailsNonStringDataIgnored(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"f","arguments":"{}"}}]}}]}
+
+data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.encrypted","id":"call_1","data":123},{"type":"reasoning.encrypted","id":"call_1","data":{"k":"v"}}]}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+	_, final := collectOpenAIEvents(t, sse, nil)
+	for _, c := range final.Content {
+		if v, ok := c.(ai.ToolCall); ok && v.ThoughtSignature != "" {
+			t.Fatalf("non-string reasoning_detail data must not set thoughtSignature, got %q", v.ThoughtSignature)
+		}
+	}
+}
+
 func TestOpenAIReasoningDetailsNoMatchIgnored(t *testing.T) {
 	sse := `data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"f"}}]}}]}
 
