@@ -16,6 +16,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.2.6`](#v026) | 2026-06-22 | `d91f8b7` | `2417adb4` | pi-ai 0.79.9 | Catalog 0.79.9; chat-template thinking compat (latent); fuzzy-edit untouched-line preservation; legacy WSL bash stdin; session-branch linearization |
 | [`v0.2.5`](#v025) | 2026-06-19 | `d5f2c73` | `56b22768` | pi-ai 0.79.8 | Catalog 0.79.8 (GLM-5.2 opencode-go, openrouter/fusion, Mistral prompt-caching data); no behavior change vs v0.2.4 |
 | [`v0.2.4`](#v024) | 2026-06-17 | `a9b7e5c` | `29c1504c` | pi-ai 0.79.6 | GLM-5.2 reasoning_effort; null Responses content; provider-scoped env overrides; deepseek gate live |
 | [`v0.2.3`](#v023) | 2026-06-16 | `c655c5a` | `f8a77f47` | pi-ai 0.79.4 | Docs-only: disclose default provider-attribution headers (no code change vs v0.2.2) |
@@ -26,6 +27,33 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.2.6
+Upstream sync `56b22768 → 2417adb4` — 22 main-line changes (**4 behavior/perf
+ports + 1 catalog regen, 17 n/a, 0 decides**). npm reference build advanced
+0.79.8 → **0.79.9**.
+
+- **Catalog → 0.79.9** (`615bf2f8`) — endpoint-pinned byte-identical both ends
+  (old ≡ 0.79.8 build, new ≡ 0.79.9, integrity-verified). 0 added, **2 removed**
+  (`google/gemma-4-E2B-it`, `gemma-4-E4B-it`; no Go refs), 20 changed (cost/
+  metadata churn + the folded-in data commits). `off:null` gates intact.
+- **chat-template thinking compat** (`8b97e75c`) — new openai-completions
+  `thinkingFormat:"chat-template"` emits configurable `chat_template_kwargs`
+  ($var/omitWhenOff/scalar), with insertion-order-preserving output for
+  byte-exact request bodies. **Latent**: no 0.79.9 catalog model sets it
+  (reachable only via custom model config).
+- **Fuzzy edit preserves untouched lines** (`128330e3`) — a fuzzy edit now
+  rewrites only the touched line-blocks and copies every other line back
+  verbatim, instead of globally normalizing the file.
+- **Legacy WSL bash via stdin** (`1287b69f`) — the Windows-bundled
+  System32/Sysnative `bash.exe` (which mishandles `-c "<cmd>"` quoting) is run
+  as `bash -s` with the command on stdin.
+- **Session-branch linearization** (`a1da88ae`) — O(n²) prepend replaced with
+  append+reverse; behavior-neutral.
+
+Reviewed via an independent idiomatic go-review (ship) + adversarial parity
+review (5/5 faithful; catalog endpoint-pinned byte-identical, tripwire +
+orphaned-id checks passed); `-race` suite green.
 
 ### v0.2.5
 Upstream sync `29c1504c → 56b22768` — 32 main-line changes, **0 behavior
