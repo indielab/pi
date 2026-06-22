@@ -27,8 +27,11 @@ func TestResolveModelProviderPrefixFallsBackToFullID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(r.Model.Provider) != "openrouter" || r.Model.ID != "anthropic/claude-3.5-haiku" {
-		t.Fatalf("expected openrouter fallback for full id, got %s/%s", r.Model.Provider, r.Model.ID)
+	// npm 0.79.10 dropped openrouter/anthropic/claude-3.5-haiku; the id now lives
+	// only under vercel-ai-gateway, so the full-id fallback resolves there (pi's
+	// registry .find() lands on the same sole remaining copy).
+	if string(r.Model.Provider) != "vercel-ai-gateway" || r.Model.ID != "anthropic/claude-3.5-haiku" {
+		t.Fatalf("expected vercel-ai-gateway fallback for full id, got %s/%s", r.Model.Provider, r.Model.ID)
 	}
 }
 
