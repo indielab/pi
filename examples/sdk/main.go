@@ -20,7 +20,7 @@ func main() {
 	if err != nil {
 		fail(err)
 	}
-	apiKey := ai.GetEnvApiKey(model.Provider) // reads OPENAI_API_KEY
+	apiKey := ai.GetEnvApiKey(model.Provider, nil) // reads OPENAI_API_KEY
 	if apiKey == "" {
 		fail(fmt.Errorf("set OPENAI_API_KEY"))
 	}

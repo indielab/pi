@@ -56,14 +56,18 @@ func apiKeyEnvVars(provider string) []string {
 
 // FindEnvKeys returns the configured environment variable names that provide an
 // API key for a provider (excludes ambient credential sources like AWS/ADC).
-func FindEnvKeys(provider string) []string {
+//
+// env carries per-stream scoped overrides that win over the OS environment
+// (pi 8eeaa2bc threads ProviderEnv through findEnvKeys); pass nil to read only
+// the OS environment.
+func FindEnvKeys(provider string, env map[string]string) []string {
 	vars := apiKeyEnvVars(provider)
 	if vars == nil {
 		return nil
 	}
 	var found []string
 	for _, v := range vars {
-		if os.Getenv(v) != "" {
+		if ProviderEnvValue(v, env) != "" {
 			found = append(found, v)
 		}
 	}
@@ -72,42 +76,46 @@ func FindEnvKeys(provider string) []string {
 
 // GetEnvApiKey returns the API key for a provider from known environment
 // variables. It does not return keys for OAuth-only providers.
-func GetEnvApiKey(provider string) string {
-	if keys := FindEnvKeys(provider); len(keys) > 0 {
-		return os.Getenv(keys[0])
+//
+// env carries per-stream scoped overrides that win over the OS environment
+// (pi 8eeaa2bc threads ProviderEnv through getEnvApiKey); pass nil to read only
+// the OS environment.
+func GetEnvApiKey(provider string, env map[string]string) string {
+	if keys := FindEnvKeys(provider, env); len(keys) > 0 {
+		return ProviderEnvValue(keys[0], env)
 	}
 
 	switch provider {
 	case "google-vertex":
-		if hasVertexADCCredentials() &&
-			anyEnv("GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT") &&
-			anyEnv("GOOGLE_CLOUD_LOCATION") {
+		if hasVertexADCCredentials(env) &&
+			anyEnv(env, "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT") &&
+			anyEnv(env, "GOOGLE_CLOUD_LOCATION") {
 			return "<authenticated>"
 		}
 	case "amazon-bedrock":
-		if os.Getenv("AWS_PROFILE") != "" ||
-			(os.Getenv("AWS_ACCESS_KEY_ID") != "" && os.Getenv("AWS_SECRET_ACCESS_KEY") != "") ||
-			os.Getenv("AWS_BEARER_TOKEN_BEDROCK") != "" ||
-			os.Getenv("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI") != "" ||
-			os.Getenv("AWS_CONTAINER_CREDENTIALS_FULL_URI") != "" ||
-			os.Getenv("AWS_WEB_IDENTITY_TOKEN_FILE") != "" {
+		if ProviderEnvValue("AWS_PROFILE", env) != "" ||
+			(ProviderEnvValue("AWS_ACCESS_KEY_ID", env) != "" && ProviderEnvValue("AWS_SECRET_ACCESS_KEY", env) != "") ||
+			ProviderEnvValue("AWS_BEARER_TOKEN_BEDROCK", env) != "" ||
+			ProviderEnvValue("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", env) != "" ||
+			ProviderEnvValue("AWS_CONTAINER_CREDENTIALS_FULL_URI", env) != "" ||
+			ProviderEnvValue("AWS_WEB_IDENTITY_TOKEN_FILE", env) != "" {
 			return "<authenticated>"
 		}
 	}
 	return ""
 }
 
-func anyEnv(names ...string) bool {
+func anyEnv(env map[string]string, names ...string) bool {
 	for _, n := range names {
-		if os.Getenv(n) != "" {
+		if ProviderEnvValue(n, env) != "" {
 			return true
 		}
 	}
 	return false
 }
 
-func hasVertexADCCredentials() bool {
-	if gac := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); gac != "" {
+func hasVertexADCCredentials(env map[string]string) bool {
+	if gac := ProviderEnvValue("GOOGLE_APPLICATION_CREDENTIALS", env); gac != "" {
 		_, err := os.Stat(gac)
 		return err == nil
 	}

@@ -10,11 +10,21 @@ func hasExplicitAPIKey(key string) bool {
 	return strings.TrimSpace(key) != ""
 }
 
+// scopedEnv returns the per-stream provider env overrides, or nil. Nil-safe so
+// callers can pass options that may be nil. These overrides are consulted ahead
+// of the OS environment when resolving the API key (pi 8eeaa2bc).
+func scopedEnv(opts *StreamOptions) map[string]string {
+	if opts == nil {
+		return nil
+	}
+	return opts.Env
+}
+
 func withEnvAPIKey(model *Model, opts *StreamOptions) *StreamOptions {
 	if opts != nil && hasExplicitAPIKey(opts.APIKey) {
 		return opts
 	}
-	key := GetEnvApiKey(model.Provider)
+	key := GetEnvApiKey(model.Provider, scopedEnv(opts))
 	if key == "" {
 		return opts
 	}
@@ -30,7 +40,11 @@ func withEnvAPIKeySimple(model *Model, opts *SimpleStreamOptions) *SimpleStreamO
 	if opts != nil && hasExplicitAPIKey(opts.APIKey) {
 		return opts
 	}
-	key := GetEnvApiKey(model.Provider)
+	var simpleEnv map[string]string
+	if opts != nil {
+		simpleEnv = opts.Env
+	}
+	key := GetEnvApiKey(model.Provider, simpleEnv)
 	if key == "" {
 		return opts
 	}

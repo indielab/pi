@@ -126,7 +126,7 @@ func main() {
 		model = resolved.Model
 		parsedThink = resolved.ThinkingLevel
 	}
-	apiKey := ai.GetEnvApiKey(model.Provider)
+	apiKey := ai.GetEnvApiKey(model.Provider, nil)
 	if apiKey == "" {
 		fatal(fmt.Errorf("no API key found for provider %q (set the appropriate *_API_KEY env var)", model.Provider))
 	}
@@ -257,7 +257,7 @@ func handleSlash(sess *coding.Session, line string) bool {
 			fmt.Fprintf(os.Stderr, "\033[31m%v\033[0m\n", err)
 			break
 		}
-		key := ai.GetEnvApiKey(m.Provider)
+		key := ai.GetEnvApiKey(m.Provider, nil)
 		if key == "" {
 			fmt.Fprintf(os.Stderr, "\033[31mno API key for provider %q\033[0m\n", m.Provider)
 			break
