@@ -10,7 +10,7 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `3b561346` — "fix(tui): bind ctrl+j as newline by default" (2026-06-22); previous pins `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17), `f8a77f47` (06-16). **Held at `3b561346`** pending the `732bb161` credential/auth substrate (2026-06-23 partial cycle): the scoped-env ports `8eeaa2bc`+`2cbce395` already landed ahead (Go `1577144`), but the pin cannot advance past the partially-ported `732bb161`. |
+| TS source fully reviewed/ported | `470a4736` — "Merge #5784 threaded-session sort" (2026-06-23); previous pins `3b561346` (06-22), `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17). The `732bb161` model-registry merge is ported (auth substrate + Models runtime + BuiltinModels, Go `bf7e7bd`/`37dcff5`/`2b164b3`); its catalog-data reorg stays deferred to the next release regen (0.79.10 not re-published). |
 | npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.10** (catalog endpoint-pinned both sides: old ≡ 0.79.9 build, new ≡ 0.79.10 build, lock integrity verified against the registry on each — `sha512-9jR23…ORuew==`); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
 | Parity proofs at the pin | catalog regen endpoint-pinned byte-identical · session tree 8/8 · image decisions 8/8 (unchanged this cycle) · differential request diff 14/14 (reasoning-details change is response-parse only — request bytes unchanged) |
 | Reviewed via | initial port + parity sweep 1 + parity sweep 2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 v0.79.10 cycle independent go-review (ship) + adversarial parity review (caught a missing validation-tightening on the reasoning-details port → fixed in `62981f1`; re-verified faithful) |
@@ -80,40 +80,43 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
 
-## Drift at last sync check (2026-06-23) — PARTIAL cycle (pin held)
+## Drift at last sync check (2026-06-23) — pin advanced to 470a4736
 
-**Pin NOT advanced (held at `3b561346`).** Delta `3b561346 → 470a4736` is 9
-main-line changes: **2 env ports landed + 6 n/a + 1 large merge ported in part
-(`732bb161`)**. No release tag crossed (`pi-ai` stays 0.79.10; npm reference
-build unchanged, all goldens unaffected, no catalog regen). noam ruled
-**adopt** the SDK-side env resolution (2026-06-23 Rulings entry).
+**Caught up to `470a4736`.** Delta `3b561346 → 470a4736` fully processed: 9
+main-line changes — **3 ports (incl. the `732bb161` model-registry merge), 6
+n/a, 0 decides** (the lone decide resolved to adopt, 2026-06-23 Rulings). No
+release tag crossed (`pi-ai` stays 0.79.10; npm reference build unchanged, all
+goldens unaffected, no catalog regen). Reviewed via independent pi-go-review
+(ship) + pi-parity-review (faithful) on both the env slice and the substrate.
 
-Landed (Go commit `1577144`), reviewed pi-go-review ship + pi-parity-review
-faithful:
-- **`8eeaa2bc` + `2cbce395` — scoped provider env through API-key resolution.**
-  `GetEnvApiKey`/`FindEnvKeys` thread a scoped `env map[string]string` (canonical
-  `ai.ProviderEnvValue`; providers' helper delegates), vertex-ADC + bedrock
-  branches included; `withEnvAPIKey`/`Simple` pass `opts.Env`. `2cbce395` is a
-  no-code-change passthrough (its `resolution.env` is latent upstream — no
-  catalog provider's `resolve()` returns env — and Go's `opts.Env` already flows
-  to providers; locked by `TestStreamEnvReachesProvider`). Byte-identical
-  requests when `Env` unset; no golden regen, no openai* request-diff triggered.
-
-**Held back — `732bb161` "Merge model-registry into main" (ported in part).**
-The merge's portable behavioral slice (the env plumbing above, which `2cbce395`
-rides) is done. The rest is a **large new credential/auth object-model** —
-`packages/ai/src/auth/{resolve,credential-store,context,helpers,types}.ts`:
-`Models`/`createModels`, `CredentialStore` interface, `ProviderAuth`,
-`AuthContext`, OAuth refresh-under-lock, login callbacks. The Go port has none
-of this today (SDK consumers pass `apiKey`/auth in); porting it is a **new
-public Go API**, host-side/app-owned (login/logout orchestration), and **latent
-w.r.t. request bytes** (`resolution.env` populates nothing yet). Per the
-escalate-on-public-API-change rule it is carved out for its **own design pass**
-(needs its own go-review + parity-review), pending a scope confirmation from
-noam. The merge's catalog-data reorg (`models.generated.ts` → per-provider
-`*.models.ts`, new providers) remains deferred to the next release regen since
-0.79.10 was not re-published. **No new boundary questions** beyond the carved-out
-substrate scope.
+- **`8eeaa2bc` + `2cbce395` — scoped provider env through API-key resolution**
+  (Go `1577144`). `GetEnvApiKey`/`FindEnvKeys` thread a scoped `env
+  map[string]string` (canonical `ai.ProviderEnvValue`; providers' helper
+  delegates), vertex-ADC + bedrock branches included; `withEnvAPIKey`/`Simple`
+  pass `opts.Env`. `2cbce395` is a no-code-change passthrough (its
+  `resolution.env` is latent upstream — no catalog provider's `resolve()`
+  returns env — and Go's `opts.Env` already flows to providers; locked by
+  `TestStreamEnvReachesProvider`). Byte-identical requests when `Env` unset.
+- **`732bb161` "Merge model-registry into main" — Models runtime + auth
+  substrate** (Go `bf7e7bd` + `37dcff5` + `2b164b3`), per noam's 2026-06-23
+  **adopt** ruling (maximum parity for the SDK package/structure). Ported pi's
+  `packages/ai/src/auth/*` as `auth_*.go` in package `ai` (CredentialStore +
+  InMemoryCredentialStore, ProviderAuth/ApiKeyAuth/OAuthAuth, AuthContext,
+  EnvAPIKeyAuth/LazyOAuth, resolveProviderAuth with OAuth refresh-under-lock),
+  and `packages/ai/src/models.ts` as `models_runtime.go` (`Provider` interface,
+  `CreateProvider`, `Models`/`CreateModels`, `GetAuth`/`applyAuth` incl. the
+  `2cbce395` env merge, `HasApi`) + `builtins_models.go` (`BuiltinModels` wiring
+  catalog + ProviderAuth + ApiProvider streams). Renamed the `Provider` string
+  alias → `ProviderId` (pi's Provider→ProviderId), freeing `Provider` for the
+  runtime interface. The pre-existing global free functions remain the **compat
+  surface** (pi's `/compat`) — consumers unchanged. Deliberate divergences
+  (documented): auth as files in package `ai` not a subpackage (import cycle);
+  async→synchronous `(T,error)`; errors via `errorStream` not `lazyStream` (G3);
+  OAuth *login acquisition* out of scope (interfaces ported, flows not); images
+  excluded. Catalog-data reorg (per-provider `*.models.ts`, new providers)
+  **deferred to the next release regen** (0.79.10 not re-published). Request
+  bytes unaffected (no `openai*.go` request-builder changed → 6-scenario diff not
+  required). **No new boundary questions.**
 
 n/a (6): `d2677a63`/`02540acd` docs; `5a8ea0bc` Bedrock scoped AWS profile
 (Bedrock provider unported); `6a4813a7` merge (only ai/src file is
@@ -365,11 +368,11 @@ Upstream reference clone: `$PI_UPSTREAM_DIR`, default `~/.cache/pi-upstream`.
 When the delta crosses a release tag, the npm reference build is refreshed to
 that version before parity review.
 
-## Ledger — 3b561346 → 470a4736 (PARTIAL — pin held at 3b561346)
+## Ledger — 3b561346 → 470a4736
 
 | Upstream | Date | Subject | Hint | Status | Go commit | Notes |
 |---|---|---|---|---|---|---|
-| `732bb161` | 2026-06-22 | Merge model-registry into main | decide→adopt | **ported (partial)** | `1577144` (env slice) | Big `packages/ai` overhaul. Env-plumbing slice landed (rides with `2cbce395`/`8eeaa2bc`). **Held back:** new `auth/{resolve,credential-store,context,helpers,types}.ts` credential/auth object-model (`Models`/`CredentialStore`/`ProviderAuth`/`AuthContext`/OAuth-refresh/login) — new public Go API, host-side/app-owned, latent w.r.t. request bytes; carved out for its own design pass (scope pending noam). Catalog-data reorg (`models.generated.ts` → per-provider `*.models.ts`, new providers) deferred to next release regen (0.79.10 not re-published). |
+| `732bb161` | 2026-06-22 | Merge model-registry into main | decide→adopt | **ported** | `bf7e7bd`+`37dcff5`+`2b164b3` | pi's `packages/ai` object-model overhaul ported per the 2026-06-23 adopt ruling. auth_*.go = `auth/*` substrate (CredentialStore/InMemoryCredentialStore, ProviderAuth/ApiKeyAuth/OAuthAuth, AuthContext, EnvAPIKeyAuth/LazyOAuth, resolveProviderAuth w/ OAuth refresh-under-lock). models_runtime.go = `models.ts` (`Provider` iface, CreateProvider, Models/CreateModels, GetAuth/applyAuth incl. 2cbce395 env merge, HasApi). builtins_models.go = BuiltinModels (catalog+ProviderAuth+ApiProvider streams). Provider→ProviderId rename (alias). Globals stay as compat (pi `/compat`). Divergences (documented): auth as files-in-package not subpackage (cycle); sync `(T,error)`; errorStream not lazyStream (G3); OAuth login out of scope; images excluded. Catalog-data reorg deferred to next regen. Request bytes unaffected. pi-go-review ship + pi-parity-review faithful. Tests: auth_test, models_runtime_test, builtins_models_test |
 | `d2677a63` | 2026-06-22 | docs(agent): mark sync models API complete | likely-n/a | n/a | — | packages/agent/docs/models.md |
 | `02540acd` | 2026-06-22 | docs(ai): update provider README | likely-n/a | n/a | — | packages/ai/README.md |
 | `5a8ea0bc` | 2026-06-23 | fix(ai): honor scoped AWS profile in Bedrock endpoint resolution | review | n/a | — | bedrock-converse-stream.ts only — Bedrock provider unported |
