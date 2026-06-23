@@ -36,7 +36,9 @@ type Provider interface {
 	Auth() ProviderAuth
 
 	// GetModels returns the current known models (last-known list for dynamic
-	// providers). Must not panic.
+	// providers). Must not panic. The result is read-only: it shares the
+	// provider's backing array (mirroring pi's by-reference return), and
+	// RefreshModels swaps the slice wholesale rather than mutating in place.
 	GetModels() []*Model
 
 	// RefreshModels re-fetches a dynamic provider's model list; a no-op for
