@@ -10,7 +10,7 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `3b561346` — "fix(tui): bind ctrl+j as newline by default" (2026-06-22); previous pins `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17), `f8a77f47` (06-16) |
+| TS source fully reviewed/ported | `3b561346` — "fix(tui): bind ctrl+j as newline by default" (2026-06-22); previous pins `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17), `f8a77f47` (06-16). **Held at `3b561346`** pending the `732bb161` credential/auth substrate (2026-06-23 partial cycle): the scoped-env ports `8eeaa2bc`+`2cbce395` already landed ahead (Go `1577144`), but the pin cannot advance past the partially-ported `732bb161`. |
 | npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.79.10** (catalog endpoint-pinned both sides: old ≡ 0.79.9 build, new ≡ 0.79.10 build, lock integrity verified against the registry on each — `sha512-9jR23…ORuew==`); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.79.x) |
 | Parity proofs at the pin | catalog regen endpoint-pinned byte-identical · session tree 8/8 · image decisions 8/8 (unchanged this cycle) · differential request diff 14/14 (reasoning-details change is response-parse only — request bytes unchanged) |
 | Reviewed via | initial port + parity sweep 1 + parity sweep 2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 v0.79.10 cycle independent go-review (ship) + adversarial parity review (caught a missing validation-tightening on the reasoning-details port → fixed in `62981f1`; re-verified faithful) |
@@ -25,6 +25,33 @@ model-registry, settings) — the SDK `StreamOptions.Env` field is ported but
 stays latent until a host sets it (see the 2026-06-17 ruling).
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
+
+- **2026-06-23 — adopt the SDK-side model-registry / env-resolution overhaul**
+  (re: the `732bb161` "Merge model-registry into main" merge + rider
+  `2cbce395` "pass provider-resolved env to APIs"). Owner call: **maximum
+  parity with the source + maximum use of Go idioms** — port the new
+  `packages/ai/src/auth/` resolution layer (`context`/`credential-store`/
+  `helpers`/`resolve`/`types`), give `AuthResult` its `env` (`ProviderEnv`),
+  and populate `StreamOptions.Env` from `resolution.env` merged with explicit
+  `options.env` inside the Go `models.ts`/`Stream` resolution path. This
+  **supersedes the latency clause** of the 2026-06-17 ruling: `StreamOptions.Env`
+  no longer stays latent-until-a-host-sets-it — the ported SDK resolution now
+  populates it itself, as upstream moved that machinery out of host-side
+  coding-agent and into `packages/ai/src`. The earlier-named "host-side
+  population machinery (resolve-config-value, model-registry, settings)" is
+  re-scoped accordingly: the part that now lives in `packages/ai/src` (the
+  model-registry + auth resolution) is **in scope**; whatever remains in
+  `coding-agent` host wiring stays out. Idiomatic Go, not transliterated TS
+  (the `pi-go-review` bar applies). Consequences: `732bb161` and `2cbce395`
+  are `port` (no longer `decide`); the catalog *data* reorg
+  (`models.generated.ts` → per-provider `*.models.ts`, new providers) is still
+  deferred to the next release regen since 0.79.10 was not re-published; new
+  providers are catalog-data/registration and land with that regen unless they
+  introduce genuinely new provider *behavior* (judge per provider at port
+  time). `8eeaa2bc` (compat scoped-env API-key injection) remains a `port`
+  under the 2026-06-17 plumbing clause and now composes with the populated
+  `Env`. The `auth/resolve.ts` credential→env resolution is the new boundary
+  edge: future commits to it in `packages/ai/src` are `port`.
 
 - **2026-06-17 — provider-scoped env overrides ported faithfully** (re:
   `7f29e7a3`). Owner call: maximum parity. `StreamOptions.Env`
@@ -52,6 +79,50 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   extension resource-loader; `skills.ts` untouched). Future trust commits are
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
+
+## Drift at last sync check (2026-06-23) — PARTIAL cycle (pin held)
+
+**Pin NOT advanced (held at `3b561346`).** Delta `3b561346 → 470a4736` is 9
+main-line changes: **2 env ports landed + 6 n/a + 1 large merge ported in part
+(`732bb161`)**. No release tag crossed (`pi-ai` stays 0.79.10; npm reference
+build unchanged, all goldens unaffected, no catalog regen). noam ruled
+**adopt** the SDK-side env resolution (2026-06-23 Rulings entry).
+
+Landed (Go commit `1577144`), reviewed pi-go-review ship + pi-parity-review
+faithful:
+- **`8eeaa2bc` + `2cbce395` — scoped provider env through API-key resolution.**
+  `GetEnvApiKey`/`FindEnvKeys` thread a scoped `env map[string]string` (canonical
+  `ai.ProviderEnvValue`; providers' helper delegates), vertex-ADC + bedrock
+  branches included; `withEnvAPIKey`/`Simple` pass `opts.Env`. `2cbce395` is a
+  no-code-change passthrough (its `resolution.env` is latent upstream — no
+  catalog provider's `resolve()` returns env — and Go's `opts.Env` already flows
+  to providers; locked by `TestStreamEnvReachesProvider`). Byte-identical
+  requests when `Env` unset; no golden regen, no openai* request-diff triggered.
+
+**Held back — `732bb161` "Merge model-registry into main" (ported in part).**
+The merge's portable behavioral slice (the env plumbing above, which `2cbce395`
+rides) is done. The rest is a **large new credential/auth object-model** —
+`packages/ai/src/auth/{resolve,credential-store,context,helpers,types}.ts`:
+`Models`/`createModels`, `CredentialStore` interface, `ProviderAuth`,
+`AuthContext`, OAuth refresh-under-lock, login callbacks. The Go port has none
+of this today (SDK consumers pass `apiKey`/auth in); porting it is a **new
+public Go API**, host-side/app-owned (login/logout orchestration), and **latent
+w.r.t. request bytes** (`resolution.env` populates nothing yet). Per the
+escalate-on-public-API-change rule it is carved out for its **own design pass**
+(needs its own go-review + parity-review), pending a scope confirmation from
+noam. The merge's catalog-data reorg (`models.generated.ts` → per-provider
+`*.models.ts`, new providers) remains deferred to the next release regen since
+0.79.10 was not re-published. **No new boundary questions** beyond the carved-out
+substrate scope.
+
+n/a (6): `d2677a63`/`02540acd` docs; `5a8ea0bc` Bedrock scoped AWS profile
+(Bedrock provider unported); `6a4813a7` merge (only ai/src file is
+`openai-codex-responses.ts` = Codex, unported; rest theme/startup-ui/
+session-picker/settings-manager/main.ts = TUI/CLI/host); `7fedc332` session-name
+`\r\n` sanitization (write path `appendSessionName`/`appendSessionInfo` is
+host/TUI-driven — Go reads `SessionInfo` but has no name-write/rename path;
+low-confidence n/a, re-confirm at substrate port time); `470a4736` threaded
+session-selector sort (TUI).
 
 ## Drift at last sync check (2026-06-22, v0.79.10 cycle)
 
@@ -293,6 +364,20 @@ only by comparison against real pi.
 Upstream reference clone: `$PI_UPSTREAM_DIR`, default `~/.cache/pi-upstream`.
 When the delta crosses a release tag, the npm reference build is refreshed to
 that version before parity review.
+
+## Ledger — 3b561346 → 470a4736 (PARTIAL — pin held at 3b561346)
+
+| Upstream | Date | Subject | Hint | Status | Go commit | Notes |
+|---|---|---|---|---|---|---|
+| `732bb161` | 2026-06-22 | Merge model-registry into main | decide→adopt | **ported (partial)** | `1577144` (env slice) | Big `packages/ai` overhaul. Env-plumbing slice landed (rides with `2cbce395`/`8eeaa2bc`). **Held back:** new `auth/{resolve,credential-store,context,helpers,types}.ts` credential/auth object-model (`Models`/`CredentialStore`/`ProviderAuth`/`AuthContext`/OAuth-refresh/login) — new public Go API, host-side/app-owned, latent w.r.t. request bytes; carved out for its own design pass (scope pending noam). Catalog-data reorg (`models.generated.ts` → per-provider `*.models.ts`, new providers) deferred to next release regen (0.79.10 not re-published). |
+| `d2677a63` | 2026-06-22 | docs(agent): mark sync models API complete | likely-n/a | n/a | — | packages/agent/docs/models.md |
+| `02540acd` | 2026-06-22 | docs(ai): update provider README | likely-n/a | n/a | — | packages/ai/README.md |
+| `5a8ea0bc` | 2026-06-23 | fix(ai): honor scoped AWS profile in Bedrock endpoint resolution | review | n/a | — | bedrock-converse-stream.ts only — Bedrock provider unported |
+| `2cbce395` | 2026-06-23 | feat(ai): pass provider-resolved env to APIs | review | ported | `1577144` | No Go code change: `resolution.env` latent upstream (no catalog provider's `resolve()` returns env), Go's `opts.Env` already flows to providers (withEnvAPIKey clones preserve Env). images-models half = images (n/a). Locked by `TestStreamEnvReachesProvider`. |
+| `8eeaa2bc` | 2026-06-23 | fix(ai): honor scoped env in compat API key injection | review | ported | `1577144` | `GetEnvApiKey`/`FindEnvKeys` thread scoped `env`; new canonical `ai.ProviderEnvValue` (providers' `getProviderEnvValue` delegates); vertex-ADC + bedrock branches consult scoped env; `withEnvAPIKey`/`Simple` pass `opts.Env`, host/example call sites pass nil. Golden: API-key selection — byte-identical when Env unset. Tests: `TestGetEnvApiKeyScopedEnv`, `TestWithEnvAPIKeyUsesScopedEnv`. |
+| `6a4813a7` | 2026-06-23 | Merge remote-tracking branch 'origin/main' | review | n/a | — | only ai/src file is `openai-codex-responses.ts` (Codex, unported); rest theme/startup-ui/session-picker/settings-manager/main.ts (TUI/CLI/host) |
+| `7fedc332` | 2026-06-23 | fix(coding-agent): normalize session names (#5999) | review | n/a | — | `\r\n`→space sanitize in `appendSessionName`/`appendSessionInfo` write path — host/TUI-driven; Go reads `SessionInfo` but has no name-write/rename path. Low-confidence n/a — re-confirm at substrate port time |
+| `470a4736` | 2026-06-23 | fix(coding-agent): sort threaded sessions by latest activity in subtree (#5784) | review | n/a | — | interactive/components/session-selector.ts (TUI) |
 
 ## Ledger — 2417adb4 → 3b561346
 
