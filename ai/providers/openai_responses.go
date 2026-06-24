@@ -360,6 +360,56 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 		}
 		idx := func() int { return len(builders) - 1 }
 
+		// sawTerminalResponseEvent tracks whether a terminal response event
+		// (response.completed | response.incomplete | response.failed) arrived
+		// before the stream ended (port of upstream cd95c274).
+		sawTerminalResponseEvent := false
+		// finalizeResponse runs the usage/stop-reason block for a terminal
+		// response payload. pi runs it even when response is null (shared
+		// :493-521): cost calc, service-tier pricing, mapStopReason(undefined),
+		// and toolUse promotion all apply. response.completed and
+		// response.incomplete both finalize identically.
+		finalizeResponse := func(r *responsesPayload) error {
+			sawTerminalResponseEvent = true
+			if r != nil {
+				if r.ID != "" {
+					output.ResponseID = r.ID
+				}
+				if r.Usage != nil {
+					cached := r.Usage.InputTokensDetails.CachedTokens
+					output.Usage = ai.Usage{
+						Input:       r.Usage.InputTokens - cached,
+						Output:      r.Usage.OutputTokens,
+						CacheRead:   cached,
+						TotalTokens: r.Usage.TotalTokens,
+					}
+				}
+			}
+			ai.CalculateCost(model, &output.Usage)
+			// Service-tier pricing: the response-reported tier wins over the
+			// requested one (shared :511-516 `response?.service_tier ?? options.serviceTier`).
+			serviceTier := opts.ServiceTier
+			if r != nil && r.ServiceTier != "" {
+				serviceTier = r.ServiceTier
+			}
+			applyResponsesServiceTierPricing(&output.Usage, serviceTier, model)
+			status := ""
+			if r != nil {
+				status = r.Status
+			}
+			reason, statusErr := mapResponsesStatus(status)
+			if statusErr != nil {
+				return statusErr
+			}
+			output.StopReason = reason
+			for _, b := range builders {
+				if b.kind == "toolCall" && output.StopReason == ai.StopStop {
+					output.StopReason = ai.StopToolUse
+				}
+			}
+			return nil
+		}
+
 		err = iterateOpenAISSE2(resp.Body, ctx, func(ev responsesEvent) error {
 			switch ev.Type {
 			case "response.created":
@@ -520,49 +570,18 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 					current = nil
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: idx(), ToolCall: &tc, Partial: output.Clone()})
 				}
-			case "response.completed":
-				// pi runs the usage/stop-reason block even when response is
-				// null (shared :493-521): cost calc, service-tier pricing,
-				// mapStopReason(undefined), and toolUse promotion all apply.
-				if ev.Response != nil {
-					if ev.Response.ID != "" {
-						output.ResponseID = ev.Response.ID
-					}
-					if ev.Response.Usage != nil {
-						cached := ev.Response.Usage.InputTokensDetails.CachedTokens
-						output.Usage = ai.Usage{
-							Input:       ev.Response.Usage.InputTokens - cached,
-							Output:      ev.Response.Usage.OutputTokens,
-							CacheRead:   cached,
-							TotalTokens: ev.Response.Usage.TotalTokens,
-						}
-					}
-				}
-				ai.CalculateCost(model, &output.Usage)
-				// Service-tier pricing: the response-reported tier wins over the
-				// requested one (shared :511-516 `response?.service_tier ?? options.serviceTier`).
-				serviceTier := opts.ServiceTier
-				if ev.Response != nil && ev.Response.ServiceTier != "" {
-					serviceTier = ev.Response.ServiceTier
-				}
-				applyResponsesServiceTierPricing(&output.Usage, serviceTier, model)
-				status := ""
-				if ev.Response != nil {
-					status = ev.Response.Status
-				}
-				reason, statusErr := mapResponsesStatus(status)
-				if statusErr != nil {
-					return statusErr
-				}
-				output.StopReason = reason
-				for _, b := range builders {
-					if b.kind == "toolCall" && output.StopReason == ai.StopStop {
-						output.StopReason = ai.StopToolUse
-					}
+			case "response.completed", "response.incomplete":
+				// Upstream cd95c274: response.incomplete finalizes usage/cost/
+				// stopReason identically to response.completed.
+				if finalizeErr := finalizeResponse(ev.Response); finalizeErr != nil {
+					return finalizeErr
 				}
 			case "error":
 				return fmt.Errorf("Error Code %s: %s", ev.Code, ev.Message)
 			case "response.failed":
+				// Upstream cd95c274: response.failed is a terminal event too,
+				// recorded before its error is thrown.
+				sawTerminalResponseEvent = true
 				return fmt.Errorf("%s", responsesFailedMessage(ev))
 			}
 			return nil
@@ -574,6 +593,13 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 		}
 		if ctx != nil && ctx.Err() != nil {
 			fail(fmt.Errorf("Request was aborted"))
+			return
+		}
+		// Upstream cd95c274: a stream that ended without any terminal response
+		// event must fail with this exact message. Checked after the abort guard
+		// so a cancelled context still surfaces "Request was aborted".
+		if !sawTerminalResponseEvent {
+			fail(fmt.Errorf("OpenAI Responses stream ended before a terminal response event"))
 			return
 		}
 		// pi openai-responses.ts:140-142: a stream that ended with an error or
@@ -1013,27 +1039,29 @@ type responsesEvent struct {
 		Summary   []responsesContentPart `json:"summary"`
 		Content   []responsesContentPart `json:"content"`
 	} `json:"item"`
-	RawItem  json.RawMessage `json:"-"`
-	Response *struct {
-		ID          string `json:"id"`
-		Status      string `json:"status"`
-		ServiceTier string `json:"service_tier"`
-		Usage       *struct {
-			InputTokens        int `json:"input_tokens"`
-			OutputTokens       int `json:"output_tokens"`
-			TotalTokens        int `json:"total_tokens"`
-			InputTokensDetails struct {
-				CachedTokens int `json:"cached_tokens"`
-			} `json:"input_tokens_details"`
-		} `json:"usage"`
-		Error *struct {
-			Code    string `json:"code"`
-			Message string `json:"message"`
-		} `json:"error"`
-		IncompleteDetails *struct {
-			Reason string `json:"reason"`
-		} `json:"incomplete_details"`
-	} `json:"response"`
+	RawItem  json.RawMessage   `json:"-"`
+	Response *responsesPayload `json:"response"`
+}
+
+type responsesPayload struct {
+	ID          string `json:"id"`
+	Status      string `json:"status"`
+	ServiceTier string `json:"service_tier"`
+	Usage       *struct {
+		InputTokens        int `json:"input_tokens"`
+		OutputTokens       int `json:"output_tokens"`
+		TotalTokens        int `json:"total_tokens"`
+		InputTokensDetails struct {
+			CachedTokens int `json:"cached_tokens"`
+		} `json:"input_tokens_details"`
+	} `json:"usage"`
+	Error *struct {
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	} `json:"error"`
+	IncompleteDetails *struct {
+		Reason string `json:"reason"`
+	} `json:"incomplete_details"`
 }
 
 func iterateOpenAISSE2(body io.Reader, ctx context.Context, handle func(responsesEvent) error) error {

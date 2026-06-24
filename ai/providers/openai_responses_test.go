@@ -1190,6 +1190,68 @@ func TestResponsesOnPayloadOnResponsePropagation(t *testing.T) {
 	}
 }
 
+// Upstream cd95c274: a response.incomplete terminal event finalizes usage and
+// stop reason identically to response.completed (status "incomplete" -> length).
+func TestResponsesIncompleteFinalizesUsageAndStopReason(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r"}}
+
+data: {"type":"response.output_item.added","item":{"type":"message","id":"msg_1"}}
+
+data: {"type":"response.content_part.added","part":{"type":"output_text","text":""}}
+
+data: {"type":"response.output_text.delta","delta":"partial"}
+
+data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1","content":[{"type":"output_text","text":"partial"}]}}
+
+data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","usage":{"input_tokens":20,"output_tokens":8,"total_tokens":28,"input_tokens_details":{"cached_tokens":5}}}}
+
+`
+	model := &ai.Model{ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "openai", Reasoning: true,
+		Cost: ai.ModelCost{Input: 1.25, Output: 10}}
+	final := runResponsesSSE(t, model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, sse)
+	if final.StopReason != ai.StopLength {
+		t.Fatalf("incomplete should map to length stop, got %s (%s)", final.StopReason, final.ErrorMessage)
+	}
+	if final.Usage.Input != 15 || final.Usage.CacheRead != 5 || final.Usage.Output != 8 || final.Usage.TotalTokens != 28 {
+		t.Fatalf("incomplete usage not finalized: %+v", final.Usage)
+	}
+	if final.Usage.Cost.Total <= 0 {
+		t.Fatalf("incomplete must run cost calc, got %v", final.Usage.Cost.Total)
+	}
+	var text string
+	for _, c := range final.Content {
+		if tc, ok := c.(ai.TextContent); ok {
+			text = tc.Text
+		}
+	}
+	if text != "partial" {
+		t.Fatalf("text wrong: %q", text)
+	}
+}
+
+// Upstream cd95c274: a stream that ends without response.completed/.incomplete/
+// .failed fails with this exact message.
+func TestResponsesNoTerminalEventFailsStream(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r"}}
+
+data: {"type":"response.output_item.added","item":{"type":"message","id":"msg_1"}}
+
+data: {"type":"response.content_part.added","part":{"type":"output_text","text":""}}
+
+data: {"type":"response.output_text.delta","delta":"partial"}
+
+data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1","content":[{"type":"output_text","text":"partial"}]}}
+
+`
+	final := runResponsesSSE(t, reasoningModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, sse)
+	if final.StopReason != ai.StopError {
+		t.Fatalf("missing terminal event should fail, got %s", final.StopReason)
+	}
+	if final.ErrorMessage != "OpenAI Responses stream ended before a terminal response event" {
+		t.Fatalf("error message wrong: %q", final.ErrorMessage)
+	}
+}
+
 // C5 (responses half): prompt_cache_retention is independent of sessionId;
 // prompt_cache_key still requires one.
 func TestResponsesCacheRetentionWithoutSessionID(t *testing.T) {
