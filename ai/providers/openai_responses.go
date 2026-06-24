@@ -221,8 +221,9 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			stream.End()
 		}
 
-		if opts.APIKey == "" {
-			fail(fmt.Errorf("No API key for provider: %s", model.Provider))
+		apiKey, keyErr := clientAPIKey(model.Provider, opts.APIKey, opts.Headers)
+		if keyErr != nil {
+			fail(keyErr)
 			return
 		}
 
@@ -274,7 +275,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			// auth header is suppressed) unless headers explicitly provide one;
 			// the API key rides in cf-aig-authorization instead.
 			if model.Provider != "cloudflare-ai-gateway" {
-				r.Header.Set("authorization", "Bearer "+opts.APIKey)
+				r.Header.Set("authorization", "Bearer "+apiKey)
 			}
 			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
 			// bundle at the bottom of the precedence stack: emit session +
@@ -307,7 +308,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				r.Header.Set(k, v)
 			}
 			if model.Provider == "cloudflare-ai-gateway" {
-				r.Header.Set("cf-aig-authorization", "Bearer "+opts.APIKey)
+				r.Header.Set("cf-aig-authorization", "Bearer "+apiKey)
 			}
 			return r, nil
 		}

@@ -916,12 +916,22 @@ func TestDiffVercelGatewayRouting(t *testing.T) {
 	if len(order) != 2 {
 		t.Fatalf("gateway order not plumbed: %v", gw)
 	}
-	// Not a vercel gateway URL -> no providerOptions even with routing set.
+	// pi 129eb460 dropped the baseUrl gate: routing is sent whenever
+	// compat.vercelGatewayRouting carries only/order, regardless of baseUrl.
 	model2 := openAIModel(func(m *ai.Model) {
 		m.Compat = json.RawMessage(`{"vercelGatewayRouting":{"only":["openai"]}}`)
 	})
 	body2 := buildOpenAIParams(model2, baseReq(), &OpenAIOptions{})
-	if has(body2, "providerOptions") {
-		t.Fatalf("providerOptions should be omitted for non-vercel-gateway baseUrl")
+	if !has(body2, "providerOptions") {
+		t.Fatalf("providerOptions must be sent for any baseUrl when routing is set")
+	}
+	// The gate is now routing presence: empty/absent routing -> omitted.
+	model3 := openAIModel(func(m *ai.Model) {
+		m.Provider = "vercel"
+		m.BaseURL = "https://ai-gateway.vercel.sh/v1"
+	})
+	body3 := buildOpenAIParams(model3, baseReq(), &OpenAIOptions{})
+	if has(body3, "providerOptions") {
+		t.Fatalf("providerOptions should be omitted when no routing is set")
 	}
 }

@@ -1177,3 +1177,22 @@ func TestDiffZaiGLM52ReasoningEffort(t *testing.T) {
 		t.Fatalf("zai without supportsReasoningEffort must not send reasoning_effort, got %v", b46["reasoning_effort"])
 	}
 }
+
+// TestClientAPIKeySentinel locks pi's getClientApiKey (129eb460): header-only
+// auth yields the "unused" placeholder; no key and no auth header fails with
+// pi's exact message.
+func TestClientAPIKeySentinel(t *testing.T) {
+	if k, err := clientAPIKey("openai", "real", nil); err != nil || k != "real" {
+		t.Fatalf("explicit key must pass through: %q %v", k, err)
+	}
+	for _, name := range []string{"Authorization", "cf-aig-authorization"} {
+		k, err := clientAPIKey("custom", "", map[string]string{name: "Bearer x"})
+		if err != nil || k != "unused" {
+			t.Fatalf("%s header must yield unused sentinel: %q %v", name, k, err)
+		}
+	}
+	if _, err := clientAPIKey("custom", "", map[string]string{"x-foo": "y"}); err == nil ||
+		err.Error() != "No API key for provider: custom" {
+		t.Fatalf("missing key+auth must fail with pi's message, got %v", err)
+	}
+}

@@ -61,8 +61,9 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			stream.End()
 		}
 
-		if opts.APIKey == "" {
-			fail(fmt.Errorf("No API key for provider: %s", model.Provider))
+		apiKey, keyErr := clientAPIKey(model.Provider, opts.APIKey, opts.Headers)
+		if keyErr != nil {
+			fail(keyErr)
 			return
 		}
 
@@ -106,7 +107,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			r.Header.Set("content-type", "application/json")
 			r.Header.Set("accept", "text/event-stream")
 			if model.Provider != "cloudflare-ai-gateway" {
-				r.Header.Set("authorization", "Bearer "+opts.APIKey)
+				r.Header.Set("authorization", "Bearer "+apiKey)
 			}
 			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
 			// bundle at the bottom of the precedence stack: emit session +
@@ -141,7 +142,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			// (set after all merges, like pi's defaultHeaders construction) and
 			// leaves the upstream Authorization to model.headers.
 			if model.Provider == "cloudflare-ai-gateway" {
-				r.Header.Set("cf-aig-authorization", "Bearer "+opts.APIKey)
+				r.Header.Set("cf-aig-authorization", "Bearer "+apiKey)
 			}
 			return r, nil
 		}
@@ -781,8 +782,11 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 		params["provider"] = compat.OpenRouterRouting
 	}
 
-	// Vercel AI Gateway provider routing preferences.
-	if strings.Contains(model.BaseURL, "ai-gateway.vercel.sh") {
+	// Vercel AI Gateway provider routing preferences. pi 129eb460 dropped the
+	// baseUrl gate — routing is sent whenever model.compat.vercelGatewayRouting
+	// carries only/order (byte-identical for catalog models: all carry the
+	// vercel baseUrl and none set routing).
+	{
 		routing := compat.VercelGatewayRouting
 		if len(routing.Only) > 0 || len(routing.Order) > 0 {
 			gatewayOptions := map[string]any{}
@@ -797,6 +801,24 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 	}
 
 	return params
+}
+
+// clientAPIKey ports pi's getClientApiKey (129eb460): when the request carries
+// no api key but its options headers supply an authorization or
+// cf-aig-authorization value, the OpenAI client uses an "unused" placeholder
+// (later overwritten by the real header) instead of failing. Absent both, the
+// stream fails with pi's exact message.
+func clientAPIKey(provider ai.ProviderId, apiKey string, headers map[string]string) (string, error) {
+	if apiKey != "" {
+		return apiKey, nil
+	}
+	for k, v := range headers {
+		lk := strings.ToLower(k)
+		if (lk == "authorization" || lk == "cf-aig-authorization") && strings.TrimSpace(v) != "" {
+			return "unused", nil
+		}
+	}
+	return "", fmt.Errorf("No API key for provider: %s", provider)
 }
 
 // hasToolHistory reports whether the conversation already contains tool calls or
