@@ -338,14 +338,24 @@ func (m *modelsImpl) GetAuth(model *Model) (*AuthResult, error) {
 	if p == nil {
 		return nil, nil
 	}
-	return resolveProviderAuth(p.ID(), p.Auth(), model, m.credentials, m.authContext)
+	return resolveProviderAuth(p.ID(), p.Auth(), model, m.credentials, m.authContext, nil)
 }
 
 // applyAuth resolves auth and folds it into the request model + options.
 // Explicit request options win per field; headers and env merge per key
 // (pi applyAuth + 2cbce395 env merge).
 func (m *modelsImpl) applyAuth(model *Model, opts *StreamOptions) (*Model, *StreamOptions, error) {
-	resolution, err := m.GetAuth(model)
+	p := m.GetProvider(model.Provider)
+	if p == nil {
+		return model, opts, nil
+	}
+	// Request-scoped apiKey/env are resolved inside resolveProviderAuth so the
+	// provider's resolve() sees them (ef231c49); getAuth stays override-free.
+	var overrides *AuthResolutionOverrides
+	if opts != nil {
+		overrides = &AuthResolutionOverrides{APIKey: opts.APIKey, Env: opts.Env}
+	}
+	resolution, err := resolveProviderAuth(p.ID(), p.Auth(), model, m.credentials, m.authContext, overrides)
 	if err != nil {
 		return nil, nil, err
 	}

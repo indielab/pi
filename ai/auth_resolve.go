@@ -38,6 +38,16 @@ func newModelsError(code ModelsErrorCode, message string, cause error) *ModelsEr
 	return &ModelsError{Code: code, Message: message, Cause: cause}
 }
 
+// AuthResolutionOverrides carry request-scoped apiKey/env into resolution so a
+// provider's resolve() sees them (pi resolve.ts AuthResolutionOverrides,
+// upstream ef231c49). An explicit apiKey resolves directly against a synthetic
+// stored credential; env overlays the AuthContext and merges into a stored
+// credential's env.
+type AuthResolutionOverrides struct {
+	APIKey string
+	Env    map[string]string
+}
+
 // resolveProviderAuth is the auth resolution shared by the Models and
 // ImagesModels collections (pi resolve.ts resolveProviderAuth). A stored
 // credential owns the provider: ambient/env is consulted only when nothing is
@@ -49,7 +59,24 @@ func resolveProviderAuth(
 	model *Model,
 	credentials CredentialStore,
 	ctx AuthContext,
+	overrides *AuthResolutionOverrides,
 ) (*AuthResult, error) {
+	// Request-scoped env is visible to the provider's resolve() (ef231c49).
+	requestCtx := ctx
+	if overrides != nil && len(overrides.Env) > 0 {
+		requestCtx = overlayEnvAuthContext(ctx, overrides.Env)
+	}
+
+	// An explicit request apiKey resolves directly, ahead of any stored
+	// credential (pi: overrides?.apiKey !== undefined).
+	if overrides != nil && overrides.APIKey != "" && auth.APIKey != nil {
+		return resolveApiKey(requestCtx, auth.APIKey, model, &Credential{
+			Type: CredentialAPIKey,
+			Key:  overrides.APIKey,
+			Env:  overrides.Env,
+		})
+	}
+
 	stored, err := readCredential(credentials, providerID)
 	if err != nil {
 		return nil, err
@@ -59,16 +86,42 @@ func resolveProviderAuth(
 			return resolveStoredOAuth(credentials, providerID, auth.OAuth, stored)
 		}
 		if stored.Type == CredentialAPIKey && auth.APIKey != nil {
-			return resolveApiKey(ctx, auth.APIKey, model, stored)
+			credential := stored
+			if overrides != nil && len(overrides.Env) > 0 {
+				clone := *stored
+				clone.Env = mergeStringMap(stored.Env, overrides.Env) // overrides win
+				credential = &clone
+			}
+			return resolveApiKey(requestCtx, auth.APIKey, model, credential)
 		}
 		return nil, nil
 	}
 
 	// Ambient (env vars, AWS profiles, ADC files).
 	if auth.APIKey != nil {
-		return resolveApiKey(ctx, auth.APIKey, model, nil)
+		return resolveApiKey(requestCtx, auth.APIKey, model, nil)
 	}
 	return nil, nil
+}
+
+// overlayAuthContext makes overrides.env take precedence over the base
+// AuthContext (pi: env[name] || base.env(name); empty falls through).
+type overlayAuthContext struct {
+	base AuthContext
+	env  map[string]string
+}
+
+func (o overlayAuthContext) Env(name string) string {
+	if v := o.env[name]; v != "" {
+		return v
+	}
+	return o.base.Env(name)
+}
+
+func (o overlayAuthContext) FileExists(path string) bool { return o.base.FileExists(path) }
+
+func overlayEnvAuthContext(base AuthContext, env map[string]string) AuthContext {
+	return overlayAuthContext{base: base, env: env}
 }
 
 // resolveStoredOAuth resolves OAuth with double-checked locking: valid tokens
