@@ -1,7 +1,10 @@
 package ai
 
 import (
+	"encoding/json"
 	"errors"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -60,6 +63,79 @@ func TestInMemoryCredentialStore(t *testing.T) {
 	if after, _ := s.Read("p"); after != nil {
 		t.Errorf("delete should remove the entry, got %v", after)
 	}
+}
+
+// TestCredentialAPIKeyJSON locks the on-disk auth.json format aligned in pi
+// 49fbe683: the discriminator serializes as "api_key" (underscore, not the old
+// "api-key") and the provider-scoped values serialize under "env" (not the old
+// "metadata"). Serialization-visible: this is the persisted credential shape.
+func TestCredentialAPIKeyJSON(t *testing.T) {
+	cred := &Credential{
+		Type: CredentialAPIKey,
+		Key:  "secret",
+		Env:  map[string]string{"accountId": "acct-123", "gatewayId": "gw-1"},
+	}
+
+	raw, err := json.Marshal(cred)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	got := string(raw)
+
+	// Exact on-disk discriminator and env key.
+	if !strings.Contains(got, `"type":"api_key"`) {
+		t.Errorf("type must serialize as api_key, got %s", got)
+	}
+	if !strings.Contains(got, `"env":{`) {
+		t.Errorf("provider env must serialize under \"env\", got %s", got)
+	}
+	// The old format must be gone.
+	if strings.Contains(got, "api-key") {
+		t.Errorf("legacy \"api-key\" discriminator must not appear, got %s", got)
+	}
+	if strings.Contains(got, "metadata") {
+		t.Errorf("legacy \"metadata\" key must not appear, got %s", got)
+	}
+
+	// Round-trips back to an equal value, and parses on the new api_key type.
+	var back Credential
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if back.Type != CredentialAPIKey {
+		t.Errorf("decoded type = %q, want %q", back.Type, CredentialAPIKey)
+	}
+	if !reflect.DeepEqual(&back, cred) {
+		t.Errorf("round-trip mismatch: %+v vs %+v", &back, cred)
+	}
+
+	// Decoding the literal on-disk shape selects the api-key resolve path.
+	var fromDisk Credential
+	if err := json.Unmarshal([]byte(`{"type":"api_key","key":"k","env":{"accountId":"a"}}`), &fromDisk); err != nil {
+		t.Fatalf("unmarshal disk shape: %v", err)
+	}
+	if fromDisk.Type != CredentialAPIKey {
+		t.Fatalf("on-disk api_key must match CredentialAPIKey, got %q", fromDisk.Type)
+	}
+	res, err := resolveProviderAuth(
+		"test",
+		ProviderAuth{APIKey: EnvAPIKeyAuth("Test")},
+		&Model{Provider: "test"},
+		seededStore(t, "test", &fromDisk),
+		fakeAuthContext{},
+	)
+	if err != nil || res == nil || res.Auth.APIKey != "k" {
+		t.Fatalf("api_key credential must resolve via the api-key path: %+v (err %v)", res, err)
+	}
+}
+
+func seededStore(t *testing.T, provider string, c *Credential) CredentialStore {
+	t.Helper()
+	s := NewInMemoryCredentialStore()
+	if _, err := s.Modify(provider, func(*Credential) (*Credential, error) { return c, nil }); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+	return s
 }
 
 func TestEnvAPIKeyAuthResolve(t *testing.T) {

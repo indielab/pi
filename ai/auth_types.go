@@ -17,11 +17,11 @@ type ModelAuth struct {
 	BaseURL string
 }
 
-// CredentialKind tags a stored Credential ("api-key" or "oauth").
+// CredentialKind tags a stored Credential ("api_key" or "oauth").
 type CredentialKind string
 
 const (
-	CredentialAPIKey CredentialKind = "api-key"
+	CredentialAPIKey CredentialKind = "api_key"
 	CredentialOAuth  CredentialKind = "oauth"
 )
 
@@ -36,16 +36,17 @@ type OAuthCredentials struct {
 // Credential is one type-tagged credential per provider — the shape of pi's
 // auth.json. pi models it as a discriminated union (ApiKeyCredential |
 // OAuthCredential); Go uses a single Type-tagged struct whose JSON serializes
-// to either {type:"api-key",key,metadata} or {type:"oauth",refresh,access,
-// expires}, the idiomatic flat tagged-union. For an api-key credential Metadata
-// holds non-key values such as Cloudflare account/gateway ids.
+// to either {type:"api_key",key,env} or {type:"oauth",refresh,access,
+// expires}, the idiomatic flat tagged-union. For an api-key credential Env
+// holds provider-scoped environment/config values such as Cloudflare
+// account/gateway ids.
 type Credential struct {
-	Type     CredentialKind    `json:"type"`
-	Key      string            `json:"key,omitempty"`
-	Metadata map[string]string `json:"metadata,omitempty"`
-	Refresh  string            `json:"refresh,omitempty"`
-	Access   string            `json:"access,omitempty"`
-	Expires  int64             `json:"expires,omitempty"`
+	Type    CredentialKind    `json:"type"`
+	Key     string            `json:"key,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	Refresh string            `json:"refresh,omitempty"`
+	Access  string            `json:"access,omitempty"`
+	Expires int64             `json:"expires,omitempty"`
 }
 
 // OAuthCredentials projects the oauth fields of a Credential.
@@ -160,20 +161,20 @@ type AuthLoginCallbacks interface {
 	Notify(event AuthEvent)
 }
 
-// ApiKeyAuth is api-key auth: a stored key/metadata plus ambient sources (env
-// vars, AWS profiles, ADC files). pi models this as an object with method
+// ApiKeyAuth is api-key auth: a stored key/provider env plus ambient sources
+// (env vars, AWS profiles, ADC files). pi models this as an object with method
 // fields; Go mirrors that as a struct of funcs (idiomatic, since instances are
 // built by helpers like envApiKeyAuth, not multiply-implemented).
 type ApiKeyAuth struct {
 	// Name is the display name, e.g. "Anthropic API key".
 	Name string
 
-	// Login is interactive setup (prompt for key/metadata). Nil = ambient-only.
-	// Out of scope for the port; present for structural parity.
+	// Login is interactive setup (prompt for key/provider env). Nil =
+	// ambient-only. Out of scope for the port; present for structural parity.
 	Login func(callbacks AuthLoginCallbacks) (*Credential, error)
 
 	// Resolve resolves auth from the stored credential and/or ambient sources,
-	// merging per field (credential.Key else env("..."), metadata.accountId
+	// merging per field (credential.Key else env("..."), credential.Env?.NAME
 	// else env("...")). Returns (nil, nil) when not configured. credential is
 	// nil when nothing is stored.
 	Resolve func(model *Model, ctx AuthContext, credential *Credential) (*AuthResult, error)

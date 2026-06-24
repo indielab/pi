@@ -6,7 +6,7 @@ import "sync"
 // packages/ai/src/auth/helpers.ts envApiKeyAuth): a stored credential key wins,
 // otherwise the first set env var resolves. Includes a Login that prompts for
 // the key (acquisition, out of scope but ported for parity). Providers with
-// non-standard resolution (metadata, ambient files, IAM) write their own
+// non-standard resolution (provider env, ambient files, IAM) write their own
 // ApiKeyAuth.
 func EnvAPIKeyAuth(name string, envVars ...string) *ApiKeyAuth {
 	return &ApiKeyAuth{
