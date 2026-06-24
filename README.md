@@ -1,5 +1,9 @@
 # pi (Go)
 
+> **A pure-Go (golang) port of [pi](https://github.com/earendil-works/pi)** — the `@earendil-works/pi-ai`
+> unified multi-provider LLM API, the `pi-agent-core` agent loop, and the `pi-coding-agent` CLI —
+> running natively in Go with **no Node.js runtime**. Looking for "pi for Go" / a "pi-go"? This is it.
+
 A pure-Go port of [pi](https://github.com/earendil-works/pi), Mario Zechner's agent
 harness and self-extensible coding agent — built so heavy Go shops can run pi natively
 without wrapping a Node.js process.
