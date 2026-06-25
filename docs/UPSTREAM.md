@@ -26,6 +26,23 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
 
+- **2026-06-25 — adopt the relocated SDK retry classifier as a latent export**
+  (re: `371adcf3` "retry explicit provider retry errors", #6019). Upstream moved
+  `isRetryableAssistantError` out of host code (`coding-agent/src/core/agent-session.ts`)
+  into the in-scope SDK package (`packages/ai/src/utils/retry.ts`) and added three
+  new retryable patterns (`"you can retry your request"`, `"try your request
+  again"`, `"please retry your request"`). Owner call (noam): **port it** — mirror
+  pi's SDK structure even though the Go port currently has **no consumer** (Go's
+  `MaxRetries`/`ai/providers/retry.go` is provider-HTTP-level backoff *within* one
+  request; the assistant-turn auto-retry loop that calls this classifier lives in
+  the unported agent-session-runtime). Consistent with the 2026-06-23 "maximum
+  parity with the SDK package" adopt ruling: port the classifier + its
+  non-retryable/retryable pattern sets as idiomatic Go in package `ai` (latent
+  until an auto-retry loop consumes it). The `isContextOverflow` pre-check stays
+  on the (unported) consumer side, as upstream keeps it in `agent-session.ts`.
+  Future commits to `packages/ai/src/utils/retry.ts` (new patterns, etc.) are
+  `port` under this ruling. This makes `371adcf3` a `port`, no longer a `decide`.
+
 - **2026-06-24 — models-runtime migration completed under the "globals stay as
   compat" divergence** (re: the `129eb460` "complete models runtime migration"
   consolidation). The 06-23 adopt ruling stands (maximum parity + Go idioms);
