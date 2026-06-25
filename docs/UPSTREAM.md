@@ -10,10 +10,10 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `a2e3e9d8` — "Merge #6004 azure-foundry-endpoints" (2026-06-24); previous pins `470a4736` (06-23), `3b561346` (06-22), `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17). The models-runtime migration is now **complete**: the `732bb161` substrate (06-23) plus the 06-24 follow-through (catalog-data reorg landed via the 0.80.2 regen; request-scoped auth `ef231c49`; api_key/env credential `49fbe683`; OpenAI Responses terminal events `cd95c274`; anthropic compat→catalog `6184307c`; header-only client auth + vercel ungate `129eb460`). |
+| TS source fully reviewed/ported | `09f10595` — "fix(ai): clamp streamSimple max tokens" (2026-06-25); previous pins `a2e3e9d8` (06-24), `470a4736` (06-23), `3b561346` (06-22), `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17). The models-runtime migration is now **complete**: the `732bb161` substrate (06-23) plus the 06-24 follow-through (catalog-data reorg landed via the 0.80.2 regen; request-scoped auth `ef231c49`; api_key/env credential `49fbe683`; OpenAI Responses terminal events `cd95c274`; anthropic compat→catalog `6184307c`; header-only client auth + vercel ungate `129eb460`). |
 | npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.80.2** (catalog endpoint-pinned, re-derived byte-identical from `dist/models.generated.js`, lock integrity verified against the registry — `sha512-5GNKfdrR…uy9RQ==`; subsumes v0.80.0/v0.80.1); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.80.x) |
 | Parity proofs at the pin | catalog regen endpoint-pinned byte-identical (386,548 B, independently re-derived) · session tree 8/8 · image decisions 8/8 (unchanged this cycle) · differential request diff 6/6 (re-derived from the 0.80.2 build) · in-repo differential parity 36/36 · fireworks/cf anthropic compat coupling 0 mismatches (14 fireworks + 17 cf-anthropic models carry the fields the removed auto-detect synthesized) |
-| Reviewed via | initial port + parity sweeps 1–2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 v0.79.10 cycle; 2026-06-24 v0.80.2 cycle independent go-review (ship, 3 optional LOW nits) + adversarial parity review (all 7 commits faithful, 6/6 differential, all 3 deliberate divergences confirmed observably-faithful) |
+| Reviewed via | initial port + parity sweeps 1–2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 v0.79.10 cycle; 2026-06-24 v0.80.2 cycle independent go-review (ship, 3 optional LOW nits) + adversarial parity review (all 7 commits faithful, 6/6 differential, all 3 deliberate divergences confirmed observably-faithful); 2026-06-25 cycle (5 ports, no release) independent go-review (ship; one LOW `strings.Join` cleanup applied) + adversarial parity review (all 5 faithful; responses test-change mutation-verified non-vacuous; `reasoning,omitempty` confirmed acceptable-latent) |
 
 Deliberately not ported (out of scope for the ledger unless a commit changes
 that decision): TUI, extensions runtime, OAuth token acquisition, project-trust
@@ -133,6 +133,85 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   extension resource-loader; `skills.ts` untouched). Future trust commits are
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
+
+## Drift at last sync check (2026-06-25) — pin advanced to 09f10595
+
+**Caught up to `09f10595`.** Delta `a2e3e9d8 → 09f10595` fully processed: 13
+main-line changes — **5 ports (→ 5 Go commits), 7 n/a, 1 decide (ruled: port)**.
+**No release tag crossed** — all 5 ports land against upstream `[Unreleased]`;
+`pi-ai` stays **0.80.2**, the npm reference build is unchanged and every existing
+byte-golden (catalog, session tree, image decisions, 14/14 differential) stays
+valid. Reviewed via independent go-review (ship; one LOW `strings.Join` cleanup
+applied) + adversarial parity review (5/5 faithful). Build/vet/`-race` green;
+14/14 differential request-body diff byte-identical (the clamp is a no-op for
+those scenarios).
+
+- **retry classifier** (`371adcf3`, Go `23d15ef`): new `ai/retry_classify.go`
+  exporting `IsRetryableAssistantError` (the two pattern sets byte-faithful incl.
+  the 3 new #6019 strings `you can retry your request` / `try your request again`
+  / `please retry your request`). **Latent SDK export** — no Go consumer yet
+  (Go's `ai/providers/retry.go` is provider-HTTP backoff *within* a stream; the
+  assistant-turn auto-retry loop that consumes this lives in the unported
+  agent-session-runtime). Adopted per the 2026-06-25 ruling. `isContextOverflow`
+  pre-check deliberately left on the consumer side, matching pi. Test:
+  `TestIsRetryableAssistantError`.
+- **reasoning token counts on Usage** (`d7868b09`, Go `339cb48`): `Usage.Reasoning`
+  (`int`, `json:"reasoning,omitempty"`); anthropic sets it only when
+  `output_tokens_details.thinking_tokens` present, openai-completions/
+  openai-responses/google set it unconditionally (`|| 0`). Tests:
+  `TestAnthropicReasoningTokens`, `TestOpenAICompletionsReasoningTokens`,
+  `TestResponsesReasoningTokens`.
+  **LATENT DIVERGENCE (must reconcile on the next pi release that publishes
+  `d7868b09`):** `omitempty` drops `reasoning:0` from session JSON, whereas pi
+  emits `reasoning:0` unconditionally for openai-completions/openai-responses/
+  google. Acceptable *now* — the published build (≤0.80.2) has no `reasoning`
+  field and the existing sessparity goldens (e.g.
+  `coding/testdata/sessparity/8_agent_message_roles.json`) carry no `reasoning`
+  key, so `omitempty` keeps the port byte-faithful to what real pi currently
+  emits. When d7868b09 ships in an npm build: regenerate the sessparity goldens
+  from that build AND drop `omitempty` for the reasoning field (or split
+  anthropic-optional vs others-always-present), then re-verify the goldens.
+- **responses out-of-order reasoning** (`8c9dbffa`, Go `f546acc`): rewrote the
+  Responses stream parser from a single `current` pointer to a
+  `map[int]*responsesOutputSlot` keyed by `output_index`, with
+  `getSlot`/`createSlot`/`getOrCreateSlot`; emitted events now carry the slot's
+  stable `contentIndex` (#6009). Response-parse only (request bytes unchanged).
+  Faithful behavior shift confirmed against pi: a `function_call` `output_item.done`
+  with no prior `added` now create-on-dones (block lands in content, `toolcall_start`
+  fires, stop→toolUse) — `TestResponsesFunctionCallDoneWithoutAdded` updated to
+  pi's behavior (mutation-verified non-vacuous). New regression:
+  `TestResponsesOutOfOrderItemsPreserveReasoning`.
+- **BMP read-tool support** (`4cc339f5`, Go `5f9c464`): `isBmp` magic+DIB
+  validation (byte-exact offsets), BMP→PNG conversion (Go `x/image/bmp` +
+  `png.Encode`) wired into the read tool's `processImage`; tool-description string
+  → `(jpg, png, gif, webp, bmp)` (byte-golden, exact); hint/omit strings
+  byte-faithful. No golden pins converted PNG bytes. Tests: `TestDetectMimeBMP`,
+  `TestDetectMimeInvalidBMPRejected`, `TestReadBMPConvertsToPNG`.
+- **clamp streamSimple max tokens** (`09f10595`, Go `4fed697`): new `ai/estimate.go`
+  (`estimateContextTokens`; constants `charsPerToken=4`, `estimatedImageChars=4800`;
+  `jsStringLength` via `utf16.Encode` = JS `.length`) + `ai/simple_options.go`
+  (`ClampMaxTokensToContext`, `contextSafetyTokens=4096`, `minMaxTokens=1`) wired
+  into all 4 Go streamSimple providers; anthropic thinkingBudget re-clamp
+  `min(budget, max(0, maxTokens-1024))`. **Request-body golden:** streamSimple now
+  always sends a clamped `max_tokens = clamp(model.maxTokens)` where it could
+  previously omit it — faithful to pi, which flipped its own
+  `openai-completions-empty-tools` test the same way. No-op for the existing
+  differential scenarios (low-level builders untouched; 14/14 byte-identical).
+  Tests: estimate/clamp units + streamSimple `3904`-clamp assertions.
+
+**Catalog regen DEFERRED** (`9cd2c81a`): per-provider `*.models.ts` churn
+(huggingface, vercel-ai-gateway, openrouter, minimax) lands in `[Unreleased]` —
+no npm publish, so it folds into the next release regen (advance only when a tag
+crosses). The `b940c52e` MiniMax shared-budget clamp was net-reverted by
+`f78b1637` (source diff = 0); its minimax `maxTokensSharesContextWindow` churn
+also folds into the deferred regen.
+
+n/a (7): `3e551faf` (interactive-mode resource/notify ordering — TUI);
+`5c76ae40` (extension-stats — startup-timing instrumentation + extensions loader,
+no Go analog); `b940c52e` + `f78b1637` (MiniMax clamp add + full revert, net-zero
+source); `c29bbc09` (docs/models.md); `6ca7ba7c` (`.github` contributor);
+`49956a7c` (`.pi/prompts`). The lone `decide` (`371adcf3`) was ruled **port** on
+2026-06-25 (see Rulings). No new boundary questions.
 
 ## Drift at last sync check (2026-06-24) — pin advanced to a2e3e9d8
 
