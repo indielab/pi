@@ -11,7 +11,9 @@ import (
 	"image/png"
 	"math"
 	"strconv"
+	"strings"
 
+	_ "golang.org/x/image/bmp"  // register BMP decoder for BMP→PNG conversion
 	_ "golang.org/x/image/webp" // decode-only, to match photon's webp support
 )
 
@@ -143,6 +145,119 @@ func resizeImageForModel(data []byte, mimeType string) (out []byte, outMime stri
 		return nil, "", false
 	}
 	return r.Data, r.MimeType, true
+}
+
+// ProcessImageResult mirrors pi's discriminated ProcessImageResult
+// (utils/image-process.ts). On success Ok is true and Data/MimeType/Hints are
+// populated; on failure Ok is false and Message holds the omission note.
+type ProcessImageResult struct {
+	Ok       bool
+	Data     []byte // raw image bytes to attach (not base64)
+	MimeType string
+	Hints    []string
+
+	Message string
+}
+
+// supportedInlineImageMimeTypes maps the mime types models accept inline. BMP
+// (and any other non-listed type) must be converted to PNG before sending.
+// Mirrors pi's normalizeSupportedImageMimeType.
+func normalizeSupportedImageMimeType(mimeType string) string {
+	base := mimeType
+	if i := strings.IndexByte(base, ';'); i >= 0 {
+		base = base[:i]
+	}
+	base = strings.ToLower(strings.TrimSpace(base))
+	switch base {
+	case "image/png":
+		return "image/png"
+	case "image/jpeg", "image/jpg":
+		return "image/jpeg"
+	case "image/gif":
+		return "image/gif"
+	case "image/webp":
+		return "image/webp"
+	default:
+		return ""
+	}
+}
+
+func baseMimeType(mimeType string) string {
+	base := mimeType
+	if i := strings.IndexByte(base, ';'); i >= 0 {
+		base = base[:i]
+	}
+	return strings.ToLower(strings.TrimSpace(base))
+}
+
+// convertImageBytesToPng decodes arbitrary image bytes and re-encodes as PNG,
+// mirroring pi's convertImageBytesToPng (photon). Returns nil on decode failure
+// (pi returns null). Only BMP reaches this path in the Go port today.
+func convertImageBytesToPng(data []byte) []byte {
+	img, _, err := image.Decode(bytes.NewReader(data))
+	if err != nil {
+		return nil
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		return nil
+	}
+	return buf.Bytes()
+}
+
+// conversionHint mirrors pi's conversionHint: emitted when the image was
+// converted from one mime type to another.
+func conversionHint(from, to string) string {
+	if from == "" || from == to {
+		return ""
+	}
+	return fmt.Sprintf("[Image converted from %s to %s.]", from, to)
+}
+
+// processImage is a faithful port of pi's processImage (utils/image-process.ts).
+// It normalizes the image to a supported inline mime type (converting BMP→PNG),
+// optionally auto-resizes it below the inline limit, and reports processing
+// hints. The result mirrors pi's discriminated { ok } shape.
+func processImage(data []byte, mimeType string, autoResizeImages bool) ProcessImageResult {
+	normalizedMime := normalizeSupportedImageMimeType(mimeType)
+	normBytes := data
+	convertedFrom := ""
+	if normalizedMime == "" {
+		pngBytes := convertImageBytesToPng(data)
+		if pngBytes == nil {
+			return ProcessImageResult{
+				Ok:      false,
+				Message: "[Image omitted: could not be converted to a supported inline image format.]",
+			}
+		}
+		normBytes = pngBytes
+		normalizedMime = "image/png"
+		convertedFrom = baseMimeType(mimeType)
+	}
+
+	if autoResizeImages {
+		resized, ok := resizeImage(normBytes, normalizedMime)
+		if !ok {
+			return ProcessImageResult{
+				Ok:      false,
+				Message: "[Image omitted: could not be resized below the inline image size limit.]",
+			}
+		}
+		var hints []string
+		if h := conversionHint(convertedFrom, resized.MimeType); h != "" {
+			hints = append(hints, h)
+		}
+		if dn := formatDimensionNote(resized); dn != "" {
+			hints = append(hints, dn)
+		}
+		return ProcessImageResult{Ok: true, Data: resized.Data, MimeType: resized.MimeType, Hints: hints}
+	}
+
+	var hints []string
+	if h := conversionHint(convertedFrom, normalizedMime); h != "" {
+		hints = append(hints, h)
+	}
+	return ProcessImageResult{Ok: true, Data: normBytes, MimeType: normalizedMime, Hints: hints}
 }
 
 // formatDimensionNote mirrors pi's formatDimensionNote: a coordinate-mapping

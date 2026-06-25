@@ -239,7 +239,74 @@ func detectSupportedImageMimeType(buf []byte) string {
 	if startsWithAscii(buf, 0, "RIFF") && startsWithAscii(buf, 8, "WEBP") {
 		return "image/webp"
 	}
+	if startsWithAscii(buf, 0, "BM") && isBmp(buf) {
+		return "image/bmp"
+	}
 	return ""
+}
+
+// isBmp validates the BMP magic + DIB header (port of utils/mime.ts isBmp).
+// It requires colorPlanes==1 and bitsPerPixel in {1,4,8,16,24,32}, and applies
+// the declaredFileSize/pixelDataOffset sanity checks.
+func isBmp(buf []byte) bool {
+	if len(buf) < 26 {
+		return false
+	}
+	declaredFileSize := readUint32LE(buf, 2)
+	pixelDataOffset := readUint32LE(buf, 10)
+	dibHeaderSize := readUint32LE(buf, 14)
+	if declaredFileSize != 0 && declaredFileSize < 26 {
+		return false
+	}
+	if pixelDataOffset < 14+dibHeaderSize {
+		return false
+	}
+	if declaredFileSize != 0 && pixelDataOffset >= declaredFileSize {
+		return false
+	}
+
+	var colorPlanes, bitsPerPixel int
+	if dibHeaderSize == 12 {
+		colorPlanes = readUint16LE(buf, 22)
+		bitsPerPixel = readUint16LE(buf, 24)
+	} else if dibHeaderSize >= 40 && dibHeaderSize <= 124 {
+		if len(buf) < 30 {
+			return false
+		}
+		colorPlanes = readUint16LE(buf, 26)
+		bitsPerPixel = readUint16LE(buf, 28)
+	} else {
+		return false
+	}
+	if colorPlanes != 1 {
+		return false
+	}
+	switch bitsPerPixel {
+	case 1, 4, 8, 16, 24, 32:
+		return true
+	default:
+		return false
+	}
+}
+
+func readUint16LE(buf []byte, offset int) int {
+	b := func(i int) int {
+		if i < len(buf) {
+			return int(buf[i])
+		}
+		return 0
+	}
+	return b(offset) + (b(offset+1) << 8)
+}
+
+func readUint32LE(buf []byte, offset int) int {
+	b := func(i int) int {
+		if i < len(buf) {
+			return int(buf[i])
+		}
+		return 0
+	}
+	return b(offset) + (b(offset+1) << 8) + (b(offset+2) << 16) + b(offset+3)*0x1000000
 }
 
 // detectSupportedImageMimeTypeFromFile reads up to the sniff window from a file
@@ -322,7 +389,7 @@ func readTool(cwd string) agent.AgentTool {
 	return agent.AgentTool{
 		Name:        "read",
 		Label:       "read",
-		Description: fmt.Sprintf("Read the contents of a file. Supports text files and images (jpg, png, gif, webp). Images are sent as attachments. For text files, output is truncated to %d lines or %dKB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.", DefaultMaxLines, DefaultMaxBytes/1024),
+		Description: fmt.Sprintf("Read the contents of a file. Supports text files and images (jpg, png, gif, webp, bmp). Images are sent as attachments. For text files, output is truncated to %d lines or %dKB (whichever is hit first). Use offset/limit for large files. When you need the full file, continue with offset until complete.", DefaultMaxLines, DefaultMaxBytes/1024),
 		PromptGuidelines: []string{
 			"Use read to examine files instead of cat or sed.",
 		},
@@ -347,22 +414,23 @@ func readTool(cwd string) agent.AgentTool {
 				if err != nil {
 					return agent.AgentToolResult{}, err
 				}
-				// Downscale/re-encode to fit the model's inline image limits and
-				// apply EXIF orientation (port of pi's resizeImage). The note text
-				// matches pi's read tool exactly (utils/image-resize.ts).
-				resized, fit := resizeImage(data, mime)
-				if !fit {
+				// Normalize (convert BMP→PNG), downscale/re-encode to fit the
+				// model's inline image limits, and apply EXIF orientation (port of
+				// pi's processImage). The note text matches pi's read tool exactly
+				// (utils/image-process.ts).
+				processed := processImage(data, mime, true)
+				if !processed.Ok {
 					return agent.AgentToolResult{Content: ai.ContentList{ai.TextContent{
-						Text: fmt.Sprintf("Read image file [%s]\n[Image omitted: could not be resized below the inline image size limit.]", mime),
+						Text: fmt.Sprintf("Read image file [%s]\n%s", mime, processed.Message),
 					}}, Details: map[string]any{}}, nil
 				}
-				note := fmt.Sprintf("Read image file [%s]", resized.MimeType)
-				if dn := formatDimensionNote(resized); dn != "" {
-					note += "\n" + dn
+				note := fmt.Sprintf("Read image file [%s]", processed.MimeType)
+				if len(processed.Hints) > 0 {
+					note += "\n" + strings.Join(processed.Hints, "\n")
 				}
 				return agent.AgentToolResult{Content: ai.ContentList{
 					ai.TextContent{Text: note},
-					ai.ImageContent{Data: encodeBase64(resized.Data), MimeType: resized.MimeType},
+					ai.ImageContent{Data: encodeBase64(processed.Data), MimeType: processed.MimeType},
 				}, Details: map[string]any{}}, nil
 			}
 

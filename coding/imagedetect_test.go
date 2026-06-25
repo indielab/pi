@@ -1,6 +1,7 @@
 package coding
 
 import (
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -41,6 +42,97 @@ func animatedPNG() []byte {
 		0xde, 0xad, 0xbe, 0xef, // CRC
 	}
 	return out
+}
+
+// tinyBMP1x1Red24bpp builds a minimal valid 1×1 24bpp BMP (BITMAPINFOHEADER),
+// mirroring pi's createTinyBmp1x1Red24bpp test fixture.
+func tinyBMP1x1Red24bpp() []byte {
+	buf := make([]byte, 58)
+	copy(buf[0:], "BM")
+	putUint32LE(buf, 2, uint32(len(buf))) // declared file size
+	putUint32LE(buf, 10, 54)              // pixel data offset
+	putUint32LE(buf, 14, 40)              // DIB header size (BITMAPINFOHEADER)
+	putUint32LE(buf, 18, 1)               // width
+	putUint32LE(buf, 22, 1)               // height
+	putUint16LE(buf, 26, 1)               // color planes
+	putUint16LE(buf, 28, 24)              // bits per pixel
+	putUint32LE(buf, 30, 0)               // compression (BI_RGB)
+	putUint32LE(buf, 34, 4)               // image size
+	buf[56] = 0xff                        // blue channel of the single pixel
+	return buf
+}
+
+func putUint16LE(b []byte, off int, v uint16) {
+	b[off] = byte(v)
+	b[off+1] = byte(v >> 8)
+}
+
+func putUint32LE(b []byte, off int, v uint32) {
+	b[off] = byte(v)
+	b[off+1] = byte(v >> 8)
+	b[off+2] = byte(v >> 16)
+	b[off+3] = byte(v >> 24)
+}
+
+func TestDetectMimeBMP(t *testing.T) {
+	if got := detectSupportedImageMimeType(tinyBMP1x1Red24bpp()); got != "image/bmp" {
+		t.Fatalf("expected image/bmp, got %q", got)
+	}
+}
+
+func TestDetectMimeInvalidBMPRejected(t *testing.T) {
+	// Valid "BM" magic but an invalid bitsPerPixel (e.g. 7) must be rejected.
+	buf := tinyBMP1x1Red24bpp()
+	putUint16LE(buf, 28, 7)
+	if got := detectSupportedImageMimeType(buf); got != "" {
+		t.Fatalf("BMP with invalid bitsPerPixel should be rejected, got %q", got)
+	}
+	// colorPlanes != 1 must also be rejected.
+	buf = tinyBMP1x1Red24bpp()
+	putUint16LE(buf, 26, 2)
+	if got := detectSupportedImageMimeType(buf); got != "" {
+		t.Fatalf("BMP with colorPlanes!=1 should be rejected, got %q", got)
+	}
+}
+
+// A BMP file on disk is read as an image attachment converted to PNG, with the
+// conversion hint, mirroring pi's tools.test.ts BMP case.
+func TestReadBMPConvertsToPNG(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "image.bmp")
+	os.WriteFile(p, tinyBMP1x1Red24bpp(), 0o644)
+	r, err := run(t, readTool(dir), map[string]any{"path": "image.bmp"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	txt := resultText(r)
+	if !strings.Contains(txt, "Read image file [image/png]") {
+		t.Fatalf("expected PNG note, got: %q", txt)
+	}
+	if !strings.Contains(txt, "[Image converted from image/bmp to image/png.]") {
+		t.Fatalf("expected conversion hint, got: %q", txt)
+	}
+	var img ai.ImageContent
+	found := false
+	for _, c := range r.Content {
+		if ic, ok := c.(ai.ImageContent); ok {
+			img = ic
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected an image content block")
+	}
+	if img.MimeType != "image/png" {
+		t.Fatalf("expected attachment mimeType image/png, got %q", img.MimeType)
+	}
+	raw, err := base64.StdEncoding.DecodeString(img.Data)
+	if err != nil {
+		t.Fatalf("attachment data not base64: %v", err)
+	}
+	if len(raw) < 1 || raw[0] != 0x89 {
+		t.Fatalf("attachment should be PNG (0x89 magic), got % x", raw[:min(len(raw), 4)])
+	}
 }
 
 func TestDetectMimeRealPNG(t *testing.T) {
