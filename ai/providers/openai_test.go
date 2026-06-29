@@ -1167,6 +1167,9 @@ func TestDiffZaiGLM52ReasoningEffort(t *testing.T) {
 		body := buildOpenAIParams(glm52(), baseReq(), &OpenAIOptions{ReasoningEffort: c.level})
 		if tm, _ := body["thinking"].(map[string]any); tm["type"] != "enabled" {
 			t.Fatalf("%s: thinking = %v, want {type:enabled}", c.level, body["thinking"])
+		} else if ct, ok := tm["clear_thinking"]; !ok || ct != false {
+			// pi (b91bdd5a / #6083): enabled payload carries clear_thinking:false.
+			t.Fatalf("%s: thinking = %v, want clear_thinking:false", c.level, body["thinking"])
 		}
 		if body["reasoning_effort"] != c.want {
 			t.Fatalf("%s: reasoning_effort = %v, want %q", c.level, body["reasoning_effort"], c.want)
@@ -1176,6 +1179,8 @@ func TestDiffZaiGLM52ReasoningEffort(t *testing.T) {
 	bMin := buildOpenAIParams(glm52(), baseReq(), &OpenAIOptions{ReasoningEffort: "minimal"})
 	if tm, _ := bMin["thinking"].(map[string]any); tm["type"] != "enabled" {
 		t.Fatalf("minimal: thinking = %v, want {type:enabled}", bMin["thinking"])
+	} else if ct, ok := tm["clear_thinking"]; !ok || ct != false {
+		t.Fatalf("minimal: thinking = %v, want clear_thinking:false", bMin["thinking"])
 	}
 	if has(bMin, "reasoning_effort") {
 		t.Fatalf("minimal maps to null -> reasoning_effort must be omitted, got %v", bMin["reasoning_effort"])
@@ -1184,6 +1189,9 @@ func TestDiffZaiGLM52ReasoningEffort(t *testing.T) {
 	bOff := buildOpenAIParams(glm52(), baseReq(), &OpenAIOptions{})
 	if tm, _ := bOff["thinking"].(map[string]any); tm["type"] != "disabled" {
 		t.Fatalf("off: thinking = %v, want {type:disabled}", bOff["thinking"])
+	} else if _, ok := tm["clear_thinking"]; ok {
+		// pi (b91bdd5a): disabled payload stays bare {type:"disabled"}.
+		t.Fatalf("off: thinking = %v, must not carry clear_thinking", bOff["thinking"])
 	}
 	if has(bOff, "reasoning_effort") {
 		t.Fatalf("off must not send reasoning_effort, got %v", bOff["reasoning_effort"])

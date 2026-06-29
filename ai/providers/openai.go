@@ -914,11 +914,14 @@ func applyReasoningFormat(params map[string]any, model *ai.Model, compat openAIC
 	case compat.ThinkingFormat == "zai" && model.Reasoning:
 		// pi (since 64b51efb): zai uses thinking: {type: "enabled"|"disabled"}
 		// driven by !!options.reasoningEffort, not enable_thinking: bool.
-		t := "disabled"
+		// pi (b91bdd5a / #6083): the enabled payload also carries
+		// clear_thinking:false to preserve Z.AI thinking content; the disabled
+		// payload stays bare {type:"disabled"}.
 		if enabled {
-			t = "enabled"
+			params["thinking"] = map[string]any{"type": "enabled", "clear_thinking": false}
+		} else {
+			params["thinking"] = map[string]any{"type": "disabled"}
 		}
-		params["thinking"] = map[string]any{"type": t}
 		// pi (75b0d723): GLM-5.2 also accepts a native reasoning_effort. When an
 		// effort was requested and the model opts in via supportsReasoningEffort,
 		// send the thinkingLevelMap-mapped effort (raw level if unmapped, omitted
