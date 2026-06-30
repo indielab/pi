@@ -10,10 +10,10 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `541d11f7` — "chore: approve contributor skhoroshavin" (2026-06-29; the substantive change this cycle is `b91bdd5a` Z.AI thinking content); previous pins `5a073885` (06-27), `622eca76` (06-26), `1d486163` (06-25), `09f10595` (06-25), `a2e3e9d8` (06-24), `470a4736` (06-23), `3b561346` (06-22), `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17). The models-runtime migration is now **complete**: the `732bb161` substrate (06-23) plus the 06-24 follow-through (catalog-data reorg landed via the 0.80.2 regen; request-scoped auth `ef231c49`; api_key/env credential `49fbe683`; OpenAI Responses terminal events `cd95c274`; anthropic compat→catalog `6184307c`; header-only client auth + vercel ungate `129eb460`). |
+| TS source fully reviewed/ported | `9be55bc7` — "fix(coding-agent): apply output padding to user messages" (2026-06-30; the substantive change this cycle is `6fbeba51` provider HTTP error-body passthrough → Go 4000-char body cap + metadata.raw dedup); previous pins `541d11f7` (06-29), `5a073885` (06-27), `622eca76` (06-26), `1d486163` (06-25), `09f10595` (06-25), `a2e3e9d8` (06-24), `470a4736` (06-23), `3b561346` (06-22), `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17). The models-runtime migration is now **complete**: the `732bb161` substrate (06-23) plus the 06-24 follow-through (catalog-data reorg landed via the 0.80.2 regen; request-scoped auth `ef231c49`; api_key/env credential `49fbe683`; OpenAI Responses terminal events `cd95c274`; anthropic compat→catalog `6184307c`; header-only client auth + vercel ungate `129eb460`). |
 | npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.80.2** (catalog endpoint-pinned, re-derived byte-identical from `dist/models.generated.js`, lock integrity verified against the registry — `sha512-5GNKfdrR…uy9RQ==`; subsumes v0.80.0/v0.80.1); `pi-coding-agent` 0.78.1 (session/image goldens — unaffected by 0.80.x) |
 | Parity proofs at the pin | catalog regen endpoint-pinned byte-identical (386,548 B, independently re-derived) · session tree 8/8 · image decisions 8/8 (unchanged this cycle) · differential request diff 6/6 (re-derived from the 0.80.2 build) · in-repo differential parity 36/36 · fireworks/cf anthropic compat coupling 0 mismatches (14 fireworks + 17 cf-anthropic models carry the fields the removed auto-detect synthesized) |
-| Reviewed via | initial port + parity sweeps 1–2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 v0.79.10 cycle; 2026-06-24 v0.80.2 cycle independent go-review (ship, 3 optional LOW nits) + adversarial parity review (all 7 commits faithful, 6/6 differential, all 3 deliberate divergences confirmed observably-faithful); 2026-06-25 cycle (5 ports, no release) independent go-review (ship; one LOW `strings.Join` cleanup applied) + adversarial parity review (all 5 faithful; responses test-change mutation-verified non-vacuous; `reasoning,omitempty` confirmed acceptable-latent); 2026-06-26 cycle (1 port, no release) independent go-review (ship, no findings) + adversarial parity review (faithful; openai default-model lock mutation-verified non-vacuous); 2026-06-29 cycle (1 port, no release) independent go-review (ship, no findings) + adversarial parity review (faithful; zai `clear_thinking:false` mutation-verified non-vacuous; confirmed no 0.80.2-derived golden pins the zai request shape, so no latent divergence) |
+| Reviewed via | initial port + parity sweeps 1–2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 v0.79.10 cycle; 2026-06-24 v0.80.2 cycle independent go-review (ship, 3 optional LOW nits) + adversarial parity review (all 7 commits faithful, 6/6 differential, all 3 deliberate divergences confirmed observably-faithful); 2026-06-25 cycle (5 ports, no release) independent go-review (ship; one LOW `strings.Join` cleanup applied) + adversarial parity review (all 5 faithful; responses test-change mutation-verified non-vacuous; `reasoning,omitempty` confirmed acceptable-latent); 2026-06-26 cycle (1 port, no release) independent go-review (ship, no findings) + adversarial parity review (faithful; openai default-model lock mutation-verified non-vacuous); 2026-06-29 cycle (1 port, no release) independent go-review (ship, no findings) + adversarial parity review (faithful; zai `clear_thinking:false` mutation-verified non-vacuous; confirmed no 0.80.2-derived golden pins the zai request shape, so no latent divergence); 2026-06-30 cycle (1 port, no release) independent go-review (ship; 2 LOW cosmetic nits, not applied) + adversarial parity review (faithful — the 4000-char body-truncation cap is the one architecture-independent behavior; the SDK-field-probing layer is N/A since Go reads the raw `resp.Body`; truncation + metadata.raw-dedup tests mutation-verified non-vacuous; two non-blocking unpinned divergences documented — see the 2026-06-30 drift note) |
 
 Deliberately not ported (out of scope for the ledger unless a commit changes
 that decision): TUI, extensions runtime, OAuth token acquisition, project-trust
@@ -133,6 +133,79 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   extension resource-loader; `skills.ts` untouched). Future trust commits are
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
+
+## Drift at last sync check (2026-06-30) — pin advanced to 9be55bc7
+
+**Caught up to `9be55bc7`.** Delta `541d11f7 → 9be55bc7` fully processed: 8
+main-line changes — **1 port (→ 1 Go commit), 7 n/a, 0 decides**. **No release
+tag crossed** — no `package.json` bump in the range; `pi-ai` stays **0.80.2**
+and `pi-coding-agent` stays **0.78.1**, so every byte-golden (catalog, session
+tree, image decisions, differential request diff) is untouched (differential
+request diff re-confirmed 6/6 — the port touches only error-formatting paths,
+not the request builder). Reviewed via independent go-review (ship; 2 LOW
+cosmetic nits, not applied) + adversarial parity review (faithful). gofmt clean;
+build/vet/`-race` green.
+
+- **surface provider HTTP error body** (`6fbeba51`, PR #5832 / #5763, Go
+  `835dbac`): pi added `normalizeProviderError`/`formatProviderError`
+  (`packages/ai/src/utils/error-body.ts`) to recover HTTP status+body from the
+  JS provider SDKs' opaque error objects, a 4000-char body cap, and an
+  openrouter `metadata.raw` double-print guard. **Architecture gap:** the Go
+  port issues raw HTTP requests and already holds `resp.StatusCode` + the raw
+  body (`io.ReadAll` → `formatProviderError(label, status, body)`), so the
+  entire SDK-field-probing layer (`extractStatus`/`extractBody`/`pickBodyText`/
+  `messageCarriesBody`) is **N/A** and the #5763 "opaque, no body" bug
+  structurally cannot occur. Only the two architecture-independent behaviors
+  were ported: (1) **4000-char body truncation** (`maxProviderErrorBodyChars`
+  + `truncateErrorText` in `ai/providers/errors.go`, UTF-16 code-unit counting
+  via `unicode/utf16` to match JS `.length`/`.slice`, suffix
+  `"... [truncated N chars]"` byte-exact), applied in `formatProviderError` and
+  `openaiSDKErrorMessage`; (2) the **openrouter `metadata.raw` dedup guard**
+  (`ai/providers/openai.go` — append only when `!strings.Contains(err.Error(),
+  raw)`). `ai/providers/google.go` is comment-only: parity confirmed the
+  `@google/genai` `ApiError` carries no `.body`/`.error` field
+  (`message=JSON.stringify(errorBody)`, `messageCarriesBody=true`), so pi's
+  google path returns the message unchanged — a **verified no-op on the wire**.
+  Tests: `TestTruncateErrorText` (incl. astral/UTF-16), `TestFormatProviderError
+  Truncation`, `TestOpenAISDKErrorMessageTruncation`, `TestOpenRouterMetadataRaw
+  Dedup` (all mutation-verified non-vacuous).
+  **Two non-blocking divergences, neither pinned by any golden (no published
+  build emits this yet — `[Unreleased]`):**
+  - *Astral-boundary micro-divergence:* if the 4000th UTF-16 unit splits a
+    surrogate pair, JS `.slice` emits a lone high surrogate where Go's
+    `utf16.Decode` emits `�`. Pathological (body must exceed 4000 units
+    AND straddle 3999–4000); pi does not surrogate-sanitize the error string
+    downstream, so it would survive into a recorded error turn, but no golden
+    pins it. Accepted.
+  - *Pre-existing openai-completions error-shape divergence (NOT introduced by
+    this commit):* for openai-completions, pi's `openai` SDK `APIError` sets
+    `messageCarriesBody=false`, so pi now surfaces `<status>: <stringified
+    error.error object>` (and its dedup guard suppresses the `metadata.raw`
+    append because raw is already inside that object). Go instead surfaces
+    `OpenAI API error <status>: <parsed .error.message>` and appends
+    `\n<raw>`. `6fbeba51` did not change Go's message shape — only added the cap
+    and the guard — so this is a documented pre-existing divergence; the new
+    `TestOpenRouterMetadataRawDedup` correctly asserts the **Go** shape. Revisit
+    only if a future published build pins a provider error string in a golden.
+
+n/a (7): `5d499272` (**stabilize interactive status indicators**, #6026 —
+`modes/interactive/*` + tests, TUI); `927e9806` (**fix compaction event
+regression test** — 1-line test edit in `coding-agent/test` for the unported
+agent-session compaction); `3d6acb37` (**regenerate model catalog**, #6138 —
+per-provider `*.models.ts` cost/metadata churn incl. Xiaomi MiMo pricing, all
+existing providers, **deferred**: lands in `[Unreleased]` with no npm publish,
+folds into the next release regen — no new provider/behavior, so not a decide);
+`939c39ab` (**emit session name changes to extensions**, #6175 —
+`setSessionName`→`_extensionRunner.emit` + `SessionInfoChangedEvent` type
+re-exports; extension-event lifecycle on agent-session-runtime, same class as
+the compaction-trio / `5b9b70d2` rulings — Go has no name-write/extension-runner
+consumer); `2117b61c` (**handle undici mid-stream client errors**, #6133 —
+`core/http-dispatcher.ts`, a Node/undici `EventEmitter` unhandled-`error` crash
+workaround; a runtime defect Go's `net/http` does not have, same class as the
+omitted bun `/proc/self/environ` fallback); `6564d947` + `9be55bc7`
+(**configurable assistant output padding**, #6168 — `core/settings-manager.ts`
+(deliberately-not-ported list) + `modes/interactive/*`). No new boundary
+questions.
 
 ## Drift at last sync check (2026-06-29) — pin advanced to 541d11f7
 
