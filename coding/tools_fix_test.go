@@ -335,6 +335,38 @@ func TestBashFractionalTimeout(t *testing.T) {
 	}
 }
 
+func TestBashRejectsNonPositiveTimeout(t *testing.T) {
+	dir := t.TempDir()
+	// pi resolveTimeoutMs rejects <= 0 (and non-finite) before spawning; the raw
+	// error surfaces as the tool result unchanged (bash.ts).
+	for _, tv := range []any{0, 0.0, -1, -0.5} {
+		_, err := run(t, bashTool(dir), map[string]any{"command": "echo hi", "timeout": tv})
+		if err == nil {
+			t.Fatalf("timeout=%v: expected rejection", tv)
+		}
+		if got, want := err.Error(), "Invalid timeout: must be a finite number of seconds"; got != want {
+			t.Fatalf("timeout=%v\n got: %q\nwant: %q", tv, got, want)
+		}
+	}
+}
+
+func TestBashRejectsOversizedTimeout(t *testing.T) {
+	dir := t.TempDir()
+	// timeout * 1000 must not exceed INT32_MAX ms; the message renders
+	// MAX_TIMEOUT_SECONDS (2147483.647) byte-identically to pi.
+	_, err := run(t, bashTool(dir), map[string]any{"command": "echo hi", "timeout": 2147484.0})
+	if err == nil {
+		t.Fatal("expected oversized-timeout rejection")
+	}
+	if got, want := err.Error(), "Invalid timeout: maximum is 2147483.647 seconds"; got != want {
+		t.Fatalf("oversized timeout\n got: %q\nwant: %q", got, want)
+	}
+	// The exact boundary (2147483647 ms) is accepted, not rejected.
+	if _, err := run(t, bashTool(dir), map[string]any{"command": "echo hi", "timeout": 2147483.647}); err != nil {
+		t.Fatalf("boundary timeout must be accepted: %v", err)
+	}
+}
+
 func TestBashTempFilePattern(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses seq")

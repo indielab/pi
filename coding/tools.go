@@ -697,6 +697,14 @@ func restoreLineEndings(s, ending string) string {
 // bash
 // ---------------------------------------------------------------------------
 
+// pi MAX_TIMEOUT_MS (INT32_MAX): the bash tool rejects any timeout that would
+// exceed this many milliseconds (bash.ts resolveTimeoutMs).
+const maxBashTimeoutMs = 2147483647
+
+// maxBashTimeoutSeconds renders pi's MAX_TIMEOUT_SECONDS (2147483.647) for the
+// rejection message, byte-identical to JS `${MAX_TIMEOUT_MS / 1000}`.
+var maxBashTimeoutSeconds = strconv.FormatFloat(float64(maxBashTimeoutMs)/1000, 'f', -1, 64)
+
 func bashTool(cwd string) agent.AgentTool {
 	return agent.AgentTool{
 		Name:        "bash",
@@ -708,6 +716,19 @@ func bashTool(cwd string) agent.AgentTool {
 		),
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			command := argStr(params, "command")
+			// pi resolveTimeoutMs (bash.ts) validates the timeout before spawning:
+			// reject a non-positive value and cap it at INT32_MAX ms, surfacing the
+			// raw error as the tool result. JSON numbers are always finite, so pi's
+			// !Number.isFinite guard collapses into the non-positive rejection here.
+			timeout, hasTimeout := argFloat(params, "timeout")
+			if hasTimeout {
+				if timeout <= 0 {
+					return agent.AgentToolResult{}, fmt.Errorf("Invalid timeout: must be a finite number of seconds")
+				}
+				if timeout*1000 > maxBashTimeoutMs {
+					return agent.AgentToolResult{}, fmt.Errorf("Invalid timeout: maximum is %s seconds", maxBashTimeoutSeconds)
+				}
+			}
 			shell, shellArgs, useStdin, err := getShellConfig()
 			if err != nil {
 				return agent.AgentToolResult{}, err
@@ -717,8 +738,7 @@ func bashTool(cwd string) agent.AgentTool {
 			}
 			runCtx := ctx
 			var cancel context.CancelFunc
-			timeout, hasTimeout := argFloat(params, "timeout")
-			if hasTimeout && timeout > 0 {
+			if hasTimeout {
 				runCtx, cancel = context.WithTimeout(ctx, time.Duration(timeout*float64(time.Second)))
 				defer cancel()
 			}
