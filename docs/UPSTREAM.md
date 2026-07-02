@@ -10,7 +10,7 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `8c943640` — "fix(ai): remove stale model metadata fallbacks" (2026-07-01; this cycle folds all deferred catalog churn into the **v0.80.3** release regen and ports bash-timeout validation `cbcf4e04`+`85b7c247`); previous pins `9be55bc7` (06-30), `541d11f7` (06-29), `5a073885` (06-27), `622eca76` (06-26), `1d486163` (06-25), `09f10595` (06-25), `a2e3e9d8` (06-24), `470a4736` (06-23), `3b561346` (06-22), `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17). The models-runtime migration is now **complete**: the `732bb161` substrate (06-23) plus the 06-24 follow-through (catalog-data reorg landed via the 0.80.2 regen; request-scoped auth `ef231c49`; api_key/env credential `49fbe683`; OpenAI Responses terminal events `cd95c274`; anthropic compat→catalog `6184307c`; header-only client auth + vercel ungate `129eb460`). |
+| TS source fully reviewed/ported | `114bacf3` — "fix(ai): enable Bedrock prompt caching for Claude 5" (2026-07-02; report-only pin advance — 0 ports, 11 n/a, 0 decides, no release tag crossed; every byte-golden untouched at 0.80.3); previous pins `8c943640` (07-01; v0.80.3 regen + bash-timeout `cbcf4e04`+`85b7c247`), `9be55bc7` (06-30), `541d11f7` (06-29), `5a073885` (06-27), `622eca76` (06-26), `1d486163` (06-25), `09f10595` (06-25), `a2e3e9d8` (06-24), `470a4736` (06-23), `3b561346` (06-22), `2417adb4` (06-21), `56b22768` (06-19), `29c1504c` (06-17). The models-runtime migration is now **complete**: the `732bb161` substrate (06-23) plus the 06-24 follow-through (catalog-data reorg landed via the 0.80.2 regen; request-scoped auth `ef231c49`; api_key/env credential `49fbe683`; OpenAI Responses terminal events `cd95c274`; anthropic compat→catalog `6184307c`; header-only client auth + vercel ungate `129eb460`). |
 | npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.80.3** (catalog endpoint-pinned, re-derived byte-identical from the build's `dist/models.generated.js` MODELS, lock integrity verified against the registry — `sha512-jPZLMeGL…z5vdA==`; subsumes 0.80.0–0.80.2); `pi-coding-agent` **0.80.3** (integrity `sha512-TIggw9gC…MTgGA==`; the session/image goldens are role/text + image-decision projections that carry no `Usage`, so the 0.78.1→0.80.3 bump leaves them unchanged) |
 | Parity proofs at the pin | catalog regen endpoint-pinned byte-identical (**397,575 B**, independently re-derived from the 0.80.3 build's MODELS and `cmp`-clean) · session tree 8/8 · image decisions 8/8 · in-repo differential parity 36/36 (request builders untouched this cycle) · bash-timeout validation faithful — both error strings byte-exact, boundary `2147483.647` s accepted, new tests mutation-verified non-vacuous · fireworks/cf anthropic compat coupling still 0 mismatches |
 | Reviewed via | initial port + parity sweeps 1–2 (`3be3911`), registration fix (`b09cb46`); 2026-06-22 v0.79.10 cycle; 2026-06-24 v0.80.2 cycle independent go-review (ship, 3 optional LOW nits) + adversarial parity review (all 7 commits faithful, 6/6 differential, all 3 deliberate divergences confirmed observably-faithful); 2026-06-25 cycle (5 ports, no release) independent go-review (ship; one LOW `strings.Join` cleanup applied) + adversarial parity review (all 5 faithful; responses test-change mutation-verified non-vacuous; `reasoning,omitempty` confirmed acceptable-latent); 2026-06-26 cycle (1 port, no release) independent go-review (ship, no findings) + adversarial parity review (faithful; openai default-model lock mutation-verified non-vacuous); 2026-06-29 cycle (1 port, no release) independent go-review (ship, no findings) + adversarial parity review (faithful; zai `clear_thinking:false` mutation-verified non-vacuous; confirmed no 0.80.2-derived golden pins the zai request shape, so no latent divergence); 2026-06-30 cycle (1 port, no release) independent go-review (ship; 2 LOW cosmetic nits, not applied) + adversarial parity review (faithful — the 4000-char body-truncation cap is the one architecture-independent behavior; the SDK-field-probing layer is N/A since Go reads the raw `resp.Body`; truncation + metadata.raw-dedup tests mutation-verified non-vacuous; two non-blocking unpinned divergences documented — see the 2026-06-30 drift note); 2026-07-01 v0.80.3 cycle (release regen + 1 behavior port) independent go-review (ship; one LOW computed-var-vs-literal-const nit, not applied) + adversarial parity review (both changes faithful — catalog `cmp`-identical to an independent re-derivation from the 0.80.3 build; bash-timeout error strings byte-exact, boundary accepted, both new tests mutation-verified non-vacuous on a worktree copy) |
@@ -133,6 +133,57 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   extension resource-loader; `skills.ts` untouched). Future trust commits are
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
+
+## Drift at last sync check (2026-07-02) — pin advanced to 114bacf3
+
+**Caught up to `114bacf3`.** Delta `8c943640 → 114bacf3` fully processed: 11
+main-line changes — **0 port, 11 n/a, 0 decides**. **No release tag crossed** —
+no `package.json` bump in the range; `pi-ai` and `pi-coding-agent` both stay
+**0.80.3**, so every byte-golden (catalog, session tree, image decisions,
+differential request diff) is untouched. Report-only triage; no Go code changed
+(pin advance only). Four changes touched core-adjacent files and were judged
+from the real diff:
+
+- **`ba10b60b`** (**add entry renderers for session entries**) — a 174-line
+  `core/session-manager.ts` change, but a **behavior-preserving refactor**: it
+  extracts `buildContextEntries` + `sessionEntryToContextMessages`, and
+  `buildSessionContext`'s LLM **message-list output is unchanged** (compaction
+  ordering, firstKeptEntryId slicing, and the message/custom_message/
+  branch_summary/compaction→summary/custom→none projections all match the old
+  `appendMessage` path). The new capability — preserving non-message entries in
+  the selected range + `pi.registerEntryRenderer(customType, renderer)`
+  custom-entry rendering — is entirely **interactive-mode/extensions surface**
+  with no Go consumer (Go has no TUI/extension runner). Go's `session_tree.go`
+  mirror of `buildSessionContext`+`convertToLlm` stays faithful.
+- **`f58c1156`** (**serialize split-turn compaction summaries**, #5536) —
+  converts pi's two split-turn summaries from `Promise.all` (parallel) to
+  sequential (history first, early-return on failure, then turn-prefix). The Go
+  port **already does exactly this** (`coding/compaction.go:389-405`); pi is
+  converging to the Go behavior. Already-faithful. (Minor: the note at
+  `coding/compaction.go:389-390` — "pi runs the two split-turn summaries in
+  parallel; we run them sequentially" — is now stale since pi is sequential too;
+  cosmetic doc update, port is already correct.)
+- **`f8bec25f`** (**surface auth storage save failures**, #6223) —
+  `core/auth-storage.ts` host-side credential store (disk write + lock). **No Go
+  analog**: Go ports the `packages/ai/src/auth/` resolution layer, not the
+  host-side disk store.
+- **`ca09b2b1`** (**skip unauthenticated default model**, #6231) — gates
+  `findInitialModel`'s saved-default path on `modelRegistry.hasConfiguredAuth`.
+  Go **deliberately doesn't port `findInitialModel`** (no settings manager;
+  `DefaultModelSpec` fixed-default divergence, `coding/resolve.go:12-16`).
+
+n/a (rest, diffstat-dispatched): `e285e90f` (**remove Copilot Sonnet 5 fallback
+in generate-models** — generator-only `scripts/generate-models.ts`; effect lands
+in regenerated data, folds into the **next release regen** — expect copilot
+catalog data to change then, not a surprise); `e2ccdc85` (**delay Copilot
+device-code token polling**, #6187 — `utils/oauth/*`, OAuth not ported);
+`114bacf3` (**enable Bedrock prompt caching for Claude 5**, #6235 —
+`api/bedrock-converse-stream.ts`, Bedrock provider not ported); `67575615`
+(**abort stuck context hooks**, #6234 — `core/extensions/runner.ts`, extensions
+runtime not ported); `ec857fec` (**set executionMode: sequential on question
+example tool** — `examples/extensions/question.ts`); `45c0fe78` + `9f91da21`
+(**approve contributors cyzlmh / xz-dev** — `.github/APPROVED_CONTRIBUTORS`). No
+new boundary questions.
 
 ## Drift at last sync check (2026-07-01) — pin advanced to 8c943640
 
