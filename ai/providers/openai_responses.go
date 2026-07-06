@@ -14,6 +14,10 @@ import (
 	"github.com/sky-valley/pi/ai"
 )
 
+// openaiResponsesMinOutputTokens is the floor OpenAI Responses enforces on
+// max_output_tokens — the API rejects values below 16 (#6265).
+const openaiResponsesMinOutputTokens = 16
+
 // openaiToolCallProviders are the providers whose tool-call ids carry the
 // Responses-specific `callId|itemId` shape (port of OPENAI_TOOL_CALL_PROVIDERS).
 var openaiToolCallProviders = map[string]bool{
@@ -663,9 +667,14 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 	if retention == ai.CacheLong && getResponsesCompat(model).SupportsLongCacheRetention {
 		params["prompt_cache_retention"] = "24h"
 	}
-	// pi `if (options?.maxTokens)` — JS truthiness, so 0 is omitted.
+	// pi `if (options?.maxTokens)` — JS truthiness, so 0 is omitted. pi then
+	// floors the value at 16 (Math.max) since the Responses API rejects lower.
 	if opts.MaxTokens != nil && *opts.MaxTokens != 0 {
-		params["max_output_tokens"] = *opts.MaxTokens
+		mo := *opts.MaxTokens
+		if mo < openaiResponsesMinOutputTokens {
+			mo = openaiResponsesMinOutputTokens
+		}
+		params["max_output_tokens"] = mo
 	}
 	if opts.Temperature != nil {
 		params["temperature"] = *opts.Temperature

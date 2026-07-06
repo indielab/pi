@@ -1078,6 +1078,22 @@ func TestResponsesMaxTokensZeroOmitted(t *testing.T) {
 	}
 }
 
+// max_output_tokens is floored at 16 — the Responses API rejects lower (#6265).
+func TestResponsesMaxTokensFloor(t *testing.T) {
+	model := reasoningModel()
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	small := 8
+	body := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{MaxTokens: &small}})
+	if body["max_output_tokens"] != openaiResponsesMinOutputTokens {
+		t.Fatalf("max_output_tokens = %v, want %d floor", body["max_output_tokens"], openaiResponsesMinOutputTokens)
+	}
+	atFloor := 16
+	body2 := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{MaxTokens: &atFloor}})
+	if body2["max_output_tokens"] != 16 {
+		t.Fatalf("at-floor value must pass through: %v", body2["max_output_tokens"])
+	}
+}
+
 // D7c: an invalid thinkingSignature on a same-model replay fails the stream
 // (pi's JSON.parse throws) instead of silently dropping the block.
 func TestResponsesInvalidThinkingSignatureFailsStream(t *testing.T) {
