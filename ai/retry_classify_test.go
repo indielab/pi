@@ -54,6 +54,11 @@ func TestIsRetryableAssistantError(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "cloudflare 524 timeout is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "524 status code (no body)"},
+			want: true,
+		},
+		{
 			name: "non-matching error message is not retryable",
 			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "model refused to answer"},
 			want: false,

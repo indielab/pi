@@ -39,6 +39,7 @@ var retryableProviderErrorPattern = regexp.MustCompile(`(?i)` + strings.Join([]s
 	"502",
 	"503",
 	"504",
+	"524", // Cloudflare origin-timeout status (#6239)
 	"service.?unavailable",
 	"server.?error",
 	"internal.?error",
