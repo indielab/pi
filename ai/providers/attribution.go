@@ -9,8 +9,8 @@ import (
 )
 
 // Provider attribution headers, ported faithfully from pi
-// core/provider-attribution.ts (at upstream f8a77f47, which adds the Vercel AI
-// Gateway branch). pi merges these in sdk.ts streamFn via
+// core/provider-attribution.ts (at upstream 83cbfc65, which removed the Vercel
+// AI Gateway branch). pi merges these in sdk.ts streamFn via
 // mergeProviderAttributionHeaders, which builds
 //
 //	{ ...getSessionHeaders(), ...getDefaultAttributionHeaders() }
@@ -36,7 +36,6 @@ const (
 	attrCloudflareAPIHost       = "api.cloudflare.com"
 	attrCloudflareAIGatewayHost = "gateway.ai.cloudflare.com"
 	attrOpenCodeHost            = "opencode.ai"
-	attrVercelGatewayHost       = "ai-gateway.vercel.sh"
 )
 
 // matchesAttributionHost reports whether baseURL's hostname equals expectedHost.
@@ -64,10 +63,6 @@ func isCloudflareAttributionModel(model *ai.Model) bool {
 		model.Provider == "cloudflare-ai-gateway" ||
 		matchesAttributionHost(model.BaseURL, attrCloudflareAPIHost) ||
 		matchesAttributionHost(model.BaseURL, attrCloudflareAIGatewayHost)
-}
-
-func isVercelGatewayAttributionModel(model *ai.Model) bool {
-	return model.Provider == "vercel-ai-gateway" || matchesAttributionHost(model.BaseURL, attrVercelGatewayHost)
 }
 
 // isInstallTelemetryEnabled mirrors pi telemetry.ts isInstallTelemetryEnabled.
@@ -114,12 +109,6 @@ func getDefaultAttributionHeaders(model *ai.Model) map[string]string {
 	case isCloudflareAttributionModel(model):
 		return map[string]string{
 			"User-Agent": "pi-coding-agent",
-		}
-	case isVercelGatewayAttributionModel(model):
-		// f8a77f47: Vercel AI Gateway branch.
-		return map[string]string{
-			"http-referer": "https://pi.dev",
-			"x-title":      "pi",
 		}
 	}
 	return nil

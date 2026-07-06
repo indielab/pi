@@ -11,7 +11,7 @@ import (
 )
 
 // Provider attribution header tests. Faithful to pi
-// core/provider-attribution.ts at upstream f8a77f47 (which adds the Vercel AI
+// core/provider-attribution.ts at upstream 83cbfc65 (which removed the Vercel AI
 // Gateway branch). The request-body differential tests do not cover headers, so
 // these assert the exact header names + values land on the outgoing request,
 // across each API/provider pi applies attribution to, plus the precedence rule
@@ -56,14 +56,15 @@ func TestAttributionOpenRouter(t *testing.T) {
 	}
 }
 
-// f8a77f47: Vercel AI Gateway attribution branch.
-func TestAttributionVercelGateway(t *testing.T) {
+// 83cbfc65: the Vercel AI Gateway attribution branch was removed — vercel-ai-gateway
+// requests must carry no attribution headers.
+func TestAttributionVercelGatewayNone(t *testing.T) {
 	h := captureOpenAICompletionsHeaders(t, "vercel-ai-gateway", "", nil)
-	if got := h.Get("http-referer"); got != "https://pi.dev" {
-		t.Fatalf("http-referer = %q, want https://pi.dev", got)
+	if got := h.Get("http-referer"); got != "" {
+		t.Fatalf("http-referer = %q, want none", got)
 	}
-	if got := h.Get("x-title"); got != "pi" {
-		t.Fatalf("x-title = %q, want pi", got)
+	if got := h.Get("x-title"); got != "" {
+		t.Fatalf("x-title = %q, want none", got)
 	}
 }
 
@@ -221,10 +222,9 @@ func TestAttributionOptsHeadersOverrideSessionHeaders(t *testing.T) {
 	}
 }
 
-// Attribution is wired into every provider pi applies it to. Cover the other
-// three APIs (responses, anthropic, google) for the Vercel branch.
-
-func TestAttributionResponsesVercel(t *testing.T) {
+// 83cbfc65: vercel-ai-gateway no longer receives attribution on any API —
+// confirm the responses path also emits no attribution headers.
+func TestAttributionResponsesVercelNone(t *testing.T) {
 	t.Setenv("PI_TELEMETRY", "1")
 	var got http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -236,8 +236,8 @@ func TestAttributionResponsesVercel(t *testing.T) {
 	model := &ai.Model{ID: "m", Api: ai.APIOpenAIResponses, Provider: "vercel-ai-gateway", BaseURL: server.URL, MaxTokens: 4096}
 	StreamOpenAIResponses(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
 		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
-	if got.Get("http-referer") != "https://pi.dev" || got.Get("x-title") != "pi" {
-		t.Fatalf("responses vercel attribution wrong: http-referer=%q x-title=%q", got.Get("http-referer"), got.Get("x-title"))
+	if got.Get("http-referer") != "" || got.Get("x-title") != "" {
+		t.Fatalf("responses vercel attribution should be absent: http-referer=%q x-title=%q", got.Get("http-referer"), got.Get("x-title"))
 	}
 }
 
@@ -252,7 +252,8 @@ func TestAttributionAnthropicOpenRouter(t *testing.T) {
 	}
 }
 
-func TestAttributionGoogleVercel(t *testing.T) {
+// 83cbfc65: the google path likewise emits no attribution for vercel-ai-gateway.
+func TestAttributionGoogleVercelNone(t *testing.T) {
 	t.Setenv("PI_TELEMETRY", "1")
 	var got http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -264,8 +265,8 @@ func TestAttributionGoogleVercel(t *testing.T) {
 	model := &ai.Model{ID: "gemini", Api: ai.APIGoogleGenerativeAI, Provider: "vercel-ai-gateway", BaseURL: server.URL, MaxTokens: 4096}
 	StreamGoogle(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
 		&GoogleOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
-	if got.Get("http-referer") != "https://pi.dev" || got.Get("x-title") != "pi" {
-		t.Fatalf("google vercel attribution wrong: http-referer=%q x-title=%q", got.Get("http-referer"), got.Get("x-title"))
+	if got.Get("http-referer") != "" || got.Get("x-title") != "" {
+		t.Fatalf("google vercel attribution should be absent: http-referer=%q x-title=%q", got.Get("http-referer"), got.Get("x-title"))
 	}
 }
 
@@ -285,7 +286,8 @@ func TestAttributionHostDetection(t *testing.T) {
 		{"nvidia host", &ai.Model{Provider: "custom", BaseURL: "https://integrate.api.nvidia.com/v1"}, "X-BILLING-INVOKE-ORIGIN", "Pi"},
 		{"cloudflare api host", &ai.Model{Provider: "custom", BaseURL: "https://api.cloudflare.com/x"}, "User-Agent", "pi-coding-agent"},
 		{"cloudflare gateway host", &ai.Model{Provider: "custom", BaseURL: "https://gateway.ai.cloudflare.com/x"}, "User-Agent", "pi-coding-agent"},
-		{"vercel gateway host", &ai.Model{Provider: "custom", BaseURL: "https://ai-gateway.vercel.sh/v1"}, "http-referer", "https://pi.dev"},
+		// 83cbfc65: vercel gateway host no longer produces attribution headers.
+		{"vercel gateway host (none)", &ai.Model{Provider: "custom", BaseURL: "https://ai-gateway.vercel.sh/v1"}, "http-referer", ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
