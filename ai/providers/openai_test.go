@@ -1266,3 +1266,32 @@ func TestOpenRouterMetadataRawDedup(t *testing.T) {
 		t.Fatalf("guard mutated message: %q", got)
 	}
 }
+
+// pi #6290 (upstream 279f53b0): an empty tool result with no image content must
+// send "(no tool output)", not "(see attached image)", so the model doesn't
+// hallucinate an attachment for commands that produce no output.
+func TestOpenAIEmptyToolResultNoImagePlaceholder(t *testing.T) {
+	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: "https://api.openai.com/v1"}
+	body := buildOpenAIParams(model, ai.Context{Messages: []ai.Message{
+		ai.NewUserText("run it", 1),
+		ai.AssistantMessage{
+			Content: ai.ContentList{ai.ToolCall{ID: "call_1", Name: "bash", Arguments: map[string]any{"command": "true"}}},
+			Api:     ai.APIOpenAICompletions, Provider: "openai", Model: "gpt-test", StopReason: ai.StopToolUse,
+		},
+		ai.ToolResultMessage{ToolCallID: "call_1", ToolName: "bash", Content: ai.ContentList{ai.TextContent{Text: ""}}, Timestamp: 2},
+	}}, &OpenAIOptions{})
+	msgs, _ := body["messages"].([]map[string]any)
+	var toolContent any
+	found := false
+	for _, m := range msgs {
+		if m["role"] == "tool" {
+			toolContent, found = m["content"], true
+		}
+	}
+	if !found {
+		t.Fatalf("no tool message emitted: %#v", msgs)
+	}
+	if toolContent != "(no tool output)" {
+		t.Fatalf("empty no-image tool result content = %#v, want %q", toolContent, "(no tool output)")
+	}
+}

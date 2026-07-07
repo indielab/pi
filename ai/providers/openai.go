@@ -671,7 +671,14 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 				textResult := strings.Join(text, "\n")
 				content := textResult
 				if content == "" {
-					content = "(see attached image)"
+					// Only claim an attached image when one is actually present;
+					// empty results with no image get a distinct placeholder so the
+					// model doesn't hallucinate an attachment (pi #6290).
+					if hasImages {
+						content = "(see attached image)"
+					} else {
+						content = "(no tool output)"
+					}
 				}
 				toolMsg := map[string]any{
 					"role":         "tool",

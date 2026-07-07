@@ -919,8 +919,12 @@ func responsesInput(model *ai.Model, req ai.Context) ([]any, error) {
 				outputVal = parts
 			} else if hasText {
 				outputVal = sanitizeSurrogates(textResult)
-			} else {
+			} else if hasImages {
 				outputVal = sanitizeSurrogates("(see attached image)")
+			} else {
+				// No text and no image: distinct placeholder so the model doesn't
+				// hallucinate an attachment for empty output (pi #6290).
+				outputVal = sanitizeSurrogates("(no tool output)")
 			}
 
 			items = append(items, map[string]any{

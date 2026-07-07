@@ -1387,3 +1387,30 @@ data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
 		t.Fatalf("text landed on wrong block: %q", text.Text)
 	}
 }
+
+// pi #6290 (upstream 279f53b0): an empty tool result with no image content must
+// send "(no tool output)" as the function_call_output, not "(see attached image)".
+func TestResponsesEmptyToolResultNoImagePlaceholder(t *testing.T) {
+	model := &ai.Model{ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "openai", Reasoning: true, Input: []string{"text", "image"}}
+	req := ai.Context{Messages: []ai.Message{
+		ai.NewUserText("run it", 1),
+		ai.AssistantMessage{
+			Content: ai.ContentList{ai.ToolCall{ID: "call_1|fc_1", Name: "bash", Arguments: map[string]any{"command": "true"}}},
+			Api:     ai.APIOpenAIResponses, Provider: "openai", Model: "gpt-5", StopReason: ai.StopToolUse,
+		},
+		ai.ToolResultMessage{ToolCallID: "call_1|fc_1", ToolName: "bash", Content: ai.ContentList{ai.TextContent{Text: ""}}, Timestamp: 2},
+	}}
+	in := mustResponsesInput(t, model, req)
+	found := false
+	for _, it := range in {
+		if m, ok := it.(map[string]any); ok && m["type"] == "function_call_output" {
+			found = true
+			if m["output"] != "(no tool output)" {
+				t.Fatalf("empty no-image output = %#v, want %q", m["output"], "(no tool output)")
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("no function_call_output emitted: %#v", in)
+	}
+}
