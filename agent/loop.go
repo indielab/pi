@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 
 	"github.com/sky-valley/pi/ai"
@@ -152,7 +153,15 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 			toolResults := []ai.ToolResultMessage{}
 			hasMoreToolCalls = false
 			if len(toolCalls) > 0 {
-				batch := executeToolCalls(ctx, current, message, config, emit)
+				// A "length" stop means the output was cut off by the token limit, so
+				// every tool call in the message may carry truncated arguments. Fail
+				// them all instead of executing potentially borked calls.
+				var batch executedBatch
+				if message.StopReason == ai.StopLength {
+					batch = failToolCallsFromTruncatedMessage(toolCalls, emit)
+				} else {
+					batch = executeToolCalls(ctx, current, message, config, emit)
+				}
 				toolResults = append(toolResults, batch.messages...)
 				hasMoreToolCalls = !batch.terminate
 				for _, r := range toolResults {
@@ -365,6 +374,34 @@ func findTool(tools []AgentTool, name string) (AgentTool, bool) {
 		}
 	}
 	return AgentTool{}, false
+}
+
+// failToolCallsFromTruncatedMessage fails all tool calls from an assistant
+// message that was truncated by the output token limit. Streamed tool-call
+// arguments are finalized with a best-effort JSON salvage parser, so a
+// truncated message can yield tool calls whose arguments parse and validate but
+// are silently incomplete. None of them are safe to execute; report each as an
+// error so the model can re-issue them.
+func failToolCallsFromTruncatedMessage(toolCalls []ai.ToolCall, emit EventSink) executedBatch {
+	messages := make([]ai.ToolResultMessage, 0, len(toolCalls))
+	for _, tc := range toolCalls {
+		mustEmit(emit, AgentEvent{Type: EvToolExecutionStart, ToolCallID: tc.ID, ToolName: tc.Name, Args: tc.Arguments})
+		fo := finalizedOutcome{
+			toolCall: tc,
+			// %s, not %q: pi interpolates the name into a template literal
+			// unescaped, so a name containing " or \ must pass through raw.
+			result: errorToolResult(fmt.Sprintf(
+				`Tool call "%s" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
+				tc.Name,
+			)),
+			isError: true,
+		}
+		emitToolExecutionEnd(fo, emit)
+		trm := createToolResultMessage(fo)
+		emitToolResultMessage(trm, emit)
+		messages = append(messages, trm)
+	}
+	return executedBatch{messages: messages, terminate: false}
 }
 
 func executeToolCalls(ctx context.Context, current *AgentContext, msg *ai.AssistantMessage, config AgentLoopConfig, emit EventSink) executedBatch {

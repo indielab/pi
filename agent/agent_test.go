@@ -1089,6 +1089,129 @@ func TestAgentIgnoresLateToolUpdates(t *testing.T) {
 	}
 }
 
+// Mirrors pi's "should not execute tool calls from a length-truncated
+// assistant message" (agent-loop.test.ts, upstream 351efc82). The salvage
+// parser can yield arguments that validate but are silently truncated, so a
+// StopLength turn must fail every tool call instead of running it, and the loop
+// must continue so the model can re-issue.
+func TestAgentFailsToolCallsFromLengthTruncatedMessage(t *testing.T) {
+	var executed []string
+	tool := AgentTool{
+		Name:        "echo",
+		Description: "echo input",
+		Parameters:  ai.Object(ai.Prop("value", ai.String())),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			executed = append(executed, params["value"].(string))
+			return AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "echoed"}}}, nil
+		},
+	}
+
+	// Output hit the token limit mid tool call: arguments may be truncated. Two
+	// calls, because the contract is that EVERY call in the message fails.
+	truncated := assistantWithToolCall("tool-1", "echo", map[string]any{"value": "hel"})
+	truncated.Content = append(truncated.Content, ai.ToolCall{ID: "tool-2", Name: "echo", Arguments: map[string]any{"value": "wor"}})
+	truncated.StopReason = ai.StopLength
+
+	var streamCalls int32
+	scripted := scriptedStream(
+		truncated,
+		&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "done"}}, StopReason: ai.StopStop},
+	)
+	counting := func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		atomic.AddInt32(&streamCalls, 1)
+		return scripted(ctx, model, req, opts)
+	}
+
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
+		StreamFn:     counting,
+	})
+
+	// The per-call event sequence, in emission order.
+	type endEvent struct {
+		toolCallID string
+		isError    bool
+		text       string
+	}
+	var ends []endEvent
+	var seq []EventType
+	a.Subscribe(func(ctx context.Context, e AgentEvent) error {
+		switch e.Type {
+		case EvToolExecutionStart, EvToolExecutionEnd:
+			seq = append(seq, e.Type)
+		}
+		if e.Type == EvToolExecutionEnd {
+			ev := endEvent{toolCallID: e.ToolCallID, isError: e.IsError}
+			if r, ok := e.Result.(AgentToolResult); ok {
+				for _, c := range r.Content {
+					if tc, ok := c.(ai.TextContent); ok {
+						ev.text = tc.Text
+					}
+				}
+			}
+			ends = append(ends, ev)
+		}
+		return nil
+	})
+
+	if err := a.Prompt(context.Background(), "echo something"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Neither tool may execute with potentially truncated arguments.
+	if len(executed) != 0 {
+		t.Fatalf("tool must not execute on a length-truncated message, got %v", executed)
+	}
+
+	// Every tool call in the message fails, in order.
+	if len(ends) != 2 {
+		t.Fatalf("expected 2 tool_execution_end events, got %d: %#v", len(ends), ends)
+	}
+	// Byte-exact against pi's message (agent-loop.ts failToolCallsFromTruncatedMessage).
+	want := `Tool call "echo" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`
+	for i, wantID := range []string{"tool-1", "tool-2"} {
+		if ends[i].toolCallID != wantID {
+			t.Fatalf("tool_execution_end[%d]: got toolCallID %q, want %q", i, ends[i].toolCallID, wantID)
+		}
+		if !ends[i].isError {
+			t.Fatalf("tool_execution_end[%d]: expected the failed tool call to be marked isError", i)
+		}
+		if ends[i].text != want {
+			t.Fatalf("tool_execution_end[%d] text mismatch:\n got: %q\nwant: %q", i, ends[i].text, want)
+		}
+	}
+	// pi emits start->end per call, sequentially, not start,start,end,end.
+	wantSeq := []EventType{EvToolExecutionStart, EvToolExecutionEnd, EvToolExecutionStart, EvToolExecutionEnd}
+	if len(seq) != len(wantSeq) {
+		t.Fatalf("unexpected tool event sequence: %v", seq)
+	}
+	for i := range wantSeq {
+		if seq[i] != wantSeq[i] {
+			t.Fatalf("tool event sequence mismatch:\n got: %v\nwant: %v", seq, wantSeq)
+		}
+	}
+
+	// The loop continues so the model can re-issue the tool calls.
+	if got := atomic.LoadInt32(&streamCalls); got != 2 {
+		t.Fatalf("expected the loop to continue (2 stream calls), got %d", got)
+	}
+
+	st := a.State()
+	// user, assistant(truncated toolcalls), toolResult x2 (error), assistant(final)
+	if len(st.Messages) != 5 {
+		t.Fatalf("expected 5 messages, got %d: %#v", len(st.Messages), st.Messages)
+	}
+	for _, i := range []int{2, 3} {
+		trm, ok := st.Messages[i].(ai.ToolResultMessage)
+		if !ok || !trm.IsError {
+			t.Fatalf("expected an error tool result at message[%d], got %#v", i, st.Messages[i])
+		}
+	}
+	if final, ok := asAssistant(st.Messages[4]); !ok || textOf(final) != "done" {
+		t.Fatalf("expected the run to end on an assistant message, got %#v", st.Messages[4])
+	}
+}
+
 func textOf(m *ai.AssistantMessage) string {
 	for _, c := range m.Content {
 		if t, ok := c.(ai.TextContent); ok {
