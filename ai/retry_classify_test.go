@@ -59,6 +59,11 @@ func TestIsRetryableAssistantError(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "bun fetch socket drop is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"},
+			want: true,
+		},
+		{
 			name: "non-matching error message is not retryable",
 			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "model refused to answer"},
 			want: false,
