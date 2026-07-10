@@ -85,6 +85,10 @@ var retryableProviderErrorPattern = regexp.MustCompile(`(?i)` + strings.Join([]s
 	"you can retry your request",
 	"try your request again",
 	"please retry your request",
+
+	// gRPC based providers (e.g. NVIDIA NIM) surface transient throttles as a
+	// ResourceExhausted status (#6449).
+	"ResourceExhausted",
 }, "|"))
 
 // IsRetryableAssistantError classifies whether a failed assistant message looks

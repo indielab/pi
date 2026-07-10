@@ -59,6 +59,11 @@ func TestIsRetryableAssistantError(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "nvidia NIM ResourceExhausted is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "ResourceExhausted: Worker local total request limit reached (288/48)"},
+			want: true,
+		},
+		{
 			name: "bun fetch socket drop is retryable",
 			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()"},
 			want: true,
