@@ -1414,3 +1414,30 @@ func TestResponsesEmptyToolResultNoImagePlaceholder(t *testing.T) {
 		t.Fatalf("no function_call_output emitted: %#v", in)
 	}
 }
+
+// Mirrors pi openai-responses-terminal-event.test.ts (upstream a9ecf301):
+// input_tokens includes both cached and cache-write tokens, so both are
+// subtracted (clamped at 0) to get non-cached input, and cache_write_tokens
+// surfaces as cacheWrite.
+func TestOpenAIResponsesUsageCacheWrite(t *testing.T) {
+	sse := "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_completed\",\"status\":\"completed\"," +
+		"\"usage\":{\"input_tokens\":20,\"output_tokens\":7,\"total_tokens\":27," +
+		"\"input_tokens_details\":{\"cached_tokens\":2,\"cache_write_tokens\":3}}}}\n\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+
+	model := &ai.Model{
+		ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "openai", BaseURL: server.URL,
+		MaxTokens: 4096, Cost: ai.ModelCost{Input: 1.25, Output: 10},
+	}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	final := StreamOpenAIResponses(context.Background(), model, req, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{APIKey: "sk"}}).Result()
+
+	if final.Usage.Input != 15 || final.Usage.CacheRead != 2 || final.Usage.CacheWrite != 3 ||
+		final.Usage.Output != 7 || final.Usage.TotalTokens != 27 {
+		t.Fatalf("usage wrong: %+v (want Input 15, CacheRead 2, CacheWrite 3, Output 7, Total 27)", final.Usage)
+	}
+}

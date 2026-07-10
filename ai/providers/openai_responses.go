@@ -430,10 +430,14 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				}
 				if r.Usage != nil {
 					cached := r.Usage.InputTokensDetails.CachedTokens
+					cacheWrite := r.Usage.InputTokensDetails.CacheWriteTokens
 					output.Usage = ai.Usage{
-						Input:     r.Usage.InputTokens - cached,
-						Output:    r.Usage.OutputTokens,
-						CacheRead: cached,
+						// OpenAI includes cached and cache-write tokens in input_tokens,
+						// so subtract both (clamped at 0) to get non-cached input.
+						Input:      max(0, r.Usage.InputTokens-cached-cacheWrite),
+						Output:     r.Usage.OutputTokens,
+						CacheRead:  cached,
+						CacheWrite: cacheWrite,
 						// pi: `reasoning: output_tokens_details?.reasoning_tokens || 0`.
 						Reasoning:   r.Usage.OutputTokensDetails.ReasoningTokens,
 						TotalTokens: r.Usage.TotalTokens,
@@ -1093,7 +1097,8 @@ type responsesPayload struct {
 		OutputTokens       int `json:"output_tokens"`
 		TotalTokens        int `json:"total_tokens"`
 		InputTokensDetails struct {
-			CachedTokens int `json:"cached_tokens"`
+			CachedTokens     int `json:"cached_tokens"`
+			CacheWriteTokens int `json:"cache_write_tokens"`
 		} `json:"input_tokens_details"`
 		OutputTokensDetails struct {
 			ReasoningTokens int `json:"reasoning_tokens"`

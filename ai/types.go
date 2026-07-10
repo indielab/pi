@@ -36,6 +36,7 @@ const (
 	ThinkingMedium  ThinkingLevel = "medium"
 	ThinkingHigh    ThinkingLevel = "high"
 	ThinkingXHigh   ThinkingLevel = "xhigh"
+	ThinkingMax     ThinkingLevel = "max"
 )
 
 // ModelThinkingLevel adds "off" to the reasoning levels.
@@ -446,12 +447,25 @@ type Context struct {
 // Models
 // ---------------------------------------------------------------------------
 
-// ModelCost holds per-million-token pricing.
+// ModelCost holds per-million-token pricing, plus optional request-wide tiers.
 type ModelCost struct {
 	Input      float64 `json:"input"`
 	Output     float64 `json:"output"`
 	CacheRead  float64 `json:"cacheRead"`
 	CacheWrite float64 `json:"cacheWrite"`
+	// Tiers are request-wide pricing overrides (pi ModelCost.tiers). The highest
+	// matching input threshold applies to the full request.
+	Tiers []ModelCostTier `json:"tiers,omitempty"`
+}
+
+// ModelCostTier overrides the base per-million-token rates for a request whose
+// total input usage exceeds InputTokensAbove (pi ModelCostTier).
+type ModelCostTier struct {
+	Input            float64 `json:"input"`
+	Output           float64 `json:"output"`
+	CacheRead        float64 `json:"cacheRead"`
+	CacheWrite       float64 `json:"cacheWrite"`
+	InputTokensAbove int     `json:"inputTokensAbove"`
 }
 
 // Model describes a concrete model in the unified model system.
