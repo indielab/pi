@@ -130,7 +130,7 @@ func messageTimestamp(m Message) int64 {
 // non-aborted/non-error assistant whose usage reports a positive token count AND
 // still describes the current prefix. A later prefix message inserted after a
 // response (e.g. a compaction summary) invalidates that response's usage, since
-// the usage can no longer describe the reshaped prefix (#6...): such stale usage
+// the usage can no longer describe the reshaped prefix (#6464): such stale usage
 // is skipped even though it is chronologically later in the list.
 func getLastAssistantUsageInfo(messages []Message) (usage Usage, index int, found bool) {
 	index = -1

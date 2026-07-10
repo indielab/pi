@@ -59,13 +59,11 @@ func CalculateCost(model *Model, usage *Usage) CostBreakdown {
 	// Input-based pricing tiers: pick the highest tier whose threshold the total
 	// input usage clears, else the base rates (pi calculateCost, models.ts).
 	inputTokens := usage.Input + usage.CacheRead + usage.CacheWrite
-	rate := struct{ input, output, cacheRead, cacheWrite float64 }{
-		model.Cost.Input, model.Cost.Output, model.Cost.CacheRead, model.Cost.CacheWrite,
-	}
+	rateInput, rateOutput, rateCacheRead, rateCacheWrite := model.Cost.Input, model.Cost.Output, model.Cost.CacheRead, model.Cost.CacheWrite
 	matchedThreshold := -1
 	for _, tier := range model.Cost.Tiers {
 		if inputTokens > tier.InputTokensAbove && tier.InputTokensAbove > matchedThreshold {
-			rate.input, rate.output, rate.cacheRead, rate.cacheWrite = tier.Input, tier.Output, tier.CacheRead, tier.CacheWrite
+			rateInput, rateOutput, rateCacheRead, rateCacheWrite = tier.Input, tier.Output, tier.CacheRead, tier.CacheWrite
 			matchedThreshold = tier.InputTokensAbove
 		}
 	}
@@ -73,10 +71,10 @@ func CalculateCost(model *Model, usage *Usage) CostBreakdown {
 	// Anthropic charges 2x base input for 1h cache writes.
 	longWrite := usage.CacheWrite1h
 	shortWrite := usage.CacheWrite - longWrite
-	usage.Cost.Input = rate.input / 1_000_000 * float64(usage.Input)
-	usage.Cost.Output = rate.output / 1_000_000 * float64(usage.Output)
-	usage.Cost.CacheRead = rate.cacheRead / 1_000_000 * float64(usage.CacheRead)
-	usage.Cost.CacheWrite = (rate.cacheWrite*float64(shortWrite) + rate.input*2*float64(longWrite)) / 1_000_000
+	usage.Cost.Input = rateInput / 1_000_000 * float64(usage.Input)
+	usage.Cost.Output = rateOutput / 1_000_000 * float64(usage.Output)
+	usage.Cost.CacheRead = rateCacheRead / 1_000_000 * float64(usage.CacheRead)
+	usage.Cost.CacheWrite = (rateCacheWrite*float64(shortWrite) + rateInput*2*float64(longWrite)) / 1_000_000
 	usage.Cost.Total = usage.Cost.Input + usage.Cost.Output + usage.Cost.CacheRead + usage.Cost.CacheWrite
 	return usage.Cost
 }
