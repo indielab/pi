@@ -785,10 +785,16 @@ func convertAssistantBlocks(am *ai.AssistantMessage, oauth, allowEmptySig bool) 
 				blocks = append(blocks, map[string]any{"type": "redacted_thinking", "data": v.ThinkingSignature})
 				continue
 			}
-			if strings.TrimSpace(v.Thinking) == "" {
+			hasThinkingSignature := strings.TrimSpace(v.ThinkingSignature) != ""
+			// Keep a thinking block when it carries a real signature even if its
+			// text is empty (#6457); only drop it when both are empty.
+			if strings.TrimSpace(v.Thinking) == "" && !hasThinkingSignature {
 				continue
 			}
-			if strings.TrimSpace(v.ThinkingSignature) == "" {
+			// If the signature is missing/empty (e.g., from an aborted stream),
+			// convert to plain text for Anthropic. Some compatible providers emit
+			// and accept empty signatures, so let marked models preserve the block.
+			if !hasThinkingSignature {
 				if allowEmptySig {
 					blocks = append(blocks, map[string]any{"type": "thinking", "thinking": sanitizeSurrogates(v.Thinking), "signature": ""})
 				} else {

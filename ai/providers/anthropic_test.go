@@ -426,6 +426,47 @@ func TestAnthropicAllowEmptySignatureTruePreservesThinking(t *testing.T) {
 	}
 }
 
+// Mirrors pi anthropic-empty-thinking-signature-compat.test.ts (upstream
+// 6731a0ba): a thinking block with empty text but a real signature is preserved
+// as a thinking block (previously dropped), even without allowEmptySignature.
+func TestAnthropicPreservesEmptyThinkingWithSignature(t *testing.T) {
+	model := &ai.Model{
+		ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic",
+		Input: []string{"text"}, MaxTokens: 4096, Reasoning: true, Compat: []byte(`{}`),
+	}
+	req := ai.Context{
+		Messages: []ai.Message{
+			ai.NewUserText("hi", 1),
+			&ai.AssistantMessage{
+				Api: ai.APIAnthropicMessages, Provider: "anthropic", Model: "claude-test",
+				Content: ai.ContentList{
+					ai.ThinkingContent{Thinking: "", ThinkingSignature: "signed-thinking"},
+				},
+			},
+			ai.NewUserText("again", 2),
+		},
+	}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}
+	_, body := anthropicCapture(t, model, req, opts, anthropicSSE)
+	var assistant map[string]any
+	for _, m := range body["messages"].([]any) {
+		if mm := m.(map[string]any); mm["role"] == "assistant" {
+			assistant = mm
+		}
+	}
+	if assistant == nil {
+		t.Fatalf("assistant message not found in %v", body["messages"])
+	}
+	blocks := assistant["content"].([]any)
+	if len(blocks) != 1 {
+		t.Fatalf("want exactly one block, got %v", blocks)
+	}
+	first := blocks[0].(map[string]any)
+	if first["type"] != "thinking" || first["thinking"] != "" || first["signature"] != "signed-thinking" {
+		t.Fatalf("empty-text signed thinking block wrong: %v", first)
+	}
+}
+
 // --- Job A.4: forceAdaptiveThinking / output_config.effort request shape ---
 //
 // Our port DOES implement forceAdaptiveThinking + output_config.effort, matching
