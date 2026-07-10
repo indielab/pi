@@ -92,6 +92,7 @@ func TestEstimateContextTokensUsageAnchor(t *testing.T) {
 		Content:    ContentList{TextContent{Text: "ok"}},
 		StopReason: StopStop,
 		Usage:      Usage{TotalTokens: 1000},
+		Timestamp:  2, // after the preceding user (ts 1), so its usage anchors the prefix
 	}
 	trailing := NewUserText(strings.Repeat("x", 8), 3) // 8 chars -> ceil(8/4)=2
 	ctx := Context{
@@ -123,6 +124,52 @@ func TestGetLastAssistantUsageInfoSkipsAbortedAndError(t *testing.T) {
 	est := estimateContextTokens(ctx)
 	if est.UsageTokens != 10 || est.LastUsageIndex != 0 {
 		t.Fatalf("est = %+v, want UsageTokens 10 at index 0 (aborted/error skipped)", est)
+	}
+}
+
+func estimateTestAssistant(timestamp int64, totalTokens int) AssistantMessage {
+	return AssistantMessage{
+		Content:    ContentList{TextContent{Text: "kept"}},
+		StopReason: StopStop,
+		Usage:      Usage{Input: totalTokens, TotalTokens: totalTokens},
+		Timestamp:  timestamp,
+	}
+}
+
+func TestEstimateIgnoresStaleUsageAfterNewerInsertedMessage(t *testing.T) {
+	// Mirrors pi context-estimate.test.ts (upstream 8973ae28): the assistant's
+	// usage (ts 100) is stale because a newer prefix message (the summary user
+	// message, ts 200) was inserted before it, so it cannot describe the current
+	// prefix. Falls back to a full estimate with no anchor.
+	ctx := Context{
+		SystemPrompt: "system",
+		Messages: []Message{
+			NewUserText("summary", 200),
+			estimateTestAssistant(100, 9_500),
+			NewUserText(strings.Repeat("x", 4_000), 300),
+		},
+	}
+	est := estimateContextTokens(ctx)
+	if est.Tokens != 1_005 || est.UsageTokens != 0 || est.TrailingTokens != 1_005 || est.LastUsageIndex != -1 {
+		t.Fatalf("stale-usage estimate = %+v, want {Tokens:1005 UsageTokens:0 TrailingTokens:1005 LastUsageIndex:-1}", est)
+	}
+}
+
+func TestEstimateUsesUsageAfterResponseToInsertedContext(t *testing.T) {
+	// The later assistant (ts 400) responds to the inserted context (ts 300), so
+	// its usage applies to the current prefix and anchors the estimate again.
+	ctx := Context{
+		Messages: []Message{
+			NewUserText("summary", 200),
+			estimateTestAssistant(100, 9_500),
+			NewUserText("new prompt", 300),
+			estimateTestAssistant(400, 2_000),
+			NewUserText("tail", 500),
+		},
+	}
+	est := estimateContextTokens(ctx)
+	if est.Tokens != 2_001 || est.UsageTokens != 2_000 || est.TrailingTokens != 1 || est.LastUsageIndex != 3 {
+		t.Fatalf("post-insert estimate = %+v, want {Tokens:2001 UsageTokens:2000 TrailingTokens:1 LastUsageIndex:3}", est)
 	}
 }
 

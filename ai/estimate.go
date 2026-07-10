@@ -111,22 +111,43 @@ func estimateMessageTokens(message Message) int {
 	}
 }
 
-// getLastAssistantUsageInfo walks messages backwards and returns the first
-// non-aborted/non-error assistant whose usage reports a positive token count.
-func getLastAssistantUsageInfo(messages []Message) (usage Usage, index int, found bool) {
-	for i := len(messages) - 1; i >= 0; i-- {
-		assistant, ok := messages[i].(AssistantMessage)
-		if !ok {
-			continue
-		}
-		if assistant.StopReason == StopAborted || assistant.StopReason == StopError {
-			continue
-		}
-		if calculateContextTokens(assistant.Usage) > 0 {
-			return assistant.Usage, i, true
-		}
+// messageTimestamp returns the message's timestamp, mirroring pi where every
+// Message carries a `timestamp`.
+func messageTimestamp(m Message) int64 {
+	switch msg := m.(type) {
+	case UserMessage:
+		return msg.Timestamp
+	case AssistantMessage:
+		return msg.Timestamp
+	case ToolResultMessage:
+		return msg.Timestamp
+	default:
+		return 0
 	}
-	return Usage{}, -1, false
+}
+
+// getLastAssistantUsageInfo walks messages forward and returns the newest
+// non-aborted/non-error assistant whose usage reports a positive token count AND
+// still describes the current prefix. A later prefix message inserted after a
+// response (e.g. a compaction summary) invalidates that response's usage, since
+// the usage can no longer describe the reshaped prefix (#6...): such stale usage
+// is skipped even though it is chronologically later in the list.
+func getLastAssistantUsageInfo(messages []Message) (usage Usage, index int, found bool) {
+	index = -1
+	latestPrefixTimestamp := int64(math.MinInt64)
+	for i := 0; i < len(messages); i++ {
+		if assistant, ok := messages[i].(AssistantMessage); ok {
+			usageAppliesToPrefix := assistant.Timestamp >= latestPrefixTimestamp
+			if usageAppliesToPrefix &&
+				assistant.StopReason != StopAborted &&
+				assistant.StopReason != StopError &&
+				calculateContextTokens(assistant.Usage) > 0 {
+				usage, index, found = assistant.Usage, i, true
+			}
+		}
+		latestPrefixTimestamp = max(latestPrefixTimestamp, messageTimestamp(messages[i]))
+	}
+	return usage, index, found
 }
 
 // estimateMessages mirrors pi's estimateMessages: anchor on the last usage
