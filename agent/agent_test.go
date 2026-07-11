@@ -125,6 +125,74 @@ func TestAgentRunsToolCallThenFinishes(t *testing.T) {
 	}
 }
 
+// TestAgentToolResultAddedToolNames verifies that AddedToolNames set on a tool's
+// execute result flows onto the constructed ToolResultMessage, and survives an
+// AfterToolCall hook that overrides other fields (pi's `...result` spread
+// preservation + createToolResultMessage's non-empty guard).
+func TestAgentToolResultAddedToolNames(t *testing.T) {
+	tool := AgentTool{
+		Name:        "loader",
+		Description: "loads more tools",
+		Parameters:  ai.Object(),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			return AgentToolResult{
+				Content:        ai.ContentList{ai.TextContent{Text: "loaded"}},
+				AddedToolNames: []string{"after_load"},
+			}, nil
+		},
+	}
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
+		StreamFn: scriptedStream(
+			assistantWithToolCall("c1", "loader", map[string]any{}),
+			&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "done"}}, StopReason: ai.StopStop},
+		),
+		// The after-hook only overrides content; AddedToolNames must be preserved.
+		AfterToolCall: func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult {
+			return &AfterToolCallResult{Content: ai.ContentList{ai.TextContent{Text: "loaded!"}}, HasContent: true}
+		},
+	})
+	if err := a.Prompt(context.Background(), "go"); err != nil {
+		t.Fatal(err)
+	}
+	st := a.State()
+	tr, ok := st.Messages[2].(ai.ToolResultMessage)
+	if !ok {
+		t.Fatalf("message[2] = %#v, want ToolResultMessage", st.Messages[2])
+	}
+	if len(tr.AddedToolNames) != 1 || tr.AddedToolNames[0] != "after_load" {
+		t.Fatalf("AddedToolNames = %v, want [after_load]", tr.AddedToolNames)
+	}
+	if textOf(&ai.AssistantMessage{Content: tr.Content}) != "loaded!" {
+		t.Fatalf("after-hook content override lost: %#v", tr.Content)
+	}
+}
+
+// TestAgentToolResultAddedToolNamesOmittedWhenEmpty guards the non-empty write:
+// a result with no added tools leaves the field nil.
+func TestAgentToolResultAddedToolNamesOmittedWhenEmpty(t *testing.T) {
+	tool := AgentTool{
+		Name: "echo", Parameters: ai.Object(),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			return AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "ok"}}}, nil
+		},
+	}
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
+		StreamFn: scriptedStream(
+			assistantWithToolCall("c1", "echo", map[string]any{}),
+			&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "done"}}, StopReason: ai.StopStop},
+		),
+	})
+	if err := a.Prompt(context.Background(), "go"); err != nil {
+		t.Fatal(err)
+	}
+	tr := a.State().Messages[2].(ai.ToolResultMessage)
+	if tr.AddedToolNames != nil {
+		t.Fatalf("AddedToolNames = %v, want nil", tr.AddedToolNames)
+	}
+}
+
 func TestAgentErrorStopsLoop(t *testing.T) {
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel},

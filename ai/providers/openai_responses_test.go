@@ -146,7 +146,8 @@ func TestResponsesNonReasoningNoInclude(t *testing.T) {
 // mustResponsesInput converts messages, failing the test on conversion errors.
 func mustResponsesInput(t *testing.T, model *ai.Model, req ai.Context) []any {
 	t.Helper()
-	in, err := responsesInput(model, req)
+	placement := ai.SplitDeferredTools(req, getResponsesCompat(model).SupportsToolSearch, nil)
+	in, err := responsesInput(model, req, placement.ByName)
 	if err != nil {
 		t.Fatalf("responsesInput: %v", err)
 	}
@@ -1109,7 +1110,7 @@ func TestResponsesInvalidThinkingSignatureFailsStream(t *testing.T) {
 		},
 		ai.NewUserText("again", 2),
 	}}
-	if _, err := responsesInput(model, req); err == nil {
+	if _, err := responsesInput(model, req, nil); err == nil {
 		t.Fatalf("expected responsesInput to error on invalid thinkingSignature")
 	}
 	final := runResponsesSSE(t, model, req, "")

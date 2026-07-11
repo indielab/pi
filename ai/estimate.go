@@ -175,22 +175,53 @@ func estimateMessages(messages []Message) ContextUsageEstimate {
 	return ContextUsageEstimate{Tokens: tokens, UsageTokens: 0, TrailingTokens: tokens, LastUsageIndex: -1}
 }
 
-// estimateContextTokens mirrors pi's Context overload of estimateContextTokens:
-// estimate the messages, and when there is no usage anchor add prefix tokens for
-// the system prompt and tool definitions.
+// estimateToolsTokens mirrors pi's estimateToolsTokens: JSON-serialize the tool
+// definitions and estimate their text tokens (0 for an empty set).
+func estimateToolsTokens(tools []Tool) int {
+	if len(tools) == 0 {
+		return 0
+	}
+	return estimateTextTokens(safeJSONStringify(tools))
+}
+
+// estimateContextTokens mirrors pi's Context overload of estimateContextTokens.
+// When there is no usage anchor it adds prefix tokens for the system prompt and
+// tool definitions. When there is an anchor it adds tokens for any tools whose
+// definitions were introduced by trailing tool results' AddedToolNames, since
+// those load after the anchored usage checkpoint.
 func estimateContextTokens(context Context) ContextUsageEstimate {
 	estimate := estimateMessages(context.Messages)
 	if estimate.LastUsageIndex != -1 {
-		return estimate
+		addedNames := map[string]bool{}
+		for i := estimate.LastUsageIndex + 1; i < len(context.Messages); i++ {
+			// Value form only, matching estimateMessages' switch: transcript
+			// messages flow as value types throughout the port.
+			if tr, ok := context.Messages[i].(ToolResultMessage); ok {
+				for _, name := range tr.AddedToolNames {
+					addedNames[name] = true
+				}
+			}
+		}
+		var addedTools []Tool
+		for _, tool := range context.Tools {
+			if addedNames[tool.Name] {
+				addedTools = append(addedTools, tool)
+			}
+		}
+		addedToolTokens := estimateToolsTokens(addedTools)
+		return ContextUsageEstimate{
+			Tokens:         estimate.Tokens + addedToolTokens,
+			UsageTokens:    estimate.UsageTokens,
+			TrailingTokens: estimate.TrailingTokens + addedToolTokens,
+			LastUsageIndex: estimate.LastUsageIndex,
+		}
 	}
 
 	prefixTokens := 0
 	if context.SystemPrompt != "" {
 		prefixTokens += estimateTextTokens(context.SystemPrompt)
 	}
-	if len(context.Tools) > 0 {
-		prefixTokens += estimateTextTokens(safeJSONStringify(context.Tools))
-	}
+	prefixTokens += estimateToolsTokens(context.Tools)
 
 	return ContextUsageEstimate{
 		Tokens:         estimate.Tokens + prefixTokens,

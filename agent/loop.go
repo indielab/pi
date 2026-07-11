@@ -744,6 +744,10 @@ func finalizeExecutedToolCall(ctx context.Context, current *AgentContext, msg *a
 				IsError:          isError,
 				Context:          current,
 			})
+			// pi rebuilds `result = {...result, content, details, terminate}`; the
+			// spread preserves fields the after-hook does not override (notably
+			// addedToolNames). Go mutates `result` in place, which preserves them
+			// the same way.
 			if after != nil {
 				if after.HasContent {
 					result.Content = after.Content
@@ -779,7 +783,7 @@ func emitToolExecutionEnd(fo finalizedOutcome, emit EventSink) {
 }
 
 func createToolResultMessage(fo finalizedOutcome) ai.ToolResultMessage {
-	return ai.ToolResultMessage{
+	trm := ai.ToolResultMessage{
 		ToolCallID: fo.toolCall.ID,
 		ToolName:   fo.toolCall.Name,
 		Content:    fo.result.Content,
@@ -787,6 +791,12 @@ func createToolResultMessage(fo finalizedOutcome) ai.ToolResultMessage {
 		IsError:    fo.isError,
 		Timestamp:  nowMillis(),
 	}
+	// pi only writes addedToolNames when non-empty so the field never enters
+	// session history or provider payloads as an empty array.
+	if len(fo.result.AddedToolNames) > 0 {
+		trm.AddedToolNames = fo.result.AddedToolNames
+	}
+	return trm
 }
 
 func emitToolResultMessage(trm ai.ToolResultMessage, emit EventSink) {

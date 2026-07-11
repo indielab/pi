@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -52,6 +53,41 @@ func TestMessageRoleRoundTrip(t *testing.T) {
 		if back.MessageRole() != m.MessageRole() {
 			t.Fatalf("role mismatch: %s vs %s", back.MessageRole(), m.MessageRole())
 		}
+	}
+}
+
+// TestToolResultAddedToolNamesRoundTrip pins the new addedToolNames field: it is
+// omitted when empty (byte-identical to the pre-change payload) and survives a
+// marshal/unmarshal round-trip through the custom MarshalJSON alias.
+func TestToolResultAddedToolNamesRoundTrip(t *testing.T) {
+	plain := ToolResultMessage{ToolCallID: "1", ToolName: "bash", Content: ContentList{TextContent{Text: "ok"}}, Timestamp: 3}
+	raw, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "addedToolNames") {
+		t.Fatalf("empty addedToolNames must be omitted, got %s", raw)
+	}
+
+	marked := plain
+	marked.AddedToolNames = []string{"late_tool", "other"}
+	raw, err = json.Marshal(marked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"addedToolNames":["late_tool","other"]`) {
+		t.Fatalf("addedToolNames not marshaled: %s", raw)
+	}
+	back, err := UnmarshalMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	tr, ok := back.(ToolResultMessage)
+	if !ok {
+		t.Fatalf("round-trip type = %T, want ToolResultMessage", back)
+	}
+	if len(tr.AddedToolNames) != 2 || tr.AddedToolNames[0] != "late_tool" || tr.AddedToolNames[1] != "other" {
+		t.Fatalf("addedToolNames round-trip = %v", tr.AddedToolNames)
 	}
 }
 

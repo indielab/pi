@@ -32,6 +32,7 @@ type responsesCompat struct {
 	SupportsDeveloperRole      bool
 	SendSessionIDHeader        bool
 	SupportsLongCacheRetention bool
+	SupportsToolSearch         bool
 }
 
 func getResponsesCompat(model *ai.Model) responsesCompat {
@@ -39,6 +40,7 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 		SupportsDeveloperRole:      true,
 		SendSessionIDHeader:        true,
 		SupportsLongCacheRetention: true,
+		SupportsToolSearch:         false,
 	}
 	if len(model.Compat) == 0 {
 		return c
@@ -47,6 +49,7 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 		SupportsDeveloperRole      *bool `json:"supportsDeveloperRole"`
 		SendSessionIDHeader        *bool `json:"sendSessionIdHeader"`
 		SupportsLongCacheRetention *bool `json:"supportsLongCacheRetention"`
+		SupportsToolSearch         *bool `json:"supportsToolSearch"`
 	}
 	if json.Unmarshal(model.Compat, &raw) != nil {
 		return c
@@ -59,6 +62,9 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 	}
 	if raw.SupportsLongCacheRetention != nil {
 		c.SupportsLongCacheRetention = *raw.SupportsLongCacheRetention
+	}
+	if raw.SupportsToolSearch != nil {
+		c.SupportsToolSearch = *raw.SupportsToolSearch
 	}
 	return c
 }
@@ -651,7 +657,10 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 }
 
 func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponsesOptions) (map[string]any, error) {
-	input, err := responsesInput(model, req)
+	// Only immediate tools go in body.tools; deferred definitions are emitted as
+	// client tool_search items at their tool-result markers inside responsesInput.
+	placement := ai.SplitDeferredTools(req, getResponsesCompat(model).SupportsToolSearch, nil)
+	input, err := responsesInput(model, req, placement.ByName)
 	if err != nil {
 		return nil, err
 	}
@@ -686,23 +695,8 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 	if opts.ServiceTier != "" {
 		params["service_tier"] = opts.ServiceTier
 	}
-	if len(req.Tools) > 0 {
-		var tools []map[string]any
-		for _, t := range req.Tools {
-			var p any = map[string]any{"type": "object", "properties": map[string]any{}}
-			if t.Parameters != nil {
-				if raw, err := json.Marshal(t.Parameters); err == nil {
-					var decoded any
-					_ = json.Unmarshal(raw, &decoded)
-					p = decoded
-				}
-			}
-			tools = append(tools, map[string]any{
-				// strict defaults to false (port of convertResponsesTools).
-				"type": "function", "name": t.Name, "description": t.Description, "parameters": p, "strict": false,
-			})
-		}
-		params["tools"] = tools
+	if len(placement.Immediate) > 0 {
+		params["tools"] = convertResponsesTools(placement.Immediate, false)
 	}
 	if model.Reasoning {
 		if opts.ReasoningEffort != "" || opts.ReasoningSummary != "" {
@@ -788,12 +782,39 @@ func buildResponsesToolCallIDNormalizer(model *ai.Model, messages []ai.Message) 
 	}
 }
 
+// convertResponsesTools maps unified tools to Responses API function tools.
+// strict defaults to false; deferLoading marks deferred definitions emitted in a
+// tool_search_output item. Port of convertResponsesTools.
+func convertResponsesTools(tools []ai.Tool, deferLoading bool) []map[string]any {
+	out := make([]map[string]any, 0, len(tools))
+	for _, t := range tools {
+		var p any = map[string]any{"type": "object", "properties": map[string]any{}}
+		if t.Parameters != nil {
+			if raw, err := json.Marshal(t.Parameters); err == nil {
+				var decoded any
+				_ = json.Unmarshal(raw, &decoded)
+				p = decoded
+			}
+		}
+		tool := map[string]any{
+			"type": "function", "name": t.Name, "description": t.Description, "parameters": p, "strict": false,
+		}
+		if deferLoading {
+			tool["defer_loading"] = true
+		}
+		out = append(out, tool)
+	}
+	return out
+}
+
 // responsesInput converts unified messages into Responses API input items
 // (port of convertResponsesMessages). It errors when an assistant thinking
 // block carries an unparseable thinkingSignature (pi's JSON.parse throws and
-// fails the stream).
-func responsesInput(model *ai.Model, req ai.Context) ([]any, error) {
+// fails the stream). deferredByName holds tools loaded lazily at their
+// tool-result markers via client tool_search items.
+func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]ai.Tool) ([]any, error) {
 	var items []any
+	loadedToolNames := map[string]bool{}
 
 	compat := getResponsesCompat(model)
 	if req.SystemPrompt != "" {
@@ -934,6 +955,33 @@ func responsesInput(model *ai.Model, req ai.Context) ([]any, error) {
 			items = append(items, map[string]any{
 				"type": "function_call_output", "call_id": callID, "output": outputVal,
 			})
+
+			// Load tools introduced by this result via a completed client tool
+			// search anchored at this transcript point (deduped across results).
+			var deferred []ai.Tool
+			for _, name := range tr.AddedToolNames {
+				tool, ok := deferredByName[name]
+				if !ok || loadedToolNames[name] {
+					continue
+				}
+				loadedToolNames[name] = true
+				deferred = append(deferred, tool)
+			}
+			if len(deferred) > 0 {
+				names := make([]string, len(deferred))
+				for i, t := range deferred {
+					names[i] = t.Name
+				}
+				searchCallID := "pi_tool_load_" + shortHash(tr.ToolCallID+":"+strings.Join(names, ","))
+				items = append(items, map[string]any{
+					"type": "tool_search_call", "call_id": searchCallID, "execution": "client", "status": "completed",
+					"arguments": map[string]any{"query": strings.Join(names, " "), "limit": len(names)},
+				})
+				items = append(items, map[string]any{
+					"type": "tool_search_output", "call_id": searchCallID, "execution": "client", "status": "completed",
+					"tools": convertResponsesTools(deferred, true),
+				})
+			}
 		}
 		msgIndex++
 	}

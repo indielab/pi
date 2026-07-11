@@ -384,8 +384,12 @@ type ToolResultMessage struct {
 	ToolName   string      `json:"toolName"`
 	Content    ContentList `json:"content"` // TextContent | ImageContent
 	Details    any         `json:"details,omitempty"`
-	IsError    bool        `json:"isError"`
-	Timestamp  int64       `json:"timestamp"`
+	// AddedToolNames lists names from Context.Tools that became available after
+	// this result. Providers with native deferred tool loading use this as the
+	// load point; other providers ignore it and use Context.Tools normally.
+	AddedToolNames []string `json:"addedToolNames,omitempty"`
+	IsError        bool     `json:"isError"`
+	Timestamp      int64    `json:"timestamp"`
 }
 
 func (ToolResultMessage) MessageRole() Role { return RoleToolResult }

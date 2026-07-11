@@ -55,6 +55,9 @@ type AgentToolResult struct {
 	Content ai.ContentList
 	// Details is arbitrary structured data for logs/UI.
 	Details any
+	// AddedToolNames lists tools introduced by this result and available from
+	// this transcript point onward (pi AgentToolResult.addedToolNames).
+	AddedToolNames []string
 	// Terminate hints that the agent should stop after the current tool batch.
 	// Early termination only happens when every finalized result sets this.
 	Terminate bool
