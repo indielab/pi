@@ -74,6 +74,13 @@ func FindEnvKeys(provider string, env map[string]string) []string {
 	return found
 }
 
+// ambientAuthMarker is a sentinel API key signalling "authenticated ambiently"
+// (e.g. AWS SDK default credential chain, Vertex ADC) — a provider is usable
+// without an explicit key. It must never be sent downstream as a real key; the
+// compat dispatch in withEnvAPIKey filters it (pi 850c210b, compat.ts
+// AMBIENT_AUTH_MARKER).
+const ambientAuthMarker = "<authenticated>"
+
 // GetEnvApiKey returns the API key for a provider from known environment
 // variables. It does not return keys for OAuth-only providers.
 //
@@ -90,7 +97,7 @@ func GetEnvApiKey(provider string, env map[string]string) string {
 		if hasVertexADCCredentials(env) &&
 			anyEnv(env, "GOOGLE_CLOUD_PROJECT", "GCLOUD_PROJECT") &&
 			anyEnv(env, "GOOGLE_CLOUD_LOCATION") {
-			return "<authenticated>"
+			return ambientAuthMarker
 		}
 	case "amazon-bedrock":
 		if ProviderEnvValue("AWS_PROFILE", env) != "" ||
@@ -99,7 +106,7 @@ func GetEnvApiKey(provider string, env map[string]string) string {
 			ProviderEnvValue("AWS_CONTAINER_CREDENTIALS_RELATIVE_URI", env) != "" ||
 			ProviderEnvValue("AWS_CONTAINER_CREDENTIALS_FULL_URI", env) != "" ||
 			ProviderEnvValue("AWS_WEB_IDENTITY_TOKEN_FILE", env) != "" {
-			return "<authenticated>"
+			return ambientAuthMarker
 		}
 	}
 	return ""

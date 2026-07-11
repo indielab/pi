@@ -62,6 +62,33 @@ func TestWithEnvAPIKeyUsesScopedEnv(t *testing.T) {
 	}
 }
 
+// The ambient-auth marker (GetEnvApiKey returns "<authenticated>" when a
+// provider is usable via ambient credentials with no explicit key — e.g. AWS
+// SDK default chain) must never be injected as a real API key by the compat
+// dispatch (pi 850c210b filters AMBIENT_AUTH_MARKER in withEnvApiKey).
+func TestWithEnvAPIKeyFiltersAmbientMarker(t *testing.T) {
+	model := &Model{Provider: "amazon-bedrock"}
+	env := map[string]string{"AWS_PROFILE": "default"}
+
+	// Precondition: this env makes GetEnvApiKey resolve to the ambient marker.
+	if key := GetEnvApiKey(model.Provider, env); key != ambientAuthMarker {
+		t.Fatalf("precondition: expected ambient marker, got %q", key)
+	}
+
+	got := withEnvAPIKey(model, &StreamOptions{Env: env})
+	if got.APIKey != "" {
+		t.Errorf("withEnvAPIKey must not inject the ambient marker as a key: got %q", got.APIKey)
+	}
+	if got.Env["AWS_PROFILE"] != "default" {
+		t.Errorf("env must survive the ambient-marker skip: got %v", got.Env)
+	}
+
+	gotSimple := withEnvAPIKeySimple(model, &SimpleStreamOptions{StreamOptions: StreamOptions{Env: env}})
+	if gotSimple.APIKey != "" {
+		t.Errorf("withEnvAPIKeySimple must not inject the ambient marker as a key: got %q", gotSimple.APIKey)
+	}
+}
+
 // pi 2cbce395 merges the resolved provider env into the request options so it
 // reaches the API. The Go port has no resolution-time env source (no catalog
 // provider resolves one, matching upstream where resolution.env is latent), so

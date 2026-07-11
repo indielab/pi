@@ -25,7 +25,9 @@ func withEnvAPIKey(model *Model, opts *StreamOptions) *StreamOptions {
 		return opts
 	}
 	key := GetEnvApiKey(model.Provider, scopedEnv(opts))
-	if key == "" {
+	// The ambient-auth marker means "authenticated without an explicit key";
+	// never inject it as a real API key (pi 850c210b).
+	if key == "" || key == ambientAuthMarker {
 		return opts
 	}
 	if opts == nil {
@@ -45,7 +47,7 @@ func withEnvAPIKeySimple(model *Model, opts *SimpleStreamOptions) *SimpleStreamO
 		simpleEnv = opts.Env
 	}
 	key := GetEnvApiKey(model.Provider, simpleEnv)
-	if key == "" {
+	if key == "" || key == ambientAuthMarker {
 		return opts
 	}
 	if opts == nil {
