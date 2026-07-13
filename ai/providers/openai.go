@@ -129,11 +129,19 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				}
 			}
 			// Session-affinity headers for cache-routing providers (e.g. Fireworks).
-			if opts.SessionID != "" && resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone &&
-				getOpenAICompat(model).SendSessionAffinityHeaders {
-				r.Header.Set("session_id", opts.SessionID)
-				r.Header.Set("x-client-request-id", opts.SessionID)
-				r.Header.Set("x-session-affinity", opts.SessionID)
+			// Format selects the header shape (pi openai-completions.ts:519-530).
+			if compat := getOpenAICompat(model); opts.SessionID != "" &&
+				resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone &&
+				compat.SendSessionAffinityHeaders {
+				if compat.SessionAffinityFormat == sessionAffinityOpenRouter {
+					r.Header.Set("x-session-id", opts.SessionID)
+				} else {
+					if compat.SessionAffinityFormat == sessionAffinityOpenAI {
+						r.Header.Set("session_id", opts.SessionID)
+					}
+					r.Header.Set("x-client-request-id", opts.SessionID)
+					r.Header.Set("x-session-affinity", opts.SessionID)
+				}
 			}
 			// pi options.headers (consumer) are spread last and win over
 			// everything above, including model.headers and the attribution

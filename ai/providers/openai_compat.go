@@ -7,6 +7,23 @@ import (
 	"github.com/sky-valley/pi/ai"
 )
 
+// Session-affinity header formats (pi SessionAffinityFormat). "openai" sends
+// session_id + x-client-request-id (+ x-session-affinity on completions);
+// "openai-nosession" drops session_id; "openrouter" sends x-session-id.
+const (
+	sessionAffinityOpenAI     = "openai"
+	sessionAffinityOpenRouter = "openrouter"
+)
+
+// sessionAffinityFormatFor is pi's `isOpenRouter ? "openrouter" : "openai"`
+// default, shared by the completions and responses providers.
+func sessionAffinityFormatFor(isOpenRouter bool) string {
+	if isOpenRouter {
+		return sessionAffinityOpenRouter
+	}
+	return sessionAffinityOpenAI
+}
+
 // vercelGatewayRouting mirrors pi's vercelGatewayRouting object shape.
 type vercelGatewayRouting struct {
 	Only  []string `json:"only,omitempty"`
@@ -30,7 +47,11 @@ type openAICompletionsCompat struct {
 	RequiresThinkingAsText                      bool
 	ZaiToolStream                               bool
 	SendSessionAffinityHeaders                  bool
-	CacheControlFormat                          string // "" | "anthropic"
+	// SessionAffinityFormat selects the session-affinity header shape (pi
+	// SessionAffinityFormat). Auto-detected: openrouter → sessionAffinityOpenRouter,
+	// else sessionAffinityOpenAI.
+	SessionAffinityFormat string
+	CacheControlFormat    string // "" | "anthropic"
 	// OpenRouterRouting is an arbitrary provider-routing object sent as `provider`.
 	OpenRouterRouting map[string]any
 	// HasOpenRouterRouting records that model.compat carried a non-null
@@ -108,6 +129,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		RequiresThinkingAsText:                      false,
 		ZaiToolStream:                               false,
 		SendSessionAffinityHeaders:                  false,
+		SessionAffinityFormat:                       sessionAffinityFormatFor(isOpenRouter),
 		CacheControlFormat:                          cacheControlFormat,
 		// pi defaults these routing objects to {} (no routing emitted).
 		OpenRouterRouting:    nil,
@@ -136,6 +158,7 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		RequiresThinkingAsText                      *bool                 `json:"requiresThinkingAsText"`
 		ZaiToolStream                               *bool                 `json:"zaiToolStream"`
 		SendSessionAffinityHeaders                  *bool                 `json:"sendSessionAffinityHeaders"`
+		SessionAffinityFormat                       *string               `json:"sessionAffinityFormat"`
 		CacheControlFormat                          *string               `json:"cacheControlFormat"`
 		OpenRouterRouting                           map[string]any        `json:"openRouterRouting"`
 		VercelGatewayRouting                        *vercelGatewayRouting `json:"vercelGatewayRouting"`
@@ -185,6 +208,9 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	}
 	if raw.SendSessionAffinityHeaders != nil {
 		c.SendSessionAffinityHeaders = *raw.SendSessionAffinityHeaders
+	}
+	if raw.SessionAffinityFormat != nil {
+		c.SessionAffinityFormat = *raw.SessionAffinityFormat
 	}
 	if raw.CacheControlFormat != nil {
 		c.CacheControlFormat = *raw.CacheControlFormat

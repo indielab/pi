@@ -29,16 +29,24 @@ var openaiToolCallProviders = map[string]bool{
 // responsesCompat is the resolved Responses-API compatibility profile
 // (port of OpenAIResponsesCompat, defaults true).
 type responsesCompat struct {
-	SupportsDeveloperRole      bool
-	SendSessionIDHeader        bool
+	SupportsDeveloperRole bool
+	// SessionAffinityFormat selects the session-affinity header shape (pi
+	// SessionAffinityFormat). Auto-detected from provider/baseURL.
+	SessionAffinityFormat      string
 	SupportsLongCacheRetention bool
 	SupportsToolSearch         bool
+}
+
+// detectResponsesSessionAffinityFormat is pi's detectSessionAffinityFormat:
+// openrouter when the provider is openrouter or the baseURL points at it.
+func detectResponsesSessionAffinityFormat(model *ai.Model) string {
+	return sessionAffinityFormatFor(model.Provider == "openrouter" || strings.Contains(model.BaseURL, "openrouter.ai"))
 }
 
 func getResponsesCompat(model *ai.Model) responsesCompat {
 	c := responsesCompat{
 		SupportsDeveloperRole:      true,
-		SendSessionIDHeader:        true,
+		SessionAffinityFormat:      detectResponsesSessionAffinityFormat(model),
 		SupportsLongCacheRetention: true,
 		SupportsToolSearch:         false,
 	}
@@ -46,10 +54,10 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 		return c
 	}
 	var raw struct {
-		SupportsDeveloperRole      *bool `json:"supportsDeveloperRole"`
-		SendSessionIDHeader        *bool `json:"sendSessionIdHeader"`
-		SupportsLongCacheRetention *bool `json:"supportsLongCacheRetention"`
-		SupportsToolSearch         *bool `json:"supportsToolSearch"`
+		SupportsDeveloperRole      *bool   `json:"supportsDeveloperRole"`
+		SessionAffinityFormat      *string `json:"sessionAffinityFormat"`
+		SupportsLongCacheRetention *bool   `json:"supportsLongCacheRetention"`
+		SupportsToolSearch         *bool   `json:"supportsToolSearch"`
 	}
 	if json.Unmarshal(model.Compat, &raw) != nil {
 		return c
@@ -57,8 +65,8 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 	if raw.SupportsDeveloperRole != nil {
 		c.SupportsDeveloperRole = *raw.SupportsDeveloperRole
 	}
-	if raw.SendSessionIDHeader != nil {
-		c.SendSessionIDHeader = *raw.SendSessionIDHeader
+	if raw.SessionAffinityFormat != nil {
+		c.SessionAffinityFormat = *raw.SessionAffinityFormat
 	}
 	if raw.SupportsLongCacheRetention != nil {
 		c.SupportsLongCacheRetention = *raw.SupportsLongCacheRetention
@@ -310,13 +318,19 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 					r.Header.Set(k, v)
 				}
 			}
-			// Session cache headers (pi openai-responses.ts:200-205); the
-			// sessionId is zeroed when cacheRetention is "none" (:115).
-			if opts.SessionID != "" && resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone {
-				if getResponsesCompat(model).SendSessionIDHeader {
-					r.Header.Set("session_id", opts.SessionID)
+			// Session cache headers (pi openai-responses.ts:207-217); the
+			// sessionId is zeroed when cacheRetention is "none" (:115). Format
+			// selects the header shape.
+			if compat := getResponsesCompat(model); opts.SessionID != "" &&
+				resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone {
+				if compat.SessionAffinityFormat == sessionAffinityOpenRouter {
+					r.Header.Set("x-session-id", opts.SessionID)
+				} else {
+					if compat.SessionAffinityFormat == sessionAffinityOpenAI {
+						r.Header.Set("session_id", opts.SessionID)
+					}
+					r.Header.Set("x-client-request-id", opts.SessionID)
 				}
-				r.Header.Set("x-client-request-id", opts.SessionID)
 			}
 			// pi options.headers (consumer) are spread last and win over
 			// everything above, including model.headers and the attribution

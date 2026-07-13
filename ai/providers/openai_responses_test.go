@@ -852,9 +852,10 @@ func TestResponsesServiceTierPricing(t *testing.T) {
 	}
 }
 
-// D3: session cache headers — session_id gated on compat.sendSessionIdHeader,
-// x-client-request-id always sent with a sessionId, both suppressed when
-// cacheRetention is "none" (pi openai-responses.ts:115,200-205).
+// D3: session cache headers — shape selected by compat.sessionAffinityFormat
+// ("openai" sends session_id + x-client-request-id; "openai-nosession" drops
+// session_id; "openrouter" sends x-session-id), all suppressed when
+// cacheRetention is "none" (pi openai-responses.ts:115,207-217; upstream 298665cf).
 func TestResponsesSessionCacheHeaders(t *testing.T) {
 	capture := func(model *ai.Model, opts *OpenAIResponsesOptions) http.Header {
 		var got http.Header
@@ -871,24 +872,40 @@ func TestResponsesSessionCacheHeaders(t *testing.T) {
 		return got
 	}
 
+	// Default (openai auto-detect): session_id + x-client-request-id, no x-session-id.
 	h := capture(reasoningModel(), &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{SessionID: "sess-1"}})
 	if h.Get("session_id") != "sess-1" || h.Get("x-client-request-id") != "sess-1" {
 		t.Fatalf("expected both session headers, got session_id=%q x-client-request-id=%q", h.Get("session_id"), h.Get("x-client-request-id"))
 	}
+	if h.Get("x-session-id") != "" {
+		t.Fatalf("openai format must not send x-session-id, got %q", h.Get("x-session-id"))
+	}
 
+	// "openai-nosession" drops session_id but keeps x-client-request-id.
 	noSidModel := reasoningModel()
-	noSidModel.Compat = json.RawMessage(`{"sendSessionIdHeader":false}`)
+	noSidModel.Compat = json.RawMessage(`{"sessionAffinityFormat":"openai-nosession"}`)
 	h2 := capture(noSidModel, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{SessionID: "sess-1"}})
 	if h2.Get("session_id") != "" {
-		t.Fatalf("sendSessionIdHeader:false must suppress session_id, got %q", h2.Get("session_id"))
+		t.Fatalf("openai-nosession must suppress session_id, got %q", h2.Get("session_id"))
 	}
 	if h2.Get("x-client-request-id") != "sess-1" {
 		t.Fatalf("x-client-request-id must still be sent, got %q", h2.Get("x-client-request-id"))
 	}
 
+	// "openrouter" sends only x-session-id (auto-detected from provider here).
+	orModel := reasoningModel()
+	orModel.Provider = "openrouter"
+	h4 := capture(orModel, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{SessionID: "sess-1"}})
+	if h4.Get("x-session-id") != "sess-1" {
+		t.Fatalf("openrouter must send x-session-id, got %q", h4.Get("x-session-id"))
+	}
+	if h4.Get("session_id") != "" || h4.Get("x-client-request-id") != "" {
+		t.Fatalf("openrouter must not send openai headers, got session_id=%q x-client-request-id=%q", h4.Get("session_id"), h4.Get("x-client-request-id"))
+	}
+
 	h3 := capture(reasoningModel(), &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{SessionID: "sess-1", CacheRetention: ai.CacheNone}})
-	if h3.Get("session_id") != "" || h3.Get("x-client-request-id") != "" {
-		t.Fatalf("cacheRetention none must suppress both headers, got session_id=%q x-client-request-id=%q", h3.Get("session_id"), h3.Get("x-client-request-id"))
+	if h3.Get("session_id") != "" || h3.Get("x-client-request-id") != "" || h3.Get("x-session-id") != "" {
+		t.Fatalf("cacheRetention none must suppress all session headers, got session_id=%q x-client-request-id=%q x-session-id=%q", h3.Get("session_id"), h3.Get("x-client-request-id"), h3.Get("x-session-id"))
 	}
 }
 

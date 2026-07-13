@@ -1060,6 +1060,33 @@ func TestOpenAIHeaderPrecedence(t *testing.T) {
 	}
 }
 
+func TestOpenAISessionAffinityOpenRouterFormat(t *testing.T) {
+	// pi openai-completions.ts:519-530 (upstream 298665cf): an OpenRouter model
+	// with session affinity enabled sends x-session-id instead of the openai
+	// session_id / x-client-request-id / x-session-affinity trio.
+	var gotHeaders http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotHeaders = r.Header.Clone()
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	model := openAIModel(func(m *ai.Model) {
+		m.Provider = "openrouter"
+		m.BaseURL = server.URL
+		m.Compat = json.RawMessage(`{"sendSessionAffinityHeaders":true}`)
+	})
+	StreamOpenAICompletions(context.Background(), model, baseReq(),
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k", SessionID: "sess-1"}}).Result()
+	if gotHeaders.Get("x-session-id") != "sess-1" {
+		t.Fatalf("openrouter format must send x-session-id, got %q", gotHeaders.Get("x-session-id"))
+	}
+	if gotHeaders.Get("Session_id") != "" || gotHeaders.Get("x-client-request-id") != "" || gotHeaders.Get("x-session-affinity") != "" {
+		t.Fatalf("openrouter format must not send openai session headers, got session_id=%q x-client-request-id=%q x-session-affinity=%q",
+			gotHeaders.Get("Session_id"), gotHeaders.Get("x-client-request-id"), gotHeaders.Get("x-session-affinity"))
+	}
+}
+
 func TestOpenAIOpenRouterRoutingEmptyObjectSent(t *testing.T) {
 	// pi checks model.compat?.openRouterRouting for truthiness: {} is truthy in
 	// JS, so an explicit empty object is still sent as `provider`.
