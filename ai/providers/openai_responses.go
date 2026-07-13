@@ -191,6 +191,10 @@ type OpenAIResponsesOptions struct {
 	// ServiceTier is OpenAI's service_tier request param ("auto", "default",
 	// "flex", "priority"); it also scales cost (flex ×0.5, priority ×2).
 	ServiceTier string
+	// ToolChoice mirrors pi's OpenAIResponsesOptions.toolChoice: the Responses
+	// API tool_choice param ("auto"|"none"|"required" or an object). Sent
+	// verbatim when set; nil leaves the param off (the API defaults to "auto").
+	ToolChoice any
 }
 
 // StreamSimpleOpenAIResponses maps unified reasoning to Responses options.
@@ -697,6 +701,9 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 	}
 	if len(placement.Immediate) > 0 {
 		params["tools"] = convertResponsesTools(placement.Immediate, false)
+	}
+	if opts.ToolChoice != nil {
+		params["tool_choice"] = opts.ToolChoice
 	}
 	if model.Reasoning {
 		if opts.ReasoningEffort != "" || opts.ReasoningSummary != "" {

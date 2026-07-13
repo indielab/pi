@@ -143,6 +143,30 @@ func TestResponsesNonReasoningNoInclude(t *testing.T) {
 	}
 }
 
+// A set ToolChoice is forwarded verbatim as the tool_choice request param
+// alongside the tools; unset (nil) omits it so the API defaults to "auto".
+// Mirrors pi's "forwards required tool choice" case (upstream eacaa130).
+func TestResponsesToolChoiceForwarded(t *testing.T) {
+	model := &ai.Model{ID: "gpt-5.4", Api: ai.APIOpenAIResponses, Provider: "openai", Reasoning: true, MaxTokens: 4096}
+	req := ai.Context{
+		Messages: []ai.Message{ai.NewUserText("Do not call ping. Respond with text instead.", 1)},
+		Tools:    []ai.Tool{{Name: "ping", Description: "Ping", Parameters: ai.Object(ai.Prop("value", ai.String()))}},
+	}
+
+	with := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{ToolChoice: "required"})
+	if with["tool_choice"] != "required" {
+		t.Fatalf("tool_choice = %v, want required", with["tool_choice"])
+	}
+	if names := dtResponsesToolNames(with); len(names) != 1 || names[0] != "ping" {
+		t.Fatalf("tools = %v, want [ping]", names)
+	}
+
+	without := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{})
+	if _, ok := without["tool_choice"]; ok {
+		t.Fatalf("tool_choice must be omitted when ToolChoice is unset, got %v", without["tool_choice"])
+	}
+}
+
 // mustResponsesInput converts messages, failing the test on conversion errors.
 func mustResponsesInput(t *testing.T, model *ai.Model, req ai.Context) []any {
 	t.Helper()
