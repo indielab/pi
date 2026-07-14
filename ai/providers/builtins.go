@@ -18,4 +18,5 @@ func RegisterBuiltins() {
 	RegisterOpenAICompletions()
 	RegisterOpenAIResponses()
 	RegisterGoogle()
+	RegisterPiMessages()
 }

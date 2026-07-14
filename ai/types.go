@@ -19,6 +19,7 @@ const (
 	APIBedrockConverseStream Api = "bedrock-converse-stream"
 	APIGoogleGenerativeAI    Api = "google-generative-ai"
 	APIGoogleVertex          Api = "google-vertex"
+	APIPiMessages            Api = "pi-messages"
 )
 
 // ProviderId identifies a model provider (e.g. "anthropic", "openai"). pi
