@@ -376,6 +376,14 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			contentIndex int
 		}
 		outputSlots := map[int]*responsesOutputSlot{}
+		// reasoningBlocksByID indexes reasoning blocks by their item id so a
+		// terminal response.completed can backfill a missing encrypted_content
+		// onto the persisted signature (port of upstream 1f0dbc00). Azure OpenAI
+		// can omit reasoning.encrypted_content from response.output_item.done and
+		// supply it only in response.completed.response.output; backfilling keeps
+		// store:false multi-turn replay stateless. See
+		// https://github.com/earendil-works/pi/issues/6409.
+		reasoningBlocksByID := map[string]*blockBuilder{}
 		// textSigs carries the per-text-block textSignature (blockBuilder, shared
 		// with anthropic, has no textSignature field) keyed by builder index.
 		textSigs := map[int]string{}
@@ -446,8 +454,42 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 		// :493-521): cost calc, service-tier pricing, mapStopReason(undefined),
 		// and toolUse promotion all apply. response.completed and
 		// response.incomplete both finalize identically.
+		// backfillReasoningSignatures re-derives a reasoning block's persisted
+		// signature from the terminal response's output when the earlier
+		// output_item.done omitted encrypted_content (port of upstream 1f0dbc00).
+		// The signature is stored as the raw reasoning item JSON; on replay it is
+		// re-parsed (see the ThinkingContent case in the request builder), so only
+		// the presence of encrypted_content matters, not the key order.
+		backfillReasoningSignatures := func(responseOutput []responsesItem) {
+			for _, item := range responseOutput {
+				if item.Type != "reasoning" || item.EncryptedContent == "" {
+					continue
+				}
+				block := reasoningBlocksByID[item.ID]
+				if block == nil || block.thinkingSig == "" {
+					continue
+				}
+				var stored map[string]any
+				if err := json.Unmarshal([]byte(block.thinkingSig), &stored); err != nil {
+					continue
+				}
+				// pi skips when storedItem.encrypted_content is already truthy.
+				if ec, ok := stored["encrypted_content"].(string); ok && ec != "" {
+					continue
+				}
+				stored["encrypted_content"] = item.EncryptedContent
+				rebuilt, err := json.Marshal(stored)
+				if err != nil {
+					continue
+				}
+				block.thinkingSig = string(rebuilt)
+			}
+		}
 		finalizeResponse := func(r *responsesPayload) error {
 			sawTerminalResponseEvent = true
+			if r != nil {
+				backfillReasoningSignatures(r.Output)
+			}
 			if r != nil {
 				if r.ID != "" {
 					output.ResponseID = r.ID
@@ -595,6 +637,9 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 					if len(ev.RawItem) > 0 {
 						slot.block.thinkingSig = string(ev.RawItem)
 					}
+					// Index by item id so a terminal response.completed can backfill
+					// a late-arriving encrypted_content (port of upstream 1f0dbc00).
+					reasoningBlocksByID[ev.Item.ID] = slot.block
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: slot.contentIndex, Content: slot.block.thinking.String(), Partial: output.Clone()})
 					delete(outputSlots, ev.OutputIndex)
@@ -1147,20 +1192,22 @@ type responsesEvent struct {
 }
 
 type responsesItem struct {
-	Type      string                 `json:"type"`
-	ID        string                 `json:"id"`
-	CallID    string                 `json:"call_id"`
-	Name      string                 `json:"name"`
-	Arguments string                 `json:"arguments"`
-	Phase     string                 `json:"phase"`
-	Summary   []responsesContentPart `json:"summary"`
-	Content   []responsesContentPart `json:"content"`
+	Type             string                 `json:"type"`
+	ID               string                 `json:"id"`
+	CallID           string                 `json:"call_id"`
+	Name             string                 `json:"name"`
+	Arguments        string                 `json:"arguments"`
+	Phase            string                 `json:"phase"`
+	EncryptedContent string                 `json:"encrypted_content"`
+	Summary          []responsesContentPart `json:"summary"`
+	Content          []responsesContentPart `json:"content"`
 }
 
 type responsesPayload struct {
-	ID          string `json:"id"`
-	Status      string `json:"status"`
-	ServiceTier string `json:"service_tier"`
+	ID          string          `json:"id"`
+	Status      string          `json:"status"`
+	ServiceTier string          `json:"service_tier"`
+	Output      []responsesItem `json:"output"`
 	Usage       *struct {
 		InputTokens        int `json:"input_tokens"`
 		OutputTokens       int `json:"output_tokens"`

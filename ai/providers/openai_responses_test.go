@@ -240,6 +240,46 @@ data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
 	}
 }
 
+// Azure OpenAI can omit reasoning.encrypted_content from
+// response.output_item.done and provide it only in
+// response.completed.response.output. The persisted reasoning signature must be
+// backfilled from the terminal response so store:false replay stays stateless
+// (port of upstream 1f0dbc00, https://github.com/earendil-works/pi/issues/6409).
+func TestResponsesBackfillReasoningEncryptedContent(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r"}}
+
+data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"rs_1"}}
+
+data: {"type":"response.reasoning_summary_text.delta","delta":"think"}
+
+data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"think"}]}}
+
+data: {"type":"response.completed","response":{"id":"r","status":"completed","output":[{"type":"reasoning","id":"rs_1","encrypted_content":"ENC-123"}]}}
+
+`
+	final := runResponsesSSE(t, reasoningModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, sse)
+	var sig string
+	for _, c := range final.Content {
+		if tc, ok := c.(ai.ThinkingContent); ok {
+			sig = tc.ThinkingSignature
+		}
+	}
+	if sig == "" {
+		t.Fatalf("no thinking signature captured")
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(sig), &parsed); err != nil {
+		t.Fatalf("signature is not valid JSON: %q (%v)", sig, err)
+	}
+	if parsed["encrypted_content"] != "ENC-123" {
+		t.Fatalf("encrypted_content not backfilled onto signature: %q", sig)
+	}
+	// The original reasoning fields must survive the backfill.
+	if parsed["id"] != "rs_1" || parsed["type"] != "reasoning" {
+		t.Fatalf("backfill dropped original reasoning fields: %q", sig)
+	}
+}
+
 // A refusal must surface as text via response.refusal.delta.
 func TestResponsesRefusalDelta(t *testing.T) {
 	sse := `data: {"type":"response.created","response":{"id":"r"}}
