@@ -16,6 +16,9 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.2.10`](#v0210) | 2026-07-15 | `cff5172` | `dcfe36c7` | pi-ai 0.80.7 | Catalog 0.80.6→0.80.7; system-prompt `Current date` line removed; rolls up the 07-11→07-15 cycles — deferred/message-anchored tool loading, Responses `tool_choice` + OpenRouter session-affinity formats, openai-responses `encrypted_content` backfill, new `pi-messages` provider API |
+| [`v0.2.9`](#v029) | 2026-07-10 | `e77a1cc` | `81de5702` | pi-ai 0.80.6 | Catalog 0.80.3→0.80.6; input-based pricing tiers + `max` thinking level; ResourceExhausted / CF-524 / Bun-socket retry patterns; stale-usage-after-compaction guard; fail tool calls from length-truncated messages; `(no tool output)` placeholder; Vercel AI Gateway attribution removed |
+| [`v0.2.8`](#v028) | 2026-07-01 | `261985e` | `8c943640` | pi-ai 0.80.3 | Catalog 0.80.2→0.80.3 (claude-sonnet-5 across providers, Fireworks GLM-5.2 Fast realign, claude-3.5-haiku pruned); bash tool timeout validation |
 | [`v0.2.7`](#v027) | 2026-06-24 | `b75f5da` | `a2e3e9d8` | pi-ai 0.80.2 | Catalog 0.79.10→0.80.2; models-runtime migration complete (auth substrate + Models runtime + request-scoped auth + api_key/env credential); OpenAI Responses terminal events; anthropic compat→catalog; header-only client auth |
 | [`v0.2.6`](#v026) | 2026-06-22 | `d91f8b7` | `2417adb4` | pi-ai 0.79.9 | Catalog 0.79.9; chat-template thinking compat (latent); fuzzy-edit untouched-line preservation; legacy WSL bash stdin; session-branch linearization |
 | [`v0.2.5`](#v025) | 2026-06-19 | `d5f2c73` | `56b22768` | pi-ai 0.79.8 | Catalog 0.79.8 (GLM-5.2 opencode-go, openrouter/fusion, Mistral prompt-caching data); no behavior change vs v0.2.4 |
@@ -28,6 +31,68 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.2.10
+Upstream sync `81de5702 → dcfe36c7` — rolls up four cycles (07-11, 07-13,
+07-14, 07-15). npm reference build advanced 0.80.6 → **0.80.7** (single release
+crossed, this cycle). Per-cycle triage/port detail is in
+[`UPSTREAM.md`](UPSTREAM.md); headline ports:
+
+- **Catalog → 0.80.7** (`818d6745` + data commit `1f9e846c`) — re-derived
+  byte-identical (**416,889 B**) from the integrity-verified build's MODELS,
+  endpoint-pinned both ends. Drains the deferred queue (fable-5 xhigh/max,
+  copilot 1M, mai-code `/responses` routing, opencode `sessionAffinityFormat`);
+  adds gpt-5.6 luna/sol/terra, gpt-realtime-2.1, kwaipilot kat-coder; prunes 11
+  openrouter/vercel ids. No schema drift.
+- **System-prompt `Current date` removed** (`f4e9ca74`) — the daily date line
+  (and its computation) dropped from both prompt branches, keeping only
+  `Current working directory`. Byte-confirmed against the shipped build.
+- **`pi-messages` provider API** (`961fa6c1`, 07-14 ruling) — new first-class
+  provider API (POST `{model,context,options}` + SSE), SDK-only; Radius OAuth +
+  host wiring stay out. Hardened after review (stream-goroutine recover, CRLF
+  normalization, `OnResponse` error propagation).
+- **openai-responses `encrypted_content` backfill** (`1f0dbc00`) — indexes
+  reasoning blocks by item id and backfills a late signature from the terminal
+  response so `store:false` replay stays stateless.
+- **Deferred / message-anchored tool loading** (`3d8f7435`) — cache-friendly
+  dynamic tool loading (`AddedToolNames`, `ai/deferred_tools.go`), gated to
+  first-party Claude ≥4.5 + openai-responses.
+- **Responses `tool_choice` + OpenRouter session-affinity formats**
+  (`eacaa130` / `298665cf`) — latent `ToolChoice`, and a `sessionAffinityFormat`
+  selector replacing the boolean toggles across both OpenAI-compatible providers.
+
+Reviewed each cycle via independent go-review + adversarial parity review (all
+faithful; catalog endpoint-pinned; differential 37/37); `-race` suite green.
+
+### v0.2.9
+Upstream sync `8c943640 → 81de5702` — five cycles (07-06 through 07-10). npm
+reference build advanced 0.80.3 → **0.80.6** (v0.80.4/5/6; each regen supersedes
+the prior).
+
+- **Catalog → 0.80.6** (`d321e2b`) — re-derived byte-identical (411,270 B);
+  legacy claude-3.x/4-0 pruned, smoke pin repointed to
+  `claude-haiku-4-5-20251001`.
+- **Input-based pricing tiers + `max` thinking level** (`fbdd4638` + `a9ecf301`)
+  — `ModelCost.Tiers`; `ThinkingMax` above `xhigh`; openai-responses parses
+  `cache_write_tokens`.
+- **Retry-classifier expansions** — CF-524 (`d53b5676`), Bun socket drop
+  (`4285712b`), gRPC ResourceExhausted (`57d96d72`).
+- **Stale-usage-after-compaction guard** (`8973ae28`); **fail tool calls from
+  length-truncated messages** (`351efc82`); **`(no tool output)` placeholder**
+  (`279f53b0`); **anthropic empty-text signed thinking block** (`6731a0ba`);
+  **remove Vercel AI Gateway attribution** (`83cbfc65`); **clamp openai-responses
+  max-output floor to 16** (`2e4ad6a0`).
+
+Reviewed via independent go-review + adversarial parity review each cycle (all
+faithful; request diff 37/37); `-race` suite green.
+
+### v0.2.8
+Upstream sync `9be55bc7 → 8c943640` (upstream release v0.80.3). Catalog
+regenerated from npm `@earendil-works/pi-ai` 0.80.3 (endpoint-pinned,
+integrity-verified) — claude-sonnet-5 across anthropic/bedrock/openrouter/
+vercel/copilot, Fireworks GLM-5.2 Fast realign, claude-3.5-haiku-* removed; plus
+bash-tool timeout validation (reject non-positive / oversized). Independent
+go-review (ship) + adversarial parity review (both faithful).
 
 ### v0.2.7
 Rolls up **three upstream cycles** untagged since v0.2.6 (`2417adb4 → a2e3e9d8`):
