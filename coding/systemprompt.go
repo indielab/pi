@@ -3,7 +3,6 @@ package coding
 import (
 	"fmt"
 	"strings"
-	"time"
 )
 
 // ContextFile is a project context file injected into the system prompt.
@@ -28,19 +27,12 @@ type BuildSystemPromptOptions struct {
 	ReadmePath   string
 	DocsPath     string
 	ExamplesPath string
-	// Now allows deterministic dates in tests; zero value uses time.Now().
-	Now time.Time
 }
 
 // BuildSystemPrompt constructs the coding agent system prompt (port of
 // buildSystemPrompt), including tools, guidelines, project context, and footer.
 func BuildSystemPrompt(opts BuildSystemPromptOptions) string {
 	promptCwd := strings.ReplaceAll(opts.Cwd, "\\", "/")
-	now := opts.Now
-	if now.IsZero() {
-		now = time.Now()
-	}
-	date := now.Format("2006-01-02")
 
 	appendSection := ""
 	if opts.AppendSystemPrompt != "" {
@@ -80,7 +72,6 @@ func BuildSystemPrompt(opts BuildSystemPromptOptions) string {
 
 	if opts.CustomPrompt != "" {
 		prompt := opts.CustomPrompt + appendSection + contextSection() + skillsSection
-		prompt += "\nCurrent date: " + date
 		prompt += "\nCurrent working directory: " + promptCwd
 		return prompt
 	}
@@ -163,7 +154,6 @@ Pi documentation (read only when the user asks about pi itself, its SDK, extensi
 - Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`, toolsList, gb.String(), readmePath, docsPath, examplesPath)
 
 	prompt += appendSection + contextSection() + skillsSection
-	prompt += "\nCurrent date: " + date
 	prompt += "\nCurrent working directory: " + promptCwd
 	return prompt
 }

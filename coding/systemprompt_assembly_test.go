@@ -69,14 +69,13 @@ func TestNewSessionCustomPromptStillAssembles(t *testing.T) {
 	if !strings.HasPrefix(prompt, "You are a custom agent.") {
 		t.Fatalf("custom prompt should lead the system prompt:\n%s", prompt)
 	}
-	// pi's order: custom prompt, project context, skills, date, cwd.
+	// pi's order: custom prompt, project context, skills, cwd.
 	ordered := []string{
 		"You are a custom agent.",
 		"<project_context>",
 		"<project_instructions path=\"" + filepath.Join(cwd, "AGENTS.md") + "\">\nfollow the rules\n</project_instructions>",
 		"<available_skills>",
 		"<name>demo-skill</name>",
-		"\nCurrent date: ",
 		"\nCurrent working directory: ",
 	}
 	last := -1
