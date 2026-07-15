@@ -55,8 +55,25 @@ scope.
 - Commit the ledger update; push everything to
   `https://github.com/sky-valley/pi.git main` (HTTPS — SSH signing is not
   available to automation on this machine).
-- Report: N changes — X ported (with commits), Y n/a, Z escalated; any test
-  count change; any new deliberate divergence added to UPSTREAM.md.
+- **Cut the release IN THIS CYCLE iff the delta crossed a release tag** (an npm
+  version bump — the same trigger that refreshes the reference build in §0).
+  Releases are not cut separately; they happen here when the sync crosses one.
+  - Version: bump the **patch** of the latest port tag (`git tag --sort=-v:refname
+    | head -1`), e.g. `v0.2.9 → v0.2.10`. The port's version is git-tag-only and
+    independent of the npm number; one tag per release-crossing cycle (cycles
+    with no npm bump get no tag).
+  - Tag the **ledger/pin-advance commit** (the tip of the sync) as an
+    **annotated, unsigned** tag, tagger `Noam Y. Tenne <noam@10ne.org>`:
+    `git -c user.name="Noam Y. Tenne" -c user.email="noam@10ne.org" tag -a
+    vX.Y.Z <sha> -m "vX.Y.Z — upstream pin <sha>, npm pi-ai <ver> …"`.
+  - Add the row + a Notes entry to `docs/RELEASES.md` (version, date, tagged
+    commit, upstream pin, npm catalog, headline). If RELEASES.md is behind the
+    tag list, backfill the missing tags from their `git tag -n99` messages first.
+  - Push the tag: `git -c credential.helper='!gh auth git-credential' push
+    https://github.com/sky-valley/pi.git vX.Y.Z` (HTTPS, same as the branch push).
+- Report: N changes — X ported (with commits), Y n/a, Z escalated; the release
+  tag if one was cut; any test count change; any new deliberate divergence added
+  to UPSTREAM.md.
 
 ## Hard rules
 - Anything that would change the **public Go API** or the deliberate non-port
