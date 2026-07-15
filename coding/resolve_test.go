@@ -23,15 +23,17 @@ func TestResolveModelOpenRouterSlashedID(t *testing.T) {
 // matches within that provider, the full input falls back to a raw model id
 // across all models (pi: "openai/gpt-4o:extended" style openrouter ids).
 func TestResolveModelProviderPrefixFallsBackToFullID(t *testing.T) {
-	r, err := ResolveModelPattern("anthropic/claude-3.5-haiku")
+	r, err := ResolveModelPattern("anthropic/claude-opus-4.8-fast")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// npm 0.79.10 dropped openrouter/anthropic/claude-3.5-haiku; the id now lives
-	// only under vercel-ai-gateway, so the full-id fallback resolves there (pi's
-	// registry .find() lands on the same sole remaining copy).
-	if string(r.Model.Provider) != "vercel-ai-gateway" || r.Model.ID != "anthropic/claude-3.5-haiku" {
-		t.Fatalf("expected vercel-ai-gateway fallback for full id, got %s/%s", r.Model.Provider, r.Model.ID)
+	// "anthropic" is a known provider but has no "claude-opus-4.8-fast" model, so
+	// the full input falls back to a raw model id across all providers; that id is
+	// hosted solely under openrouter, so the fallback resolves there (pi's registry
+	// .find() lands on the same sole copy). npm 0.80.7 dropped the previous fixture
+	// (vercel-ai-gateway/anthropic/claude-3.5-haiku); re-point on catalog churn.
+	if string(r.Model.Provider) != "openrouter" || r.Model.ID != "anthropic/claude-opus-4.8-fast" {
+		t.Fatalf("expected openrouter fallback for full id, got %s/%s", r.Model.Provider, r.Model.ID)
 	}
 }
 
