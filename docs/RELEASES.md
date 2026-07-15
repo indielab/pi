@@ -10,13 +10,17 @@ captured from. The commit-by-commit triage/port ledger lives in
 - A release tag points at the cycle's ledger/pin-advance commit (the tip of the
   sync), so the catalog + ledger are included.
 - Versioning is git-tag-only — there is no `VERSION` file or in-source version
-  constant. The npm number below is the upstream catalog version, not the port's.
+  constant. **As of `v0.80.11` the port's `major.minor` follows the upstream
+  `pi-ai` catalog `major.minor`; `patch` is the port's own monotonic counter**
+  (it never resets, so it stays distinct from pi's patch — e.g. `v0.80.11` syncs
+  pi 0.80.7). Earlier tags (`v0.1.0`–`v0.2.10`) used an independent `v0.2.x`
+  line; they are left as-is.
 
 ## Releases
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
-| [`v0.2.10`](#v0210) | 2026-07-15 | `cff5172` | `dcfe36c7` | pi-ai 0.80.7 | Catalog 0.80.6→0.80.7; system-prompt `Current date` line removed; rolls up the 07-11→07-15 cycles — deferred/message-anchored tool loading, Responses `tool_choice` + OpenRouter session-affinity formats, openai-responses `encrypted_content` backfill, new `pi-messages` provider API |
+| [`v0.80.11`](#v08011) | 2026-07-15 | `cff5172` | `dcfe36c7` | pi-ai 0.80.7 | Catalog 0.80.6→0.80.7; system-prompt `Current date` line removed; rolls up the 07-11→07-15 cycles — deferred/message-anchored tool loading, Responses `tool_choice` + OpenRouter session-affinity formats, openai-responses `encrypted_content` backfill, new `pi-messages` provider API |
 | [`v0.2.9`](#v029) | 2026-07-10 | `e77a1cc` | `81de5702` | pi-ai 0.80.6 | Catalog 0.80.3→0.80.6; input-based pricing tiers + `max` thinking level; ResourceExhausted / CF-524 / Bun-socket retry patterns; stale-usage-after-compaction guard; fail tool calls from length-truncated messages; `(no tool output)` placeholder; Vercel AI Gateway attribution removed |
 | [`v0.2.8`](#v028) | 2026-07-01 | `261985e` | `8c943640` | pi-ai 0.80.3 | Catalog 0.80.2→0.80.3 (claude-sonnet-5 across providers, Fireworks GLM-5.2 Fast realign, claude-3.5-haiku pruned); bash tool timeout validation |
 | [`v0.2.7`](#v027) | 2026-06-24 | `b75f5da` | `a2e3e9d8` | pi-ai 0.80.2 | Catalog 0.79.10→0.80.2; models-runtime migration complete (auth substrate + Models runtime + request-scoped auth + api_key/env credential); OpenAI Responses terminal events; anthropic compat→catalog; header-only client auth |
@@ -32,8 +36,10 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 ## Notes
 
-### v0.2.10
-Upstream sync `81de5702 → dcfe36c7` — rolls up four cycles (07-11, 07-13,
+### v0.80.11
+First release under the pi-tracking scheme (`major.minor` = pi 0.80; patch 11
+continues the port's own counter from `v0.2.10`). Upstream sync
+`81de5702 → dcfe36c7` — rolls up four cycles (07-11, 07-13,
 07-14, 07-15). npm reference build advanced 0.80.6 → **0.80.7** (single release
 crossed, this cycle). Per-cycle triage/port detail is in
 [`UPSTREAM.md`](UPSTREAM.md); headline ports:

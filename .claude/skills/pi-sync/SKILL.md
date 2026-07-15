@@ -58,10 +58,14 @@ scope.
 - **Cut the release IN THIS CYCLE iff the delta crossed a release tag** (an npm
   version bump — the same trigger that refreshes the reference build in §0).
   Releases are not cut separately; they happen here when the sync crosses one.
-  - Version: bump the **patch** of the latest port tag (`git tag --sort=-v:refname
-    | head -1`), e.g. `v0.2.9 → v0.2.10`. The port's version is git-tag-only and
-    independent of the npm number; one tag per release-crossing cycle (cycles
-    with no npm bump get no tag).
+  - Version: **major.minor follow pi's npm catalog version; patch is the port's
+    own monotonic counter.** Set `major.minor` to the crossed `pi-ai` release's
+    `major.minor`, and set `patch` to the latest port tag's patch + 1 (the port
+    counter never resets — so it stays distinct from pi's patch and there is no
+    minor-vs-patch judgement to make). E.g. syncing pi 0.80.7 after `v0.80.10`
+    → `v0.80.11`; if pi later bumps to 0.81.x, the next tag is `v0.81.<n+1>`. The
+    version is git-tag-only; one tag per release-crossing cycle (cycles with no
+    npm bump get no tag).
   - Tag the **ledger/pin-advance commit** (the tip of the sync) as an
     **annotated, unsigned** tag, tagger `Noam Y. Tenne <noam@10ne.org>`:
     `git -c user.name="Noam Y. Tenne" -c user.email="noam@10ne.org" tag -a
