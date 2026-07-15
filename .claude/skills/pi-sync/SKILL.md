@@ -75,6 +75,26 @@ scope.
     tag list, backfill the missing tags from their `git tag -n99` messages first.
   - Push the tag: `git -c credential.helper='!gh auth git-credential' push
     https://github.com/sky-valley/pi.git vX.Y.Z` (HTTPS, same as the branch push).
+  - **Draft the release tweet** (we tweet on every release cut). Surface it for
+    the human to post — do NOT auto-post (publishing is the owner's action).
+    Owner's voice/format, verbatim shape:
+
+    ```
+    Gophers of pi!
+
+    vX.Y.Z has dropped, tracking pi <npm-ver> 🎉
+
+    What's fresh?
+    :: <high-level change 1>
+    :: <high-level change 2>
+    :: <high-level change 3>
+
+    Keep it real 👉 https://github.com/sky-valley/pi
+    ```
+
+    Rules: open with `Gophers of pi!`; name the port version and the pi npm
+    version it tracks; up to 3 high-level `:: `-prefixed changes (plain, no jargon
+    dump); link the **repo, not the release**; keep the upbeat tone.
 - Report: N changes — X ported (with commits), Y n/a, Z escalated; the release
   tag if one was cut; any test count change; any new deliberate divergence added
   to UPSTREAM.md.
