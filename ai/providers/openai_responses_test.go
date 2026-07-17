@@ -1523,3 +1523,56 @@ func TestOpenAIResponsesUsageCacheWrite(t *testing.T) {
 		t.Fatalf("usage wrong: %+v (want Input 15, CacheRead 2, CacheWrite 3, Output 7, Total 27)", final.Usage)
 	}
 }
+
+// TestResponsesXaiEncryptedReasoningInclude locks pi 5220aba6: every
+// reasoning-capable xai model requests include=["reasoning.encrypted_content"]
+// regardless of which reasoning branch fired — including the grok-4.5 shape
+// (thinkingLevelMap.off null, no effort → no reasoning object, include still
+// sent) — while non-xai models without effort stay include-free.
+func TestResponsesXaiEncryptedReasoningInclude(t *testing.T) {
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+
+	// grok-4.5 shape: reasoning true, off:null map, no effort requested.
+	grok := &ai.Model{
+		ID: "grok-4.5", Api: ai.APIOpenAIResponses, Provider: "xai",
+		BaseURL: "https://api.x.ai/v1", Reasoning: true,
+		ThinkingLevelMap: map[ai.ModelThinkingLevel]*string{"off": nil, "minimal": nil},
+		Input:            []string{"text"}, MaxTokens: 4096,
+	}
+	params := mustBuildResponsesParams(t, grok, req, &OpenAIResponsesOptions{})
+	include, ok := params["include"].([]any)
+	if !ok || len(include) != 1 || include[0] != "reasoning.encrypted_content" {
+		t.Fatalf("xai include = %v, want [reasoning.encrypted_content]", params["include"])
+	}
+	if _, hasReasoning := params["reasoning"]; hasReasoning {
+		t.Fatalf("off:null with no effort must not send reasoning: %v", params["reasoning"])
+	}
+
+	// With an effort both the reasoning object and include are present.
+	params = mustBuildResponsesParams(t, grok, req, &OpenAIResponsesOptions{ReasoningEffort: "high"})
+	if _, ok := params["include"].([]any); !ok {
+		t.Fatalf("xai include missing with effort: %v", params["include"])
+	}
+
+	// Non-xai reasoning model without effort: no include.
+	other := &ai.Model{
+		ID: "some-model", Api: ai.APIOpenAIResponses, Provider: "openai",
+		BaseURL: "https://api.openai.com/v1", Reasoning: true,
+		Input: []string{"text"}, MaxTokens: 4096,
+	}
+	params = mustBuildResponsesParams(t, other, req, &OpenAIResponsesOptions{})
+	if _, has := params["include"]; has {
+		t.Fatalf("non-xai without effort must not send include: %v", params["include"])
+	}
+
+	// Non-reasoning xai model: no include (the branch is inside model.reasoning).
+	flat := &ai.Model{
+		ID: "grok-build-0.1", Api: ai.APIOpenAIResponses, Provider: "xai",
+		BaseURL: "https://api.x.ai/v1", Reasoning: false,
+		Input: []string{"text"}, MaxTokens: 4096,
+	}
+	params = mustBuildResponsesParams(t, flat, req, &OpenAIResponsesOptions{})
+	if _, has := params["include"]; has {
+		t.Fatalf("non-reasoning xai must not send include: %v", params["include"])
+	}
+}

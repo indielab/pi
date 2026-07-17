@@ -785,6 +785,12 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 				params["reasoning"] = map[string]any{"effort": off}
 			}
 		}
+		// xAI returns encrypted reasoning only when asked; request it for every
+		// reasoning-capable xai model regardless of which branch fired, so
+		// store:false multi-turn replay keeps the reasoning items (pi 5220aba6).
+		if model.Provider == "xai" {
+			params["include"] = []any{"reasoning.encrypted_content"}
+		}
 	}
 	return params, nil
 }
