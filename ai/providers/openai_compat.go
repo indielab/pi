@@ -47,6 +47,12 @@ type openAICompletionsCompat struct {
 	RequiresThinkingAsText                      bool
 	ZaiToolStream                               bool
 	SendSessionAffinityHeaders                  bool
+	// DeferredToolsMode selects a provider-specific deferred-tool serialization
+	// (pi OpenAICompletionsCompat.deferredToolsMode). "kimi" withholds tools
+	// introduced by a tool result's addedToolNames from the top-level tools
+	// param and re-declares them in a system message after that tool-result
+	// run. "" (pi undefined) disables deferral.
+	DeferredToolsMode string
 	// SessionAffinityFormat selects the session-affinity header shape (pi
 	// SessionAffinityFormat). Auto-detected: openrouter → sessionAffinityOpenRouter,
 	// else sessionAffinityOpenAI.
@@ -129,6 +135,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		RequiresThinkingAsText:                      false,
 		ZaiToolStream:                               false,
 		SendSessionAffinityHeaders:                  false,
+		DeferredToolsMode:                           "",
 		SessionAffinityFormat:                       sessionAffinityFormatFor(isOpenRouter),
 		CacheControlFormat:                          cacheControlFormat,
 		// pi defaults these routing objects to {} (no routing emitted).
@@ -158,6 +165,7 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		RequiresThinkingAsText                      *bool                 `json:"requiresThinkingAsText"`
 		ZaiToolStream                               *bool                 `json:"zaiToolStream"`
 		SendSessionAffinityHeaders                  *bool                 `json:"sendSessionAffinityHeaders"`
+		DeferredToolsMode                           *string               `json:"deferredToolsMode"`
 		SessionAffinityFormat                       *string               `json:"sessionAffinityFormat"`
 		CacheControlFormat                          *string               `json:"cacheControlFormat"`
 		OpenRouterRouting                           map[string]any        `json:"openRouterRouting"`
@@ -208,6 +216,9 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	}
 	if raw.SendSessionAffinityHeaders != nil {
 		c.SendSessionAffinityHeaders = *raw.SendSessionAffinityHeaders
+	}
+	if raw.DeferredToolsMode != nil {
+		c.DeferredToolsMode = *raw.DeferredToolsMode
 	}
 	if raw.SessionAffinityFormat != nil {
 		c.SessionAffinityFormat = *raw.SessionAffinityFormat

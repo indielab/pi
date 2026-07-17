@@ -658,8 +658,11 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 			messages = append(messages, msg)
 			lastRole = "assistant"
 		} else if _, ok := asToolResultMsg(m); ok {
-			// Group consecutive tool-result messages, collecting images.
+			// Group consecutive tool-result messages, collecting images and —
+			// in Kimi deferred mode — the tool names this run introduces.
 			var imageBlocks []any
+			var runDeferredNames []string
+			runDeferredSeen := map[string]bool{}
 			j := i
 			for ; j < len(transformed); j++ {
 				tr, ok := asToolResultMsg(transformed[j])
@@ -698,6 +701,15 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 				}
 				messages = append(messages, toolMsg)
 
+				if compat.DeferredToolsMode == "kimi" {
+					for _, name := range tr.AddedToolNames {
+						if !runDeferredSeen[name] {
+							runDeferredSeen[name] = true
+							runDeferredNames = append(runDeferredNames, name)
+						}
+					}
+				}
+
 				if hasImages && modelHasImageInput {
 					for _, c := range tr.Content {
 						if img, ok := c.(ai.ImageContent); ok {
@@ -723,6 +735,18 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 				lastRole = "user"
 			} else {
 				lastRole = "toolResult"
+			}
+
+			// Kimi deferred tools: declare the run's introduced tools in a
+			// system message after all its tool results. Kimi accepts a system
+			// message with tools but omits the standard content field.
+			if len(runDeferredNames) > 0 {
+				if deferredTools := getToolsByName(req.Tools, runDeferredNames); len(deferredTools) > 0 {
+					messages = append(messages, map[string]any{
+						"role":  "system",
+						"tools": convertOpenAITools(deferredTools, compat),
+					})
+				}
 			}
 			continue
 		}
@@ -762,24 +786,21 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 		params["temperature"] = *opts.Temperature
 	}
 
-	if len(req.Tools) > 0 {
-		var tools []map[string]any
-		for _, t := range req.Tools {
-			var schema any = map[string]any{"type": "object", "properties": map[string]any{}}
-			if t.Parameters != nil {
-				if raw, err := json.Marshal(t.Parameters); err == nil {
-					var p any
-					_ = json.Unmarshal(raw, &p)
-					schema = p
-				}
-			}
-			fn := map[string]any{"name": t.Name, "description": t.Description, "parameters": schema}
-			if compat.SupportsStrictMode {
-				fn["strict"] = false
-			}
-			tools = append(tools, map[string]any{"type": "function", "function": fn})
+	// Kimi deferred tools: tools introduced by a tool result's addedToolNames
+	// are withheld from the top-level tools param (pi f16b4e0c; they are
+	// re-declared in a system message after their tool-result run instead).
+	deferredNames := map[string]bool{}
+	if compat.DeferredToolsMode == "kimi" {
+		deferredNames = getDeferredToolNames(req.Messages)
+	}
+	var activeTools []ai.Tool
+	for _, t := range req.Tools {
+		if !deferredNames[t.Name] {
+			activeTools = append(activeTools, t)
 		}
-		params["tools"] = tools
+	}
+	if len(activeTools) > 0 {
+		params["tools"] = convertOpenAITools(activeTools, compat)
 		if compat.ZaiToolStream {
 			params["tool_stream"] = true
 		}
@@ -844,6 +865,63 @@ func clientAPIKey(provider ai.ProviderId, apiKey string, headers map[string]stri
 		}
 	}
 	return "", fmt.Errorf("No API key for provider: %s", provider)
+}
+
+// getDeferredToolNames collects the tool names introduced by tool results'
+// addedToolNames across the conversation (port of pi's getDeferredToolNames,
+// f16b4e0c).
+func getDeferredToolNames(messages []ai.Message) map[string]bool {
+	names := map[string]bool{}
+	for _, m := range messages {
+		if tr, ok := asToolResultMsg(m); ok {
+			for _, name := range tr.AddedToolNames {
+				names[name] = true
+			}
+		}
+	}
+	return names
+}
+
+// getToolsByName resolves names against the context tools, preserving name
+// order and skipping unknown names (port of pi's getToolsByName).
+func getToolsByName(tools []ai.Tool, names []string) []ai.Tool {
+	if len(tools) == 0 {
+		return nil
+	}
+	byName := make(map[string]ai.Tool, len(tools))
+	for _, t := range tools {
+		byName[t.Name] = t
+	}
+	out := make([]ai.Tool, 0, len(names))
+	for _, name := range names {
+		if t, ok := byName[name]; ok {
+			out = append(out, t)
+		}
+	}
+	return out
+}
+
+// convertOpenAITools serializes tools into the chat-completions tools shape
+// (port of pi's convertTools), shared by the top-level tools param and the
+// Kimi deferred-tools system message.
+func convertOpenAITools(tools []ai.Tool, compat openAICompletionsCompat) []map[string]any {
+	var out []map[string]any
+	for _, t := range tools {
+		var schema any = map[string]any{"type": "object", "properties": map[string]any{}}
+		if t.Parameters != nil {
+			if raw, err := json.Marshal(t.Parameters); err == nil {
+				var p any
+				_ = json.Unmarshal(raw, &p)
+				schema = p
+			}
+		}
+		fn := map[string]any{"name": t.Name, "description": t.Description, "parameters": schema}
+		if compat.SupportsStrictMode {
+			fn["strict"] = false
+		}
+		out = append(out, map[string]any{"type": "function", "function": fn})
+	}
+	return out
 }
 
 // hasToolHistory reports whether the conversation already contains tool calls or

@@ -403,3 +403,178 @@ func TestDeferredToolsResponsesDisabled(t *testing.T) {
 		}
 	}
 }
+
+// ---- Kimi deferred tools on openai-completions (upstream f16b4e0c) ----
+
+// dtKimiModel mirrors pi's makeKimiModel: an openai-completions moonshotai
+// model, optionally with compat.deferredToolsMode="kimi".
+func dtKimiModel(deferred bool) *ai.Model {
+	m := &ai.Model{
+		ID: "deferred-tools-model", Name: "Deferred Tools Model",
+		Api: ai.APIOpenAICompletions, Provider: "moonshotai",
+		BaseURL: "http://127.0.0.1:9/v1", Input: []string{"text"},
+		ContextWindow: 128000, MaxTokens: 4096,
+	}
+	if deferred {
+		m.Compat = json.RawMessage(`{"deferredToolsMode":"kimi"}`)
+	}
+	return m
+}
+
+// dtKimiContext mirrors pi's makeContext for the completions provider.
+func dtKimiContext(model *ai.Model, tools []ai.Tool, added ...string) ai.Context {
+	return ai.Context{
+		Messages: []ai.Message{
+			ai.NewUserText("hi", 1),
+			&ai.AssistantMessage{
+				Api: model.Api, Provider: model.Provider, Model: model.ID,
+				Content:    ai.ContentList{ai.ToolCall{ID: "call_1", Name: "base_tool", Arguments: map[string]any{}}},
+				StopReason: ai.StopToolUse, Timestamp: 2,
+			},
+			ai.ToolResultMessage{
+				ToolCallID: "call_1", ToolName: "base_tool",
+				Content: ai.ContentList{ai.TextContent{Text: "done"}}, AddedToolNames: added, Timestamp: 3,
+			},
+			ai.NewUserText("next", 4),
+		},
+		Tools: tools,
+	}
+}
+
+// dtCompletionsToolNames extracts function names from a completions tools array
+// (top-level params or a Kimi system message).
+func dtCompletionsToolNames(tools any) []string {
+	var names []string
+	list, _ := tools.([]map[string]any)
+	if list == nil {
+		if anyList, ok := tools.([]any); ok {
+			for _, item := range anyList {
+				if m, ok := item.(map[string]any); ok {
+					list = append(list, m)
+				}
+			}
+		}
+	}
+	for _, tool := range list {
+		if fn, ok := tool["function"].(map[string]any); ok {
+			if name, ok := fn["name"].(string); ok {
+				names = append(names, name)
+			}
+		}
+	}
+	return names
+}
+
+func dtCompletionsMessages(t *testing.T, body map[string]any) []map[string]any {
+	t.Helper()
+	raw, ok := body["messages"].([]map[string]any)
+	if !ok {
+		t.Fatalf("messages missing or wrong type: %T", body["messages"])
+	}
+	return raw
+}
+
+// TestDeferredToolsKimiSystemDefinitions mirrors pi "serializes Kimi deferred
+// tools as system tool definitions": the deferred tool leaves the top-level
+// tools param and lands in a system message after its tool-result run.
+func TestDeferredToolsKimiSystemDefinitions(t *testing.T) {
+	model := dtKimiModel(true)
+	ctx := dtKimiContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
+	body := buildOpenAIParams(model, ctx, &OpenAIOptions{})
+
+	if got := dtCompletionsToolNames(body["tools"]); len(got) != 1 || got[0] != "base_tool" {
+		t.Fatalf("top-level tools = %v, want [base_tool]", got)
+	}
+	messages := dtCompletionsMessages(t, body)
+	toolResultIndex, systemToolIndex := -1, -1
+	for i, m := range messages {
+		if m["role"] == "tool" && toolResultIndex < 0 {
+			toolResultIndex = i
+		}
+		if _, ok := m["tools"]; ok && systemToolIndex < 0 {
+			systemToolIndex = i
+		}
+	}
+	if toolResultIndex < 0 {
+		t.Fatal("no tool-result message serialized")
+	}
+	if systemToolIndex <= toolResultIndex {
+		t.Fatalf("system tools message must follow the tool result: tool=%d system=%d", toolResultIndex, systemToolIndex)
+	}
+	sys := messages[systemToolIndex]
+	if sys["role"] != "system" {
+		t.Fatalf("tools carrier role = %v, want system", sys["role"])
+	}
+	if _, hasContent := sys["content"]; hasContent {
+		t.Fatalf("Kimi system tools message must omit the content field: %v", sys)
+	}
+	if got := dtCompletionsToolNames(sys["tools"]); len(got) != 1 || got[0] != "late_tool" {
+		t.Fatalf("system message tools = %v, want [late_tool]", got)
+	}
+}
+
+// TestDeferredToolsKimiBatchedResults mirrors pi "emits Kimi deferred schemas
+// after all tool results in a batch": one system message follows the whole
+// tool-result run, carrying both introduced tools in introduction order.
+func TestDeferredToolsKimiBatchedResults(t *testing.T) {
+	model := dtKimiModel(true)
+	ctx := dtKimiContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool"), dtTool("later_tool")}, "late_tool")
+	// Insert a second tool result (call_2) into the run, like pi's splice(3, 0, ...).
+	second := ai.ToolResultMessage{
+		ToolCallID: "call_2", ToolName: "base_tool",
+		Content: ai.ContentList{ai.TextContent{Text: "done"}}, AddedToolNames: []string{"later_tool"}, Timestamp: 3,
+	}
+	msgs := ctx.Messages
+	ctx.Messages = append(msgs[:3:3], append([]ai.Message{second}, msgs[3:]...)...)
+
+	body := buildOpenAIParams(model, ctx, &OpenAIOptions{})
+	messages := dtCompletionsMessages(t, body)
+	var roles []string
+	for _, m := range messages {
+		roles = append(roles, m["role"].(string))
+	}
+	want := []string{"user", "assistant", "tool", "tool", "system", "user"}
+	if len(roles) != len(want) {
+		t.Fatalf("roles = %v, want %v", roles, want)
+	}
+	for i := range want {
+		if roles[i] != want[i] {
+			t.Fatalf("roles = %v, want %v", roles, want)
+		}
+	}
+	if got := dtCompletionsToolNames(messages[4]["tools"]); len(got) != 2 || got[0] != "late_tool" || got[1] != "later_tool" {
+		t.Fatalf("batched system tools = %v, want [late_tool later_tool]", got)
+	}
+}
+
+// TestDeferredToolsKimiDisabled mirrors pi "leaves OpenAI Completions tools
+// unchanged without Kimi mode".
+func TestDeferredToolsKimiDisabled(t *testing.T) {
+	model := dtKimiModel(false)
+	ctx := dtKimiContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
+	body := buildOpenAIParams(model, ctx, &OpenAIOptions{})
+
+	if got := dtCompletionsToolNames(body["tools"]); len(got) != 2 || got[0] != "base_tool" || got[1] != "late_tool" {
+		t.Fatalf("tools = %v, want unchanged [base_tool late_tool]", got)
+	}
+	for _, m := range dtCompletionsMessages(t, body) {
+		if _, ok := m["tools"]; ok {
+			t.Fatalf("no message may carry tools without Kimi mode: %v", m)
+		}
+	}
+}
+
+// TestDeferredToolsKimiAllDeferred pins the fused buildParams structure: when
+// every context tool is deferred, the active list is empty and the tool-history
+// branch sends the empty tools array (pi: activeTools.length > 0 falls through
+// to hasToolHistory).
+func TestDeferredToolsKimiAllDeferred(t *testing.T) {
+	model := dtKimiModel(true)
+	ctx := dtKimiContext(model, []ai.Tool{dtTool("late_tool")}, "late_tool")
+	body := buildOpenAIParams(model, ctx, &OpenAIOptions{})
+
+	tools, ok := body["tools"].([]map[string]any)
+	if !ok || len(tools) != 0 {
+		t.Fatalf("all-deferred must fall through to the empty tool-history array, got %v", body["tools"])
+	}
+}
