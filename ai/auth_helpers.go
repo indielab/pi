@@ -1,6 +1,9 @@
 package ai
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // EnvAPIKeyAuth builds the standard api-key auth (pi
 // packages/ai/src/auth/helpers.ts envApiKeyAuth): a stored credential key wins,
@@ -11,14 +14,14 @@ import "sync"
 func EnvAPIKeyAuth(name string, envVars ...string) *ApiKeyAuth {
 	return &ApiKeyAuth{
 		Name: name,
-		Login: func(callbacks AuthLoginCallbacks) (*Credential, error) {
-			key, err := callbacks.Prompt(AuthPrompt{Type: AuthPromptSecret, Message: "Enter " + name})
+		Login: func(interaction AuthInteraction) (*Credential, error) {
+			key, err := interaction.Prompt(AuthPrompt{Type: AuthPromptSecret, Message: "Enter " + name})
 			if err != nil {
 				return nil, err
 			}
 			return &Credential{Type: CredentialAPIKey, Key: key}, nil
 		},
-		Resolve: func(_ *Model, ctx AuthContext, credential *Credential) (*AuthResult, error) {
+		Resolve: func(ctx AuthContext, credential *Credential) (*AuthResult, error) {
 			if credential != nil && credential.Key != "" {
 				return &AuthResult{Auth: ModelAuth{APIKey: credential.Key}, Source: "stored credential"}, nil
 			}
@@ -48,19 +51,19 @@ func LazyOAuth(name string, load func() (*OAuthAuth, error)) *OAuthAuth {
 	}
 	return &OAuthAuth{
 		Name: name,
-		Login: func(callbacks AuthLoginCallbacks) (*Credential, error) {
+		Login: func(interaction AuthInteraction) (*Credential, error) {
 			o, err := get()
 			if err != nil {
 				return nil, err
 			}
-			return o.Login(callbacks)
+			return o.Login(interaction)
 		},
-		Refresh: func(credential OAuthCredentials) (OAuthCredentials, error) {
+		Refresh: func(ctx context.Context, credential OAuthCredentials) (OAuthCredentials, error) {
 			o, err := get()
 			if err != nil {
 				return OAuthCredentials{}, err
 			}
-			return o.Refresh(credential)
+			return o.Refresh(ctx, credential)
 		},
 		ToAuth: func(credential OAuthCredentials) (ModelAuth, error) {
 			o, err := get()

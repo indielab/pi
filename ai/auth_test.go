@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -120,7 +121,6 @@ func TestCredentialAPIKeyJSON(t *testing.T) {
 	res, err := resolveProviderAuth(
 		"test",
 		ProviderAuth{APIKey: EnvAPIKeyAuth("Test")},
-		&Model{Provider: "test"},
 		seededStore(t, "test", &fromDisk),
 		fakeAuthContext{},
 		nil,
@@ -145,7 +145,7 @@ func seededStore(t *testing.T, provider string, c *Credential) CredentialStore {
 func TestResolveProviderAuthRequestOverrides(t *testing.T) {
 	auth := ProviderAuth{APIKey: &ApiKeyAuth{
 		Name: "Test",
-		Resolve: func(model *Model, ctx AuthContext, credential *Credential) (*AuthResult, error) {
+		Resolve: func(ctx AuthContext, credential *Credential) (*AuthResult, error) {
 			key := ctx.Env("FALLBACK_KEY")
 			if credential != nil && credential.Key != "" {
 				key = credential.Key
@@ -156,17 +156,16 @@ func TestResolveProviderAuthRequestOverrides(t *testing.T) {
 			return &AuthResult{Auth: ModelAuth{APIKey: key}, Env: map[string]string{"ACCT": ctx.Env("ACCT")}}, nil
 		},
 	}}
-	model := &Model{Provider: "test"}
 	stored := &Credential{Type: CredentialAPIKey, Key: "stored-key"}
 
 	// Request apiKey override wins over the stored credential.
-	res, err := resolveProviderAuth("test", auth, model, seededStore(t, "test", stored), fakeAuthContext{}, &AuthResolutionOverrides{APIKey: "req-key"})
+	res, err := resolveProviderAuth("test", auth, seededStore(t, "test", stored), fakeAuthContext{}, &AuthResolutionOverrides{APIKey: "req-key"})
 	if err != nil || res == nil || res.Auth.APIKey != "req-key" {
 		t.Fatalf("override apiKey must resolve directly: %+v err %v", res, err)
 	}
 
 	// Override env overlays ambient and is visible to Resolve.
-	res, err = resolveProviderAuth("test", auth, model, seededStore(t, "test", stored),
+	res, err = resolveProviderAuth("test", auth, seededStore(t, "test", stored),
 		fakeAuthContext{env: map[string]string{"ACCT": "ambient"}},
 		&AuthResolutionOverrides{Env: map[string]string{"ACCT": "scoped"}})
 	if err != nil || res == nil || res.Env["ACCT"] != "scoped" {
@@ -176,41 +175,38 @@ func TestResolveProviderAuthRequestOverrides(t *testing.T) {
 
 func TestEnvAPIKeyAuthResolve(t *testing.T) {
 	auth := EnvAPIKeyAuth("Test key", "PRIMARY_KEY", "SECONDARY_KEY")
-	model := &Model{Provider: "test"}
 
 	// Stored credential key wins over env.
 	ctx := fakeAuthContext{env: map[string]string{"PRIMARY_KEY": "from-env"}}
-	res, err := auth.Resolve(model, ctx, &Credential{Type: CredentialAPIKey, Key: "stored"})
+	res, err := auth.Resolve(ctx, &Credential{Type: CredentialAPIKey, Key: "stored"})
 	if err != nil || res == nil || res.Auth.APIKey != "stored" || res.Source != "stored credential" {
 		t.Fatalf("stored key should win: %+v (err %v)", res, err)
 	}
 
 	// No stored credential: first set env var in order resolves.
-	res, _ = auth.Resolve(model, fakeAuthContext{env: map[string]string{"SECONDARY_KEY": "second"}}, nil)
+	res, _ = auth.Resolve(fakeAuthContext{env: map[string]string{"SECONDARY_KEY": "second"}}, nil)
 	if res == nil || res.Auth.APIKey != "second" || res.Source != "SECONDARY_KEY" {
 		t.Fatalf("env fallback wrong: %+v", res)
 	}
 
 	// Unconfigured -> nil.
-	if res, _ := auth.Resolve(model, fakeAuthContext{}, nil); res != nil {
+	if res, _ := auth.Resolve(fakeAuthContext{}, nil); res != nil {
 		t.Fatalf("unconfigured should be nil, got %+v", res)
 	}
 }
 
 func TestResolveProviderAuthAPIKeyAmbient(t *testing.T) {
 	auth := ProviderAuth{APIKey: EnvAPIKeyAuth("Test", "TEST_KEY")}
-	model := &Model{Provider: "test"}
 	store := NewInMemoryCredentialStore()
 	ctx := fakeAuthContext{env: map[string]string{"TEST_KEY": "ambient"}}
 
-	res, err := resolveProviderAuth("test", auth, model, store, ctx, nil)
+	res, err := resolveProviderAuth("test", auth, store, ctx, nil)
 	if err != nil || res == nil || res.Auth.APIKey != "ambient" {
 		t.Fatalf("ambient api-key resolution wrong: %+v (err %v)", res, err)
 	}
 }
 
 func TestResolveProviderAuthOAuthRefreshUnderLock(t *testing.T) {
-	model := &Model{Provider: "oauthp"}
 	store := NewInMemoryCredentialStore()
 	// Seed an EXPIRED oauth credential.
 	_, _ = store.Modify("oauthp", func(*Credential) (*Credential, error) {
@@ -220,7 +216,7 @@ func TestResolveProviderAuthOAuthRefreshUnderLock(t *testing.T) {
 	refreshCalls := 0
 	auth := ProviderAuth{OAuth: &OAuthAuth{
 		Name: "Test OAuth",
-		Refresh: func(c OAuthCredentials) (OAuthCredentials, error) {
+		Refresh: func(_ context.Context, c OAuthCredentials) (OAuthCredentials, error) {
 			refreshCalls++
 			return OAuthCredentials{Refresh: "r1", Access: "new", Expires: nowMillis() + 3_600_000}, nil
 		},
@@ -229,7 +225,7 @@ func TestResolveProviderAuthOAuthRefreshUnderLock(t *testing.T) {
 		},
 	}}
 
-	res, err := resolveProviderAuth("oauthp", auth, model, store, ctx(), nil)
+	res, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
 	if err != nil || res == nil || res.Auth.APIKey != "new" || res.Source != "OAuth" {
 		t.Fatalf("expired oauth should refresh then derive: %+v (err %v)", res, err)
 	}
@@ -242,27 +238,26 @@ func TestResolveProviderAuthOAuthRefreshUnderLock(t *testing.T) {
 	}
 
 	// A still-valid credential is not refreshed.
-	res, _ = resolveProviderAuth("oauthp", auth, model, store, ctx(), nil)
+	res, _ = resolveProviderAuth("oauthp", auth, store, ctx(), nil)
 	if res == nil || res.Auth.APIKey != "new" || refreshCalls != 1 {
 		t.Fatalf("valid token should not refresh again: %+v calls=%d", res, refreshCalls)
 	}
 }
 
 func TestResolveProviderAuthOAuthRefreshFailure(t *testing.T) {
-	model := &Model{Provider: "oauthp"}
 	store := NewInMemoryCredentialStore()
 	_, _ = store.Modify("oauthp", func(*Credential) (*Credential, error) {
 		return &Credential{Type: CredentialOAuth, Refresh: "r0", Access: "old", Expires: 1}, nil
 	})
 
 	auth := ProviderAuth{OAuth: &OAuthAuth{
-		Refresh: func(c OAuthCredentials) (OAuthCredentials, error) {
+		Refresh: func(_ context.Context, c OAuthCredentials) (OAuthCredentials, error) {
 			return OAuthCredentials{}, errors.New("invalid_grant")
 		},
 		ToAuth: func(c OAuthCredentials) (ModelAuth, error) { return ModelAuth{}, nil },
 	}}
 
-	_, err := resolveProviderAuth("oauthp", auth, model, store, ctx(), nil)
+	_, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
 	var me *ModelsError
 	if !errors.As(err, &me) || me.Code != ErrOAuth {
 		t.Fatalf("refresh failure should be ModelsError code oauth, got %v", err)
@@ -270,6 +265,30 @@ func TestResolveProviderAuthOAuthRefreshFailure(t *testing.T) {
 	// The stored credential is preserved for retry.
 	if stored, _ := store.Read("oauthp"); stored == nil || stored.Access != "old" {
 		t.Fatalf("failed refresh must preserve the stored credential, got %+v", stored)
+	}
+}
+
+// TestCredentialStoreList locks pi ff28097a's list(): non-secret metadata
+// only, one entry per provider.
+func TestCredentialStoreList(t *testing.T) {
+	s := NewInMemoryCredentialStore()
+	_, _ = s.Modify("b-oauth", func(*Credential) (*Credential, error) {
+		return &Credential{Type: CredentialOAuth, Refresh: "r", Access: "secret", Expires: 1}, nil
+	})
+	_, _ = s.Modify("a-key", func(*Credential) (*Credential, error) {
+		return &Credential{Type: CredentialAPIKey, Key: "secret"}, nil
+	})
+
+	infos, err := s.List()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	want := []CredentialInfo{
+		{ProviderID: "a-key", Type: CredentialAPIKey},
+		{ProviderID: "b-oauth", Type: CredentialOAuth},
+	}
+	if !reflect.DeepEqual(infos, want) {
+		t.Fatalf("list = %+v, want %+v", infos, want)
 	}
 }
 

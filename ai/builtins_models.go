@@ -32,10 +32,11 @@ func BuiltinModels() MutableModels {
 			}
 		}
 		m.SetProvider(CreateProvider(CreateProviderOptions{
-			ID:       providerID,
-			Auth:     builtinProviderAuth(providerID),
-			Models:   models,
-			APIByApi: apiMap,
+			ID:           providerID,
+			Auth:         builtinProviderAuth(providerID),
+			Models:       models,
+			FilterModels: builtinFilterModels(providerID),
+			APIByApi:     apiMap,
 		}))
 	}
 	return m
@@ -52,7 +53,7 @@ func builtinProviderAuth(providerID string) ProviderAuth {
 	}
 	return ProviderAuth{APIKey: &ApiKeyAuth{
 		Name: providerID,
-		Resolve: func(_ *Model, _ AuthContext, cred *Credential) (*AuthResult, error) {
+		Resolve: func(_ AuthContext, cred *Credential) (*AuthResult, error) {
 			if cred != nil && cred.Key != "" {
 				return &AuthResult{Auth: ModelAuth{APIKey: cred.Key}, Source: "stored credential"}, nil
 			}
@@ -63,4 +64,30 @@ func builtinProviderAuth(providerID string) ProviderAuth {
 			return &AuthResult{Auth: ModelAuth{APIKey: key}}, nil
 		},
 	}}
+}
+
+// builtinFilterModels returns the credential-specific availability policy for
+// a built-in provider, or nil when it has none. github-copilot restricts its
+// catalog to the OAuth credential's availableModelIds (pi
+// providers/github-copilot.ts filterModels).
+func builtinFilterModels(providerID string) func([]*Model, *Credential) []*Model {
+	if providerID != "github-copilot" {
+		return nil
+	}
+	return func(models []*Model, credential *Credential) []*Model {
+		if credential == nil || credential.Type != CredentialOAuth || credential.AvailableModelIDs == nil {
+			return models
+		}
+		available := make(map[string]bool, len(credential.AvailableModelIDs))
+		for _, id := range credential.AvailableModelIDs {
+			available[id] = true
+		}
+		out := make([]*Model, 0, len(models))
+		for _, model := range models {
+			if available[model.ID] {
+				out = append(out, model)
+			}
+		}
+		return out
+	}
 }

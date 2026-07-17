@@ -1,6 +1,9 @@
 package ai
 
-import "sync"
+import (
+	"sort"
+	"sync"
+)
 
 // InMemoryCredentialStore is the default credential store (pi
 // packages/ai/src/auth/credential-store.ts). Keyed by provider id, one
@@ -41,6 +44,20 @@ func (s *InMemoryCredentialStore) Read(providerID string) (*Credential, error) {
 	}
 	clone := *c
 	return &clone, nil
+}
+
+// List returns stored credential metadata without exposing secrets (pi
+// InMemoryCredentialStore.list). pi enumerates in Map insertion order; Go maps
+// are unordered, so entries are sorted by provider id for determinism.
+func (s *InMemoryCredentialStore) List() ([]CredentialInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]CredentialInfo, 0, len(s.creds))
+	for providerID, credential := range s.creds {
+		out = append(out, CredentialInfo{ProviderID: providerID, Type: credential.Type})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProviderID < out[j].ProviderID })
+	return out, nil
 }
 
 // Modify is the only write path: a serialized read-modify-write per provider

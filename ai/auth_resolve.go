@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"errors"
 	"fmt"
 )
@@ -56,7 +57,6 @@ type AuthResolutionOverrides struct {
 func resolveProviderAuth(
 	providerID string,
 	auth ProviderAuth,
-	model *Model,
 	credentials CredentialStore,
 	ctx AuthContext,
 	overrides *AuthResolutionOverrides,
@@ -70,7 +70,7 @@ func resolveProviderAuth(
 	// An explicit request apiKey resolves directly, ahead of any stored
 	// credential (pi: overrides?.apiKey !== undefined).
 	if overrides != nil && overrides.APIKey != "" && auth.APIKey != nil {
-		return resolveApiKey(requestCtx, auth.APIKey, model, &Credential{
+		return resolveApiKey(requestCtx, auth.APIKey, providerID, &Credential{
 			Type: CredentialAPIKey,
 			Key:  overrides.APIKey,
 			Env:  overrides.Env,
@@ -92,14 +92,14 @@ func resolveProviderAuth(
 				clone.Env = mergeStringMap(stored.Env, overrides.Env) // overrides win
 				credential = &clone
 			}
-			return resolveApiKey(requestCtx, auth.APIKey, model, credential)
+			return resolveApiKey(requestCtx, auth.APIKey, providerID, credential)
 		}
 		return nil, nil
 	}
 
 	// Ambient (env vars, AWS profiles, ADC files).
 	if auth.APIKey != nil {
-		return resolveApiKey(requestCtx, auth.APIKey, model, nil)
+		return resolveApiKey(requestCtx, auth.APIKey, providerID, nil)
 	}
 	return nil, nil
 }
@@ -144,7 +144,7 @@ func resolveStoredOAuth(
 			if nowMillis() < current.Expires {
 				return nil, nil // another request refreshed
 			}
-			refreshed, rerr := oauth.Refresh(current.OAuthCredentials())
+			refreshed, rerr := oauth.Refresh(context.Background(), current.OAuthCredentials())
 			if rerr != nil {
 				return nil, newModelsError(ErrOAuth, "OAuth refresh failed for "+providerID, rerr)
 			}
@@ -174,12 +174,12 @@ func resolveStoredOAuth(
 func resolveApiKey(
 	ctx AuthContext,
 	apiKey *ApiKeyAuth,
-	model *Model,
+	providerID string,
 	credential *Credential,
 ) (*AuthResult, error) {
-	res, err := apiKey.Resolve(model, ctx, credential)
+	res, err := apiKey.Resolve(ctx, credential)
 	if err != nil {
-		return nil, newModelsError(ErrAuth, "API key auth failed for provider "+string(model.Provider), err)
+		return nil, newModelsError(ErrAuth, "API key auth failed for provider "+providerID, err)
 	}
 	return res, nil
 }

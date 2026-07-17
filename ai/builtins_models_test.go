@@ -23,7 +23,7 @@ func TestBuiltinModelsCatalogAndAuth(t *testing.T) {
 	}
 
 	// The auth substrate resolves the env key for a catalog provider.
-	res, err := m.GetAuth(&Model{Provider: "openai", Api: APIOpenAICompletions, ID: "x"})
+	res, err := m.GetAuth(&Model{Provider: "openai", Api: APIOpenAICompletions, ID: "x"}, nil)
 	if err != nil {
 		t.Fatalf("GetAuth error: %v", err)
 	}
@@ -38,5 +38,49 @@ func TestBuiltinModelsCatalogAndAuth(t *testing.T) {
 	}
 	if !sort.StringsAreSorted(ids) {
 		t.Fatalf("provider order not sorted: %v", ids)
+	}
+}
+
+// TestBuiltinGithubCopilotFilterModels locks pi providers/github-copilot.ts
+// filterModels: an OAuth credential carrying availableModelIds restricts the
+// catalog; a credential without the field leaves it untouched.
+func TestBuiltinGithubCopilotFilterModels(t *testing.T) {
+	m := BuiltinModels()
+	p := m.GetProvider("github-copilot")
+	if p == nil {
+		t.Fatal("github-copilot provider not present")
+	}
+	models := p.GetModels()
+	if len(models) < 2 {
+		t.Fatalf("need at least two copilot models, got %d", len(models))
+	}
+	keptID := models[0].ID
+
+	restricted := p.FilterModels(models, &Credential{
+		Type:              CredentialOAuth,
+		AvailableModelIDs: []string{keptID},
+	})
+	if len(restricted) != 1 || restricted[0].ID != keptID {
+		t.Fatalf("filter must restrict to availableModelIds: %v", restricted)
+	}
+
+	// No availableModelIds -> unfiltered (pi: non-array -> return models).
+	if got := p.FilterModels(models, &Credential{Type: CredentialOAuth}); len(got) != len(models) {
+		t.Fatalf("credential without ids must not filter: %d vs %d", len(got), len(models))
+	}
+	// Non-OAuth credential -> unfiltered.
+	if got := p.FilterModels(models, &Credential{Type: CredentialAPIKey, AvailableModelIDs: []string{keptID}}); len(got) != len(models) {
+		t.Fatalf("api-key credential must not filter: %d vs %d", len(got), len(models))
+	}
+	// Empty (non-nil) list filters everything (pi: empty set).
+	if got := p.FilterModels(models, &Credential{Type: CredentialOAuth, AvailableModelIDs: []string{}}); len(got) != 0 {
+		t.Fatalf("empty availableModelIds must filter all models, got %d", len(got))
+	}
+	// A provider without a filter policy is the identity.
+	if other := m.GetProvider("openai"); other != nil {
+		otherModels := other.GetModels()
+		if got := other.FilterModels(otherModels, &Credential{Type: CredentialOAuth, AvailableModelIDs: []string{}}); len(got) != len(otherModels) {
+			t.Fatal("providers without a policy must not filter")
+		}
 	}
 }
