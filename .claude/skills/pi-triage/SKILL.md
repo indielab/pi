@@ -65,3 +65,11 @@ Specific rulings (from pilot runs — keep appending):
 - Cost control: changes whose `--stat` touches only docs/CHANGELOG/.github/
   scripts/.pi/packages/tui may be dispatched from the diffstat alone; read
   hunks only when any path is in or near ported surface.
+- **Merges can smuggle in-scope hunks** (2026-07-17 lesson: `5220aba6`'s xai
+  responses hunk + `97f9978f`'s force flag + the v0.80.8 release all rode in
+  via merges and were missed by per-first-parent diffstats — caught only by
+  the adversarial parity review). After per-commit triage, ALWAYS reconcile
+  with a whole-range sweep: `git diff <pin>..origin/main --stat -- packages/ai/src
+  packages/agent/src packages/coding-agent/src/core` and account for every
+  in-scope file's delta against the verdicts. Merge-commit diffstats must be
+  read in full, not truncated.
