@@ -206,8 +206,8 @@ func (p *providerImpl) RefreshModels(ctx context.Context, req RefreshModelsConte
 			return err
 		}
 		if stored != nil {
-			restored := make([]*Model, 0, len(stored))
-			for _, model := range stored {
+			restored := make([]*Model, 0, len(stored.Models))
+			for _, model := range stored.Models {
 				if model.Provider == p.id {
 					restored = append(restored, model)
 				}
@@ -229,7 +229,7 @@ func (p *providerImpl) RefreshModels(ctx context.Context, req RefreshModelsConte
 		p.mu.Lock()
 		p.dynamic = refreshed
 		p.mu.Unlock()
-		return req.Store.Write(refreshed)
+		return req.Store.Write(ModelsStoreEntry{Models: refreshed, CheckedAt: nowMillis()})
 	}()
 
 	p.mu.Lock()

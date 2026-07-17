@@ -247,8 +247,12 @@ func TestModelsRefreshPersistsAndRestores(t *testing.T) {
 	if res := m.Refresh(context.Background(), nil); len(res.Errors) != 0 || calls != 1 {
 		t.Fatalf("initial refresh: errors=%v calls=%d", res.Errors, calls)
 	}
-	if stored, _ := store.Read("dyn"); len(stored) != 1 || stored[0].ID != "remote" {
+	stored, _ := store.Read("dyn")
+	if stored == nil || len(stored.Models) != 1 || stored.Models[0].ID != "remote" {
 		t.Fatalf("refresh must persist through the store: %v", stored)
+	}
+	if stored.CheckedAt == 0 {
+		t.Fatal("a completed remote check must stamp checkedAt (bd9e09db)")
 	}
 
 	// A fresh collection sharing the store restores offline.
