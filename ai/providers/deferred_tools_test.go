@@ -578,3 +578,20 @@ func TestDeferredToolsKimiAllDeferred(t *testing.T) {
 		t.Fatalf("all-deferred must fall through to the empty tool-history array, got %v", body["tools"])
 	}
 }
+
+// TestDeferredToolsKimiCatalogLive pins the 0.80.10 regen going live: the
+// moonshotai kimi-k3 catalog entries carry compat.deferredToolsMode="kimi"
+// (upstream 70c57632 data + f16b4e0c behavior), so the deferred path is no
+// longer latent for them.
+func TestDeferredToolsKimiCatalogLive(t *testing.T) {
+	ai.LoadBuiltinModels()
+	for _, provider := range []string{"moonshotai", "moonshotai-cn"} {
+		model := ai.GetModel(provider, "kimi-k3")
+		if model == nil {
+			t.Fatalf("%s/kimi-k3 not in catalog", provider)
+		}
+		if got := getOpenAICompat(model).DeferredToolsMode; got != "kimi" {
+			t.Fatalf("%s/kimi-k3 deferredToolsMode = %q, want kimi", provider, got)
+		}
+	}
+}
