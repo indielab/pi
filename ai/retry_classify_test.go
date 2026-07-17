@@ -69,6 +69,13 @@ func TestIsRetryableAssistantError(t *testing.T) {
 			want: true,
 		},
 		{
+			// pi b0c2a90e: OpenAI Responses streams that end before terminal
+			// events (message byte-identical to pi's vitest constant).
+			name: "openai responses early EOF is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "OpenAI Responses stream ended before a terminal response event"},
+			want: true,
+		},
+		{
 			name: "non-matching error message is not retryable",
 			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "model refused to answer"},
 			want: false,

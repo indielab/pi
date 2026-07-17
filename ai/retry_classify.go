@@ -74,6 +74,7 @@ var retryableProviderErrorPattern = regexp.MustCompile(`(?i)` + strings.Join([]s
 	// (#4433); Bedrock/Smithy can throw an HTTP/2 no-response error (#3594).
 	"ended without",
 	"stream ended before message_stop",
+	"stream ended before a terminal response event",
 	"http2 request did not get a response",
 
 	// Provider-requested retry delay cap failures should flow through the outer
