@@ -20,6 +20,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.80.12`](#v08012) | 2026-07-17 | `7cc7772` | `a9f6a315` | pi-ai 0.80.10 | Catalog 0.80.7→0.80.10 (3 upstream tags); model-runtime facade ported SDK-scoped (ModelsStore, refresh/checkAuth/getAvailable/login/logout, header transforms, force flag); Kimi K3 deferred tools live on openai-completions; xai default grok-4.5 + encrypted-reasoning include; Responses early-EOF retry |
 | [`v0.80.11`](#v08011) | 2026-07-15 | `cff5172` | `dcfe36c7` | pi-ai 0.80.7 | Catalog 0.80.6→0.80.7; system-prompt `Current date` line removed; rolls up the 07-11→07-15 cycles — deferred/message-anchored tool loading, Responses `tool_choice` + OpenRouter session-affinity formats, openai-responses `encrypted_content` backfill, new `pi-messages` provider API |
 | [`v0.2.9`](#v029) | 2026-07-10 | `e77a1cc` | `81de5702` | pi-ai 0.80.6 | Catalog 0.80.3→0.80.6; input-based pricing tiers + `max` thinking level; ResourceExhausted / CF-524 / Bun-socket retry patterns; stale-usage-after-compaction guard; fail tool calls from length-truncated messages; `(no tool output)` placeholder; Vercel AI Gateway attribution removed |
 | [`v0.2.8`](#v028) | 2026-07-01 | `261985e` | `8c943640` | pi-ai 0.80.3 | Catalog 0.80.2→0.80.3 (claude-sonnet-5 across providers, Fireworks GLM-5.2 Fast realign, claude-3.5-haiku pruned); bash tool timeout validation |
@@ -35,6 +36,23 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.80.12
+Upstream sync `dcfe36c7 → a9f6a315` (pi 0.80.10; three release tags crossed —
+0.80.8 rode in via merge). The model-runtime facade landed **SDK-scoped** per
+the 2026-07-17 ruling: ModelsStore persistence (`checkedAt` entries), context-
+taking provider refresh with offline restore + `force`, `checkAuth`/
+`getAvailable`/`login`/`logout`, overloaded `getAuth` with case-insensitive
+model-header merge, Models-only header transforms, provider-scoped api-key
+resolution (`AuthInteraction` rename), and github-copilot credential-based
+model filtering — host runtime, OAuth acquisition, and the radius provider
+stay out. Kimi K3 deferred tools went **live** on openai-completions with the
+0.80.10 catalog (system-message tool re-declaration); xai's default is now
+grok-4.5, routed through Responses with `include:["reasoning.encrypted_content"]`.
+The adversarial parity review caught two merge-carried hunks first-parent
+triage missed (the xai include + the force flag) — both ported and
+mutation-verified; triage now sweeps the whole-range `packages/ai/src` diff.
+Differential 37/37; `-race` green; catalog 420,411 B endpoint-pinned.
 
 ### v0.80.11
 First release under the pi-tracking scheme (`major.minor` = pi 0.80; patch 11
