@@ -207,3 +207,29 @@ func TestDefaultModelPerProviderOpenAI(t *testing.T) {
 		}
 	}
 }
+
+// pi a01baaae trims the xai model list and re-points defaultModelPerProvider's
+// xai entry to grok-4.5 (the old grok-4.20-0309-reasoning id is removed from
+// the catalog at 0.80.10). Pin the constant through the custom-id fallback:
+// the synthetic model must be templated from grok-4.5.
+func TestResolveModelXaiFallbackDefault(t *testing.T) {
+	if defaultModelPerProvider["xai"] != "grok-4.5" {
+		t.Fatalf("xai default = %q, want grok-4.5", defaultModelPerProvider["xai"])
+	}
+	r, err := ResolveModelPattern("xai/my-custom-grok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(r.Model.Provider) != "xai" || r.Model.ID != "my-custom-grok" {
+		t.Fatalf("xai fallback wrong: %s/%s", r.Model.Provider, r.Model.ID)
+	}
+	// The template is the grok-4.5 catalog entry (clone carries its limits).
+	tmpl, err := ResolveModel("xai/grok-4.5")
+	if err != nil {
+		t.Fatalf("grok-4.5 must exist in the catalog: %v", err)
+	}
+	if r.Model.ContextWindow != tmpl.ContextWindow || r.Model.MaxTokens != tmpl.MaxTokens {
+		t.Fatalf("fallback not templated from grok-4.5: cw=%d/%d mt=%d/%d",
+			r.Model.ContextWindow, tmpl.ContextWindow, r.Model.MaxTokens, tmpl.MaxTokens)
+	}
+}

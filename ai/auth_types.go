@@ -234,6 +234,11 @@ type OAuthAuth struct {
 	// Name is the display name, e.g. "Anthropic (Claude Pro/Max)".
 	Name string
 
+	// LoginLabel is the selector label for the subscription login option,
+	// e.g. "Sign in with SuperGrok or X Premium" (pi a01baaae; optional, ""
+	// when unset). Latent: the interactive login UI is unported.
+	LoginLabel string
+
 	// Login runs the interactive OAuth flow. Out of scope for the port
 	// (OAuth-acquisition exclusion); present for structural parity.
 	Login func(interaction AuthInteraction) (*Credential, error)
