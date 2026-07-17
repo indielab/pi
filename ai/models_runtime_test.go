@@ -673,3 +673,53 @@ func TestCreateProviderDynamicOverlay(t *testing.T) {
 }
 
 func ptrStreams(s ProviderStreams) *ProviderStreams { return &s }
+
+// TestModelsRefreshForce locks pi 97f9978f: ModelsRefreshOptions.Force threads
+// into the provider's RefreshModelsContext so fetch implementations can bypass
+// freshness checks — but the best-effort cache-restore call after a failure
+// deliberately stays force-free (matching pi's error path).
+func TestModelsRefreshForce(t *testing.T) {
+	var forces []bool
+	m := modelsWithEnv(map[string]string{"K": "key"}, nil)
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:   "dyn",
+		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("dyn", "K")},
+		FetchModels: func(_ context.Context, req RefreshModelsContext) ([]*Model, error) {
+			forces = append(forces, req.Force)
+			return nil, nil
+		},
+	}))
+
+	m.Refresh(context.Background(), &ModelsRefreshOptions{Force: true})
+	m.Refresh(context.Background(), nil)
+	if len(forces) != 2 || !forces[0] || forces[1] {
+		t.Fatalf("force threading wrong: %v (want [true false])", forces)
+	}
+
+	// Failure path: the main call carries force, the cache-restore does not.
+	var restoreForces []bool
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:   "boom",
+		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("boom", "K")},
+		FetchModels: func(_ context.Context, req RefreshModelsContext) ([]*Model, error) {
+			if req.AllowNetwork {
+				restoreForces = append(restoreForces, req.Force)
+				return nil, errors.New("network")
+			}
+			// cache-restore call (AllowNetwork false) never reaches fetch;
+			// record via the context should it ever fetch.
+			restoreForces = append(restoreForces, req.Force)
+			return nil, nil
+		},
+	}))
+	res := m.Refresh(context.Background(), &ModelsRefreshOptions{Force: true})
+	if res.Errors["boom"] == nil {
+		t.Fatalf("boom must fail: %v", res.Errors)
+	}
+	if len(restoreForces) < 1 || !restoreForces[0] {
+		t.Fatalf("main call must carry force: %v", restoreForces)
+	}
+	if len(restoreForces) > 1 {
+		t.Fatalf("cache-restore must not fetch (AllowNetwork false): %v", restoreForces)
+	}
+}

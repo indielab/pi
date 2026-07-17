@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"sync"
 )
@@ -35,6 +36,9 @@ type RefreshModelsContext struct {
 	Store ProviderModelsStore
 	// AllowNetwork is false during offline/cache-only initialization.
 	AllowNetwork bool
+	// Force bypasses provider freshness checks and fetches immediately when
+	// network access is allowed (pi 97f9978f).
+	Force bool
 }
 
 // Provider is the concrete runtime unit (pi Provider). It owns id/name/base
@@ -178,8 +182,11 @@ func (p *providerImpl) FilterModels(models []*Model, credential *Credential) []*
 
 // RefreshModels restores the stored dynamic overlay and, when the network is
 // allowed, fetches and persists a fresh one; concurrent callers share the one
-// in-flight refresh (pi's inflightRefresh). Static providers (nil fetchFn) are
-// a no-op.
+// in-flight refresh (pi's inflightRefresh): a joiner blocks until the leader
+// completes and returns its error — the joiner's ctx and req are not consulted
+// until then, matching pi's shared-promise semantics (an awaited promise can't
+// be cancelled or re-parameterized). Static providers (nil fetchFn) are a
+// no-op.
 func (p *providerImpl) RefreshModels(ctx context.Context, req RefreshModelsContext) error {
 	p.mu.Lock()
 	if p.fetchFn == nil {
@@ -271,6 +278,9 @@ type ModelsRefreshOptions struct {
 	// AllowNetwork gates network fetches; nil defaults to true (pi
 	// allowNetwork ?? true).
 	AllowNetwork *bool
+	// Force bypasses provider freshness checks and fetches immediately when
+	// network access is allowed (pi 97f9978f).
+	Force bool
 }
 
 // ModelsRefreshResult reports a refresh sweep (pi ModelsRefreshResult).
@@ -305,6 +315,12 @@ type ModelsSimpleStreamOptions struct {
 // Models is the runtime collection of providers plus auth application and
 // stream convenience (pi Models). Providers own stream behavior; Models
 // resolves auth and delegates each request to the provider that owns the model.
+//
+// Concurrency: provider registration (SetProvider/DeleteProvider/
+// ClearProviders) is guarded but not coordinated with in-flight work —
+// register providers before concurrent use; Refresh/Stream and the stores are
+// safe once the provider set is stable (mirroring pi's construct-then-use
+// object model).
 type Models interface {
 	GetProviders() []Provider
 	GetProvider(id string) Provider
@@ -479,8 +495,12 @@ func (m *modelsImpl) GetModel(provider, id string) *Model {
 // refresh restores the stored catalog after a failure.
 func (m *modelsImpl) Refresh(ctx context.Context, options *ModelsRefreshOptions) ModelsRefreshResult {
 	allowNetwork := true
-	if options != nil && options.AllowNetwork != nil {
-		allowNetwork = *options.AllowNetwork
+	force := false
+	if options != nil {
+		if options.AllowNetwork != nil {
+			allowNetwork = *options.AllowNetwork
+		}
+		force = options.Force
 	}
 
 	var (
@@ -517,6 +537,7 @@ func (m *modelsImpl) Refresh(ctx context.Context, options *ModelsRefreshOptions)
 					Credential:   credential,
 					Store:        store,
 					AllowNetwork: allowNetwork,
+					Force:        force,
 				})
 			}()
 			if err != nil {
@@ -840,7 +861,10 @@ func HasApi(model *Model, api Api) bool {
 
 // mergeHeaders returns base overlaid with override, deleting base entries
 // whose names match an override key case-insensitively before setting it
-// (pi models.ts mergeHeaders). nil when both inputs are nil.
+// (pi models.ts mergeHeaders). nil when both inputs are nil. Override keys
+// are applied in sorted order so case-colliding overrides merge
+// deterministically (pi iterates insertion order; Go maps are unordered).
+// The nested scan is O(n*m) — fine for header-sized maps.
 func mergeHeaders(base, override map[string]string) map[string]string {
 	if base == nil && override == nil {
 		return nil
@@ -849,14 +873,19 @@ func mergeHeaders(base, override map[string]string) map[string]string {
 	for k, v := range base {
 		merged[k] = v
 	}
-	for name, value := range override {
+	names := make([]string, 0, len(override))
+	for name := range override {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
 		lower := strings.ToLower(name)
 		for existing := range merged {
 			if strings.ToLower(existing) == lower {
 				delete(merged, existing)
 			}
 		}
-		merged[name] = value
+		merged[name] = override[name]
 	}
 	return merged
 }
