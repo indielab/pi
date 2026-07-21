@@ -73,3 +73,14 @@ Specific rulings (from pilot runs — keep appending):
   packages/agent/src packages/coding-agent/src/core` and account for every
   in-scope file's delta against the verdicts. Merge-commit diffstats must be
   read in full, not truncated.
+- **One upstream fix can touch multiple sites that map to ONE Go file — or to a
+  differently-structured Go file** (2026-07-21 lesson: `1942b260` "env section
+  ignored" fixed BOTH `auth/helpers.ts` and `amazon-bedrock.ts`; the port landed
+  the helpers half but missed the bedrock half, because in Go there is no
+  `amazon-bedrock.ts` — ambient providers (bedrock/vertex/… anything not in
+  `apiKeyEnvVars`) route through the GENERIC resolver in `builtins_models.go`
+  `builtinProviderAuth`. Caught only by the parity review). When a change edits
+  a shared helper AND a specific provider, list EVERY hunk in the commit and map
+  each to its Go home — a provider-specific TS edit may collapse into a generic
+  Go resolver rather than a same-named file. Don't assume one TS hunk = one Go
+  edit, and don't assume a provider file has a 1:1 Go counterpart.
