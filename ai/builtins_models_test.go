@@ -84,3 +84,21 @@ func TestBuiltinGithubCopilotFilterModels(t *testing.T) {
 		}
 	}
 }
+
+// TestBuiltinAmbientProviderEnvPassthrough locks that the generic ambient-provider
+// resolver passes a stored credential's env section through (upstream 1942b260 —
+// the amazon-bedrock half of the "env section ignored" fix; amazon-bedrock is not
+// in apiKeyEnvVars, so it routes to this resolver).
+func TestBuiltinAmbientProviderEnvPassthrough(t *testing.T) {
+	pa := builtinProviderAuth("amazon-bedrock")
+	if pa.APIKey == nil {
+		t.Fatal("expected an API-key auth for amazon-bedrock")
+	}
+	res, err := pa.APIKey.Resolve(fakeAuthContext{}, &Credential{Type: CredentialAPIKey, Key: "stored", Env: map[string]string{"AWS_PROFILE": "prod"}})
+	if err != nil || res == nil || res.Auth.APIKey != "stored" {
+		t.Fatalf("resolve wrong: %+v (err %v)", res, err)
+	}
+	if res.Env["AWS_PROFILE"] != "prod" {
+		t.Fatalf("stored credential env section dropped: %+v", res.Env)
+	}
+}

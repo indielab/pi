@@ -55,7 +55,10 @@ func builtinProviderAuth(providerID string) ProviderAuth {
 		Name: providerID,
 		Resolve: func(_ AuthContext, cred *Credential) (*AuthResult, error) {
 			if cred != nil && cred.Key != "" {
-				return &AuthResult{Auth: ModelAuth{APIKey: cred.Key}, Source: "stored credential"}, nil
+				// Pass the credential's env section through (upstream 1942b260 —
+				// this generic ambient resolver stands in for pi's bedrockAuth et al.,
+				// which the fix also touched).
+				return &AuthResult{Auth: ModelAuth{APIKey: cred.Key}, Env: cred.Env, Source: "stored credential"}, nil
 			}
 			key := GetEnvApiKey(providerID, nil)
 			if key == "" {
