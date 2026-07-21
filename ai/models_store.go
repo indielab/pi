@@ -9,6 +9,11 @@ import "sync"
 // ModelsStoreEntry is one provider's stored catalog (pi ModelsStoreEntry).
 type ModelsStoreEntry struct {
 	Models []*Model `json:"models"`
+	// LastModified is the Unix-millisecond timestamp from the remote catalog's
+	// Last-Modified header; 0 when unknown (pi lastModified?, upstream 54fad505).
+	// Latent in the SDK: consumed by hosts that compare a stored catalog's mtime
+	// against remote/built-in catalogs.
+	LastModified int64 `json:"lastModified,omitempty"`
 	// CheckedAt is the Unix-millisecond timestamp of the last completed remote
 	// check; 0 when never checked (pi checkedAt?).
 	CheckedAt int64 `json:"checkedAt,omitempty"`
@@ -55,7 +60,7 @@ func (s *InMemoryModelsStore) Read(providerID string) (*ModelsStoreEntry, error)
 	if !ok {
 		return nil, nil
 	}
-	out := ModelsStoreEntry{Models: make([]*Model, len(stored.Models)), CheckedAt: stored.CheckedAt}
+	out := ModelsStoreEntry{Models: make([]*Model, len(stored.Models)), LastModified: stored.LastModified, CheckedAt: stored.CheckedAt}
 	copy(out.Models, stored.Models)
 	return &out, nil
 }
@@ -64,7 +69,7 @@ func (s *InMemoryModelsStore) Read(providerID string) (*ModelsStoreEntry, error)
 func (s *InMemoryModelsStore) Write(providerID string, entry ModelsStoreEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	stored := ModelsStoreEntry{Models: make([]*Model, len(entry.Models)), CheckedAt: entry.CheckedAt}
+	stored := ModelsStoreEntry{Models: make([]*Model, len(entry.Models)), LastModified: entry.LastModified, CheckedAt: entry.CheckedAt}
 	copy(stored.Models, entry.Models)
 	s.entries[providerID] = stored
 	return nil
