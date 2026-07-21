@@ -176,11 +176,15 @@ func TestResolveProviderAuthRequestOverrides(t *testing.T) {
 func TestEnvAPIKeyAuthResolve(t *testing.T) {
 	auth := EnvAPIKeyAuth("Test key", "PRIMARY_KEY", "SECONDARY_KEY")
 
-	// Stored credential key wins over env.
+	// Stored credential key wins over env, and its env section passes through
+	// (upstream 1942b260 — a stored credential must not drop its `env` overrides).
 	ctx := fakeAuthContext{env: map[string]string{"PRIMARY_KEY": "from-env"}}
-	res, err := auth.Resolve(ctx, &Credential{Type: CredentialAPIKey, Key: "stored"})
+	res, err := auth.Resolve(ctx, &Credential{Type: CredentialAPIKey, Key: "stored", Env: map[string]string{"PI_CACHE_RETENTION": "1h"}})
 	if err != nil || res == nil || res.Auth.APIKey != "stored" || res.Source != "stored credential" {
 		t.Fatalf("stored key should win: %+v (err %v)", res, err)
+	}
+	if res.Env["PI_CACHE_RETENTION"] != "1h" {
+		t.Fatalf("stored credential env section dropped: %+v", res.Env)
 	}
 
 	// No stored credential: first set env var in order resolves.

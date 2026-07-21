@@ -23,7 +23,7 @@ func EnvAPIKeyAuth(name string, envVars ...string) *ApiKeyAuth {
 		},
 		Resolve: func(ctx AuthContext, credential *Credential) (*AuthResult, error) {
 			if credential != nil && credential.Key != "" {
-				return &AuthResult{Auth: ModelAuth{APIKey: credential.Key}, Source: "stored credential"}, nil
+				return &AuthResult{Auth: ModelAuth{APIKey: credential.Key}, Env: credential.Env, Source: "stored credential"}, nil
 			}
 			for _, envVar := range envVars {
 				if value := ctx.Env(envVar); value != "" {
