@@ -21,12 +21,12 @@ type RetryPolicy struct {
 	// never counts as a retry.
 	MaxRetries int
 	// BaseDelayMs is the base backoff; the per-attempt delay is
-	// BaseDelayMs * 2^(attempt-1) before any jitter.
+	// BaseDelayMs * 2^(attempt-1).
 	BaseDelayMs int
 }
 
 // RetryCallbacks are the optional hooks pi's retryAssistantCall emits around
-// each retry. Any field may be nil.
+// each retry. Any field may be nil, and the whole *RetryCallbacks may be nil.
 type RetryCallbacks struct {
 	// OnRetryScheduled fires before the backoff sleep of each retry attempt
 	// (1-indexed).
@@ -37,6 +37,27 @@ type RetryCallbacks struct {
 	// OnRetryFinished fires once when the loop ends: success is true if a later
 	// call completed normally.
 	OnRetryFinished func(success bool, attempt int, finalError string)
+}
+
+// The following nil-safe dispatchers let RetryAssistantCall emit callbacks
+// unconditionally: a nil *RetryCallbacks or an unset hook is a no-op.
+
+func (c *RetryCallbacks) scheduled(attempt, maxAttempts, delayMs int, errorMessage string) {
+	if c != nil && c.OnRetryScheduled != nil {
+		c.OnRetryScheduled(attempt, maxAttempts, delayMs, errorMessage)
+	}
+}
+
+func (c *RetryCallbacks) attemptStart() {
+	if c != nil && c.OnRetryAttemptStart != nil {
+		c.OnRetryAttemptStart()
+	}
+}
+
+func (c *RetryCallbacks) finished(success bool, attempt int, finalError string) {
+	if c != nil && c.OnRetryFinished != nil {
+		c.OnRetryFinished(success, attempt, finalError)
+	}
 }
 
 // RetryAssistantCall runs a single assistant-producing call with bounded retry
@@ -55,7 +76,8 @@ type RetryCallbacks struct {
 //     (whether the loop ends in success, exhausted retries, or an aborted sleep).
 //
 // When policy is nil or disabled, the first response is returned unchanged
-// (equivalent to calling produce() directly).
+// (equivalent to calling produce() directly). produce must return a non-nil
+// *AssistantMessage (matching pi's Promise<AssistantMessage> contract).
 func RetryAssistantCall(ctx context.Context, produce func() *AssistantMessage, policy *RetryPolicy, callbacks *RetryCallbacks) *AssistantMessage {
 	maxAttempts := 0
 	if policy != nil && policy.Enabled {
@@ -70,24 +92,24 @@ func RetryAssistantCall(ctx context.Context, produce func() *AssistantMessage, p
 
 		// Abort: terminal but not successful. Never retry an aborted message.
 		if response.StopReason == StopAborted {
-			if lastRetryScheduled && callbacks != nil && callbacks.OnRetryFinished != nil {
-				callbacks.OnRetryFinished(false, lastRetryAttempt, "")
+			if lastRetryScheduled {
+				callbacks.finished(false, lastRetryAttempt, "")
 			}
 			return response
 		}
 
 		// Success: non-error, non-abort responses return as-is.
 		if response.StopReason != StopError {
-			if lastRetryScheduled && callbacks != nil && callbacks.OnRetryFinished != nil {
-				callbacks.OnRetryFinished(true, lastRetryAttempt, "")
+			if lastRetryScheduled {
+				callbacks.finished(true, lastRetryAttempt, "")
 			}
 			return response
 		}
 
 		// Non-retryable, or budget exhausted: return the final error message.
 		if attempt >= maxAttempts || !IsRetryableAssistantError(*response) {
-			if lastRetryScheduled && callbacks != nil && callbacks.OnRetryFinished != nil {
-				callbacks.OnRetryFinished(false, lastRetryAttempt, response.ErrorMessage)
+			if lastRetryScheduled {
+				callbacks.finished(false, lastRetryAttempt, response.ErrorMessage)
 			}
 			return response
 		}
@@ -100,9 +122,7 @@ func RetryAssistantCall(ctx context.Context, produce func() *AssistantMessage, p
 			errorMessage = "Unknown error"
 		}
 		delayMs := policy.BaseDelayMs << (attempt - 1)
-		if callbacks != nil && callbacks.OnRetryScheduled != nil {
-			callbacks.OnRetryScheduled(attempt, maxAttempts, delayMs, errorMessage)
-		}
+		callbacks.scheduled(attempt, maxAttempts, delayMs, errorMessage)
 
 		// Normalize aborts during retry backoff to the same AssistantMessage shape
 		// as provider stream aborts, so callers need not care when cancellation
@@ -112,16 +132,12 @@ func RetryAssistantCall(ctx context.Context, produce func() *AssistantMessage, p
 		case <-timer.C:
 		case <-ctx.Done():
 			timer.Stop()
-			if callbacks != nil && callbacks.OnRetryFinished != nil {
-				callbacks.OnRetryFinished(false, attempt, errorMessage)
-			}
+			callbacks.finished(false, attempt, errorMessage)
 			aborted := *response
 			aborted.StopReason = StopAborted
 			aborted.ErrorMessage = ""
 			return &aborted
 		}
-		if callbacks != nil && callbacks.OnRetryAttemptStart != nil {
-			callbacks.OnRetryAttemptStart()
-		}
+		callbacks.attemptStart()
 	}
 }
