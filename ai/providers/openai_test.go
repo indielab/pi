@@ -503,11 +503,14 @@ func TestOpenAIToolCallIDNormalization(t *testing.T) {
 		return
 	}
 
-	t.Run("pipe id sanitized and clamped", func(t *testing.T) {
+	t.Run("pipe id sanitized and combined", func(t *testing.T) {
+		// upstream d9f7f814: both halves are sanitized and joined as
+		// {call_id}_{item_id} (was: keep only the call_id) so item-level uniqueness
+		// survives replay into Chat Completions.
 		model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: "https://api.openai.com/v1"}
 		body := captureBody(model, mkTurn("call_abc+/=123|ENCRYPTEDPAYLOAD", "github-copilot", "gpt-5"))
 		callID, resultID := findToolCallIDs(body)
-		want := "call_abc___123"
+		want := "call_abc___123_ENCRYPTEDPAYLOAD"
 		if callID != want {
 			t.Fatalf("tool call id = %q, want %q", callID, want)
 		}
