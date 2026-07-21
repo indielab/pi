@@ -1322,3 +1322,45 @@ func TestOpenAIEmptyToolResultNoImagePlaceholder(t *testing.T) {
 		t.Fatalf("empty no-image tool result content = %#v, want %q", toolContent, "(no tool output)")
 	}
 }
+
+// TestNormalizeOpenAIToolCallID locks pi's normalizeToolCallId (openai-completions.ts
+// convertMessages, upstream d9f7f814): pipe-separated Responses-API ids preserve
+// item-level uniqueness as {call_id}_{item_id}, sharing a call_id but differing by
+// item_id yields distinct ids, and an over-40 combination falls back to
+// {call_id}_{hash8}. Expected values were derived independently from pi's algorithm.
+func TestNormalizeOpenAIToolCallID(t *testing.T) {
+	openaiModel := &ai.Model{Provider: "openai"}
+	otherModel := &ai.Model{Provider: "github-copilot"}
+
+	cases := []struct {
+		name  string
+		model *ai.Model
+		id    string
+		want  string
+	}{
+		{"combined", otherModel, "call_abc|item_xyz", "call_abc_item_xyz"},
+		{"shared call_id A", otherModel, "call_1|A", "call_1_A"},
+		{"shared call_id B", otherModel, "call_1|B", "call_1_B"},
+		{"empty item keeps call_id", otherModel, "call_abc|", "call_abc"},
+		{"sanitize both halves", otherModel, "call+ab|it/em", "call_ab_it_em"},
+		{"boundary 40 no hash", otherModel, strings.Repeat("c", 20) + "|" + strings.Repeat("d", 19), strings.Repeat("c", 20) + "_" + strings.Repeat("d", 19)},
+		{"over 40 hash fallback", otherModel, strings.Repeat("c", 20) + "|" + strings.Repeat("d", 20), strings.Repeat("c", 20) + "_srm525dv"},
+		{"long call+item hash fallback", otherModel, strings.Repeat("a", 50) + "|" + strings.Repeat("b", 50), strings.Repeat("a", 31) + "_1bex2pkm"},
+		{"non-pipe openai truncates", openaiModel, strings.Repeat("z", 45), strings.Repeat("z", 40)},
+		{"non-pipe other passes through", otherModel, strings.Repeat("z", 45), strings.Repeat("z", 45)},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := normalizeOpenAIToolCallID(tc.model, tc.id); got != tc.want {
+				t.Errorf("normalizeOpenAIToolCallID(%q) = %q, want %q", tc.id, got, tc.want)
+			}
+			if len(tc.want) > 40 && strings.Contains(tc.id, "|") {
+				t.Errorf("pipe id %q produced over-40 result %q", tc.id, tc.want)
+			}
+		})
+	}
+	// Shared call_id with distinct item_id must not collide.
+	if a, b := normalizeOpenAIToolCallID(otherModel, "call_1|A"), normalizeOpenAIToolCallID(otherModel, "call_1|B"); a == b {
+		t.Errorf("shared call_id ids collided: %q == %q", a, b)
+	}
+}

@@ -1143,18 +1143,38 @@ func openAIUserContent(content ai.ContentList) []any {
 var openAIToolCallIDSanitizeRe = regexp.MustCompile(`[^a-zA-Z0-9_-]`)
 
 // normalizeOpenAIToolCallID ports pi's normalizeToolCallId
-// (openai-completions.ts:753-766): pipe-separated ids from the Responses API
-// ({call_id}|{encrypted}, e.g. github-copilot / openai-codex / opencode) keep
-// only the call_id, sanitized and clamped to 40 chars. Non-pipe ids longer
-// than 40 chars are truncated only for provider "openai".
+// (openai-completions.ts convertMessages): pipe-separated ids from the Responses
+// API ({call_id}|{item_id}, e.g. github-copilot / openai-codex / opencode).
+// Multiple tool calls in the same turn can share call_id but differ by item_id,
+// so item-level uniqueness is preserved when replaying into Chat Completions
+// (which requires distinct tool call ids): both halves are sanitized and joined
+// as {call_id}_{item_id}, falling back to {call_id}_{hash} when that exceeds the
+// 40-char limit. Non-pipe ids longer than 40 chars are truncated only for
+// provider "openai".
 func normalizeOpenAIToolCallID(model *ai.Model, id string) string {
-	if strings.Contains(id, "|") {
-		callID := strings.SplitN(id, "|", 2)[0]
-		callID = openAIToolCallIDSanitizeRe.ReplaceAllString(callID, "_")
-		if r := []rune(callID); len(r) > 40 {
-			return string(r[:40])
+	if sep := strings.Index(id, "|"); sep >= 0 {
+		callID := openAIToolCallIDSanitizeRe.ReplaceAllString(id[:sep], "_")
+		itemID := openAIToolCallIDSanitizeRe.ReplaceAllString(id[sep+1:], "_")
+		combined := callID
+		if len(itemID) > 0 {
+			combined = callID + "_" + itemID
 		}
-		return callID
+		// Sanitized halves are ASCII, so byte length == pi's UTF-16 .length here.
+		if len(combined) <= 40 {
+			return combined
+		}
+		hash := shortHash(id)
+		if len(hash) > 8 {
+			hash = hash[:8]
+		}
+		prefixLen := 40 - len(hash) - 1
+		if prefixLen < 1 {
+			prefixLen = 1
+		}
+		if prefixLen > len(callID) {
+			prefixLen = len(callID)
+		}
+		return callID[:prefixLen] + "_" + hash
 	}
 	if model.Provider == "openai" {
 		if r := []rune(id); len(r) > 40 {
