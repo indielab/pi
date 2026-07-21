@@ -112,3 +112,23 @@ func TestStreamEnvReachesProvider(t *testing.T) {
 		t.Errorf("env must survive explicit-key passthrough: got %v", passthrough.Env)
 	}
 }
+
+// TestQwenTokenPlanEnvKeys locks the Qwen Token Plan built-in provider wiring
+// (upstream bbb91fa8): both providers map to their API-key env vars and register
+// as built-ins from the catalog with env-key auth.
+func TestQwenTokenPlanEnvKeys(t *testing.T) {
+	want := map[string]string{
+		"qwen-token-plan":    "QWEN_TOKEN_PLAN_API_KEY",
+		"qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
+	}
+	m := BuiltinModels()
+	for provider, envVar := range want {
+		vars := apiKeyEnvVars(provider)
+		if len(vars) != 1 || vars[0] != envVar {
+			t.Errorf("apiKeyEnvVars(%q) = %v, want [%s]", provider, vars, envVar)
+		}
+		if prov := m.GetProvider(provider); prov == nil || len(prov.GetModels()) == 0 {
+			t.Errorf("%q not registered as a built-in provider with models", provider)
+		}
+	}
+}
