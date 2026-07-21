@@ -31,6 +31,12 @@ type SessionEntry struct {
 	FromID        string     // for "branch_summary"
 	// compaction
 	FirstKeptEntryID string
+	// RetainedTail holds the compaction's kept tail inlined on the entry (pi
+	// CompactionEntry.retainedTail, upstream 9e7582aa). When set, it replaces the
+	// firstKeptEntryId walk: the reconstructed context is the summary followed by
+	// these messages. Already filtered through convertToLlm (excluded entries drop
+	// out during parse).
+	RetainedTail []agent.AgentMessage
 	// custom_message
 	CustomType string
 	Content    ai.ContentList
@@ -59,20 +65,21 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			continue
 		}
 		var head struct {
-			Type             string          `json:"type"`
-			ID               string          `json:"id"`
-			ParentID         *string         `json:"parentId"`
-			Timestamp        string          `json:"timestamp"`
-			Cwd              string          `json:"cwd"`
-			Message          json.RawMessage `json:"message"`
-			Provider         string          `json:"provider"`
-			ModelID          string          `json:"modelId"`
-			ThinkingLevel    string          `json:"thinkingLevel"`
-			Summary          string          `json:"summary"`
-			FromID           string          `json:"fromId"`
-			FirstKeptEntryID string          `json:"firstKeptEntryId"`
-			CustomType       string          `json:"customType"`
-			Content          json.RawMessage `json:"content"`
+			Type             string            `json:"type"`
+			ID               string            `json:"id"`
+			ParentID         *string           `json:"parentId"`
+			Timestamp        string            `json:"timestamp"`
+			Cwd              string            `json:"cwd"`
+			Message          json.RawMessage   `json:"message"`
+			Provider         string            `json:"provider"`
+			ModelID          string            `json:"modelId"`
+			ThinkingLevel    string            `json:"thinkingLevel"`
+			Summary          string            `json:"summary"`
+			FromID           string            `json:"fromId"`
+			FirstKeptEntryID string            `json:"firstKeptEntryId"`
+			RetainedTail     []json.RawMessage `json:"retainedTail"`
+			CustomType       string            `json:"customType"`
+			Content          json.RawMessage   `json:"content"`
 		}
 		if json.Unmarshal([]byte(line), &head) != nil {
 			continue
@@ -89,6 +96,15 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 		}
 		if head.ParentID != nil {
 			e.ParentID = *head.ParentID
+		}
+		if head.Type == "compaction" {
+			// Parse the inlined kept tail, applying the same convertToLlm filtering
+			// as message entries (excluded/undecodable messages drop out).
+			for _, raw := range head.RetainedTail {
+				if m, ok := unmarshalSessionMessage(raw); ok {
+					e.RetainedTail = append(e.RetainedTail, m)
+				}
+			}
 		}
 		if head.Type == "custom_message" && len(head.Content) > 0 {
 			e.Content = parseCustomContent(head.Content)
@@ -224,14 +240,20 @@ func (t *SessionTree) BuildContext(leafID ...string) BranchContext {
 	if compaction != nil {
 		// 1. Emit the compaction summary first.
 		ctx.Messages = append(ctx.Messages, compactionSummaryMessage(compaction.Summary, entryMillis(compaction.Timestamp)))
-		// 2. Emit kept messages before the compaction, starting at firstKeptEntryId.
-		foundFirstKept := false
-		for i := 0; i < compactionIdx; i++ {
-			if path[i].ID == compaction.FirstKeptEntryID {
-				foundFirstKept = true
-			}
-			if foundFirstKept {
-				appendMessage(path[i])
+		// 2. Emit the kept tail. A retainedTail inlined on the entry (upstream
+		// 9e7582aa) replaces the firstKeptEntryId walk; otherwise walk kept
+		// pre-compaction entries starting at firstKeptEntryId.
+		if len(compaction.RetainedTail) > 0 {
+			ctx.Messages = append(ctx.Messages, compaction.RetainedTail...)
+		} else {
+			foundFirstKept := false
+			for i := 0; i < compactionIdx; i++ {
+				if path[i].ID == compaction.FirstKeptEntryID {
+					foundFirstKept = true
+				}
+				if foundFirstKept {
+					appendMessage(path[i])
+				}
 			}
 		}
 		// 3. Emit everything after the compaction.
