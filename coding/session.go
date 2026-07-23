@@ -245,35 +245,47 @@ type Session struct {
 }
 
 // bashSessionEnv returns the PI_* session metadata exposed to bash commands
-// (pi bb3d7d39): the session id and file come from the recorder — pi's session
-// manager — so they are absent until one is attached, exactly as pi omits
-// PI_SESSION_FILE while the session has no file yet. The model and reasoning
-// level are read live, so they follow /model and thinking-level changes.
+// (pi bb3d7d39): the session id and file come from the recorder, the closest
+// Go analog of pi's session manager, so both are absent until one is attached.
+// pi assigns its session file at session start and omits PI_SESSION_FILE only
+// when persistence is off; the observable behavior matches, but note an SDK
+// embedder that never calls Record gets no PI_SESSION_ID either, where pi would
+// still have one. The model and reasoning level are read live, so they follow
+// /model and thinking-level changes.
 // It runs on the tool-execution goroutine while the main loop may be switching
 // models or attaching a recorder, so every field it reads is taken through a
 // synchronized path: the model and thinking level from the agent's guarded
 // state, the recorder under recMu.
 func (s *Session) bashSessionEnv() map[string]string {
 	env := map[string]string{}
-	s.recMu.RLock()
-	r := s.Recorder
-	s.recMu.RUnlock()
-	if r != nil {
+	if r := s.recorder(); r != nil {
 		env["PI_SESSION_ID"] = r.ID()
 		env["PI_SESSION_FILE"] = r.Path()
 	}
-	// State() copies under the agent's mutex; SetModel writes the agent's model
-	// too, so this is both race-free and the genuinely live value.
-	if m := s.Agent.State().Model; m != nil {
+	// One snapshot: State() copies under the agent's mutex, so a single call is
+	// both race-free and internally consistent — model and level describe the
+	// same instant even if /model lands mid-read. SetModel writes the agent's
+	// model too, so this is the genuinely live value.
+	st := s.Agent.State()
+	if m := st.Model; m != nil {
 		env["PI_PROVIDER"] = m.Provider
 		env["PI_MODEL"] = m.ID
 	}
 	// pi guards on truthiness only, and "off" is truthy there — an explicitly
 	// disabled reasoning level is still reported.
-	if level := s.Agent.State().ThinkingLevel; level != "" {
+	if level := st.ThinkingLevel; level != "" {
 		env["PI_REASONING_LEVEL"] = string(level)
 	}
 	return env
+}
+
+// recorder reads the attached SessionRecorder under recMu. Every read goes
+// through here: bash commands read it from the tool-execution goroutine while
+// the main loop may be attaching one.
+func (s *Session) recorder() *SessionRecorder {
+	s.recMu.RLock()
+	defer s.recMu.RUnlock()
+	return s.Recorder
 }
 
 // Record attaches a SessionRecorder; finalized messages are appended to it.
@@ -306,7 +318,7 @@ func (s *Session) SetModel(model *ai.Model, apiKey string) {
 	s.apiKey = apiKey
 	s.Agent.SetModel(model)
 	s.Agent.GetApiKey = func(provider string) string { return apiKey }
-	if r := s.Recorder; r != nil {
+	if r := s.recorder(); r != nil {
 		r.RecordModelChange(model.Provider, model.ID)
 	}
 }
@@ -314,7 +326,7 @@ func (s *Session) SetModel(model *ai.Model, apiKey string) {
 // SetThinkingLevel sets the reasoning level for future turns.
 func (s *Session) SetThinkingLevel(level agent.ThinkingLevel) {
 	s.Agent.SetThinkingLevel(level)
-	if r := s.Recorder; r != nil {
+	if r := s.recorder(); r != nil {
 		r.RecordThinkingLevel(string(level))
 	}
 }

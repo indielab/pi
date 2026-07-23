@@ -391,6 +391,7 @@ func TestBashSessionEnvRaceWithSetModel(t *testing.T) {
 		for i := 0; i < 20; i++ {
 			sess.SetModel(&ai.Model{ID: "model-b", Provider: "prov-b", Name: "B"}, "")
 			sess.Record(nil)
+			sess.SetThinkingLevel(agent.ThinkOff)
 			sess.SetModel(&ai.Model{ID: "model-a", Provider: "prov-a", Name: "A"}, "")
 		}
 	}()
