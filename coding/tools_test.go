@@ -348,21 +348,56 @@ func TestSessionBashToolExposesEnv(t *testing.T) {
 	model := &ai.Model{ID: "model-a", Provider: "prov-a", Name: "A"}
 	sess := NewSession(SessionOptions{Model: model, Cwd: t.TempDir(), ThinkingLevel: agent.ThinkOff})
 
-	var bash *agent.AgentTool
-	for i, tool := range sess.Agent.State().Tools {
-		if tool.Name == "bash" {
-			bash = &sess.Agent.State().Tools[i]
-			break
-		}
-	}
-	if bash == nil {
+	bash, ok := sessionTool(sess, "bash")
+	if !ok {
 		t.Fatal("session has no bash tool")
 	}
-	r, err := run(t, *bash, map[string]any{"command": "echo \"$PI_PROVIDER/$PI_MODEL\""})
+	r, err := run(t, bash, map[string]any{"command": "echo \"$PI_PROVIDER/$PI_MODEL\""})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(resultText(r), "prov-a/model-a") {
 		t.Fatalf("session bash tool did not expose model metadata: %q", resultText(r))
 	}
+}
+
+// sessionTool returns the named tool from a session's active set.
+func sessionTool(sess *Session, name string) (agent.AgentTool, bool) {
+	for _, tool := range sess.Agent.State().Tools {
+		if tool.Name == name {
+			return tool, true
+		}
+	}
+	return agent.AgentTool{}, false
+}
+
+// TestBashSessionEnvRaceWithSetModel pins the synchronization on the metadata
+// the bash tool reads: a command runs on the tool goroutine while the session
+// switches models and attaches a recorder, which is exactly what an embedder
+// with a live UI does. Meaningful under -race.
+func TestBashSessionEnvRaceWithSetModel(t *testing.T) {
+	sess := NewSession(SessionOptions{
+		Model: &ai.Model{ID: "model-a", Provider: "prov-a", Name: "A"},
+		Cwd:   t.TempDir(),
+	})
+	bash, ok := sessionTool(sess, "bash")
+	if !ok {
+		t.Fatal("session has no bash tool")
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 20; i++ {
+			sess.SetModel(&ai.Model{ID: "model-b", Provider: "prov-b", Name: "B"}, "")
+			sess.Record(nil)
+			sess.SetModel(&ai.Model{ID: "model-a", Provider: "prov-a", Name: "A"}, "")
+		}
+	}()
+	for i := 0; i < 20; i++ {
+		if _, err := run(t, bash, map[string]any{"command": "echo $PI_MODEL"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	<-done
 }

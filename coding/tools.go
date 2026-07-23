@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -733,13 +734,14 @@ var piSessionEnvKeys = []string{
 // bashCommandEnv builds the child environment: the inherited environment minus
 // the PI_* session keys, plus whatever the session currently provides.
 func bashCommandEnv(sessionEnv sessionEnvFn) []string {
-	drop := make(map[string]bool, len(piSessionEnvKeys))
-	for _, k := range piSessionEnvKeys {
-		drop[k] = true
-	}
-	env := make([]string, 0, len(os.Environ())+len(piSessionEnvKeys))
-	for _, kv := range os.Environ() {
-		if name, _, ok := strings.Cut(kv, "="); ok && drop[name] {
+	environ := os.Environ()
+	env := make([]string, 0, len(environ)+len(piSessionEnvKeys))
+	for _, kv := range environ {
+		// Exact-match, like pi's `delete env.PI_SESSION_ID`. On Windows a
+		// differently-cased inherited key survives this, but os/exec dedupes the
+		// child environment case-insensitively keeping the last entry, so the
+		// value appended below still wins.
+		if name, _, ok := strings.Cut(kv, "="); ok && slices.Contains(piSessionEnvKeys, name) {
 			continue
 		}
 		env = append(env, kv)

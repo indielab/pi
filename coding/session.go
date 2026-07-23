@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/sky-valley/pi/agent"
@@ -238,6 +239,9 @@ type Session struct {
 	Cwd      string
 	Recorder *SessionRecorder
 	apiKey   string
+	// recMu guards Recorder against the tool-execution goroutine reading it for
+	// bash session metadata while Record attaches one.
+	recMu sync.RWMutex
 }
 
 // bashSessionEnv returns the PI_* session metadata exposed to bash commands
@@ -245,16 +249,22 @@ type Session struct {
 // manager — so they are absent until one is attached, exactly as pi omits
 // PI_SESSION_FILE while the session has no file yet. The model and reasoning
 // level are read live, so they follow /model and thinking-level changes.
+// It runs on the tool-execution goroutine while the main loop may be switching
+// models or attaching a recorder, so every field it reads is taken through a
+// synchronized path: the model and thinking level from the agent's guarded
+// state, the recorder under recMu.
 func (s *Session) bashSessionEnv() map[string]string {
-	if s == nil {
-		return nil
-	}
 	env := map[string]string{}
-	if r := s.Recorder; r != nil {
+	s.recMu.RLock()
+	r := s.Recorder
+	s.recMu.RUnlock()
+	if r != nil {
 		env["PI_SESSION_ID"] = r.ID()
 		env["PI_SESSION_FILE"] = r.Path()
 	}
-	if m := s.Model; m != nil {
+	// State() copies under the agent's mutex; SetModel writes the agent's model
+	// too, so this is both race-free and the genuinely live value.
+	if m := s.Agent.State().Model; m != nil {
 		env["PI_PROVIDER"] = m.Provider
 		env["PI_MODEL"] = m.ID
 	}
@@ -267,8 +277,13 @@ func (s *Session) bashSessionEnv() map[string]string {
 }
 
 // Record attaches a SessionRecorder; finalized messages are appended to it.
+// The write is guarded because bash commands read the recorder concurrently for
+// their PI_SESSION_ID/PI_SESSION_FILE metadata. Assigning the exported Recorder
+// field directly bypasses that guard — use this method.
 func (s *Session) Record(r *SessionRecorder) {
+	s.recMu.Lock()
 	s.Recorder = r
+	s.recMu.Unlock()
 	if r == nil {
 		return
 	}
@@ -323,11 +338,12 @@ func NewSession(opts SessionOptions) *Session {
 		cwd, _ = os.Getwd()
 	}
 	// The bash tool reads session metadata through this indirection because the
-	// Session does not exist yet and, once it does, the recorder, model, and
-	// thinking level all change during the session (pi reads them off the live
-	// ExtensionContext per call).
-	var sess *Session
-	tools := resolveTools(cwd, opts, func() map[string]string { return sess.bashSessionEnv() })
+	// recorder, model, and thinking level all change during the session (pi
+	// reads them off the live ExtensionContext per call). The Session is
+	// allocated up front so the closure captures a stable, non-nil pointer; its
+	// Agent is filled in below, before NewSession returns and any tool can run.
+	sess := &Session{Cwd: cwd, Model: opts.Model, apiKey: opts.APIKey}
+	tools := resolveTools(cwd, opts, sess.bashSessionEnv)
 	// A custom SystemPrompt still goes through buildSystemPrompt with discovery:
 	// pi appends project context files, skills, date, and cwd to custom prompts
 	// too (system-prompt.ts:53-80 custom branch; only the docs block and the
@@ -388,7 +404,7 @@ func NewSession(opts SessionOptions) *Session {
 		AfterToolCall:   opts.AfterToolCall,
 	})
 
-	sess = &Session{Agent: a, Model: opts.Model, Cwd: cwd, apiKey: opts.APIKey}
+	sess.Agent = a
 	if opts.Compaction != nil && opts.Compaction.Enabled {
 		sess.EnableCompaction(*opts.Compaction)
 	}
