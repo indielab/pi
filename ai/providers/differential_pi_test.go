@@ -215,6 +215,62 @@ func TestDiffOpenRouterAnthropicCacheControl(t *testing.T) {
 	}
 }
 
+// TestDiffOpenRouterCacheControlOnToolResult mirrors pi's "moves the
+// conversation cache marker to a tool result" (bc41f612, #6940): when the turn
+// ends on a tool result, the conversation marker lands on the tool message, not
+// on the earlier user message.
+func TestDiffOpenRouterCacheControlOnToolResult(t *testing.T) {
+	model := openAIModel(func(m *ai.Model) {
+		m.ID = "anthropic/claude-x"
+		m.Provider = "openrouter"
+		m.BaseURL = "https://openrouter.ai/api/v1"
+	})
+	req := baseReq()
+	req.Messages = append(req.Messages,
+		ai.AssistantMessage{
+			Content:    ai.ContentList{ai.ToolCall{ID: "call_1", Name: "read", Arguments: map[string]any{"path": "README.md"}}},
+			Provider:   "openrouter",
+			Api:        ai.APIOpenAICompletions,
+			StopReason: ai.StopToolUse,
+		},
+		ai.ToolResultMessage{ToolCallID: "call_1", ToolName: "read", Content: ai.ContentList{ai.TextContent{Text: "file contents"}}},
+	)
+	body := buildOpenAIParams(model, req, &OpenAIOptions{})
+	msgs, _ := body["messages"].([]map[string]any)
+
+	// The user message keeps its plain string content — the marker moved past it.
+	var user map[string]any
+	for _, m := range msgs {
+		if r, _ := m["role"].(string); r == "user" {
+			user = m
+			break
+		}
+	}
+	if user == nil {
+		t.Fatalf("no user message in %#v", msgs)
+	}
+	if got, ok := user["content"].(string); !ok || got != "hi" {
+		t.Fatalf("user content = %#v, want plain string %q", user["content"], "hi")
+	}
+
+	// The last message is the tool result, converted to blocks with cache_control.
+	last := msgs[len(msgs)-1]
+	if r, _ := last["role"].(string); r != "tool" {
+		t.Fatalf("last message role = %v, want tool", last["role"])
+	}
+	blocks, ok := last["content"].([]any)
+	if !ok || len(blocks) == 0 {
+		t.Fatalf("tool content not converted to blocks: %#v", last["content"])
+	}
+	cc, has := blocks[0].(map[string]any)["cache_control"]
+	if !has {
+		t.Fatalf("tool result missing cache_control: %#v", blocks[0])
+	}
+	if typ, _ := cc.(map[string]any)["type"].(string); typ != "ephemeral" {
+		t.Fatalf("cache_control = %#v, want {type: ephemeral}", cc)
+	}
+}
+
 func TestDiffOmitsStrictWhenCompatDisables(t *testing.T) {
 	model := openAIModel(func(m *ai.Model) {
 		// moonshot disables strict mode in pi's detectCompat.

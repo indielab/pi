@@ -970,9 +970,11 @@ func applyAnthropicCacheControl(messages []map[string]any, tools any, cc map[str
 	if ts, ok := tools.([]map[string]any); ok && len(ts) > 0 {
 		ts[len(ts)-1]["cache_control"] = cc
 	}
-	// Last user/assistant message with text.
+	// Last user/assistant/tool message with text. Tool results are cacheable
+	// too (pi bc41f612, #6940) — an OpenRouter turn that ends on a tool result
+	// would otherwise leave the marker on an earlier message.
 	for i := len(messages) - 1; i >= 0; i-- {
-		if r, _ := messages[i]["role"].(string); r == "user" || r == "assistant" {
+		if r, _ := messages[i]["role"].(string); r == "user" || r == "assistant" || r == "tool" {
 			if addCacheControlToTextContent(messages[i], cc) {
 				break
 			}
