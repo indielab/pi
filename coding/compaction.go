@@ -514,10 +514,15 @@ func messagesAsLlm(messages []agent.AgentMessage) []ai.Message {
 func (s *Session) completeSummarization(ctx context.Context, promptText string, maxTokens int) (string, bool) {
 	summarizationMessages := []ai.Message{ai.NewUserText(promptText, nowMillisCoding())}
 
+	// Summaries are standalone requests, so isolate routing and avoid cache
+	// writes that cannot be reused (pi 9b3a2059): retention "none" and a fresh
+	// session id per request, rather than the session's own.
 	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{
-		APIKey:    s.apiKey,
-		MaxTokens: &maxTokens,
-		Headers:   s.Agent.Headers,
+		APIKey:         s.apiKey,
+		MaxTokens:      &maxTokens,
+		Headers:        s.Agent.Headers,
+		CacheRetention: ai.CacheNone,
+		SessionID:      uuidv7(),
 	}}
 	level := s.Agent.State().ThinkingLevel
 	if s.Model != nil && s.Model.Reasoning && level != "" && level != agent.ThinkOff {

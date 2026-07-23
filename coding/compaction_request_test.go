@@ -135,3 +135,49 @@ func TestSummarizationMaxTokensClampedByModel(t *testing.T) {
 		t.Fatalf("expected maxTokens clamped to model.MaxTokens 4096, got %d", capturedMax)
 	}
 }
+
+// TestSummarizationIsolatesRouting mirrors pi's "uses fresh routing sessions
+// without prompt caching" (9b3a2059): every summarization request carries
+// cacheRetention "none" and its own session id, so summaries neither reuse nor
+// pollute the main session's cache and routing.
+func TestSummarizationIsolatesRouting(t *testing.T) {
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+		Models: []providers.FauxModelDefinition{{ID: "faux-1", ContextWindow: 200000}},
+	})
+	defer reg.Unregister()
+	model := reg.GetModel()
+
+	var retentions []ai.CacheRetention
+	var sessionIDs []string
+	capture := func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+		retentions = append(retentions, opts.CacheRetention)
+		sessionIDs = append(sessionIDs, opts.SessionID)
+		return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "ok"}}, ai.StopStop)
+	}
+	reg.SetResponses([]providers.FauxResponseStep{capture, capture})
+
+	sess := NewSession(SessionOptions{Model: model, Cwd: t.TempDir(), NoTools: NoToolsAll, SessionID: "main-session"})
+	older := []agent.AgentMessage{ai.NewUserText("hi", 1)}
+	sess.summarize(context.Background(), older, 16384)
+	sess.summarize(context.Background(), older, 16384)
+
+	if len(retentions) != 2 {
+		t.Fatalf("expected 2 summarization requests, got %d", len(retentions))
+	}
+	for i, r := range retentions {
+		if r != ai.CacheNone {
+			t.Fatalf("request %d cacheRetention = %q, want %q", i, r, ai.CacheNone)
+		}
+	}
+	for i, id := range sessionIDs {
+		if id == "" {
+			t.Fatalf("request %d has no session id, want a fresh one", i)
+		}
+		if id == "main-session" {
+			t.Fatalf("request %d reused the session's own id %q", i, id)
+		}
+	}
+	if sessionIDs[0] == sessionIDs[1] {
+		t.Fatalf("both summarization requests shared session id %q, want distinct ids", sessionIDs[0])
+	}
+}
