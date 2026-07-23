@@ -76,6 +76,28 @@ func TestIsRetryableAssistantError(t *testing.T) {
 			want: true,
 		},
 		{
+			// pi #6904: DNS transport failures, including the wrapped form
+			// bedrock surfaces (message byte-identical to pi's vitest constant).
+			name: "wrapped DNS lookup failure is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)"},
+			want: true,
+		},
+		{
+			name: "ENOTFOUND is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "connect ENOTFOUND api.example.com"},
+			want: true,
+		},
+		{
+			name: "EAI_AGAIN is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "EAI_AGAIN api.example.com"},
+			want: true,
+		},
+		{
+			name: "getaddrinfo is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "getaddrinfo failed for api.example.com"},
+			want: true,
+		},
+		{
 			name: "non-matching error message is not retryable",
 			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "model refused to answer"},
 			want: false,

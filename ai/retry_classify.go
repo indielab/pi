@@ -57,6 +57,10 @@ var retryableProviderErrorPattern = regexp.MustCompile(`(?i)` + strings.Join([]s
 	"connection.?lost",
 	"other side closed",
 	"fetch failed",
+	// DNS resolution failures surface as node/libuv transport errors (#6904).
+	"getaddrinfo",
+	"ENOTFOUND",
+	"EAI_AGAIN",
 	"upstream.?connect",
 	"reset before headers",
 	"socket hang up",
