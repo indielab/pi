@@ -182,7 +182,7 @@ func TestBashPartialLastLineFooter(t *testing.T) {
 	dir := t.TempDir()
 	// One giant line with no newlines, larger than the 50KB byte cap.
 	size := DefaultMaxBytes + 5000
-	r, err := run(t, bashTool(dir), map[string]any{
+	r, err := run(t, bashTool(dir, nil), map[string]any{
 		"command": "printf 'x%.0s' $(seq 1 " + strconv.Itoa(size) + ")",
 	})
 	if err != nil {

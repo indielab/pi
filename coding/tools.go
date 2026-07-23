@@ -150,13 +150,22 @@ var ToolSnippets = map[string]string{
 	"web_fetch": "Fetch a web URL and return readable text",
 }
 
-// CreateTool builds a single built-in tool by name, rooted at cwd.
+// CreateTool builds a single built-in tool by name, rooted at cwd. The bash
+// tool built this way exposes no PI_* session metadata: there is no session to
+// read it from, matching pi's `exposeSessionEnvironment && ctx` guard when the
+// tool runs without an extension context.
 func CreateTool(name, cwd string) (agent.AgentTool, error) {
+	return createTool(name, cwd, nil)
+}
+
+// createTool is CreateTool with the session-metadata provider the coding
+// session threads into the bash tool (nil for standalone construction).
+func createTool(name, cwd string, sessionEnv sessionEnvFn) (agent.AgentTool, error) {
 	switch name {
 	case "read":
 		return readTool(cwd), nil
 	case "bash":
-		return bashTool(cwd), nil
+		return bashTool(cwd, sessionEnv), nil
 	case "edit":
 		return editTool(cwd), nil
 	case "write":
@@ -176,13 +185,13 @@ func CreateTool(name, cwd string) (agent.AgentTool, error) {
 
 // CreateCodingTools returns the default coding tool set [read, bash, edit, write].
 func CreateCodingTools(cwd string) []agent.AgentTool {
-	return []agent.AgentTool{readTool(cwd), bashTool(cwd), editTool(cwd), writeTool(cwd)}
+	return []agent.AgentTool{readTool(cwd), bashTool(cwd, nil), editTool(cwd), writeTool(cwd)}
 }
 
 // CreateAllTools returns all seven built-in tools.
 func CreateAllTools(cwd string) []agent.AgentTool {
 	return []agent.AgentTool{
-		readTool(cwd), bashTool(cwd), editTool(cwd), writeTool(cwd),
+		readTool(cwd), bashTool(cwd, nil), editTool(cwd), writeTool(cwd),
 		grepTool(cwd), findTool(cwd), lsTool(cwd),
 	}
 }
@@ -705,11 +714,57 @@ const maxBashTimeoutMs = 2147483647
 // rejection message, byte-identical to JS `${MAX_TIMEOUT_MS / 1000}`.
 var maxBashTimeoutSeconds = strconv.FormatFloat(float64(maxBashTimeoutMs)/1000, 'f', -1, 64)
 
-func bashTool(cwd string) agent.AgentTool {
+// sessionEnvFn supplies the PI_* session metadata exposed to bash commands.
+// It is called per execution so a mid-session /model or thinking-level change
+// is reflected, mirroring pi reading them off the live ExtensionContext.
+type sessionEnvFn func() map[string]string
+
+// piSessionEnvKeys are the session metadata variables pi manages for bash
+// commands. They are stripped from the inherited environment before every run
+// so a parent process's stale values never leak into a child (pi bb3d7d39).
+var piSessionEnvKeys = []string{
+	"PI_SESSION_ID",
+	"PI_SESSION_FILE",
+	"PI_PROVIDER",
+	"PI_MODEL",
+	"PI_REASONING_LEVEL",
+}
+
+// bashCommandEnv builds the child environment: the inherited environment minus
+// the PI_* session keys, plus whatever the session currently provides.
+func bashCommandEnv(sessionEnv sessionEnvFn) []string {
+	drop := make(map[string]bool, len(piSessionEnvKeys))
+	for _, k := range piSessionEnvKeys {
+		drop[k] = true
+	}
+	env := make([]string, 0, len(os.Environ())+len(piSessionEnvKeys))
+	for _, kv := range os.Environ() {
+		if name, _, ok := strings.Cut(kv, "="); ok && drop[name] {
+			continue
+		}
+		env = append(env, kv)
+	}
+	if sessionEnv == nil {
+		return env
+	}
+	// pi assigns in a fixed order; keep it stable for readable diffs.
+	provided := sessionEnv()
+	for _, k := range piSessionEnvKeys {
+		if v, ok := provided[k]; ok && v != "" {
+			env = append(env, k+"="+v)
+		}
+	}
+	return env
+}
+
+func bashTool(cwd string, sessionEnv sessionEnvFn) agent.AgentTool {
 	return agent.AgentTool{
 		Name:        "bash",
 		Label:       "bash",
 		Description: fmt.Sprintf("Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last %d lines or %dKB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.", DefaultMaxLines, DefaultMaxBytes/1024),
+		PromptGuidelines: []string{
+			"Inspect PI_* environment variables for current model and session details.",
+		},
 		Parameters: ai.Object(
 			ai.Prop("command", ai.String("Bash command to execute")),
 			ai.Opt("timeout", ai.Number("Timeout in seconds (optional, no default timeout)")),
@@ -752,6 +807,7 @@ func bashTool(cwd string) agent.AgentTool {
 				cmd = exec.CommandContext(runCtx, shell, append(shellArgs, command)...)
 			}
 			cmd.Dir = cwd
+			cmd.Env = bashCommandEnv(sessionEnv)
 			// Run in its own process group and, on cancel/timeout, kill the whole
 			// tree so backgrounded grandchildren don't survive (port of pi).
 			setProcessGroup(cmd)

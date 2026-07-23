@@ -17,8 +17,8 @@ import (
 )
 
 // ---------------------------------------------------------------------------
-// I1: per-tool promptGuidelines (byte-exact from pi read.ts:214, edit.ts:299-304,
-// write.ts:192)
+// I1: per-tool promptGuidelines (byte-exact from pi read.ts:214, bash.ts:329,
+// edit.ts:299-304, write.ts:192)
 // ---------------------------------------------------------------------------
 
 func TestToolPromptGuidelines(t *testing.T) {
@@ -32,6 +32,8 @@ func TestToolPromptGuidelines(t *testing.T) {
 			"Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.",
 		},
 		"write": {"Use write only for new files or complete rewrites."},
+		// pi bb3d7d39: bash advertises the PI_* session metadata it exports.
+		"bash": {"Inspect PI_* environment variables for current model and session details."},
 	}
 	for name, guidelines := range want {
 		tool, err := CreateTool(name, dir)
@@ -43,7 +45,7 @@ func TestToolPromptGuidelines(t *testing.T) {
 		}
 	}
 	// Tools without guidelines in pi must not carry any.
-	for _, name := range []string{"bash", "grep", "find", "ls"} {
+	for _, name := range []string{"grep", "find", "ls"} {
 		tool, _ := CreateTool(name, dir)
 		if len(tool.PromptGuidelines) != 0 {
 			t.Fatalf("%s should have no PromptGuidelines, got %#v", name, tool.PromptGuidelines)
@@ -287,7 +289,7 @@ func TestGrepLimitClampedToOne(t *testing.T) {
 
 func TestBashNoOutputOnNonZeroExit(t *testing.T) {
 	dir := t.TempDir()
-	_, err := run(t, bashTool(dir), map[string]any{"command": "exit 3"})
+	_, err := run(t, bashTool(dir, nil), map[string]any{"command": "exit 3"})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -303,7 +305,7 @@ func TestBashSignalKilledIsSuccess(t *testing.T) {
 	}
 	dir := t.TempDir()
 	// The shell kills itself → exit code is null in pi (-1 in Go) → success.
-	r, err := run(t, bashTool(dir), map[string]any{"command": "echo before; kill -KILL $$"})
+	r, err := run(t, bashTool(dir, nil), map[string]any{"command": "echo before; kill -KILL $$"})
 	if err != nil {
 		t.Fatalf("signal-killed child must be success like pi (exitCode null): %v", err)
 	}
@@ -311,7 +313,7 @@ func TestBashSignalKilledIsSuccess(t *testing.T) {
 		t.Fatalf("expected captured output, got %q", resultText(r))
 	}
 	// With no output at all, "(no output)" still applies.
-	r, err = run(t, bashTool(dir), map[string]any{"command": "kill -KILL $$"})
+	r, err = run(t, bashTool(dir, nil), map[string]any{"command": "kill -KILL $$"})
 	if err != nil {
 		t.Fatalf("signal-killed child must be success: %v", err)
 	}
@@ -325,7 +327,7 @@ func TestBashFractionalTimeout(t *testing.T) {
 		t.Skip("uses sleep")
 	}
 	dir := t.TempDir()
-	_, err := run(t, bashTool(dir), map[string]any{"command": "sleep 5", "timeout": 0.5})
+	_, err := run(t, bashTool(dir, nil), map[string]any{"command": "sleep 5", "timeout": 0.5})
 	if err == nil {
 		t.Fatal("expected timeout error")
 	}
@@ -340,7 +342,7 @@ func TestBashRejectsNonPositiveTimeout(t *testing.T) {
 	// pi resolveTimeoutMs rejects <= 0 (and non-finite) before spawning; the raw
 	// error surfaces as the tool result unchanged (bash.ts).
 	for _, tv := range []any{0, 0.0, -1, -0.5} {
-		_, err := run(t, bashTool(dir), map[string]any{"command": "echo hi", "timeout": tv})
+		_, err := run(t, bashTool(dir, nil), map[string]any{"command": "echo hi", "timeout": tv})
 		if err == nil {
 			t.Fatalf("timeout=%v: expected rejection", tv)
 		}
@@ -354,7 +356,7 @@ func TestBashRejectsOversizedTimeout(t *testing.T) {
 	dir := t.TempDir()
 	// timeout * 1000 must not exceed INT32_MAX ms; the message renders
 	// MAX_TIMEOUT_SECONDS (2147483.647) byte-identically to pi.
-	_, err := run(t, bashTool(dir), map[string]any{"command": "echo hi", "timeout": 2147484.0})
+	_, err := run(t, bashTool(dir, nil), map[string]any{"command": "echo hi", "timeout": 2147484.0})
 	if err == nil {
 		t.Fatal("expected oversized-timeout rejection")
 	}
@@ -362,7 +364,7 @@ func TestBashRejectsOversizedTimeout(t *testing.T) {
 		t.Fatalf("oversized timeout\n got: %q\nwant: %q", got, want)
 	}
 	// The exact boundary (2147483647 ms) is accepted, not rejected.
-	if _, err := run(t, bashTool(dir), map[string]any{"command": "echo hi", "timeout": 2147483.647}); err != nil {
+	if _, err := run(t, bashTool(dir, nil), map[string]any{"command": "echo hi", "timeout": 2147483.647}); err != nil {
 		t.Fatalf("boundary timeout must be accepted: %v", err)
 	}
 }
@@ -372,7 +374,7 @@ func TestBashTempFilePattern(t *testing.T) {
 		t.Skip("uses seq")
 	}
 	dir := t.TempDir()
-	r, err := run(t, bashTool(dir), map[string]any{"command": "seq 1 20000"})
+	r, err := run(t, bashTool(dir, nil), map[string]any{"command": "seq 1 20000"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,7 +422,7 @@ func TestBashInitialEmptyUpdate(t *testing.T) {
 			first = &r
 		}
 	}
-	_, err := bashTool(t.TempDir()).Execute(context.Background(), "id",
+	_, err := bashTool(t.TempDir(), nil).Execute(context.Background(), "id",
 		map[string]any{"command": "echo hi"}, onUpdate)
 	if err != nil {
 		t.Fatal(err)

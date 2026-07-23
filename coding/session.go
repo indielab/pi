@@ -92,7 +92,7 @@ var defaultActiveToolNames = []string{"read", "bash", "edit", "write"}
 // then excludeTools denylist). Consequences: NoTools "all" disables custom
 // tools too; a ToolNames allowlist constrains custom tools; ExcludeTools
 // applies to custom tools.
-func resolveTools(cwd string, opts SessionOptions) []agent.AgentTool {
+func resolveTools(cwd string, opts SessionOptions, sessionEnv sessionEnvFn) []agent.AgentTool {
 	// allowlist: nil = everything allowed (pi: undefined); empty = nothing.
 	var allowed map[string]bool
 	if opts.ToolNames != nil {
@@ -136,7 +136,7 @@ func resolveTools(cwd string, opts SessionOptions) []agent.AgentTool {
 			if !isAllowed(name) {
 				continue
 			}
-			if t, err := CreateTool(name, cwd); err == nil {
+			if t, err := createTool(name, cwd, sessionEnv); err == nil {
 				addReg(t)
 			}
 		}
@@ -146,7 +146,7 @@ func resolveTools(cwd string, opts SessionOptions) []agent.AgentTool {
 			if _, ok := registry[name]; ok || !isAllowed(name) {
 				continue
 			}
-			if t, err := CreateTool(name, cwd); err == nil {
+			if t, err := createTool(name, cwd, sessionEnv); err == nil {
 				addReg(t)
 			}
 		}
@@ -240,6 +240,32 @@ type Session struct {
 	apiKey   string
 }
 
+// bashSessionEnv returns the PI_* session metadata exposed to bash commands
+// (pi bb3d7d39): the session id and file come from the recorder — pi's session
+// manager — so they are absent until one is attached, exactly as pi omits
+// PI_SESSION_FILE while the session has no file yet. The model and reasoning
+// level are read live, so they follow /model and thinking-level changes.
+func (s *Session) bashSessionEnv() map[string]string {
+	if s == nil {
+		return nil
+	}
+	env := map[string]string{}
+	if r := s.Recorder; r != nil {
+		env["PI_SESSION_ID"] = r.ID()
+		env["PI_SESSION_FILE"] = r.Path()
+	}
+	if m := s.Model; m != nil {
+		env["PI_PROVIDER"] = m.Provider
+		env["PI_MODEL"] = m.ID
+	}
+	// pi guards on truthiness only, and "off" is truthy there — an explicitly
+	// disabled reasoning level is still reported.
+	if level := s.Agent.State().ThinkingLevel; level != "" {
+		env["PI_REASONING_LEVEL"] = string(level)
+	}
+	return env
+}
+
 // Record attaches a SessionRecorder; finalized messages are appended to it.
 func (s *Session) Record(r *SessionRecorder) {
 	s.Recorder = r
@@ -296,7 +322,12 @@ func NewSession(opts SessionOptions) *Session {
 	if cwd == "" {
 		cwd, _ = os.Getwd()
 	}
-	tools := resolveTools(cwd, opts)
+	// The bash tool reads session metadata through this indirection because the
+	// Session does not exist yet and, once it does, the recorder, model, and
+	// thinking level all change during the session (pi reads them off the live
+	// ExtensionContext per call).
+	var sess *Session
+	tools := resolveTools(cwd, opts, func() map[string]string { return sess.bashSessionEnv() })
 	// A custom SystemPrompt still goes through buildSystemPrompt with discovery:
 	// pi appends project context files, skills, date, and cwd to custom prompts
 	// too (system-prompt.ts:53-80 custom branch; only the docs block and the
@@ -357,7 +388,7 @@ func NewSession(opts SessionOptions) *Session {
 		AfterToolCall:   opts.AfterToolCall,
 	})
 
-	sess := &Session{Agent: a, Model: opts.Model, Cwd: cwd, apiKey: opts.APIKey}
+	sess = &Session{Agent: a, Model: opts.Model, Cwd: cwd, apiKey: opts.APIKey}
 	if opts.Compaction != nil && opts.Compaction.Enabled {
 		sess.EnableCompaction(*opts.Compaction)
 	}

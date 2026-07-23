@@ -31,7 +31,7 @@ func TestBashStreamsPartialOutput(t *testing.T) {
 	}
 	// Each line is followed by a sleep longer than the 100ms throttle, so an
 	// intermediate update should fire before the final line.
-	final, err := bashTool(t.TempDir()).Execute(context.Background(), "id",
+	final, err := bashTool(t.TempDir(), nil).Execute(context.Background(), "id",
 		map[string]any{"command": "echo first; sleep 0.2; echo second; sleep 0.2; echo third"},
 		onUpdate)
 	if err != nil {
@@ -74,7 +74,7 @@ func TestBashCapturesOutputPastExit(t *testing.T) {
 	// printf HEAD, then a backgrounded subshell that keeps the pipe open and
 	// emits TICK1..TICK6, the last ~300ms after the parent shell exits.
 	command := `printf "HEAD\n"; ( for i in 1 2 3 4 5 6; do sleep 0.05; printf "TICK$i\n"; done ) &`
-	final, err := bashTool(t.TempDir()).Execute(context.Background(), "id",
+	final, err := bashTool(t.TempDir(), nil).Execute(context.Background(), "id",
 		map[string]any{"command": command}, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestBashReleasesPromptlyOnQuietHeldPipe(t *testing.T) {
 	}
 	command := `printf "DONE\n"; ( sleep 30 ) &`
 	start := time.Now()
-	final, err := bashTool(t.TempDir()).Execute(context.Background(), "id",
+	final, err := bashTool(t.TempDir(), nil).Execute(context.Background(), "id",
 		map[string]any{"command": command}, nil)
 	elapsed := time.Since(start)
 	if err != nil {

@@ -27,7 +27,7 @@ func TestBashKillsProcessTree(t *testing.T) {
 	go func() {
 		// Background a subshell that writes the marker after 1s, then the parent
 		// blocks for 10s. Cancelling must kill the whole group before 1s elapses.
-		_, _ = bashTool(dir).Execute(ctx, "id",
+		_, _ = bashTool(dir, nil).Execute(ctx, "id",
 			map[string]any{"command": "(sleep 1; echo alive > " + marker + ") & sleep 10"},
 			func(agent.AgentToolResult) {})
 		close(done)

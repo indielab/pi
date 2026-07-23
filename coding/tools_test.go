@@ -121,7 +121,7 @@ func TestEditMultipleDisjoint(t *testing.T) {
 
 func TestBashTool(t *testing.T) {
 	dir := t.TempDir()
-	r, err := run(t, bashTool(dir), map[string]any{"command": "echo hello && pwd"})
+	r, err := run(t, bashTool(dir, nil), map[string]any{"command": "echo hello && pwd"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -132,7 +132,7 @@ func TestBashTool(t *testing.T) {
 
 func TestBashNonZeroExit(t *testing.T) {
 	dir := t.TempDir()
-	_, err := run(t, bashTool(dir), map[string]any{"command": "exit 3"})
+	_, err := run(t, bashTool(dir, nil), map[string]any{"command": "exit 3"})
 	if err == nil || !strings.Contains(err.Error(), "code 3") {
 		t.Fatalf("expected exit code 3 error, got %v", err)
 	}
@@ -262,5 +262,107 @@ func TestSystemPromptShape(t *testing.T) {
 	}
 	if !strings.Contains(p, "Current working directory: /work/project") {
 		t.Fatal("missing cwd footer")
+	}
+}
+
+// TestBashSessionEnvExposed mirrors pi's session-metadata exposure
+// (bb3d7d39): a bash command run through a session sees PI_SESSION_ID,
+// PI_SESSION_FILE, PI_PROVIDER, PI_MODEL, and PI_REASONING_LEVEL.
+func TestBashSessionEnvExposed(t *testing.T) {
+	dir := t.TempDir()
+	sessionEnv := func() map[string]string {
+		return map[string]string{
+			"PI_SESSION_ID":      "sess-1",
+			"PI_SESSION_FILE":    "/tmp/sess-1.jsonl",
+			"PI_PROVIDER":        "anthropic",
+			"PI_MODEL":           "claude-x",
+			"PI_REASONING_LEVEL": "medium",
+		}
+	}
+	r, err := run(t, bashTool(dir, sessionEnv), map[string]any{
+		"command": "echo $PI_SESSION_ID $PI_SESSION_FILE $PI_PROVIDER $PI_MODEL $PI_REASONING_LEVEL",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "sess-1 /tmp/sess-1.jsonl anthropic claude-x medium"
+	if !strings.Contains(resultText(r), want) {
+		t.Fatalf("session env not exposed: got %q, want it to contain %q", resultText(r), want)
+	}
+}
+
+// TestBashSessionEnvStripsInherited pins pi's unconditional delete of the PI_*
+// keys: a stale value inherited from the parent process never reaches the
+// child, whether or not a session supplies a replacement.
+func TestBashSessionEnvStripsInherited(t *testing.T) {
+	t.Setenv("PI_SESSION_ID", "stale-from-parent")
+	t.Setenv("PI_MODEL", "stale-model")
+	dir := t.TempDir()
+
+	// No session: both are stripped and nothing replaces them.
+	r, err := run(t, bashTool(dir, nil), map[string]any{"command": "echo \"[$PI_SESSION_ID][$PI_MODEL]\""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resultText(r), "[][]") {
+		t.Fatalf("stale PI_* leaked without a session: %q", resultText(r))
+	}
+
+	// With a session: the session's values win over the inherited ones.
+	sessionEnv := func() map[string]string { return map[string]string{"PI_MODEL": "claude-x"} }
+	r, err = run(t, bashTool(dir, sessionEnv), map[string]any{"command": "echo \"[$PI_SESSION_ID][$PI_MODEL]\""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resultText(r), "[][claude-x]") {
+		t.Fatalf("session values did not replace inherited ones: %q", resultText(r))
+	}
+}
+
+// TestSessionBashEnvIsLive checks the metadata follows the session rather than
+// being frozen at construction: pi reads it off the live ExtensionContext, so a
+// model switch after the tools were built must be visible to the next command.
+func TestSessionBashEnvIsLive(t *testing.T) {
+	model := &ai.Model{ID: "model-a", Provider: "prov-a", Name: "A"}
+	sess := NewSession(SessionOptions{Model: model, Cwd: t.TempDir(), ThinkingLevel: agent.ThinkOff})
+
+	env := sess.bashSessionEnv()
+	if env["PI_MODEL"] != "model-a" || env["PI_PROVIDER"] != "prov-a" {
+		t.Fatalf("initial model metadata wrong: %#v", env)
+	}
+	if _, ok := env["PI_SESSION_ID"]; ok {
+		t.Fatalf("session id should be absent without a recorder: %#v", env)
+	}
+
+	sess.SetModel(&ai.Model{ID: "model-b", Provider: "prov-b", Name: "B"}, "")
+	env = sess.bashSessionEnv()
+	if env["PI_MODEL"] != "model-b" || env["PI_PROVIDER"] != "prov-b" {
+		t.Fatalf("model switch not reflected: %#v", env)
+	}
+}
+
+// TestSessionBashToolExposesEnv is the end-to-end check on the wiring: the
+// bash tool a Session resolves reads its metadata through the session, not
+// through a nil provider.
+func TestSessionBashToolExposesEnv(t *testing.T) {
+	model := &ai.Model{ID: "model-a", Provider: "prov-a", Name: "A"}
+	sess := NewSession(SessionOptions{Model: model, Cwd: t.TempDir(), ThinkingLevel: agent.ThinkOff})
+
+	var bash *agent.AgentTool
+	for i, tool := range sess.Agent.State().Tools {
+		if tool.Name == "bash" {
+			bash = &sess.Agent.State().Tools[i]
+			break
+		}
+	}
+	if bash == nil {
+		t.Fatal("session has no bash tool")
+	}
+	r, err := run(t, *bash, map[string]any{"command": "echo \"$PI_PROVIDER/$PI_MODEL\""})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(resultText(r), "prov-a/model-a") {
+		t.Fatalf("session bash tool did not expose model metadata: %q", resultText(r))
 	}
 }
