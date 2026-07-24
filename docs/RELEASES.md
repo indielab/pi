@@ -20,6 +20,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.82.14`](#v08214) | 2026-07-24 | (this commit) | `7df73a00` | pi-ai 0.82.0 | Catalog 0.81.1→0.82.0 (456,576 B, +19/−1 models); constrained sampling — JSON-schema `strict` and Lark/regex grammar tools across anthropic/openai-completions/openai-responses/google, incl. `custom` tool calls and streaming grammar deltas; abortable provider retries with fail-fast on oversized `Retry-After`; explicit prompt-cache mode for GPT-5.6+ |
 | [`v0.81.13`](#v08113) | 2026-07-21 | `b224be0` | `dd6bea41` | pi-ai 0.81.1 | Catalog 0.80.10→0.81.1 (2 upstream tags, 431,732 B) + Qwen Token Plan built-ins; tool_call_id item-level uniqueness ({call_id}_{item_id}); RetryAssistantCall bounded-backoff retry loop; compaction retainedTail reconstruction; credential env-section passthrough on env-key + ambient resolvers |
 | [`v0.80.12`](#v08012) | 2026-07-17 | `7cc7772` | `a9f6a315` | pi-ai 0.80.10 | Catalog 0.80.7→0.80.10 (3 upstream tags); model-runtime facade ported SDK-scoped (ModelsStore, refresh/checkAuth/getAvailable/login/logout, header transforms, force flag); Kimi K3 deferred tools live on openai-completions; xai default grok-4.5 + encrypted-reasoning include; Responses early-EOF retry |
 | [`v0.80.11`](#v08011) | 2026-07-15 | `cff5172` | `dcfe36c7` | pi-ai 0.80.7 | Catalog 0.80.6→0.80.7; system-prompt `Current date` line removed; rolls up the 07-11→07-15 cycles — deferred/message-anchored tool loading, Responses `tool_choice` + OpenRouter session-affinity formats, openai-responses `encrypted_content` backfill, new `pi-messages` provider API |
@@ -37,6 +38,39 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.82.14
+
+- **Upstream pin**: `7df73a00` (delta `34f3719a..7df73a00`, 21 first-parent changes — 4 ports, 17 n/a, 0 decides)
+- **npm catalog**: `@earendil-works/pi-ai` 0.82.0 / `pi-coding-agent` 0.82.0, both integrity-verified against the registry
+- **Release crossed**: v0.82.0 (`083e6162`), one tag
+
+Headline is **constrained sampling** (upstream `24bace27`): tools can now ask the
+provider to constrain sampling to their JSON schema (`strict`, prefer-or-require)
+or to a Lark/regex grammar, with `type:"custom"` tool calls and a streaming
+grammar-delta path on openai-completions and openai-responses, strict tool
+schemas on anthropic, and `VALIDATED` function-calling mode on Gemini 3+.
+
+Two silent request-body changes ride along and are worth knowing about:
+openai-responses `supportsStrictMode` now defaults **false**, so the `strict` key
+disappears for the 53 of 99 catalog responses models that lack the flag
+(github-copilot, cloudflare-ai-gateway, opencode, azure) while the 46 under the
+`openai` provider are unchanged; and function-call replay now drops item ids that
+do not start with `fc_`.
+
+Also: provider retries are abortable and now **fail fast** when a server requests
+a delay above `maxRetryDelayMs` rather than silently ignoring it, and
+`prompt_cache_options:{mode:"explicit"}` is emitted for GPT-5.6+ when cache
+retention is none.
+
+The adversarial parity review caught a **missed hunk** that would otherwise have
+shipped as a feature that silently does nothing for this port's own consumers:
+`24bace27` threads `constrainedSampling` through `tool-definition-wrapper.ts`,
+which reaches `AgentTool` for free in TypeScript via interface inheritance but had
+no Go home, leaving constrained sampling implemented in `ai` and unreachable from
+`agent/` and `coding/`. Fixed before the tag.
+
+
 
 ### v0.81.13
 Upstream sync `8b937370 → dd6bea41` (pi 0.81.1; two release tags crossed —
