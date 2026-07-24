@@ -182,7 +182,7 @@ func TestGoogleDisabledThinkingPerFamily(t *testing.T) {
 		t.Run(tc.id, func(t *testing.T) {
 			model := &ai.Model{ID: tc.id, Api: ai.APIGoogleGenerativeAI, Provider: "google", Reasoning: true}
 			opts := &GoogleOptions{ThinkingProvided: true, ThinkingEnabled: false}
-			body := roundtripBody(t, buildGoogleParams(model, ai.Context{}, opts))
+			body := roundtripBody(t, mustBuildGoogleParams(t, model, ai.Context{}, opts))
 			gen, _ := body["generationConfig"].(map[string]any)
 			if gen == nil {
 				t.Fatalf("no generationConfig: %v", body)
@@ -206,7 +206,7 @@ func TestGoogleThinkingConfigUnderGenerationConfig(t *testing.T) {
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", Reasoning: true}
 	budget := 8192
 	opts := &GoogleOptions{ThinkingProvided: true, ThinkingEnabled: true, ThinkingBudget: &budget}
-	body := roundtripBody(t, buildGoogleParams(model, ai.Context{}, opts))
+	body := roundtripBody(t, mustBuildGoogleParams(t, model, ai.Context{}, opts))
 	if _, ok := body["thinkingConfig"]; ok {
 		t.Fatalf("thinkingConfig must not be at top level: %v", body)
 	}
@@ -220,7 +220,7 @@ func TestGoogleThinkingConfigUnderGenerationConfig(t *testing.T) {
 func TestGoogleNoThinkingConfigWhenNotProvided(t *testing.T) {
 	// Generic Stream path (RegisterGoogle) never sets ThinkingProvided.
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", Reasoning: true}
-	body := roundtripBody(t, buildGoogleParams(model, ai.Context{}, &GoogleOptions{}))
+	body := roundtripBody(t, mustBuildGoogleParams(t, model, ai.Context{}, &GoogleOptions{}))
 	if gen, ok := body["generationConfig"].(map[string]any); ok {
 		if _, has := gen["thinkingConfig"]; has {
 			t.Fatalf("thinkingConfig must be absent when thinking not provided: %v", gen)
@@ -240,7 +240,7 @@ func TestGoogleToolResultImageGemini2SeparateTurn(t *testing.T) {
 			ai.ImageContent{MimeType: "image/png", Data: "AAAA"},
 		}},
 	}}
-	body := roundtripBody(t, buildGoogleParams(model, req, &GoogleOptions{}))
+	body := roundtripBody(t, mustBuildGoogleParams(t, model, req, &GoogleOptions{}))
 	contents := body["contents"].([]any)
 	// 2.x: user, model, user(functionResponse), user(Tool result image) = 4 turns.
 	if len(contents) != 4 {
@@ -276,7 +276,7 @@ func TestGoogleToolResultImageGemini3Nested(t *testing.T) {
 			ai.ImageContent{MimeType: "image/png", Data: "AAAA"},
 		}},
 	}}
-	body := roundtripBody(t, buildGoogleParams(model, req, &GoogleOptions{}))
+	body := roundtripBody(t, mustBuildGoogleParams(t, model, req, &GoogleOptions{}))
 	contents := body["contents"].([]any)
 	// Gemini 3: user, model, user(functionResponse with nested parts) = 3 turns.
 	if len(contents) != 3 {
@@ -297,7 +297,7 @@ func TestGoogleToolResultEmptyResponseValue(t *testing.T) {
 	req := ai.Context{Messages: []ai.Message{
 		ai.ToolResultMessage{ToolCallID: "c1", ToolName: "noop", Content: ai.ContentList{}},
 	}}
-	body := roundtripBody(t, buildGoogleParams(model, req, &GoogleOptions{}))
+	body := roundtripBody(t, mustBuildGoogleParams(t, model, req, &GoogleOptions{}))
 	fr := firstFunctionResponse(body["contents"].([]any))
 	if resp := fr["response"].(map[string]any); resp["output"] != "" {
 		t.Fatalf("empty tool result should yield empty output, got %v", resp)
@@ -435,7 +435,7 @@ func TestGoogleTextSignatureSend(t *testing.T) {
 		ai.AssistantMessage{Provider: "google", Model: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI,
 			Content: ai.ContentList{ai.TextContent{Text: "hi", TextSignature: "YWJjZA=="}}},
 	}}
-	body := roundtripBody(t, buildGoogleParams(model, req, &GoogleOptions{}))
+	body := roundtripBody(t, mustBuildGoogleParams(t, model, req, &GoogleOptions{}))
 	contents := body["contents"].([]any)
 	parts := contents[0].(map[string]any)["parts"].([]any)
 	p := parts[0].(map[string]any)
@@ -450,7 +450,7 @@ func TestGoogleTextSignatureDroppedCrossModel(t *testing.T) {
 		ai.AssistantMessage{Provider: "openai", Model: "gpt-4", Api: ai.APIOpenAICompletions,
 			Content: ai.ContentList{ai.TextContent{Text: "hi", TextSignature: "YWJjZA=="}}},
 	}}
-	body := roundtripBody(t, buildGoogleParams(model, req, &GoogleOptions{}))
+	body := roundtripBody(t, mustBuildGoogleParams(t, model, req, &GoogleOptions{}))
 	contents := body["contents"].([]any)
 	parts := contents[0].(map[string]any)["parts"].([]any)
 	if _, ok := parts[0].(map[string]any)["thoughtSignature"]; ok {
@@ -716,7 +716,7 @@ func TestGoogleToolCallSignatureOnStartPartial(t *testing.T) {
 func TestGoogleGenerationConfigAlwaysSent(t *testing.T) {
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google"}
 	// No temperature, no maxTokens, no thinking: SDK still sends generationConfig {}.
-	body := roundtripBody(t, buildGoogleParams(model, ai.Context{}, &GoogleOptions{}))
+	body := roundtripBody(t, mustBuildGoogleParams(t, model, ai.Context{}, &GoogleOptions{}))
 	gen, ok := body["generationConfig"].(map[string]any)
 	if !ok {
 		t.Fatalf("generationConfig must always be sent (SDK setValueByPath is unconditional): %v", body)
@@ -788,4 +788,76 @@ func TestGoogleOnPayloadErrorFailsStream(t *testing.T) {
 	if requested {
 		t.Fatalf("request must not be sent when onPayload errors")
 	}
+}
+
+// mustBuildGoogleParams builds a generateContent request body, failing the test
+// on the errors constrained sampling can raise.
+func mustBuildGoogleParams(t *testing.T, model *ai.Model, req ai.Context, opts *GoogleOptions) map[string]any {
+	t.Helper()
+	params, err := buildGoogleParams(model, req, opts)
+	if err != nil {
+		t.Fatalf("buildGoogleParams: %v", err)
+	}
+	return params
+}
+
+// Upstream 24bace27: Gemini 3+ maps json_schema-constrained tools to the
+// VALIDATED function-calling mode, "none"/"any" still win over it, and with no
+// tool choice and no constrained tool the toolConfig key is omitted entirely.
+func TestGoogleFunctionCallingMode(t *testing.T) {
+	plain := ai.Tool{Name: "calc", Description: "d", Parameters: ai.Object(ai.Prop("x", ai.Integer()))}
+	strict := plain
+	strict.ConstrainedSampling = &ai.ConstrainedSamplingConfig{
+		Type: ai.ConstrainedSamplingJSONSchema, Strict: ai.ConstrainedSamplingPrefer,
+	}
+
+	for _, tc := range []struct {
+		name       string
+		modelID    string
+		tool       ai.Tool
+		toolChoice string
+		want       string // "" means toolConfig must be absent
+	}{
+		{"gemini-3 strict tool", "gemini-3-pro", strict, "", "VALIDATED"},
+		{"gemini-3 strict tool, auto still validated", "gemini-3-pro", strict, "auto", "VALIDATED"},
+		{"gemini-3 strict tool, none wins", "gemini-3-pro", strict, "none", "NONE"},
+		{"gemini-3 strict tool, any wins", "gemini-3-pro", strict, "any", "ANY"},
+		{"gemini-2 strict tool is not validated", "gemini-2.5-pro", strict, "", ""},
+		{"gemini-3 plain tool, no choice", "gemini-3-pro", plain, "", ""},
+		{"gemini-3 plain tool, explicit auto", "gemini-3-pro", plain, "auto", "AUTO"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &ai.Model{ID: tc.modelID, Api: ai.APIGoogleGenerativeAI, Provider: "google"}
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{tc.tool}}
+			body := roundtripBody(t, mustBuildGoogleParams(t, model, req, &GoogleOptions{ToolChoice: tc.toolChoice}))
+			cfg, has := body["toolConfig"]
+			if tc.want == "" {
+				if has {
+					t.Fatalf("toolConfig must be omitted, got %#v", cfg)
+				}
+				return
+			}
+			cfgMap, _ := cfg.(map[string]any)
+			fcc, _ := cfgMap["functionCallingConfig"].(map[string]any)
+			if fcc["mode"] != tc.want {
+				t.Fatalf("mode = %v, want %v", fcc["mode"], tc.want)
+			}
+		})
+	}
+}
+
+// A tool that REQUIRES strict sampling fails on a pre-Gemini-3 model.
+func TestGoogleStrictSamplingRequireFails(t *testing.T) {
+	model := &ai.Model{ID: "gemini-2.5-pro", Api: ai.APIGoogleGenerativeAI, Provider: "google"}
+	req := ai.Context{
+		Messages: []ai.Message{ai.NewUserText("hi", 1)},
+		Tools: []ai.Tool{{
+			Name: "js_require", Description: "d", Parameters: ai.Object(ai.Prop("x", ai.Integer())),
+			ConstrainedSampling: &ai.ConstrainedSamplingConfig{
+				Type: ai.ConstrainedSamplingJSONSchema, Strict: ai.ConstrainedSamplingRequire,
+			},
+		}},
+	}
+	_, err := buildGoogleParams(model, req, &GoogleOptions{})
+	assertErrString(t, err, `Tool "js_require" requires JSON-schema constrained sampling, but strict tools are unsupported.`)
 }

@@ -34,7 +34,19 @@ type responsesCompat struct {
 	// SessionAffinityFormat). Auto-detected from provider/baseURL.
 	SessionAffinityFormat      string
 	SupportsLongCacheRetention bool
+	// SupportsStrictMode reports whether the provider supports strict
+	// JSON-schema function tools. Default: false; the generated OpenAI models
+	// enable it explicitly.
+	SupportsStrictMode bool
+	// SupportsOpenAIGrammarTools reports whether to emit OpenAI custom tools with
+	// Lark/regex grammar formats. When false, grammar-constrained tools fall back
+	// to normal function tools. Default: false.
+	SupportsOpenAIGrammarTools bool
 	SupportsToolSearch         bool
+	// SupportsExplicitPromptCacheMode reports whether the model accepts
+	// `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older
+	// OpenAI models reject the parameter. Default: false.
+	SupportsExplicitPromptCacheMode bool
 }
 
 // detectResponsesSessionAffinityFormat is pi's detectSessionAffinityFormat:
@@ -54,10 +66,13 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 		return c
 	}
 	var raw struct {
-		SupportsDeveloperRole      *bool   `json:"supportsDeveloperRole"`
-		SessionAffinityFormat      *string `json:"sessionAffinityFormat"`
-		SupportsLongCacheRetention *bool   `json:"supportsLongCacheRetention"`
-		SupportsToolSearch         *bool   `json:"supportsToolSearch"`
+		SupportsDeveloperRole           *bool   `json:"supportsDeveloperRole"`
+		SessionAffinityFormat           *string `json:"sessionAffinityFormat"`
+		SupportsLongCacheRetention      *bool   `json:"supportsLongCacheRetention"`
+		SupportsStrictMode              *bool   `json:"supportsStrictMode"`
+		SupportsOpenAIGrammarTools      *bool   `json:"supportsOpenAIGrammarTools"`
+		SupportsToolSearch              *bool   `json:"supportsToolSearch"`
+		SupportsExplicitPromptCacheMode *bool   `json:"supportsExplicitPromptCacheMode"`
 	}
 	if json.Unmarshal(model.Compat, &raw) != nil {
 		return c
@@ -71,8 +86,17 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 	if raw.SupportsLongCacheRetention != nil {
 		c.SupportsLongCacheRetention = *raw.SupportsLongCacheRetention
 	}
+	if raw.SupportsStrictMode != nil {
+		c.SupportsStrictMode = *raw.SupportsStrictMode
+	}
+	if raw.SupportsOpenAIGrammarTools != nil {
+		c.SupportsOpenAIGrammarTools = *raw.SupportsOpenAIGrammarTools
+	}
 	if raw.SupportsToolSearch != nil {
 		c.SupportsToolSearch = *raw.SupportsToolSearch
+	}
+	if raw.SupportsExplicitPromptCacheMode != nil {
+		c.SupportsExplicitPromptCacheMode = *raw.SupportsExplicitPromptCacheMode
 	}
 	return c
 }
@@ -268,6 +292,13 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			baseURL = resolved
 		}
 
+		// Resolved before the request body, matching pi: a bad grammar tool must
+		// fail the stream with its own message rather than a downstream one.
+		grammarProps, err := grammarToolInputProperties(req.Tools, getResponsesCompat(model).SupportsOpenAIGrammarTools)
+		if err != nil {
+			fail(err)
+			return
+		}
 		params, err := buildResponsesParams(model, req, opts)
 		if err != nil {
 			fail(err)
@@ -410,6 +441,32 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			}
 			return nil
 		}
+		// grammarInput is the raw input accumulated on a custom tool call so far.
+		grammarInput := func(b *blockBuilder) string {
+			if b.grammar == nil {
+				return ""
+			}
+			s, _ := b.args[b.grammar.property].(string)
+			return s
+		}
+		// appendGrammarInput advances a custom tool call to nextInput and pushes
+		// the synthesized JSON delta, if any.
+		appendGrammarInput := func(slot *responsesOutputSlot, nextInput string, final bool) error {
+			b := slot.block
+			if b.grammar == nil {
+				return nil
+			}
+			delta, ok, err := b.grammar.append(nextInput, final)
+			if err != nil {
+				return err
+			}
+			b.args = map[string]any{b.grammar.property: nextInput}
+			materialize()
+			if ok {
+				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: slot.contentIndex, Delta: delta, Partial: output.Clone()})
+			}
+			return nil
+		}
 		// createSlot appends a new block for item and records the slot with its
 		// stable contentIndex, emitting the matching *_start event. Returns nil
 		// for item types that have no streaming block.
@@ -426,6 +483,18 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			case "function_call":
 				b = &blockBuilder{kind: "toolCall", toolID: item.CallID + "|" + item.ID, toolName: item.Name, args: map[string]any{}}
 				b.partialJSON.WriteString(item.Arguments)
+				startEvent = ai.EventToolCallStart
+			case "custom_tool_call":
+				// The "input" fallback should never be taken; it only gives a
+				// made-up tool we know nothing about somewhere to stash its input.
+				property, ok := grammarProps[item.Name]
+				if !ok {
+					property = "input"
+				}
+				b = &blockBuilder{
+					kind: "toolCall", toolID: item.CallID + "|" + item.ID, toolName: item.Name,
+					args: map[string]any{property: item.Input}, grammar: newGrammarInputBuffer(property),
+				}
 				startEvent = ai.EventToolCallStart
 			default:
 				return nil
@@ -588,7 +657,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: slot.contentIndex, Delta: ev.Delta, Partial: output.Clone()})
 			case "response.function_call_arguments.delta":
 				slot := getSlot(ev.OutputIndex, "toolCall")
-				if slot == nil {
+				if slot == nil || slot.block.grammar != nil {
 					return nil
 				}
 				slot.block.partialJSON.WriteString(ev.Delta)
@@ -597,7 +666,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: slot.contentIndex, Delta: ev.Delta, Partial: output.Clone()})
 			case "response.function_call_arguments.done":
 				slot := getSlot(ev.OutputIndex, "toolCall")
-				if slot == nil {
+				if slot == nil || slot.block.grammar != nil {
 					return nil
 				}
 				previous := slot.block.partialJSON.String()
@@ -613,6 +682,18 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: slot.contentIndex, Delta: delta, Partial: output.Clone()})
 					}
 				}
+			case "response.custom_tool_call_input.delta":
+				slot := getSlot(ev.OutputIndex, "toolCall")
+				if slot == nil || slot.block.grammar == nil {
+					return nil
+				}
+				return appendGrammarInput(slot, grammarInput(slot.block)+ev.Delta, false)
+			case "response.custom_tool_call_input.done":
+				slot := getSlot(ev.OutputIndex, "toolCall")
+				if slot == nil || slot.block.grammar == nil {
+					return nil
+				}
+				return appendGrammarInput(slot, ev.Input, true)
 			case "response.output_item.done":
 				if ev.Item == nil {
 					return nil
@@ -659,7 +740,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextEnd, ContentIndex: slot.contentIndex, Content: slot.block.text.String(), Partial: output.Clone()})
 					delete(outputSlots, ev.OutputIndex)
-				case ev.Item.Type == "function_call" && slot != nil && slot.block.kind == "toolCall":
+				case ev.Item.Type == "function_call" && slot != nil && slot.block.kind == "toolCall" && slot.block.grammar == nil:
 					// pi 8c9dbffa: parseStreamingJson(item.arguments || partialJson || "{}")
 					// — the done event's item.arguments wins over the scratch buffer.
 					argsJSON := ev.Item.Arguments
@@ -667,6 +748,20 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 						argsJSON = slot.block.partialJSON.String()
 					}
 					slot.block.args = parseStreamingJSON(orEmptyJSON(argsJSON))
+					materialize()
+					tc := slot.block.toContent().(ai.ToolCall)
+					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: slot.contentIndex, ToolCall: &tc, Partial: output.Clone()})
+					delete(outputSlots, ev.OutputIndex)
+				case ev.Item.Type == "custom_tool_call" && slot != nil && slot.block.grammar != nil:
+					// pi: item.input ?? the input accumulated so far.
+					finalInput := ev.Item.Input
+					if !ev.ItemHasInput {
+						finalInput = grammarInput(slot.block)
+					}
+					if gerr := appendGrammarInput(slot, finalInput, true); gerr != nil {
+						return gerr
+					}
+					slot.block.grammar = nil
 					materialize()
 					tc := slot.block.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: slot.contentIndex, ToolCall: &tc, Partial: output.Clone()})
@@ -722,7 +817,8 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponsesOptions) (map[string]any, error) {
 	// Only immediate tools go in body.tools; deferred definitions are emitted as
 	// client tool_search items at their tool-result markers inside responsesInput.
-	placement := ai.SplitDeferredTools(req, getResponsesCompat(model).SupportsToolSearch, nil)
+	compat := getResponsesCompat(model)
+	placement := ai.SplitDeferredTools(req, compat.SupportsToolSearch, nil)
 	input, err := responsesInput(model, req, placement.ByName)
 	if err != nil {
 		return nil, err
@@ -740,8 +836,14 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 		params["prompt_cache_key"] = clampPromptCacheKey(opts.SessionID)
 	}
 	// pi sets prompt_cache_retention independent of sessionId (openai-responses.ts:239).
-	if retention == ai.CacheLong && getResponsesCompat(model).SupportsLongCacheRetention {
+	if retention == ai.CacheLong && compat.SupportsLongCacheRetention {
 		params["prompt_cache_retention"] = "24h"
+	}
+	// Upstream 241431c6: models with explicit prompt caching must be told to stop
+	// caching implicitly when the caller asked for no retention at all (write
+	// compaction / branch summaries must not poison the session cache).
+	if retention == ai.CacheNone && compat.SupportsExplicitPromptCacheMode {
+		params["prompt_cache_options"] = map[string]any{"mode": "explicit"}
 	}
 	// pi `if (options?.maxTokens)` — JS truthiness, so 0 is omitted. pi then
 	// floors the value at 16 (Math.max) since the Responses API rejects lower.
@@ -759,7 +861,11 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 		params["service_tier"] = opts.ServiceTier
 	}
 	if len(placement.Immediate) > 0 {
-		params["tools"] = convertResponsesTools(placement.Immediate, false)
+		tools, err := convertResponsesTools(placement.Immediate, compat, false)
+		if err != nil {
+			return nil, err
+		}
+		params["tools"] = tools
 	}
 	if opts.ToolChoice != nil {
 		params["tool_choice"] = opts.ToolChoice
@@ -854,12 +960,33 @@ func buildResponsesToolCallIDNormalizer(model *ai.Model, messages []ai.Message) 
 	}
 }
 
-// convertResponsesTools maps unified tools to Responses API function tools.
-// strict defaults to false; deferLoading marks deferred definitions emitted in a
-// tool_search_output item. Port of convertResponsesTools.
-func convertResponsesTools(tools []ai.Tool, deferLoading bool) []map[string]any {
+// convertResponsesTools maps unified tools to Responses API tools. `strict` is
+// emitted only where the provider supports it (upstream 24bace27 — it used to be
+// unconditional); grammar-constrained tools become custom tools; deferLoading
+// marks deferred definitions emitted in a tool_search_output item.
+// Port of convertResponsesTools.
+func convertResponsesTools(tools []ai.Tool, compat responsesCompat, deferLoading bool) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
+		grammar, err := resolveGrammarSampling(t, compat.SupportsOpenAIGrammarTools)
+		if err != nil {
+			return nil, err
+		}
+		if grammar != nil {
+			tool := map[string]any{
+				"type": "custom", "name": t.Name, "description": t.Description,
+				"format": map[string]any{"type": "grammar", "syntax": grammar.format, "definition": grammar.definition},
+			}
+			if deferLoading {
+				tool["defer_loading"] = true
+			}
+			out = append(out, tool)
+			continue
+		}
+		strict, err := resolveJSONSchemaStrictSampling(t, compat.SupportsStrictMode)
+		if err != nil {
+			return nil, err
+		}
 		var p any = map[string]any{"type": "object", "properties": map[string]any{}}
 		if t.Parameters != nil {
 			if raw, err := json.Marshal(t.Parameters); err == nil {
@@ -869,14 +996,17 @@ func convertResponsesTools(tools []ai.Tool, deferLoading bool) []map[string]any 
 			}
 		}
 		tool := map[string]any{
-			"type": "function", "name": t.Name, "description": t.Description, "parameters": p, "strict": false,
+			"type": "function", "name": t.Name, "description": t.Description, "parameters": p,
 		}
 		if deferLoading {
 			tool["defer_loading"] = true
 		}
+		if compat.SupportsStrictMode {
+			tool["strict"] = strict
+		}
 		out = append(out, tool)
 	}
-	return out
+	return out, nil
 }
 
 // responsesInput converts unified messages into Responses API input items
@@ -889,6 +1019,10 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 	loadedToolNames := map[string]bool{}
 
 	compat := getResponsesCompat(model)
+	grammarProps, err := grammarToolInputProperties(req.Tools, compat.SupportsOpenAIGrammarTools)
+	if err != nil {
+		return nil, err
+	}
 	if req.SystemPrompt != "" {
 		role := "system"
 		if model.Reasoning && compat.SupportsDeveloperRole {
@@ -968,17 +1102,37 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 					// !isSameModel messages; pi splits the (raw or normalized)
 					// id here without further touching it (shared :201-217).
 					callID, itemID := splitToolCallID(v.ID)
-					// For different-model messages, drop the fc_ item id to
-					// avoid pairing validation against reasoning items.
-					if isDifferentModel && strings.HasPrefix(itemID, "fc_") {
+					property, isGrammar := grammarProps[v.Name]
+					// For different-model messages, drop the fc_ item id to avoid
+					// pairing validation against reasoning items. Replaying a
+					// custom-tool call as a function_call also drops any non-fc_*
+					// id (e.g. a ctc_* custom-tool id), which function_call items
+					// cannot carry (upstream 24bace27).
+					if (isDifferentModel && strings.HasPrefix(itemID, "fc_")) ||
+						(!isGrammar && !strings.HasPrefix(itemID, "fc_")) {
 						itemID = ""
 					}
-					args, _ := json.Marshal(orEmptyMap(v.Arguments))
-					fc := map[string]any{"type": "function_call", "call_id": callID, "name": v.Name, "arguments": string(args)}
-					if itemID != "" {
-						fc["id"] = itemID
+					var item map[string]any
+					if isGrammar {
+						input, gerr := grammarToolInput(v.Name, v.Arguments, property)
+						if gerr != nil {
+							return nil, gerr
+						}
+						item = map[string]any{
+							"type": "custom_tool_call", "call_id": callID, "name": v.Name,
+							"input": sanitizeSurrogates(input),
+						}
+					} else {
+						args, _ := json.Marshal(orEmptyMap(v.Arguments))
+						item = map[string]any{
+							"type": "function_call", "call_id": callID, "name": v.Name,
+							"arguments": string(args),
+						}
 					}
-					output = append(output, fc)
+					if itemID != "" {
+						item["id"] = itemID
+					}
+					output = append(output, item)
 				}
 			}
 			if len(output) == 0 {
@@ -1024,8 +1178,12 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 				outputVal = sanitizeSurrogates("(no tool output)")
 			}
 
+			outputType := "function_call_output"
+			if _, isGrammar := grammarProps[tr.ToolName]; isGrammar {
+				outputType = "custom_tool_call_output"
+			}
 			items = append(items, map[string]any{
-				"type": "function_call_output", "call_id": callID, "output": outputVal,
+				"type": outputType, "call_id": callID, "output": outputVal,
 			})
 
 			// Load tools introduced by this result via a completed client tool
@@ -1049,9 +1207,13 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 					"type": "tool_search_call", "call_id": searchCallID, "execution": "client", "status": "completed",
 					"arguments": map[string]any{"query": strings.Join(names, " "), "limit": len(names)},
 				})
+				deferredTools, err := convertResponsesTools(deferred, compat, true)
+				if err != nil {
+					return nil, err
+				}
 				items = append(items, map[string]any{
 					"type": "tool_search_output", "call_id": searchCallID, "execution": "client", "status": "completed",
-					"tools": convertResponsesTools(deferred, true),
+					"tools": deferredTools,
 				})
 			}
 		}
@@ -1185,16 +1347,21 @@ type responsesContentPart struct {
 }
 
 type responsesEvent struct {
-	Type        string                `json:"type"`
-	Delta       string                `json:"delta"`
-	Arguments   string                `json:"arguments"`
-	Code        string                `json:"code"`
-	Message     string                `json:"message"`
-	OutputIndex int                   `json:"output_index"`
-	Part        *responsesContentPart `json:"part"`
-	Item        *responsesItem        `json:"item"`
-	RawItem     json.RawMessage       `json:"-"`
-	Response    *responsesPayload     `json:"response"`
+	Type      string `json:"type"`
+	Delta     string `json:"delta"`
+	Arguments string `json:"arguments"`
+	// Input carries response.custom_tool_call_input.done's final raw input.
+	Input string `json:"input"`
+	// ItemHasInput records whether item.input was present at all (pi's
+	// `item.input ?? …` distinguishes an absent field from an empty string).
+	ItemHasInput bool                  `json:"-"`
+	Code         string                `json:"code"`
+	Message      string                `json:"message"`
+	OutputIndex  int                   `json:"output_index"`
+	Part         *responsesContentPart `json:"part"`
+	Item         *responsesItem        `json:"item"`
+	RawItem      json.RawMessage       `json:"-"`
+	Response     *responsesPayload     `json:"response"`
 }
 
 type responsesItem struct {
@@ -1203,6 +1370,7 @@ type responsesItem struct {
 	CallID           string                 `json:"call_id"`
 	Name             string                 `json:"name"`
 	Arguments        string                 `json:"arguments"`
+	Input            string                 `json:"input"`
 	Phase            string                 `json:"phase"`
 	EncryptedContent string                 `json:"encrypted_content"`
 	Summary          []responsesContentPart `json:"summary"`
@@ -1260,6 +1428,12 @@ func iterateOpenAISSE2(body io.Reader, ctx context.Context, handle func(response
 		}
 		if json.Unmarshal([]byte(data), &probe) == nil {
 			ev.RawItem = probe.Item
+			var itemProbe struct {
+				Input *string `json:"input"`
+			}
+			if json.Unmarshal(probe.Item, &itemProbe) == nil {
+				ev.ItemHasInput = itemProbe.Input != nil
+			}
 		}
 		if err := handle(ev); err != nil {
 			return err

@@ -81,7 +81,10 @@ type anthropicCompat struct {
 	supportsTemperature             bool
 	allowEmptySignature             bool
 	forceAdaptiveThinking           bool
-	supportsToolReferences          bool
+	// supportsStrictTools reports whether the provider accepts Anthropic strict
+	// tool schemas. Default: false.
+	supportsStrictTools    bool
+	supportsToolReferences bool
 }
 
 func getAnthropicCompat(model *ai.Model) anthropicCompat {
@@ -107,6 +110,7 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 			SupportsTemperature             *bool `json:"supportsTemperature"`
 			AllowEmptySignature             *bool `json:"allowEmptySignature"`
 			ForceAdaptiveThinking           *bool `json:"forceAdaptiveThinking"`
+			SupportsStrictTools             *bool `json:"supportsStrictTools"`
 			SupportsToolReferences          *bool `json:"supportsToolReferences"`
 		}
 		if json.Unmarshal(model.Compat, &raw) == nil {
@@ -117,6 +121,7 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 			setBool(&c.supportsTemperature, raw.SupportsTemperature)
 			setBool(&c.allowEmptySignature, raw.AllowEmptySignature)
 			setBool(&c.forceAdaptiveThinking, raw.ForceAdaptiveThinking)
+			setBool(&c.supportsStrictTools, raw.SupportsStrictTools)
 			setBool(&c.supportsToolReferences, raw.SupportsToolReferences)
 		}
 	}
@@ -341,7 +346,11 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 			model.Provider != "github-copilot" &&
 			isOAuthToken(apiKey)
 
-		body := buildAnthropicParams(model, req, oauth, opts)
+		body, err := buildAnthropicParams(model, req, oauth, opts)
+		if err != nil {
+			fail(err)
+			return
+		}
 		if opts.OnPayload != nil {
 			next, perr := opts.OnPayload(body, model)
 			if perr != nil {
@@ -569,6 +578,9 @@ type blockBuilder struct {
 	toolName    string
 	partialJSON strings.Builder
 	args        map[string]any
+	// grammar is set on custom (grammar-constrained) tool calls, whose raw input
+	// is re-synthesized into JSON deltas instead of being parsed from partialJSON.
+	grammar *grammarInputBuffer
 }
 
 func (b *blockBuilder) toContent() ai.Content {
@@ -589,7 +601,7 @@ func (b *blockBuilder) toContent() ai.Content {
 
 // ---- request building ----
 
-func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *AnthropicOptions) map[string]any {
+func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *AnthropicOptions) (map[string]any, error) {
 	retention := ai.CacheRetention("")
 	var env map[string]string
 	if opts != nil {
@@ -665,9 +677,15 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 		if compat.supportsCacheControlOnTools {
 			toolCC = cc
 		}
-		tools := convertAnthropicTools(immediateTools, oauth, compat.supportsEagerToolInputStreaming, toolCC, false)
-		tools = append(tools, convertAnthropicTools(deferredTools, oauth, compat.supportsEagerToolInputStreaming, nil, true)...)
-		params["tools"] = tools
+		tools, err := convertAnthropicTools(immediateTools, oauth, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools, toolCC, false)
+		if err != nil {
+			return nil, err
+		}
+		deferred, err := convertAnthropicTools(deferredTools, oauth, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools, nil, true)
+		if err != nil {
+			return nil, err
+		}
+		params["tools"] = append(tools, deferred...)
 	}
 
 	// pi tri-state (anthropic.ts:950-978): thinkingEnabled undefined omits the
@@ -714,20 +732,26 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 		}
 	}
 
-	return params
+	return params, nil
 }
 
-func convertAnthropicTools(tools []ai.Tool, oauth, eager bool, cc *cacheControl, deferLoading bool) []map[string]any {
+func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bool, cc *cacheControl, deferLoading bool) ([]map[string]any, error) {
 	out := make([]map[string]any, len(tools))
 	for i, t := range tools {
 		name := t.Name
 		if oauth {
 			name = toClaudeCodeName(name)
 		}
+		strict, err := resolveJSONSchemaStrictSampling(t, supportsStrictTools)
+		if err != nil {
+			return nil, err
+		}
+		var full map[string]any
 		props := map[string]any{}
 		var required []string
 		if t.Parameters != nil {
 			if raw, err := json.Marshal(t.Parameters); err == nil {
+				_ = json.Unmarshal(raw, &full)
 				var sch struct {
 					Properties json.RawMessage `json:"properties"`
 					Required   []string        `json:"required"`
@@ -742,18 +766,34 @@ func convertAnthropicTools(tools []ai.Tool, oauth, eager bool, cc *cacheControl,
 		if required == nil {
 			required = []string{}
 		}
+		// The legacy {type, properties, required} shape is always sent; strict
+		// tools carry the rest of the JSON Schema underneath it (pi spreads the
+		// full parameters first, then the legacy shape over the top).
+		inputSchema := map[string]any{
+			"type":       "object",
+			"properties": props,
+			"required":   required,
+		}
+		if strict {
+			if full == nil {
+				full = map[string]any{}
+			}
+			for k, v := range inputSchema {
+				full[k] = v
+			}
+			inputSchema = full
+		}
 		tool := map[string]any{
 			"name":        name,
 			"description": t.Description,
-			"input_schema": map[string]any{
-				"type":       "object",
-				"properties": props,
-				"required":   required,
-			},
 		}
 		if eager {
 			tool["eager_input_streaming"] = true
 		}
+		if strict {
+			tool["strict"] = true
+		}
+		tool["input_schema"] = inputSchema
 		if deferLoading {
 			tool["defer_loading"] = true
 		}
@@ -762,7 +802,7 @@ func convertAnthropicTools(tools []ai.Tool, oauth, eager bool, cc *cacheControl,
 		}
 		out[i] = tool
 	}
-	return out
+	return out, nil
 }
 
 func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheControl, allowEmptySig bool, deferredToolNames map[string]bool, normalizeToolName ai.ToolNameNormalizer) []map[string]any {

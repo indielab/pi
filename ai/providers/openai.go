@@ -86,7 +86,19 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			baseURL = resolved
 		}
 
-		var body any = buildOpenAIParams(model, req, opts)
+		// Resolved before the request body, matching pi: a bad grammar tool must
+		// fail the stream with its own message rather than a downstream one.
+		grammarProps, err := grammarToolInputProperties(req.Tools, getOpenAICompat(model).SupportsOpenAIGrammarTools)
+		if err != nil {
+			fail(err)
+			return
+		}
+		params, err := buildOpenAIParams(model, req, opts)
+		if err != nil {
+			fail(err)
+			return
+		}
+		var body any = params
 		if opts.OnPayload != nil {
 			next, err := opts.OnPayload(body, model)
 			if err != nil {
@@ -240,6 +252,39 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				delete(pendingReasoningDetails, b.toolID)
 			}
 		}
+		// startGrammarBuffer switches a block to the custom-tool (grammar) shape.
+		// The "input" fallback should never be taken; it only gives a made-up tool
+		// we know nothing about somewhere to stash its input.
+		startGrammarBuffer := func(b *blockBuilder) {
+			property, ok := grammarProps[b.toolName]
+			if !ok {
+				property = "input"
+			}
+			b.grammar = newGrammarInputBuffer(property)
+			b.args = map[string]any{property: ""}
+			b.partialJSON.Reset()
+		}
+		// grammarInput is the raw input accumulated on a custom tool call so far.
+		grammarInput := func(b *blockBuilder) string {
+			if b.grammar == nil {
+				return ""
+			}
+			s, _ := b.args[b.grammar.property].(string)
+			return s
+		}
+		// appendGrammarInput advances a custom tool call to nextInput and returns
+		// the synthesized JSON delta (empty when there is nothing to emit).
+		appendGrammarInput := func(b *blockBuilder, nextInput string, final bool) (string, error) {
+			if b.grammar == nil {
+				return "", nil
+			}
+			delta, _, err := b.grammar.append(nextInput, final)
+			if err != nil {
+				return "", err
+			}
+			b.args = map[string]any{b.grammar.property: nextInput}
+			return delta, nil
+		}
 		ensureToolCallBlock := func(tcDelta openAIToolCallDelta) *blockBuilder {
 			var b *blockBuilder
 			if tcDelta.Index != nil {
@@ -249,9 +294,9 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				b = toolBuildersByID[tcDelta.ID]
 			}
 			if b == nil {
-				b = &blockBuilder{kind: "toolCall", toolID: tcDelta.ID, args: map[string]any{}}
-				if tcDelta.Function != nil {
-					b.toolName = tcDelta.Function.Name
+				b = &blockBuilder{kind: "toolCall", toolID: tcDelta.ID, toolName: tcDelta.name(), args: map[string]any{}}
+				if tcDelta.Custom != nil {
+					startGrammarBuffer(b)
 				}
 				if tcDelta.Index != nil {
 					toolBuildersByIndex[*tcDelta.Index] = b
@@ -270,6 +315,12 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			}
 			if tcDelta.ID != "" {
 				toolBuildersByID[tcDelta.ID] = b
+			}
+			if b.toolName == "" {
+				b.toolName = tcDelta.name()
+			}
+			if tcDelta.Custom != nil && b.grammar == nil {
+				startGrammarBuffer(b)
 			}
 			applyPendingReasoningDetail(b)
 			return b
@@ -365,8 +416,8 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 					b.toolID = tcDelta.ID
 					toolBuildersByID[tcDelta.ID] = b
 				}
-				if b.toolName == "" && tcDelta.Function != nil && tcDelta.Function.Name != "" {
-					b.toolName = tcDelta.Function.Name
+				if b.toolName == "" {
+					b.toolName = tcDelta.name()
 				}
 
 				// pi pushes a toolcall_delta for EVERY delta entry, with an empty
@@ -376,6 +427,12 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 					delta = tcDelta.Function.Arguments
 					b.partialJSON.WriteString(delta)
 					b.args = parseStreamingJSON(b.partialJSON.String())
+				} else if tcDelta.Custom != nil && tcDelta.Custom.Input != "" {
+					d, gerr := appendGrammarInput(b, grammarInput(b)+tcDelta.Custom.Input, false)
+					if gerr != nil {
+						return gerr
+					}
+					delta = d
 				}
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: indexOf(b), Delta: delta, Partial: output.Clone()})
@@ -445,7 +502,19 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			case "thinking":
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: indexOf(b), Content: b.thinking.String(), Partial: output.Clone()})
 			case "toolCall":
-				b.args = parseStreamingJSON(b.partialJSON.String())
+				if b.grammar != nil {
+					delta, gerr := appendGrammarInput(b, grammarInput(b), true)
+					if gerr != nil {
+						fail(gerr)
+						return
+					}
+					if delta != "" {
+						materialize()
+						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: indexOf(b), Delta: delta, Partial: output.Clone()})
+					}
+				} else {
+					b.args = parseStreamingJSON(b.partialJSON.String())
+				}
 				materialize()
 				tc := b.toContent().(ai.ToolCall)
 				if sig := toolThoughtSigs[b]; sig != "" {
@@ -500,8 +569,12 @@ func openRouterErrorRaw(body []byte) string {
 	return parsed.Error.Metadata.Raw
 }
 
-func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map[string]any {
+func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (map[string]any, error) {
 	compat := getOpenAICompat(model)
+	grammarProps, err := grammarToolInputProperties(req.Tools, compat.SupportsOpenAIGrammarTools)
+	if err != nil {
+		return nil, err
+	}
 
 	var messages []map[string]any
 	if req.SystemPrompt != "" {
@@ -572,6 +645,17 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 						thinkingBlocks = append(thinkingBlocks, v)
 					}
 				case ai.ToolCall:
+					if property, isGrammar := grammarProps[v.Name]; isGrammar {
+						input, gerr := grammarToolInput(v.Name, v.Arguments, property)
+						if gerr != nil {
+							return nil, gerr
+						}
+						toolCalls = append(toolCalls, map[string]any{
+							"id": v.ID, "type": "custom",
+							"custom": map[string]any{"name": v.Name, "input": sanitizeSurrogates(input)},
+						})
+						break
+					}
 					args, _ := json.Marshal(v.Arguments)
 					toolCalls = append(toolCalls, map[string]any{
 						"id": v.ID, "type": "function",
@@ -742,10 +826,11 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 			// message with tools but omits the standard content field.
 			if len(runDeferredNames) > 0 {
 				if deferredTools := getToolsByName(req.Tools, runDeferredNames); len(deferredTools) > 0 {
-					messages = append(messages, map[string]any{
-						"role":  "system",
-						"tools": convertOpenAITools(deferredTools, compat),
-					})
+					converted, cerr := convertOpenAITools(deferredTools, compat)
+					if cerr != nil {
+						return nil, cerr
+					}
+					messages = append(messages, map[string]any{"role": "system", "tools": converted})
 				}
 			}
 			continue
@@ -800,7 +885,11 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 		}
 	}
 	if len(activeTools) > 0 {
-		params["tools"] = convertOpenAITools(activeTools, compat)
+		converted, cerr := convertOpenAITools(activeTools, compat)
+		if cerr != nil {
+			return nil, cerr
+		}
+		params["tools"] = converted
 		if compat.ZaiToolStream {
 			params["tool_stream"] = true
 		}
@@ -846,7 +935,7 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) map
 		}
 	}
 
-	return params
+	return params, nil
 }
 
 // clientAPIKey ports pi's getClientApiKey (129eb460): when the request carries
@@ -904,9 +993,27 @@ func getToolsByName(tools []ai.Tool, names []string) []ai.Tool {
 // convertOpenAITools serializes tools into the chat-completions tools shape
 // (port of pi's convertTools), shared by the top-level tools param and the
 // Kimi deferred-tools system message.
-func convertOpenAITools(tools []ai.Tool, compat openAICompletionsCompat) []map[string]any {
+func convertOpenAITools(tools []ai.Tool, compat openAICompletionsCompat) ([]map[string]any, error) {
 	var out []map[string]any
 	for _, t := range tools {
+		grammar, err := resolveGrammarSampling(t, compat.SupportsOpenAIGrammarTools)
+		if err != nil {
+			return nil, err
+		}
+		if grammar != nil {
+			out = append(out, map[string]any{
+				"type": "custom",
+				"custom": map[string]any{
+					"name":        t.Name,
+					"description": t.Description,
+					"format": map[string]any{
+						"type":    "grammar",
+						"grammar": map[string]any{"syntax": grammar.format, "definition": grammar.definition},
+					},
+				},
+			})
+			continue
+		}
 		var schema any = map[string]any{"type": "object", "properties": map[string]any{}}
 		if t.Parameters != nil {
 			if raw, err := json.Marshal(t.Parameters); err == nil {
@@ -915,13 +1022,20 @@ func convertOpenAITools(tools []ai.Tool, compat openAICompletionsCompat) []map[s
 				schema = p
 			}
 		}
+		// Resolved unconditionally: a tool that REQUIRES strict sampling must fail
+		// the request on a provider that cannot do it, even though the key itself
+		// is only emitted where the provider supports it (some reject unknown fields).
+		strict, err := resolveJSONSchemaStrictSampling(t, compat.SupportsStrictMode)
+		if err != nil {
+			return nil, err
+		}
 		fn := map[string]any{"name": t.Name, "description": t.Description, "parameters": schema}
 		if compat.SupportsStrictMode {
-			fn["strict"] = false
+			fn["strict"] = strict
 		}
 		out = append(out, map[string]any{"type": "function", "function": fn})
 	}
-	return out
+	return out, nil
 }
 
 // hasToolHistory reports whether the conversation already contains tool calls or
@@ -1268,6 +1382,24 @@ type openAIToolCallDelta struct {
 		Name      string `json:"name"`
 		Arguments string `json:"arguments"`
 	} `json:"function"`
+	// Custom carries the OpenAI custom-tool (grammar) variant of a tool call,
+	// whose raw input replaces function.arguments.
+	Custom *struct {
+		Name  string `json:"name"`
+		Input string `json:"input"`
+	} `json:"custom"`
+}
+
+// name is the tool name carried by either tool-call variant (pi:
+// `toolCall.function?.name ?? toolCall.custom?.name`).
+func (d openAIToolCallDelta) name() string {
+	if d.Function != nil && d.Function.Name != "" {
+		return d.Function.Name
+	}
+	if d.Custom != nil {
+		return d.Custom.Name
+	}
+	return ""
 }
 
 type openAIChunk struct {

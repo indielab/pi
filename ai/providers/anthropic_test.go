@@ -1121,3 +1121,97 @@ func streamAnthropicSSE(t *testing.T, model *ai.Model, sse string) *ai.Assistant
 	return StreamAnthropic(context.Background(), &clone, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
 		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
 }
+
+// mustBuildAnthropicParams builds a Messages request body, failing the test on
+// the errors constrained sampling can raise.
+func mustBuildAnthropicParams(t *testing.T, model *ai.Model, req ai.Context, oauth bool, opts *AnthropicOptions) map[string]any {
+	t.Helper()
+	params, err := buildAnthropicParams(model, req, oauth, opts)
+	if err != nil {
+		t.Fatalf("buildAnthropicParams: %v", err)
+	}
+	return params
+}
+
+// Upstream 24bace27: with compat.supportsStrictTools, a json_schema-constrained
+// tool gains `strict: true` and its input_schema becomes the full parameter
+// schema with the legacy {type, properties, required} shape layered over it.
+// Expectations captured from pi 0.82.0 (onPayload on anthropic-messages.stream):
+//
+//	strict   -> {"name":"rich",…,"strict":true,"input_schema":{"$schema":…,"type":"object",
+//	             "properties":{"x":{"type":"integer"}},"required":["x"],"additionalProperties":false}}
+//	default  -> no "strict"; input_schema is only {"type","properties","required"}
+func TestAnthropicStrictTools(t *testing.T) {
+	model := func(compat string) *ai.Model {
+		m := &ai.Model{ID: "claude-x", Api: ai.APIAnthropicMessages, Provider: "anthropic", Input: []string{"text"}, MaxTokens: 100}
+		if compat != "" {
+			m.Compat = json.RawMessage(compat)
+		}
+		return m
+	}
+	params := ai.Object(ai.Prop("x", ai.Integer()))
+	params.AdditionalAllowed = boolPtr(false)
+	tool := ai.Tool{
+		Name: "rich", Description: "d", Parameters: params,
+		ConstrainedSampling: &ai.ConstrainedSamplingConfig{
+			Type: ai.ConstrainedSamplingJSONSchema, Strict: ai.ConstrainedSamplingPrefer,
+		},
+	}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{tool}}
+
+	firstTool := func(compat string) map[string]any {
+		t.Helper()
+		body := mustBuildAnthropicParams(t, model(compat), req, false, &AnthropicOptions{})
+		tools, ok := body["tools"].([]map[string]any)
+		if !ok || len(tools) != 1 {
+			t.Fatalf("tools wrong: %#v", body["tools"])
+		}
+		return tools[0]
+	}
+
+	strictTool := firstTool(`{"supportsStrictTools":true}`)
+	if strictTool["strict"] != true {
+		t.Fatalf("strict tool must carry strict:true: %#v", strictTool)
+	}
+	schema, _ := strictTool["input_schema"].(map[string]any)
+	if schema["type"] != "object" {
+		t.Fatalf("input_schema type: %#v", schema)
+	}
+	if _, has := schema["additionalProperties"]; !has {
+		t.Fatalf("strict input_schema must spread the full parameter schema: %#v", schema)
+	}
+	if props, _ := schema["properties"].(map[string]any); len(props) != 1 || props["x"] == nil {
+		t.Fatalf("legacy properties must win: %#v", schema["properties"])
+	}
+	if req, _ := schema["required"].([]string); len(req) != 1 || req[0] != "x" {
+		t.Fatalf("legacy required must win: %#v", schema["required"])
+	}
+
+	plainTool := firstTool("")
+	if _, has := plainTool["strict"]; has {
+		t.Fatalf("strict must be absent without supportsStrictTools: %#v", plainTool)
+	}
+	schema, _ = plainTool["input_schema"].(map[string]any)
+	if len(schema) != 3 {
+		t.Fatalf("non-strict input_schema must stay the legacy 3-key shape: %#v", schema)
+	}
+}
+
+// A tool that REQUIRES strict sampling fails the request on a provider without
+// strict tools. Message captured verbatim from pi 0.82.0.
+func TestAnthropicStrictToolsRequireFails(t *testing.T) {
+	model := &ai.Model{ID: "claude-x", Api: ai.APIAnthropicMessages, Provider: "anthropic", Input: []string{"text"}, MaxTokens: 100}
+	req := ai.Context{
+		Messages: []ai.Message{ai.NewUserText("hi", 1)},
+		Tools: []ai.Tool{{
+			Name: "js_require", Description: "d", Parameters: ai.Object(ai.Prop("x", ai.Integer())),
+			ConstrainedSampling: &ai.ConstrainedSamplingConfig{
+				Type: ai.ConstrainedSamplingJSONSchema, Strict: ai.ConstrainedSamplingRequire,
+			},
+		}},
+	}
+	_, err := buildAnthropicParams(model, req, false, &AnthropicOptions{})
+	assertErrString(t, err, `Tool "js_require" requires JSON-schema constrained sampling, but strict tools are unsupported.`)
+}
+
+func boolPtr(b bool) *bool { return &b }

@@ -92,7 +92,7 @@ func dtFirstToolResult(t *testing.T, body map[string]any) map[string]any {
 func TestDeferredToolsAnthropicLoadsAtMarker(t *testing.T) {
 	model := dtAnthropicModel("claude-opus-4-6")
 	ctx := dtAnthropicContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
-	body := buildAnthropicParams(model, ctx, false, &AnthropicOptions{})
+	body := mustBuildAnthropicParams(t, model, ctx, false, &AnthropicOptions{})
 
 	tools := dtTools(body)
 	if got := dtToolNames(tools); len(got) != 2 || got[0] != "base_tool" || got[1] != "late_tool" {
@@ -134,7 +134,7 @@ func TestDeferredToolsAnthropicSiblingDisplacement(t *testing.T) {
 	}}, ctx.Messages[3:]...)
 	ctx.Messages = append(ctx.Messages[:3], rest...)
 
-	body := buildAnthropicParams(model, ctx, false, &AnthropicOptions{})
+	body := mustBuildAnthropicParams(t, model, ctx, false, &AnthropicOptions{})
 	content := dtAnthropicToolResultContent(t, body)
 	if len(content) != 4 {
 		t.Fatalf("content len = %d, want 4 (2 tool_result + text + image): %#v", len(content), content)
@@ -167,7 +167,7 @@ func TestDeferredToolsAnthropicFromOpenAIHistory(t *testing.T) {
 	assistant.Provider = "openai"
 	assistant.Model = "gpt-5.4"
 
-	body := buildAnthropicParams(model, ctx, false, &AnthropicOptions{})
+	body := mustBuildAnthropicParams(t, model, ctx, false, &AnthropicOptions{})
 	tools := dtTools(body)
 	if got := dtToolNames(tools); len(got) != 2 || got[1] != "late_tool" || tools[1]["defer_loading"] != true {
 		t.Fatalf("tools = %v (defer=%v), want late_tool deferred", got, tools[1]["defer_loading"])
@@ -181,7 +181,7 @@ func TestDeferredToolsAnthropicFromOpenAIHistory(t *testing.T) {
 func TestDeferredToolsAnthropicNotResurrected(t *testing.T) {
 	model := dtAnthropicModel("claude-opus-4-6")
 	ctx := dtAnthropicContext(model, []ai.Tool{dtTool("base_tool")}, "late_tool")
-	body := buildAnthropicParams(model, ctx, false, &AnthropicOptions{})
+	body := mustBuildAnthropicParams(t, model, ctx, false, &AnthropicOptions{})
 	if got := dtToolNames(dtTools(body)); len(got) != 1 || got[0] != "base_tool" {
 		t.Fatalf("tools = %v, want [base_tool]", got)
 	}
@@ -195,7 +195,7 @@ func TestDeferredToolsAnthropicUsedBeforeMarker(t *testing.T) {
 	model := dtAnthropicModel("claude-opus-4-6")
 	ctx := dtAnthropicContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
 	ctx.Messages[1].(*ai.AssistantMessage).Content = ai.ContentList{ai.ToolCall{ID: "call_1", Name: "late_tool", Arguments: map[string]any{}}}
-	body := buildAnthropicParams(model, ctx, false, &AnthropicOptions{})
+	body := mustBuildAnthropicParams(t, model, ctx, false, &AnthropicOptions{})
 	tools := dtTools(body)
 	if got := dtToolNames(tools); len(got) != 2 || got[0] != "base_tool" || got[1] != "late_tool" {
 		t.Fatalf("tools = %v, want [base_tool late_tool]", got)
@@ -211,7 +211,7 @@ func TestDeferredToolsAnthropicUnsupportedModels(t *testing.T) {
 	for _, id := range []string{"claude-haiku-4-5", "claude-sonnet-4-20250514"} {
 		model := dtAnthropicModel(id)
 		ctx := dtAnthropicContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
-		body := buildAnthropicParams(model, ctx, false, &AnthropicOptions{})
+		body := mustBuildAnthropicParams(t, model, ctx, false, &AnthropicOptions{})
 		tools := dtTools(body)
 		if got := dtToolNames(tools); len(got) != 2 || got[0] != "base_tool" || got[1] != "late_tool" {
 			t.Fatalf("%s tools = %v, want normal list", id, got)
@@ -227,7 +227,7 @@ func TestDeferredToolsAnthropicUnsupportedModels(t *testing.T) {
 func TestDeferredToolsAnthropicPromoteWhenAllDeferred(t *testing.T) {
 	model := dtAnthropicModel("claude-opus-4-6")
 	ctx := dtAnthropicContext(model, []ai.Tool{dtTool("late_tool")}, "late_tool")
-	body := buildAnthropicParams(model, ctx, false, &AnthropicOptions{})
+	body := mustBuildAnthropicParams(t, model, ctx, false, &AnthropicOptions{})
 	tools := dtTools(body)
 	if got := dtToolNames(tools); len(got) != 1 || got[0] != "late_tool" {
 		t.Fatalf("tools = %v, want [late_tool]", got)
@@ -247,7 +247,7 @@ func TestDeferredToolsAnthropicCompatOverride(t *testing.T) {
 	model.Provider = "anthropic-proxy"
 	model.Compat = json.RawMessage(`{"supportsToolReferences":true}`)
 	ctx := dtAnthropicContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
-	body := buildAnthropicParams(model, ctx, false, &AnthropicOptions{})
+	body := mustBuildAnthropicParams(t, model, ctx, false, &AnthropicOptions{})
 	tools := dtTools(body)
 	if tools[1]["name"] != "late_tool" || tools[1]["defer_loading"] != true {
 		t.Fatalf("override did not defer late_tool: %v", tools[1])
@@ -258,7 +258,7 @@ func TestDeferredToolsAnthropicOAuthCanonicalMarker(t *testing.T) {
 	// Marker "Read" must match the "read" tool once OAuth canonicalization runs.
 	model := dtAnthropicModel("claude-opus-4-6")
 	ctx := dtAnthropicContext(model, []ai.Tool{dtTool("base_tool"), dtTool("read")}, "Read")
-	body := buildAnthropicParams(model, ctx, true, &AnthropicOptions{})
+	body := mustBuildAnthropicParams(t, model, ctx, true, &AnthropicOptions{})
 	tools := dtTools(body)
 	if got := dtToolNames(tools); len(got) != 2 || got[1] != "Read" || tools[1]["defer_loading"] != true {
 		t.Fatalf("tools = %v (defer=%v), want Read deferred", got, tools[1]["defer_loading"])
@@ -480,7 +480,7 @@ func dtCompletionsMessages(t *testing.T, body map[string]any) []map[string]any {
 func TestDeferredToolsKimiSystemDefinitions(t *testing.T) {
 	model := dtKimiModel(true)
 	ctx := dtKimiContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
-	body := buildOpenAIParams(model, ctx, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, ctx, &OpenAIOptions{})
 
 	if got := dtCompletionsToolNames(body["tools"]); len(got) != 1 || got[0] != "base_tool" {
 		t.Fatalf("top-level tools = %v, want [base_tool]", got)
@@ -527,7 +527,7 @@ func TestDeferredToolsKimiBatchedResults(t *testing.T) {
 	msgs := ctx.Messages
 	ctx.Messages = append(msgs[:3:3], append([]ai.Message{second}, msgs[3:]...)...)
 
-	body := buildOpenAIParams(model, ctx, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, ctx, &OpenAIOptions{})
 	messages := dtCompletionsMessages(t, body)
 	var roles []string
 	for _, m := range messages {
@@ -552,7 +552,7 @@ func TestDeferredToolsKimiBatchedResults(t *testing.T) {
 func TestDeferredToolsKimiDisabled(t *testing.T) {
 	model := dtKimiModel(false)
 	ctx := dtKimiContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
-	body := buildOpenAIParams(model, ctx, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, ctx, &OpenAIOptions{})
 
 	if got := dtCompletionsToolNames(body["tools"]); len(got) != 2 || got[0] != "base_tool" || got[1] != "late_tool" {
 		t.Fatalf("tools = %v, want unchanged [base_tool late_tool]", got)
@@ -571,7 +571,7 @@ func TestDeferredToolsKimiDisabled(t *testing.T) {
 func TestDeferredToolsKimiAllDeferred(t *testing.T) {
 	model := dtKimiModel(true)
 	ctx := dtKimiContext(model, []ai.Tool{dtTool("late_tool")}, "late_tool")
-	body := buildOpenAIParams(model, ctx, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, ctx, &OpenAIOptions{})
 
 	tools, ok := body["tools"].([]map[string]any)
 	if !ok || len(tools) != 0 {

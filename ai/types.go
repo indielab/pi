@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 )
@@ -434,11 +435,84 @@ func UnmarshalMessage(data []byte) (Message, error) {
 // Tools and context
 // ---------------------------------------------------------------------------
 
+// Constrained-sampling kinds (ConstrainedSamplingConfig.Type).
+const (
+	// ConstrainedSamplingJSONSchema asks the provider to constrain sampling to
+	// the tool's JSON schema — the concept most APIs expose as `strict`.
+	ConstrainedSamplingJSONSchema = "json_schema"
+	// ConstrainedSamplingGrammar asks the provider to constrain sampling to a
+	// grammar supplied in one of the provider-specific Variants.
+	ConstrainedSamplingGrammar = "grammar"
+)
+
+// Constrained-sampling strictness levels (ConstrainedSamplingConfig.Strict).
+const (
+	// ConstrainedSamplingPrefer uses strict sampling where available and falls
+	// back to unconstrained sampling elsewhere.
+	ConstrainedSamplingPrefer = "prefer"
+	// ConstrainedSamplingRequire fails the request when the model cannot
+	// constrain sampling to the schema.
+	ConstrainedSamplingRequire = "require"
+)
+
+// GrammarVariants holds provider-specific encodings of the same intended
+// grammar. An empty field means the caller supplied no such variant.
+type GrammarVariants struct {
+	OpenAILark  string `json:"openai_lark,omitempty"`
+	OpenAIRegex string `json:"openai_regex,omitempty"`
+}
+
+// ConstrainedSamplingConfig is an optional provider-side constrained-sampling
+// config for a tool.
+//
+// Type ConstrainedSamplingJSONSchema roughly maps to the concept of `strict` in
+// APIs that implement it as JSON-schema constrained sampling, and reads Strict.
+// Type ConstrainedSamplingGrammar reads Variants. The zero value marshals to
+// (and unmarshals from) JSON `false`, pi's "explicitly unconstrained" spelling,
+// and is treated exactly like no config at all.
+type ConstrainedSamplingConfig struct {
+	Type     string          `json:"type"`
+	Strict   string          `json:"strict,omitempty"`
+	Variants GrammarVariants `json:"variants,omitempty"`
+}
+
+// MarshalJSON emits only the fields belonging to the configured Type, matching
+// pi's discriminated union (and `false` for the disabled zero value).
+func (c ConstrainedSamplingConfig) MarshalJSON() ([]byte, error) {
+	switch c.Type {
+	case ConstrainedSamplingJSONSchema:
+		return json.Marshal(struct {
+			Type   string `json:"type"`
+			Strict string `json:"strict"`
+		}{c.Type, c.Strict})
+	case ConstrainedSamplingGrammar:
+		return json.Marshal(struct {
+			Type     string          `json:"type"`
+			Variants GrammarVariants `json:"variants"`
+		}{c.Type, c.Variants})
+	default:
+		return []byte("false"), nil
+	}
+}
+
+// UnmarshalJSON accepts pi's `false` spelling for "no constrained sampling".
+func (c *ConstrainedSamplingConfig) UnmarshalJSON(data []byte) error {
+	if s := string(bytes.TrimSpace(data)); s == "false" || s == "null" {
+		*c = ConstrainedSamplingConfig{}
+		return nil
+	}
+	type alias ConstrainedSamplingConfig
+	return json.Unmarshal(data, (*alias)(c))
+}
+
 // Tool is a tool definition exposed to the model.
 type Tool struct {
 	Name        string  `json:"name"`
 	Description string  `json:"description"`
 	Parameters  *Schema `json:"parameters"`
+	// ConstrainedSampling optionally asks the provider to constrain sampling of
+	// this tool's input. Nil (and the zero config) leave sampling unconstrained.
+	ConstrainedSampling *ConstrainedSamplingConfig `json:"constrainedSampling,omitempty"`
 }
 
 // Context is the input to a stream call: system prompt, transcript, and tools.

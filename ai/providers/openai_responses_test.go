@@ -560,23 +560,40 @@ func TestResponsesImageToolResultNonVision(t *testing.T) {
 	}
 }
 
-// Tools must carry strict:false (port of convertResponsesTools default).
-func TestResponsesToolsStrictFalse(t *testing.T) {
-	model := reasoningModel()
+// Upstream 24bace27 flipped supportsStrictMode's default to false and made
+// convertResponsesTools emit `strict` only where the provider supports it, so
+// responses tools no longer carry an unconditional strict:false. pi 0.82.0:
+//
+//	compat undefined            -> [{"type":"function","name":"calc",…}]
+//	{"supportsStrictMode":true} -> [{…,"strict":false}]
+func TestResponsesToolsStrictOnlyWhenSupported(t *testing.T) {
 	req := ai.Context{
 		Messages: []ai.Message{ai.NewUserText("hi", 1)},
 		Tools:    []ai.Tool{{Name: "calc", Description: "calc", Parameters: ai.Object(ai.Prop("x", ai.Integer()))}},
 	}
-	body := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{})
-	tools, ok := body["tools"].([]map[string]any)
-	if !ok || len(tools) != 1 {
-		t.Fatalf("tools wrong: %#v", body["tools"])
+	toolOf := func(compat json.RawMessage) map[string]any {
+		t.Helper()
+		model := reasoningModel()
+		model.Compat = compat
+		body := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{})
+		tools, ok := body["tools"].([]map[string]any)
+		if !ok || len(tools) != 1 {
+			t.Fatalf("tools wrong: %#v", body["tools"])
+		}
+		return tools[0]
 	}
-	if strict, has := tools[0]["strict"]; !has || strict != false {
-		t.Fatalf("tool must set strict:false, got %v (has=%v)", strict, has)
+
+	tool := toolOf(nil)
+	if _, has := tool["strict"]; has {
+		t.Fatalf("strict must be omitted when the model does not set supportsStrictMode: %#v", tool)
 	}
-	if tools[0]["type"] != "function" || tools[0]["name"] != "calc" {
-		t.Fatalf("tool body shape wrong: %#v", tools[0])
+	if tool["type"] != "function" || tool["name"] != "calc" {
+		t.Fatalf("tool body shape wrong: %#v", tool)
+	}
+
+	tool = toolOf(json.RawMessage(`{"supportsStrictMode":true}`))
+	if strict, has := tool["strict"]; !has || strict != false {
+		t.Fatalf("supportsStrictMode:true must send strict:false, got %v (has=%v)", strict, has)
 	}
 }
 
@@ -1399,6 +1416,57 @@ func TestResponsesCacheRetentionWithoutSessionID(t *testing.T) {
 	}
 }
 
+// Upstream 241431c6: `prompt_cache_options: {mode: "explicit"}` is emitted only
+// when cacheRetention is "none" AND compat.supportsExplicitPromptCacheMode.
+// Expectations captured from pi 0.82.0 (dist/api/openai-responses.js onPayload).
+func TestResponsesExplicitPromptCacheMode(t *testing.T) {
+	explicitCompat := json.RawMessage(`{"supportsExplicitPromptCacheMode":true}`)
+	tests := []struct {
+		name      string
+		compat    json.RawMessage
+		retention ai.CacheRetention
+		want      bool
+	}{
+		{"unset compat, none", nil, ai.CacheNone, false},
+		{"explicit compat, none", explicitCompat, ai.CacheNone, true},
+		{"explicit compat, short", explicitCompat, "", false},
+		{"explicit compat, long", explicitCompat, ai.CacheLong, false},
+		{"compat false, none", json.RawMessage(`{"supportsExplicitPromptCacheMode":false}`), ai.CacheNone, false},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := reasoningModel()
+			model.Compat = tc.compat
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+			body := mustBuildResponsesParams(t, model, req,
+				&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{SessionID: "sess-1", CacheRetention: tc.retention}})
+			got, has := body["prompt_cache_options"]
+			if has != tc.want {
+				t.Fatalf("prompt_cache_options present=%v want %v (value %#v)", has, tc.want, got)
+			}
+			if !tc.want {
+				return
+			}
+			if diff := gotWantJSON(t, got, `{"mode":"explicit"}`); diff != "" {
+				t.Fatal(diff)
+			}
+		})
+	}
+}
+
+// gotWantJSON renders got as JSON and compares it byte-for-byte with want.
+func gotWantJSON(t *testing.T, got any, want string) string {
+	t.Helper()
+	b, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(b) == want {
+		return ""
+	}
+	return "got " + string(b) + ", want " + want
+}
+
 // Regression for #6009 (upstream 8c9dbffa): when output items interleave, a
 // delta for an earlier item that arrives AFTER a later item's block was started
 // must route to the earlier item's block by output_index, not to whatever block
@@ -1574,5 +1642,153 @@ func TestResponsesXaiEncryptedReasoningInclude(t *testing.T) {
 	params = mustBuildResponsesParams(t, flat, req, &OpenAIResponsesOptions{})
 	if _, has := params["include"]; has {
 		t.Fatalf("non-reasoning xai must not send include: %v", params["include"])
+	}
+}
+
+// ---- Upstream 24bace27: constrained sampling (responses) ----
+
+func grammarResponsesModel(compat string) *ai.Model {
+	m := reasoningModel()
+	m.Compat = json.RawMessage(compat)
+	return m
+}
+
+// pi 0.82.0 tools payload for a lark grammar tool on openai-responses:
+//
+//	[{"type":"custom","name":"gram","description":"gram tool",
+//	  "format":{"type":"grammar","syntax":"lark","definition":"start: /.+/"}}]
+func TestResponsesGrammarToolSerialization(t *testing.T) {
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
+	body := mustBuildResponsesParams(t, grammarResponsesModel(`{"supportsOpenAIGrammarTools":true}`), req, &OpenAIResponsesOptions{})
+	if got := mustJSON(t, body["tools"]); got != `[{"description":"gram tool","format":{"definition":"start: /.+/","syntax":"lark","type":"grammar"},"name":"gram","type":"custom"}]` {
+		t.Fatalf("grammar tool payload: %s", got)
+	}
+
+	// Without grammar support it degrades to a function tool (and, since this
+	// model does not set supportsStrictMode, carries no strict key).
+	plain := mustBuildResponsesParams(t, reasoningModel(), req, &OpenAIResponsesOptions{})
+	tools, _ := plain["tools"].([]map[string]any)
+	if len(tools) != 1 || tools[0]["type"] != "function" {
+		t.Fatalf("grammar tool must fall back to a function tool: %#v", plain["tools"])
+	}
+}
+
+// pi 0.82.0 replay of a grammar tool call + its result:
+//
+//	{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_abc","name":"gram","input":"SELECT 1"}
+//	{"type":"custom_tool_call_output","call_id":"ctc_abc","output":"ok"}
+func TestResponsesGrammarToolCallReplay(t *testing.T) {
+	model := grammarResponsesModel(`{"supportsOpenAIGrammarTools":true}`)
+	req := ai.Context{
+		Messages: []ai.Message{
+			ai.NewUserText("hi", 1),
+			ai.AssistantMessage{
+				Content:  ai.ContentList{ai.ToolCall{ID: "ctc_abc|ctc_item", Name: "gram", Arguments: map[string]any{"query": "SELECT 1"}}},
+				Model:    model.ID,
+				Provider: model.Provider,
+				Api:      model.Api,
+			},
+			ai.ToolResultMessage{ToolCallID: "ctc_abc|ctc_item", ToolName: "gram", Content: ai.ContentList{ai.TextContent{Text: "ok"}}},
+		},
+		Tools: []ai.Tool{grammarSamplingTool()},
+	}
+	in := mustResponsesInput(t, model, req)
+	call := findResponsesItem(in, "custom_tool_call")
+	if got := mustJSON(t, call); got != `{"call_id":"ctc_abc","id":"ctc_item","input":"SELECT 1","name":"gram","type":"custom_tool_call"}` {
+		t.Fatalf("custom_tool_call: %s", got)
+	}
+	out := findResponsesItem(in, "custom_tool_call_output")
+	if got := mustJSON(t, out); got != `{"call_id":"ctc_abc","output":"ok","type":"custom_tool_call_output"}` {
+		t.Fatalf("custom_tool_call_output: %s", got)
+	}
+}
+
+// Upstream 24bace27 also changed the function_call replay path: an item id that
+// is not fc_* cannot ride on a function_call item and is now dropped. pi 0.82.0
+// with grammar support OFF replays the same transcript as
+// {"type":"function_call","call_id":"ctc_abc",…} — no "id" — while an fc_* id
+// still survives.
+func TestResponsesFunctionCallReplayDropsNonFCItemID(t *testing.T) {
+	model := reasoningModel()
+	transcript := func(id string) ai.Context {
+		return ai.Context{
+			Messages: []ai.Message{
+				ai.NewUserText("hi", 1),
+				ai.AssistantMessage{
+					Content:  ai.ContentList{ai.ToolCall{ID: id, Name: "gram", Arguments: map[string]any{"query": "SELECT 1"}}},
+					Model:    model.ID,
+					Provider: model.Provider,
+					Api:      model.Api,
+				},
+				ai.ToolResultMessage{ToolCallID: id, ToolName: "gram", Content: ai.ContentList{ai.TextContent{Text: "ok"}}},
+			},
+			Tools: []ai.Tool{grammarSamplingTool()},
+		}
+	}
+
+	call := findResponsesItem(mustResponsesInput(t, model, transcript("ctc_abc|ctc_item")), "function_call")
+	if _, has := call["id"]; has {
+		t.Fatalf("a non-fc_ item id must be dropped from a function_call: %#v", call)
+	}
+	if call["call_id"] != "ctc_abc" {
+		t.Fatalf("call_id must survive: %#v", call)
+	}
+
+	call = findResponsesItem(mustResponsesInput(t, model, transcript("fc_abc|fc_item")), "function_call")
+	if call["id"] != "fc_item" {
+		t.Fatalf("an fc_ item id must survive: %#v", call)
+	}
+}
+
+// Event sequence captured from pi 0.82.0 driving the same SSE.
+func TestResponsesGrammarToolCallStreaming(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r1"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":""}}
+
+data: {"type":"response.custom_tool_call_input.delta","output_index":0,"delta":"SEL"}
+
+data: {"type":"response.custom_tool_call_input.delta","output_index":0,"delta":"ECT \"a\""}
+
+data: {"type":"response.custom_tool_call_input.done","output_index":0,"input":"SELECT \"a\""}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":"SELECT \"a\""}}
+
+data: {"type":"response.completed","response":{"id":"r1","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}
+
+data: [DONE]
+
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+
+	model := grammarResponsesModel(`{"supportsOpenAIGrammarTools":true}`)
+	model.BaseURL = server.URL
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
+	stream := StreamOpenAIResponses(context.Background(), model, req,
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{APIKey: "sk"}})
+
+	var deltas []string
+	for ev := range stream.Events() {
+		if ev.Type == ai.EventToolCallDelta {
+			deltas = append(deltas, ev.Delta)
+		}
+	}
+	want := []string{`{"query":"SEL`, `ECT \"a\"`, `"}`}
+	if len(deltas) != len(want) {
+		t.Fatalf("deltas = %#v, want %#v", deltas, want)
+	}
+	for i := range want {
+		if deltas[i] != want[i] {
+			t.Fatalf("delta %d = %q, want %q", i, deltas[i], want[i])
+		}
+	}
+	final := stream.Result()
+	tc, ok := final.Content[0].(ai.ToolCall)
+	if !ok || tc.ID != "ctc_call|ctc_item" || tc.Name != "gram" || tc.Arguments["query"] != `SELECT "a"` {
+		t.Fatalf("final tool call = %#v", final.Content)
 	}
 }

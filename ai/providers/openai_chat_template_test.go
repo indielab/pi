@@ -45,19 +45,19 @@ func TestOpenAIChatTemplateKwargs(t *testing.T) {
 	}
 
 	// Effort high: enabled->true, effort->mapped "high", scalars carried, order kept.
-	bHigh := buildOpenAIParams(ctkModel(kwargs, tlm), baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	bHigh := mustBuildOpenAIParams(t, ctkModel(kwargs, tlm), baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 	if got, want := ctkParam(t, bHigh), `{"thinking":true,"reasoning_effort":"high","literal":"x","nullable":null}`; got != want {
 		t.Fatalf("high: chat_template_kwargs = %s, want %s", got, want)
 	}
 
 	// Off: enabled->false, effort omitted via omitWhenOff, scalars remain.
-	bOff := buildOpenAIParams(ctkModel(kwargs, tlm), baseReq(), &OpenAIOptions{})
+	bOff := mustBuildOpenAIParams(t, ctkModel(kwargs, tlm), baseReq(), &OpenAIOptions{})
 	if got, want := ctkParam(t, bOff), `{"thinking":false,"literal":"x","nullable":null}`; got != want {
 		t.Fatalf("off: chat_template_kwargs = %s, want %s", got, want)
 	}
 
 	// minimal maps to null -> effort key omitted (thinking still true).
-	bMin := buildOpenAIParams(ctkModel(kwargs, tlm), baseReq(), &OpenAIOptions{ReasoningEffort: "minimal"})
+	bMin := mustBuildOpenAIParams(t, ctkModel(kwargs, tlm), baseReq(), &OpenAIOptions{ReasoningEffort: "minimal"})
 	if got, want := ctkParam(t, bMin), `{"thinking":true,"literal":"x","nullable":null}`; got != want {
 		t.Fatalf("minimal: chat_template_kwargs = %s, want %s", got, want)
 	}
@@ -70,21 +70,21 @@ func TestOpenAIChatTemplateEffortFallbacks(t *testing.T) {
 	kwargs := `{"effort":{"$var":"thinking.effort"}}`
 
 	// Unmapped level "medium" (not in map) -> raw level string.
-	bMed := buildOpenAIParams(ctkModel(kwargs, ai.ThinkingLevelMap{"high": strPtr("high")}),
+	bMed := mustBuildOpenAIParams(t, ctkModel(kwargs, ai.ThinkingLevelMap{"high": strPtr("high")}),
 		baseReq(), &OpenAIOptions{ReasoningEffort: "medium"})
 	if got, want := ctkParam(t, bMed), `{"effort":"medium"}`; got != want {
 		t.Fatalf("unmapped level: %s, want %s", got, want)
 	}
 
 	// Off with tlm.off mapped to a string -> sent (no omitWhenOff).
-	bOffStr := buildOpenAIParams(ctkModel(kwargs, ai.ThinkingLevelMap{"off": strPtr("none")}),
+	bOffStr := mustBuildOpenAIParams(t, ctkModel(kwargs, ai.ThinkingLevelMap{"off": strPtr("none")}),
 		baseReq(), &OpenAIOptions{})
 	if got, want := ctkParam(t, bOffStr), `{"effort":"none"}`; got != want {
 		t.Fatalf("off mapped string: %s, want %s", got, want)
 	}
 
 	// Off with no tlm.off entry -> reasoningEffort undefined -> whole object omitted.
-	bOffNone := buildOpenAIParams(ctkModel(kwargs, ai.ThinkingLevelMap{"high": strPtr("high")}),
+	bOffNone := mustBuildOpenAIParams(t, ctkModel(kwargs, ai.ThinkingLevelMap{"high": strPtr("high")}),
 		baseReq(), &OpenAIOptions{})
 	if has(bOffNone, "chat_template_kwargs") {
 		t.Fatalf("off with no off-entry must omit chat_template_kwargs, got %s", ctkParam(t, bOffNone))
@@ -95,7 +95,7 @@ func TestOpenAIChatTemplateEffortFallbacks(t *testing.T) {
 // returns undefined and no chat_template_kwargs param is emitted.
 func TestOpenAIChatTemplateAllOmitted(t *testing.T) {
 	kwargs := `{"effort":{"$var":"thinking.effort","omitWhenOff":true}}`
-	body := buildOpenAIParams(ctkModel(kwargs, ai.ThinkingLevelMap{"off": strPtr("none")}),
+	body := mustBuildOpenAIParams(t, ctkModel(kwargs, ai.ThinkingLevelMap{"off": strPtr("none")}),
 		baseReq(), &OpenAIOptions{})
 	if has(body, "chat_template_kwargs") {
 		t.Fatalf("all-omitted must drop chat_template_kwargs, got %s", ctkParam(t, body))

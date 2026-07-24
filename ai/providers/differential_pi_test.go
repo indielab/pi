@@ -39,7 +39,7 @@ func has(m map[string]any, key string) bool { _, ok := m[key]; return ok }
 // ---- Mirrors openai-completions-prompt-cache.test.ts ----
 
 func TestDiffPromptCacheKeyForDirectOpenAI(t *testing.T) {
-	body := buildOpenAIParams(openAIModel(nil), baseReq(),
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(),
 		&OpenAIOptions{StreamOptions: ai.StreamOptions{SessionID: "session-123"}})
 	if body["prompt_cache_key"] != "session-123" {
 		t.Fatalf("prompt_cache_key = %v, want session-123", body["prompt_cache_key"])
@@ -50,7 +50,7 @@ func TestDiffPromptCacheKeyForDirectOpenAI(t *testing.T) {
 }
 
 func TestDiffPromptCacheRetentionLong(t *testing.T) {
-	body := buildOpenAIParams(openAIModel(nil), baseReq(),
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(),
 		&OpenAIOptions{StreamOptions: ai.StreamOptions{SessionID: "session-456", CacheRetention: ai.CacheLong}})
 	if body["prompt_cache_key"] != "session-456" {
 		t.Fatalf("prompt_cache_key = %v", body["prompt_cache_key"])
@@ -61,7 +61,7 @@ func TestDiffPromptCacheRetentionLong(t *testing.T) {
 }
 
 func TestDiffPromptCacheKeyClampedTo64(t *testing.T) {
-	body := buildOpenAIParams(openAIModel(nil), baseReq(),
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(),
 		&OpenAIOptions{StreamOptions: ai.StreamOptions{SessionID: strings.Repeat("x", 67)}})
 	if body["prompt_cache_key"] != strings.Repeat("x", 64) {
 		t.Fatalf("prompt_cache_key not clamped to 64: len=%d", len(body["prompt_cache_key"].(string)))
@@ -69,7 +69,7 @@ func TestDiffPromptCacheKeyClampedTo64(t *testing.T) {
 }
 
 func TestDiffPromptCacheOmittedWhenNone(t *testing.T) {
-	body := buildOpenAIParams(openAIModel(nil), baseReq(),
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(),
 		&OpenAIOptions{StreamOptions: ai.StreamOptions{SessionID: "session-789", CacheRetention: ai.CacheNone}})
 	if has(body, "prompt_cache_key") || has(body, "prompt_cache_retention") {
 		t.Fatalf("prompt cache fields should be omitted for none: %v", body)
@@ -81,7 +81,7 @@ func TestDiffPromptCacheOmittedForNonOpenAIWithoutLongRetention(t *testing.T) {
 		m.BaseURL = "https://proxy.example.com/v1"
 		m.Compat = json.RawMessage(`{"supportsLongCacheRetention":false}`)
 	})
-	body := buildOpenAIParams(model, baseReq(),
+	body := mustBuildOpenAIParams(t, model, baseReq(),
 		&OpenAIOptions{StreamOptions: ai.StreamOptions{SessionID: "session-proxy", CacheRetention: ai.CacheLong}})
 	if has(body, "prompt_cache_key") || has(body, "prompt_cache_retention") {
 		t.Fatalf("prompt cache fields should be omitted for non-OpenAI w/o long retention: %v", body)
@@ -90,7 +90,7 @@ func TestDiffPromptCacheOmittedForNonOpenAIWithoutLongRetention(t *testing.T) {
 
 func TestDiffPICacheRetentionEnv(t *testing.T) {
 	t.Setenv("PI_CACHE_RETENTION", "long")
-	body := buildOpenAIParams(openAIModel(nil), baseReq(),
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(),
 		&OpenAIOptions{StreamOptions: ai.StreamOptions{SessionID: "session-env"}})
 	if body["prompt_cache_key"] != "session-env" || body["prompt_cache_retention"] != "24h" {
 		t.Fatalf("PI_CACHE_RETENTION=long not honored: %v / %v", body["prompt_cache_key"], body["prompt_cache_retention"])
@@ -147,7 +147,7 @@ func TestDiffSessionAffinityOmittedWhenCacheNone(t *testing.T) {
 func TestDiffOmitsToolsWhenEmpty(t *testing.T) {
 	req := baseReq()
 	req.Tools = []ai.Tool{}
-	body := buildOpenAIParams(openAIModel(nil), req, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, openAIModel(nil), req, &OpenAIOptions{})
 	if has(body, "tools") {
 		t.Fatalf("tools field must be omitted for empty tools: %v", body["tools"])
 	}
@@ -155,7 +155,7 @@ func TestDiffOmitsToolsWhenEmpty(t *testing.T) {
 
 func TestDiffNoDefaultMaxTokenFields(t *testing.T) {
 	// pi: "does not send default max token fields" — neither field unless explicit.
-	body := buildOpenAIParams(openAIModel(nil), baseReq(), &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(), &OpenAIOptions{})
 	if has(body, "max_tokens") || has(body, "max_completion_tokens") {
 		t.Fatalf("no max-token field should be sent by default: %v", body)
 	}
@@ -163,7 +163,7 @@ func TestDiffNoDefaultMaxTokenFields(t *testing.T) {
 
 func TestDiffExplicitMaxTokensUsesCompletionField(t *testing.T) {
 	mt := 1234
-	body := buildOpenAIParams(openAIModel(nil), baseReq(), &OpenAIOptions{StreamOptions: ai.StreamOptions{MaxTokens: &mt}})
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(), &OpenAIOptions{StreamOptions: ai.StreamOptions{MaxTokens: &mt}})
 	if has(body, "max_tokens") {
 		t.Fatalf("OpenAI must not use max_tokens")
 	}
@@ -186,7 +186,7 @@ func TestDiffOpenRouterAnthropicCacheControl(t *testing.T) {
 	})
 	req := baseReq()
 	req.Tools = []ai.Tool{{Name: "t", Description: "d", Parameters: ai.Object(ai.Prop("x", ai.String()))}}
-	body := buildOpenAIParams(model, req, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 
 	msgs, _ := body["messages"].([]map[string]any)
 	// System prompt converted to a block array with cache_control.
@@ -208,7 +208,7 @@ func TestDiffOpenRouterAnthropicCacheControl(t *testing.T) {
 		m.Provider = "openrouter"
 		m.BaseURL = "https://openrouter.ai/api/v1"
 	})
-	body2 := buildOpenAIParams(model2, baseReq(), &OpenAIOptions{})
+	body2 := mustBuildOpenAIParams(t, model2, baseReq(), &OpenAIOptions{})
 	m2, _ := body2["messages"].([]map[string]any)
 	if _, isArr := m2[0]["content"].([]any); isArr {
 		t.Fatalf("non-anthropic OpenRouter model should not get cache_control blocks")
@@ -235,7 +235,7 @@ func TestDiffOpenRouterCacheControlOnToolResult(t *testing.T) {
 		},
 		ai.ToolResultMessage{ToolCallID: "call_1", ToolName: "read", Content: ai.ContentList{ai.TextContent{Text: "file contents"}}},
 	)
-	body := buildOpenAIParams(model, req, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 	msgs, _ := body["messages"].([]map[string]any)
 
 	// The user message keeps its plain string content — the marker moved past it.
@@ -279,7 +279,7 @@ func TestDiffOmitsStrictWhenCompatDisables(t *testing.T) {
 	})
 	req := baseReq()
 	req.Tools = []ai.Tool{{Name: "t", Description: "d", Parameters: ai.Object(ai.Prop("x", ai.String()))}}
-	body := buildOpenAIParams(model, req, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 	tools, _ := body["tools"].([]map[string]any)
 	if len(tools) == 0 {
 		t.Fatal("expected a tool")
@@ -330,7 +330,7 @@ func TestDiffDetectZai(t *testing.T) {
 
 	// Request shape (pi 64b51efb): thinking: {type:"enabled"|"disabled"} driven
 	// by whether reasoning was requested; no reasoning_effort, store omitted.
-	body := buildOpenAIParams(model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 	if thinking, _ := body["thinking"].(map[string]any); thinking == nil || thinking["type"] != "enabled" {
 		t.Fatalf(`zai on: thinking = %v, want {"type":"enabled"}`, body["thinking"])
 	}
@@ -345,7 +345,7 @@ func TestDiffDetectZai(t *testing.T) {
 	}
 
 	// No reasoning effort -> thinking: {type:"disabled"}.
-	bodyOff := buildOpenAIParams(model, baseReq(), &OpenAIOptions{})
+	bodyOff := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{})
 	if thinking, _ := bodyOff["thinking"].(map[string]any); thinking == nil || thinking["type"] != "disabled" {
 		t.Fatalf(`zai off: thinking = %v, want {"type":"disabled"}`, bodyOff["thinking"])
 	}
@@ -366,12 +366,12 @@ func TestDiffZaiToolStream(t *testing.T) {
 	if !getOpenAICompat(model).ZaiToolStream {
 		t.Fatalf("zaiToolStream override not applied")
 	}
-	body := buildOpenAIParams(model, reqWithTool(), &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, reqWithTool(), &OpenAIOptions{})
 	if body["tool_stream"] != true {
 		t.Fatalf("expected tool_stream:true when zaiToolStream + tools, got %v", body["tool_stream"])
 	}
 	// No tools -> no tool_stream.
-	body2 := buildOpenAIParams(model, baseReq(), &OpenAIOptions{})
+	body2 := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{})
 	if has(body2, "tool_stream") {
 		t.Fatalf("tool_stream must be omitted when no tools present")
 	}
@@ -406,7 +406,7 @@ func TestDiffDetectAntLing(t *testing.T) {
 	}
 	// Request shape: ant-ling sends reasoning:{effort} from thinkingLevelMap, max_tokens.
 	mt := 500
-	body := buildOpenAIParams(model, reqWithTool(),
+	body := mustBuildOpenAIParams(t, model, reqWithTool(),
 		&OpenAIOptions{ReasoningEffort: "high", StreamOptions: ai.StreamOptions{MaxTokens: &mt}})
 	r, ok := body["reasoning"].(map[string]any)
 	if !ok || r["effort"] != "high" {
@@ -443,7 +443,7 @@ func TestDiffDetectGrok(t *testing.T) {
 		t.Fatalf("grok supportsDeveloperRole should be false")
 	}
 	// Request shape: openai thinkingFormat but supportsReasoningEffort=false => no reasoning_effort.
-	body := buildOpenAIParams(model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 	if has(body, "reasoning_effort") {
 		t.Fatalf("grok must not send reasoning_effort (supportsReasoningEffort=false)")
 	}
@@ -540,7 +540,7 @@ func TestDiffDetectOpenRouterDeveloperRoleMatrix(t *testing.T) {
 		if c.SupportsDeveloperRole != tc.want {
 			t.Fatalf("openrouter %s supportsDeveloperRole = %v, want %v", tc.id, c.SupportsDeveloperRole, tc.want)
 		}
-		body := buildOpenAIParams(model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+		body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 		msgs, _ := body["messages"].([]map[string]any)
 		role, _ := msgs[0]["role"].(string)
 		wantRole := "system"
@@ -588,18 +588,18 @@ func TestDiffStringThinkingFormat(t *testing.T) {
 		m.ThinkingLevelMap = ai.ThinkingLevelMap{"high": strPtr("deep"), "off": strPtr("none")}
 		m.Compat = json.RawMessage(`{"thinkingFormat":"string-thinking"}`)
 	})
-	body := buildOpenAIParams(model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 	if body["thinking"] != "deep" {
 		t.Fatalf("string-thinking on: thinking = %v, want deep", body["thinking"])
 	}
 	// off -> send mapped off string.
-	bodyOff := buildOpenAIParams(model, baseReq(), &OpenAIOptions{})
+	bodyOff := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{})
 	if bodyOff["thinking"] != "none" {
 		t.Fatalf("string-thinking off: thinking = %v, want none", bodyOff["thinking"])
 	}
 	// off present-null -> omit.
 	model.ThinkingLevelMap = ai.ThinkingLevelMap{"off": nil}
-	bodyNull := buildOpenAIParams(model, baseReq(), &OpenAIOptions{})
+	bodyNull := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{})
 	if has(bodyNull, "thinking") {
 		t.Fatalf("string-thinking off=null should omit thinking, got %v", bodyNull["thinking"])
 	}
@@ -622,22 +622,22 @@ func TestDiffDeepseekThinkingOffGate(t *testing.T) {
 		})
 	}
 	// on -> thinking:{type:enabled}.
-	bOn := buildOpenAIParams(mk(nil), baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	bOn := mustBuildOpenAIParams(t, mk(nil), baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 	if tm, _ := bOn["thinking"].(map[string]any); tm["type"] != "enabled" {
 		t.Fatalf("deepseek on: thinking = %v, want {type:enabled}", bOn["thinking"])
 	}
 	// off, off absent -> thinking:{type:disabled}.
-	bAbsent := buildOpenAIParams(mk(nil), baseReq(), &OpenAIOptions{})
+	bAbsent := mustBuildOpenAIParams(t, mk(nil), baseReq(), &OpenAIOptions{})
 	if tm, _ := bAbsent["thinking"].(map[string]any); tm["type"] != "disabled" {
 		t.Fatalf("deepseek off (off absent): thinking = %v, want {type:disabled}", bAbsent["thinking"])
 	}
 	// off, off present-null -> omit thinking entirely.
-	bNull := buildOpenAIParams(mk(ai.ThinkingLevelMap{"off": nil}), baseReq(), &OpenAIOptions{})
+	bNull := mustBuildOpenAIParams(t, mk(ai.ThinkingLevelMap{"off": nil}), baseReq(), &OpenAIOptions{})
 	if has(bNull, "thinking") {
 		t.Fatalf("deepseek off (off:null) should omit thinking, got %v", bNull["thinking"])
 	}
 	// off, off mapped to a string -> still send {type:disabled} (off !== null).
-	bStr := buildOpenAIParams(mk(ai.ThinkingLevelMap{"off": strPtr("none")}), baseReq(), &OpenAIOptions{})
+	bStr := mustBuildOpenAIParams(t, mk(ai.ThinkingLevelMap{"off": strPtr("none")}), baseReq(), &OpenAIOptions{})
 	if tm, _ := bStr["thinking"].(map[string]any); tm["type"] != "disabled" {
 		t.Fatalf("deepseek off (off mapped non-null): thinking = %v, want {type:disabled}", bStr["thinking"])
 	}
@@ -664,7 +664,7 @@ func TestDeepseekDisabledThinkingGateLive(t *testing.T) {
 	}
 	// No effort + off:null -> omit the thinking key entirely (always-thinking model
 	// rejects a disabled payload).
-	body := buildOpenAIParams(m, baseReq(), &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, m, baseReq(), &OpenAIOptions{})
 	if has(body, "thinking") {
 		t.Fatalf("catalog kimi-k2.7-code with thinking off must omit the thinking key, got %v", body["thinking"])
 	}
@@ -679,11 +679,11 @@ func TestDiffQwenThinkingFormat(t *testing.T) {
 		m.Reasoning = true
 		m.Compat = json.RawMessage(`{"thinkingFormat":"qwen"}`)
 	})
-	body := buildOpenAIParams(model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 	if body["enable_thinking"] != true {
 		t.Fatalf("qwen on: enable_thinking = %v, want true", body["enable_thinking"])
 	}
-	bodyOff := buildOpenAIParams(model, baseReq(), &OpenAIOptions{})
+	bodyOff := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{})
 	if bodyOff["enable_thinking"] != false {
 		t.Fatalf("qwen off: enable_thinking = %v, want false", bodyOff["enable_thinking"])
 	}
@@ -699,17 +699,17 @@ func TestDiffOpenAIOffTriState(t *testing.T) {
 		})
 	}
 	// off mapped to a string -> reasoning_effort = that string.
-	b1 := buildOpenAIParams(mk(ai.ThinkingLevelMap{"off": strPtr("minimal")}), baseReq(), &OpenAIOptions{})
+	b1 := mustBuildOpenAIParams(t, mk(ai.ThinkingLevelMap{"off": strPtr("minimal")}), baseReq(), &OpenAIOptions{})
 	if b1["reasoning_effort"] != "minimal" {
 		t.Fatalf("off=minimal: reasoning_effort = %v, want minimal", b1["reasoning_effort"])
 	}
 	// off present-null -> omit (no reasoning_effort).
-	b2 := buildOpenAIParams(mk(ai.ThinkingLevelMap{"off": nil}), baseReq(), &OpenAIOptions{})
+	b2 := mustBuildOpenAIParams(t, mk(ai.ThinkingLevelMap{"off": nil}), baseReq(), &OpenAIOptions{})
 	if has(b2, "reasoning_effort") {
 		t.Fatalf("off=null should omit reasoning_effort, got %v", b2["reasoning_effort"])
 	}
 	// off absent -> default openai branch sends nothing (offEffortValue absent).
-	b3 := buildOpenAIParams(mk(nil), baseReq(), &OpenAIOptions{})
+	b3 := mustBuildOpenAIParams(t, mk(nil), baseReq(), &OpenAIOptions{})
 	if has(b3, "reasoning_effort") {
 		t.Fatalf("off absent should omit reasoning_effort in default openai branch, got %v", b3["reasoning_effort"])
 	}
@@ -730,7 +730,7 @@ func TestDiffEmptyToolsWithToolHistory(t *testing.T) {
 		},
 		ai.ToolResultMessage{ToolCallID: "c1", ToolName: "f", Content: ai.ContentList{ai.TextContent{Text: "ok"}}},
 	)
-	body := buildOpenAIParams(openAIModel(nil), req, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, openAIModel(nil), req, &OpenAIOptions{})
 	tools, ok := body["tools"].([]map[string]any)
 	if !ok {
 		t.Fatalf("tools should be present (empty array) when conversation has tool history, got %T %v", body["tools"], body["tools"])
@@ -742,26 +742,26 @@ func TestDiffEmptyToolsWithToolHistory(t *testing.T) {
 
 func TestDiffNoEmptyToolsWithoutHistory(t *testing.T) {
 	// No tool history and no tools -> tools omitted entirely.
-	body := buildOpenAIParams(openAIModel(nil), baseReq(), &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(), &OpenAIOptions{})
 	if has(body, "tools") {
 		t.Fatalf("tools must be omitted with no tools and no history, got %v", body["tools"])
 	}
 }
 
 func TestDiffToolChoice(t *testing.T) {
-	body := buildOpenAIParams(openAIModel(nil), reqWithTool(), &OpenAIOptions{ToolChoice: "required"})
+	body := mustBuildOpenAIParams(t, openAIModel(nil), reqWithTool(), &OpenAIOptions{ToolChoice: "required"})
 	if body["tool_choice"] != "required" {
 		t.Fatalf("tool_choice = %v, want required", body["tool_choice"])
 	}
 	// Object form.
 	tc := map[string]any{"type": "function", "function": map[string]any{"name": "t"}}
-	body2 := buildOpenAIParams(openAIModel(nil), reqWithTool(), &OpenAIOptions{ToolChoice: tc})
+	body2 := mustBuildOpenAIParams(t, openAIModel(nil), reqWithTool(), &OpenAIOptions{ToolChoice: tc})
 	got, _ := body2["tool_choice"].(map[string]any)
 	if got == nil || got["type"] != "function" {
 		t.Fatalf("tool_choice object not plumbed: %v", body2["tool_choice"])
 	}
 	// Omitted when not set.
-	body3 := buildOpenAIParams(openAIModel(nil), reqWithTool(), &OpenAIOptions{})
+	body3 := mustBuildOpenAIParams(t, openAIModel(nil), reqWithTool(), &OpenAIOptions{})
 	if has(body3, "tool_choice") {
 		t.Fatalf("tool_choice should be omitted when unset")
 	}
@@ -776,7 +776,7 @@ func TestDiffRequiresToolResultName(t *testing.T) {
 		ai.AssistantMessage{Content: ai.ContentList{ai.ToolCall{ID: "c1", Name: "search", Arguments: map[string]any{}}}, StopReason: ai.StopToolUse},
 		ai.ToolResultMessage{ToolCallID: "c1", ToolName: "search", Content: ai.ContentList{ai.TextContent{Text: "r"}}},
 	)
-	body := buildOpenAIParams(model, req, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 	msgs, _ := body["messages"].([]map[string]any)
 	var toolMsg map[string]any
 	for _, m := range msgs {
@@ -799,7 +799,7 @@ func TestDiffRequiresAssistantAfterToolResult(t *testing.T) {
 		ai.ToolResultMessage{ToolCallID: "c1", ToolName: "f", Content: ai.ContentList{ai.TextContent{Text: "r"}}},
 		ai.NewUserText("next", 9),
 	)
-	body := buildOpenAIParams(model, req, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 	msgs, _ := body["messages"].([]map[string]any)
 	// Find the tool message; the message right after it must be a synthetic assistant.
 	bridged := false
@@ -829,7 +829,7 @@ func TestDiffRequiresThinkingAsText(t *testing.T) {
 		},
 		ai.NewUserText("again", 9),
 	)
-	body := buildOpenAIParams(model, req, &OpenAIOptions{ReasoningEffort: "high"})
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{ReasoningEffort: "high"})
 	msgs, _ := body["messages"].([]map[string]any)
 	var asst map[string]any
 	for _, m := range msgs {
@@ -863,7 +863,7 @@ func TestDiffReasoningDetailsRoundTrip(t *testing.T) {
 		},
 		ai.ToolResultMessage{ToolCallID: "c1", ToolName: "f", Content: ai.ContentList{ai.TextContent{Text: "r"}}},
 	)
-	body := buildOpenAIParams(model, req, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 	msgs, _ := body["messages"].([]map[string]any)
 	var asst map[string]any
 	for _, m := range msgs {
@@ -893,7 +893,7 @@ func TestDiffToolResultImagesEmitUserMessage(t *testing.T) {
 			Content: ai.ContentList{ai.ImageContent{MimeType: "image/png", Data: "BASE64"}},
 		},
 	)
-	body := buildOpenAIParams(model, req, &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 	msgs, _ := body["messages"].([]map[string]any)
 	// tool message content is the placeholder, followed by a user message with image.
 	var toolMsg, userImgMsg map[string]any
@@ -932,7 +932,7 @@ func TestDiffOpenRouterRouting(t *testing.T) {
 		m.BaseURL = "https://openrouter.ai/api/v1"
 		m.Compat = json.RawMessage(`{"openRouterRouting":{"order":["anthropic","openai"]}}`)
 	})
-	body := buildOpenAIParams(model, baseReq(), &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{})
 	prov, ok := body["provider"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected provider routing block, got %v", body["provider"])
@@ -946,7 +946,7 @@ func TestDiffOpenRouterRouting(t *testing.T) {
 		m.Provider = "openrouter"
 		m.BaseURL = "https://openrouter.ai/api/v1"
 	})
-	body2 := buildOpenAIParams(model2, baseReq(), &OpenAIOptions{})
+	body2 := mustBuildOpenAIParams(t, model2, baseReq(), &OpenAIOptions{})
 	if has(body2, "provider") {
 		t.Fatalf("provider block should be omitted with empty openRouterRouting")
 	}
@@ -958,7 +958,7 @@ func TestDiffVercelGatewayRouting(t *testing.T) {
 		m.BaseURL = "https://ai-gateway.vercel.sh/v1"
 		m.Compat = json.RawMessage(`{"vercelGatewayRouting":{"only":["openai"],"order":["openai","anthropic"]}}`)
 	})
-	body := buildOpenAIParams(model, baseReq(), &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{})
 	po, ok := body["providerOptions"].(map[string]any)
 	if !ok {
 		t.Fatalf("expected providerOptions, got %v", body["providerOptions"])
@@ -977,7 +977,7 @@ func TestDiffVercelGatewayRouting(t *testing.T) {
 	model2 := openAIModel(func(m *ai.Model) {
 		m.Compat = json.RawMessage(`{"vercelGatewayRouting":{"only":["openai"]}}`)
 	})
-	body2 := buildOpenAIParams(model2, baseReq(), &OpenAIOptions{})
+	body2 := mustBuildOpenAIParams(t, model2, baseReq(), &OpenAIOptions{})
 	if !has(body2, "providerOptions") {
 		t.Fatalf("providerOptions must be sent for any baseUrl when routing is set")
 	}
@@ -986,7 +986,7 @@ func TestDiffVercelGatewayRouting(t *testing.T) {
 		m.Provider = "vercel"
 		m.BaseURL = "https://ai-gateway.vercel.sh/v1"
 	})
-	body3 := buildOpenAIParams(model3, baseReq(), &OpenAIOptions{})
+	body3 := mustBuildOpenAIParams(t, model3, baseReq(), &OpenAIOptions{})
 	if has(body3, "providerOptions") {
 		t.Fatalf("providerOptions should be omitted when no routing is set")
 	}

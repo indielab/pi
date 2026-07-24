@@ -85,6 +85,47 @@ func escapeControlChar(ch byte) string {
 	}
 }
 
+// jsEscape renders s the way `JSON.stringify(s).slice(1, -1)` does in
+// JavaScript: only `"`, `\` and control characters are escaped, and unpaired
+// UTF-16 surrogates become \udXXX (ES2019 well-formed stringify). Go's
+// encoding/json cannot be used here — it additionally escapes <, >, & and
+// U+2028/U+2029, and replaces lone surrogates with U+FFFD.
+func jsEscape(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		if hi, isSurrogate := decodeWTF8Surrogate(s[i:]); isSurrogate {
+			// A well-formed pair is a single astral character in JS and is
+			// emitted literally; a lone surrogate is escaped.
+			if hi <= 0xDBFF {
+				if lo, ok := decodeWTF8Surrogate(s[i+3:]); ok && lo >= 0xDC00 {
+					b.WriteRune(utf16.DecodeRune(hi, lo))
+					i += 6
+					continue
+				}
+			}
+			fmt.Fprintf(&b, "\\u%04x", hi)
+			i += 3
+			continue
+		}
+		switch ch := s[i]; {
+		case ch == '"':
+			b.WriteString(`\"`)
+		case ch == '\\':
+			b.WriteString(`\\`)
+		case ch <= 0x1f:
+			b.WriteString(escapeControlChar(ch))
+		default:
+			b.WriteByte(ch)
+		}
+		i++
+	}
+	return b.String()
+}
+
+// jsQuote renders s the way `JSON.stringify(s)` does, quotes included.
+func jsQuote(s string) string { return `"` + jsEscape(s) + `"` }
+
 // parseJSONWithRepair parses JSON, retrying once with repairs on failure.
 func parseJSONWithRepair(s string, out any) error {
 	if err := json.Unmarshal([]byte(s), out); err == nil {

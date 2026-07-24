@@ -294,7 +294,11 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 			return
 		}
 
-		body := buildGoogleParams(model, req, opts)
+		body, err := buildGoogleParams(model, req, opts)
+		if err != nil {
+			fail(err)
+			return
+		}
 		if opts.OnPayload != nil {
 			next, perr := opts.OnPayload(body, model)
 			if perr != nil {
@@ -546,7 +550,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 // generativelanguage.googleapis.com. The SDK lifts systemInstruction / tools /
 // toolConfig to the top level (alongside contents) and keeps generation params
 // (temperature, maxOutputTokens, thinkingConfig) under generationConfig.
-func buildGoogleParams(model *ai.Model, req ai.Context, opts *GoogleOptions) map[string]any {
+func buildGoogleParams(model *ai.Model, req ai.Context, opts *GoogleOptions) (map[string]any, error) {
 	params := map[string]any{
 		"contents": googleContents(model, req),
 	}
@@ -588,13 +592,53 @@ func buildGoogleParams(model *ai.Model, req ai.Context, opts *GoogleOptions) map
 	}
 	if len(req.Tools) > 0 {
 		params["tools"] = googleTools(req.Tools, useParameters(model.ID))
-		if opts.ToolChoice != "" {
+		mode, err := resolveGoogleFunctionCallingMode(req.Tools, opts.ToolChoice, supportsGoogleStrictToolSampling(model.ID))
+		if err != nil {
+			return nil, err
+		}
+		if mode != "" {
 			params["toolConfig"] = map[string]any{
-				"functionCallingConfig": map[string]any{"mode": mapToolChoice(opts.ToolChoice)},
+				"functionCallingConfig": map[string]any{"mode": mode},
 			}
 		}
 	}
-	return params
+	return params, nil
+}
+
+// supportsGoogleStrictToolSampling reports whether the model enforces required
+// function parameters in validated tool-calling modes — Gemini 3 and newer.
+func supportsGoogleStrictToolSampling(modelID string) bool {
+	major, ok := getGeminiMajorVersion(modelID)
+	return ok && major >= 3
+}
+
+// resolveGoogleFunctionCallingMode picks the functionCallingConfig mode, or ""
+// to omit toolConfig entirely (port of resolveGoogleFunctionCallingMode).
+func resolveGoogleFunctionCallingMode(tools []ai.Tool, toolChoice string, supportsStrictMode bool) (string, error) {
+	useStrictMode := false
+	for _, tool := range tools {
+		strict, err := resolveJSONSchemaStrictSampling(tool, supportsStrictMode)
+		if err != nil {
+			return "", err
+		}
+		if strict {
+			// Matches pi's `tools.some(...)` short-circuit. (Unobservable either
+			// way: resolve can only throw when supportsStrictMode is false, and
+			// can only return true when it is true.)
+			useStrictMode = true
+			break
+		}
+	}
+	if toolChoice == "none" || toolChoice == "any" {
+		return mapToolChoice(toolChoice), nil
+	}
+	if useStrictMode {
+		return "VALIDATED", nil
+	}
+	if toolChoice != "" {
+		return mapToolChoice(toolChoice), nil
+	}
+	return "", nil
 }
 
 // mapToolChoice mirrors pi google-shared mapToolChoice (auto/none/any → upper).

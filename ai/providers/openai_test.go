@@ -477,7 +477,7 @@ func TestOpenAIZeroChoiceStreamErrors(t *testing.T) {
 func TestOpenAIToolCallIDNormalization(t *testing.T) {
 	captureBody := func(model *ai.Model, msgs []ai.Message) map[string]any {
 		t.Helper()
-		return buildOpenAIParams(model, ai.Context{Messages: msgs}, &OpenAIOptions{})
+		return mustBuildOpenAIParams(t, model, ai.Context{Messages: msgs}, &OpenAIOptions{})
 	}
 	mkTurn := func(id, provider, modelID string) []ai.Message {
 		return []ai.Message{
@@ -576,7 +576,7 @@ data: [DONE]
 
 	// Round trip: replaying this assistant turn emits reasoning_details.
 	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: "https://api.openai.com/v1"}
-	body := buildOpenAIParams(model, ai.Context{Messages: []ai.Message{
+	body := mustBuildOpenAIParams(t, model, ai.Context{Messages: []ai.Message{
 		ai.NewUserText("hi", 1),
 		*final,
 		ai.ToolResultMessage{ToolCallID: "call_1", ToolName: "f", Content: ai.ContentList{ai.TextContent{Text: "ok"}}},
@@ -765,7 +765,7 @@ func TestOpenAICloudflareBaseURLMissingEnvFailsStream(t *testing.T) {
 // ---- C5: prompt_cache_retention independent of sessionId (pi :515) ----
 
 func TestOpenAICacheRetentionWithoutSessionID(t *testing.T) {
-	body := buildOpenAIParams(openAIModel(nil), baseReq(),
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(),
 		&OpenAIOptions{StreamOptions: ai.StreamOptions{CacheRetention: ai.CacheLong}})
 	if body["prompt_cache_retention"] != "24h" {
 		t.Fatalf("prompt_cache_retention must be sent without a sessionId, got %v", body["prompt_cache_retention"])
@@ -928,7 +928,7 @@ func TestOpenAIUserContentArrayParts(t *testing.T) {
 		req := ai.Context{Messages: []ai.Message{
 			ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "one"}, ai.TextContent{Text: "two"}}, Timestamp: 1},
 		}}
-		body := buildOpenAIParams(model, req, &OpenAIOptions{})
+		body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 		msgs, _ := body["messages"].([]map[string]any)
 		parts, ok := msgs[0]["content"].([]any)
 		if !ok || len(parts) != 2 {
@@ -946,7 +946,7 @@ func TestOpenAIUserContentArrayParts(t *testing.T) {
 		req := ai.Context{Messages: []ai.Message{
 			ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "hi"}}, Timestamp: 1},
 		}}
-		body := buildOpenAIParams(model, req, &OpenAIOptions{})
+		body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 		msgs, _ := body["messages"].([]map[string]any)
 		parts, ok := msgs[0]["content"].([]any)
 		if !ok || len(parts) != 1 {
@@ -958,7 +958,7 @@ func TestOpenAIUserContentArrayParts(t *testing.T) {
 			ai.UserMessage{Content: ai.ContentList{}, Timestamp: 1},
 			ai.NewUserText("hi", 2),
 		}}
-		body := buildOpenAIParams(model, req, &OpenAIOptions{})
+		body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
 		msgs, _ := body["messages"].([]map[string]any)
 		if len(msgs) != 1 {
 			t.Fatalf("empty user message must be skipped entirely, got %d messages", len(msgs))
@@ -1098,7 +1098,7 @@ func TestOpenAIOpenRouterRoutingEmptyObjectSent(t *testing.T) {
 		m.BaseURL = "https://openrouter.ai/api/v1"
 		m.Compat = json.RawMessage(`{"openRouterRouting":{}}`)
 	})
-	body := buildOpenAIParams(model, baseReq(), &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{})
 	prov, ok := body["provider"].(map[string]any)
 	if !ok || len(prov) != 0 {
 		t.Fatalf("explicit empty openRouterRouting must be sent as provider:{}, got %#v", body["provider"])
@@ -1109,7 +1109,7 @@ func TestOpenAIOpenRouterRoutingEmptyObjectSent(t *testing.T) {
 		m.BaseURL = "https://openrouter.ai/api/v1"
 		m.Compat = json.RawMessage(`{"openRouterRouting":null}`)
 	})
-	body2 := buildOpenAIParams(model2, baseReq(), &OpenAIOptions{})
+	body2 := mustBuildOpenAIParams(t, model2, baseReq(), &OpenAIOptions{})
 	if has(body2, "provider") {
 		t.Fatalf("null openRouterRouting must be omitted, got %v", body2["provider"])
 	}
@@ -1126,7 +1126,7 @@ func TestOpenAIAntLingFallThrough(t *testing.T) {
 		m.ThinkingLevelMap = ai.ThinkingLevelMap{"off": strPtr("minimal")}
 		m.Compat = json.RawMessage(`{"supportsReasoningEffort":true}`)
 	})
-	body := buildOpenAIParams(model, baseReq(), &OpenAIOptions{})
+	body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{})
 	if body["reasoning_effort"] != "minimal" {
 		t.Fatalf("ant-ling without effort must reach the generic off branch, got %v", body["reasoning_effort"])
 	}
@@ -1136,7 +1136,7 @@ func TestOpenAIAntLingFallThrough(t *testing.T) {
 	// With an effort but no thinkingLevelMap entry, the ant-ling branch is
 	// taken and sends nothing (typeof effort !== "string").
 	model.ThinkingLevelMap = nil
-	body2 := buildOpenAIParams(model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	body2 := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 	if has(body2, "reasoning") || has(body2, "reasoning_effort") {
 		t.Fatalf("ant-ling with unmapped effort must send nothing, got %v / %v", body2["reasoning"], body2["reasoning_effort"])
 	}
@@ -1148,7 +1148,7 @@ func TestOpenAIAntLingFallThrough(t *testing.T) {
 // the regression the 6-scenario differential diff caught after the C9 fix.
 func TestOpenAIUserContentStringForm(t *testing.T) {
 	stringMsg := ai.NewUserText("hi", 1)
-	body := buildOpenAIParams(openAIModel(nil),
+	body := mustBuildOpenAIParams(t, openAIModel(nil),
 		ai.Context{Messages: []ai.Message{stringMsg}}, &OpenAIOptions{})
 	msgs := body["messages"].([]map[string]any)
 	if c, ok := msgs[0]["content"].(string); !ok || c != "hi" {
@@ -1156,7 +1156,7 @@ func TestOpenAIUserContentStringForm(t *testing.T) {
 	}
 
 	arrayMsg := ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "hi"}}, Timestamp: 1}
-	body = buildOpenAIParams(openAIModel(nil),
+	body = mustBuildOpenAIParams(t, openAIModel(nil),
 		ai.Context{Messages: []ai.Message{arrayMsg}}, &OpenAIOptions{})
 	msgs = body["messages"].([]map[string]any)
 	if _, ok := msgs[0]["content"].([]any); !ok {
@@ -1194,7 +1194,7 @@ func TestDiffZaiGLM52ReasoningEffort(t *testing.T) {
 		{"high", "high"},
 		{"xhigh", "max"},
 	} {
-		body := buildOpenAIParams(glm52(), baseReq(), &OpenAIOptions{ReasoningEffort: c.level})
+		body := mustBuildOpenAIParams(t, glm52(), baseReq(), &OpenAIOptions{ReasoningEffort: c.level})
 		if tm, _ := body["thinking"].(map[string]any); tm["type"] != "enabled" {
 			t.Fatalf("%s: thinking = %v, want {type:enabled}", c.level, body["thinking"])
 		} else if ct, ok := tm["clear_thinking"]; !ok || ct != false {
@@ -1206,7 +1206,7 @@ func TestDiffZaiGLM52ReasoningEffort(t *testing.T) {
 		}
 	}
 	// minimal maps to null -> thinking:enabled, reasoning_effort omitted.
-	bMin := buildOpenAIParams(glm52(), baseReq(), &OpenAIOptions{ReasoningEffort: "minimal"})
+	bMin := mustBuildOpenAIParams(t, glm52(), baseReq(), &OpenAIOptions{ReasoningEffort: "minimal"})
 	if tm, _ := bMin["thinking"].(map[string]any); tm["type"] != "enabled" {
 		t.Fatalf("minimal: thinking = %v, want {type:enabled}", bMin["thinking"])
 	} else if ct, ok := tm["clear_thinking"]; !ok || ct != false {
@@ -1216,7 +1216,7 @@ func TestDiffZaiGLM52ReasoningEffort(t *testing.T) {
 		t.Fatalf("minimal maps to null -> reasoning_effort must be omitted, got %v", bMin["reasoning_effort"])
 	}
 	// no effort -> thinking:disabled, no reasoning_effort.
-	bOff := buildOpenAIParams(glm52(), baseReq(), &OpenAIOptions{})
+	bOff := mustBuildOpenAIParams(t, glm52(), baseReq(), &OpenAIOptions{})
 	if tm, _ := bOff["thinking"].(map[string]any); tm["type"] != "disabled" {
 		t.Fatalf("off: thinking = %v, want {type:disabled}", bOff["thinking"])
 	} else if _, ok := tm["clear_thinking"]; ok {
@@ -1234,7 +1234,7 @@ func TestDiffZaiGLM52ReasoningEffort(t *testing.T) {
 		m.Reasoning = true
 		m.Compat = json.RawMessage(`{"thinkingFormat":"zai"}`)
 	})
-	b46 := buildOpenAIParams(glm46, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	b46 := mustBuildOpenAIParams(t, glm46, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 	if has(b46, "reasoning_effort") {
 		t.Fatalf("zai without supportsReasoningEffort must not send reasoning_effort, got %v", b46["reasoning_effort"])
 	}
@@ -1302,7 +1302,7 @@ func TestOpenRouterMetadataRawDedup(t *testing.T) {
 // hallucinate an attachment for commands that produce no output.
 func TestOpenAIEmptyToolResultNoImagePlaceholder(t *testing.T) {
 	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: "https://api.openai.com/v1"}
-	body := buildOpenAIParams(model, ai.Context{Messages: []ai.Message{
+	body := mustBuildOpenAIParams(t, model, ai.Context{Messages: []ai.Message{
 		ai.NewUserText("run it", 1),
 		ai.AssistantMessage{
 			Content: ai.ContentList{ai.ToolCall{ID: "call_1", Name: "bash", Arguments: map[string]any{"command": "true"}}},
@@ -1366,4 +1366,184 @@ func TestNormalizeOpenAIToolCallID(t *testing.T) {
 	if a, b := normalizeOpenAIToolCallID(otherModel, "call_1|A"), normalizeOpenAIToolCallID(otherModel, "call_1|B"); a == b {
 		t.Errorf("shared call_id ids collided: %q == %q", a, b)
 	}
+}
+
+// mustBuildOpenAIParams builds a chat-completions request body, failing the test
+// on the errors constrained sampling can raise.
+func mustBuildOpenAIParams(t *testing.T, model *ai.Model, req ai.Context, opts *OpenAIOptions) map[string]any {
+	t.Helper()
+	params, err := buildOpenAIParams(model, req, opts)
+	if err != nil {
+		t.Fatalf("buildOpenAIParams: %v", err)
+	}
+	return params
+}
+
+// ---- Upstream 24bace27: constrained sampling (chat completions) ----
+
+// grammarSamplingTool is the tool used by the constrained-sampling tests; its
+// pi-side counterpart is the `gram` tool in the recorded probes.
+func grammarSamplingTool() ai.Tool {
+	return ai.Tool{
+		Name: "gram", Description: "gram tool",
+		Parameters: ai.Object(ai.Prop("query", ai.String())),
+		ConstrainedSampling: &ai.ConstrainedSamplingConfig{
+			Type: ai.ConstrainedSamplingGrammar, Variants: ai.GrammarVariants{OpenAILark: "start: /.+/"},
+		},
+	}
+}
+
+// pi 0.82.0 tools payload for a lark grammar tool on openai-completions:
+//
+//	[{"type":"custom","custom":{"name":"gram","description":"gram tool",
+//	  "format":{"type":"grammar","grammar":{"syntax":"lark","definition":"start: /.+/"}}}}]
+func TestOpenAIGrammarToolSerialization(t *testing.T) {
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
+
+	model := openAIModel(func(m *ai.Model) { m.Compat = json.RawMessage(`{"supportsOpenAIGrammarTools":true}`) })
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
+	if got := mustJSON(t, body["tools"]); got != `[{"custom":{"description":"gram tool","format":{"grammar":{"definition":"start: /.+/","syntax":"lark"},"type":"grammar"},"name":"gram"},"type":"custom"}]` {
+		t.Fatalf("grammar tool payload: %s", got)
+	}
+
+	// Without grammar support the tool degrades to a plain function tool.
+	plain := mustBuildOpenAIParams(t, openAIModel(nil), req, &OpenAIOptions{})
+	tools, _ := plain["tools"].([]map[string]any)
+	if len(tools) != 1 || tools[0]["type"] != "function" {
+		t.Fatalf("grammar tool must fall back to a function tool: %#v", plain["tools"])
+	}
+}
+
+// pi: a json_schema-constrained tool sends strict:true where strict is supported
+// and fails outright where "require" cannot be honored.
+func TestOpenAIJSONSchemaStrictSampling(t *testing.T) {
+	tool := func(strict string) ai.Tool {
+		return ai.Tool{
+			Name: "js", Description: "d", Parameters: ai.Object(ai.Prop("x", ai.Integer())),
+			ConstrainedSampling: &ai.ConstrainedSamplingConfig{Type: ai.ConstrainedSamplingJSONSchema, Strict: strict},
+		}
+	}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{tool(ai.ConstrainedSamplingPrefer)}}
+	body := mustBuildOpenAIParams(t, openAIModel(nil), req, &OpenAIOptions{})
+	tools, _ := body["tools"].([]map[string]any)
+	fn, _ := tools[0]["function"].(map[string]any)
+	if fn["strict"] != true {
+		t.Fatalf("json_schema constrained tool must send strict:true, got %#v", fn)
+	}
+
+	// moonshot disables strict mode in detectCompat.
+	noStrict := openAIModel(func(m *ai.Model) { m.Provider = "moonshotai" })
+	reqRequire := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{tool(ai.ConstrainedSamplingRequire)}}
+	_, err := buildOpenAIParams(noStrict, reqRequire, &OpenAIOptions{})
+	assertErrString(t, err, `Tool "js" requires JSON-schema constrained sampling, but strict tools are unsupported.`)
+
+	// "prefer" simply drops the constraint.
+	reqPrefer := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{tool(ai.ConstrainedSamplingPrefer)}}
+	if body, err := buildOpenAIParams(noStrict, reqPrefer, &OpenAIOptions{}); err != nil {
+		t.Fatalf("prefer must not fail: %v", err)
+	} else if tools, _ := body["tools"].([]map[string]any); len(tools) != 1 {
+		t.Fatalf("tools: %#v", body["tools"])
+	} else if fn, _ := tools[0]["function"].(map[string]any); fn["strict"] != nil {
+		t.Fatalf("strict must stay omitted when the provider rejects it: %#v", fn)
+	}
+}
+
+// pi 0.82.0 assistant replay for a grammar tool call:
+//
+//	"tool_calls":[{"id":"ctc_abc|ctc_item","type":"custom","custom":{"name":"gram","input":"SELECT 1"}}]
+func TestOpenAIGrammarToolCallReplay(t *testing.T) {
+	model := openAIModel(func(m *ai.Model) { m.Compat = json.RawMessage(`{"supportsOpenAIGrammarTools":true}`) })
+	req := ai.Context{
+		Messages: []ai.Message{
+			ai.NewUserText("hi", 1),
+			ai.AssistantMessage{
+				Content:  ai.ContentList{ai.ToolCall{ID: "ctc_abc|ctc_item", Name: "gram", Arguments: map[string]any{"query": "SELECT 1"}}},
+				Model:    model.ID,
+				Provider: model.Provider,
+				Api:      model.Api,
+			},
+		},
+		Tools: []ai.Tool{grammarSamplingTool()},
+	}
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
+	msgs, _ := body["messages"].([]map[string]any)
+	var assistant map[string]any
+	for _, m := range msgs {
+		if m["role"] == "assistant" {
+			assistant = m
+		}
+	}
+	if got := mustJSON(t, assistant["tool_calls"]); got != `[{"custom":{"input":"SELECT 1","name":"gram"},"id":"ctc_abc|ctc_item","type":"custom"}]` {
+		t.Fatalf("grammar tool call replay: %s", got)
+	}
+
+	// A grammar tool call whose stored arguments lost the string property fails.
+	req.Messages[1] = ai.AssistantMessage{
+		Content:  ai.ContentList{ai.ToolCall{ID: "ctc_abc|ctc_item", Name: "gram", Arguments: map[string]any{}}},
+		Model:    model.ID,
+		Provider: model.Provider,
+		Api:      model.Api,
+	}
+	_, err := buildOpenAIParams(model, req, &OpenAIOptions{})
+	assertErrString(t, err, `Grammar tool call "gram" requires argument "query" to be a string.`)
+}
+
+// Streaming custom-tool input is re-synthesized into JSON deltas. Event sequence
+// captured from pi 0.82.0 driving the same SSE:
+//
+//	start, delta {"query":"SEL, delta ECT \"a\", delta "}, end args {"query":"SELECT \"a\""}
+func TestOpenAIGrammarToolCallStreaming(t *testing.T) {
+	sse := `data: {"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"ctc_1","type":"custom","custom":{"name":"gram","input":"SEL"}}]}}]}
+
+data: {"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"custom":{"input":"ECT \"a\""}}]}}]}
+
+data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+
+	model := openAIModel(func(m *ai.Model) {
+		m.BaseURL = server.URL
+		m.Compat = json.RawMessage(`{"supportsOpenAIGrammarTools":true}`)
+	})
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
+	stream := StreamOpenAICompletions(context.Background(), model, req,
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-test"}})
+
+	var deltas []string
+	for ev := range stream.Events() {
+		if ev.Type == ai.EventToolCallDelta {
+			deltas = append(deltas, ev.Delta)
+		}
+	}
+	want := []string{`{"query":"SEL`, `ECT \"a\"`, `"}`}
+	if len(deltas) != len(want) {
+		t.Fatalf("deltas = %#v, want %#v", deltas, want)
+	}
+	for i := range want {
+		if deltas[i] != want[i] {
+			t.Fatalf("delta %d = %q, want %q", i, deltas[i], want[i])
+		}
+	}
+	final := stream.Result()
+	tc, ok := final.Content[0].(ai.ToolCall)
+	if !ok || tc.ID != "ctc_1" || tc.Name != "gram" || tc.Arguments["query"] != `SELECT "a"` {
+		t.Fatalf("final tool call = %#v", final.Content)
+	}
+}
+
+// mustJSON marshals v with sorted keys for stable byte comparison.
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	return string(b)
 }

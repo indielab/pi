@@ -33,13 +33,17 @@ type vercelGatewayRouting struct {
 // openAICompletionsCompat is the resolved compatibility profile for an
 // OpenAI-compatible chat-completions provider (port of ResolvedOpenAICompletionsCompat).
 type openAICompletionsCompat struct {
-	SupportsStore                               bool
-	SupportsDeveloperRole                       bool
-	SupportsReasoningEffort                     bool
-	SupportsUsageInStreaming                    bool
-	MaxTokensField                              string // "max_tokens" | "max_completion_tokens"
-	ThinkingFormat                              string
-	SupportsStrictMode                          bool
+	SupportsStore            bool
+	SupportsDeveloperRole    bool
+	SupportsReasoningEffort  bool
+	SupportsUsageInStreaming bool
+	MaxTokensField           string // "max_tokens" | "max_completion_tokens"
+	ThinkingFormat           string
+	SupportsStrictMode       bool
+	// SupportsOpenAIGrammarTools reports whether the provider accepts OpenAI
+	// custom tools with Lark/regex grammar formats. When false, grammar-
+	// constrained tools fall back to normal function tools. Default: false.
+	SupportsOpenAIGrammarTools                  bool
 	SupportsLongCacheRetention                  bool
 	RequiresReasoningContentOnAssistantMessages bool
 	RequiresToolResultName                      bool
@@ -128,6 +132,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		MaxTokensField:                              maxTokensField,
 		ThinkingFormat:                              thinkingFormat,
 		SupportsStrictMode:                          !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		SupportsOpenAIGrammarTools:                  false,
 		SupportsLongCacheRetention:                  !(isTogether || isCloudflareWorkersAI || isCloudflareAiGateway || isNvidia || isAntLing),
 		RequiresReasoningContentOnAssistantMessages: isDeepSeek,
 		RequiresToolResultName:                      false,
@@ -158,6 +163,7 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		MaxTokensField                              *string               `json:"maxTokensField"`
 		ThinkingFormat                              *string               `json:"thinkingFormat"`
 		SupportsStrictMode                          *bool                 `json:"supportsStrictMode"`
+		SupportsOpenAIGrammarTools                  *bool                 `json:"supportsOpenAIGrammarTools"`
 		SupportsLongCacheRetention                  *bool                 `json:"supportsLongCacheRetention"`
 		RequiresReasoningContentOnAssistantMessages *bool                 `json:"requiresReasoningContentOnAssistantMessages"`
 		RequiresToolResultName                      *bool                 `json:"requiresToolResultName"`
@@ -195,6 +201,9 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	}
 	if raw.SupportsStrictMode != nil {
 		c.SupportsStrictMode = *raw.SupportsStrictMode
+	}
+	if raw.SupportsOpenAIGrammarTools != nil {
+		c.SupportsOpenAIGrammarTools = *raw.SupportsOpenAIGrammarTools
 	}
 	if raw.SupportsLongCacheRetention != nil {
 		c.SupportsLongCacheRetention = *raw.SupportsLongCacheRetention

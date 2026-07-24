@@ -166,3 +166,50 @@ func TestUserMessageMissingContentTolerated(t *testing.T) {
 		t.Fatalf("null content: got %#v", m.Content)
 	}
 }
+
+// ConstrainedSamplingConfig mirrors pi's discriminated union, whose "disabled"
+// spelling on the wire is the literal `false`.
+func TestConstrainedSamplingConfigJSON(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cfg  ConstrainedSamplingConfig
+		want string
+	}{
+		{"disabled", ConstrainedSamplingConfig{}, `false`},
+		{
+			"json_schema", ConstrainedSamplingConfig{Type: ConstrainedSamplingJSONSchema, Strict: ConstrainedSamplingRequire},
+			`{"type":"json_schema","strict":"require"}`,
+		},
+		{
+			"grammar",
+			ConstrainedSamplingConfig{Type: ConstrainedSamplingGrammar, Variants: GrammarVariants{OpenAILark: "start: /.+/"}},
+			`{"type":"grammar","variants":{"openai_lark":"start: /.+/"}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(raw) != tc.want {
+				t.Fatalf("marshal = %s, want %s", raw, tc.want)
+			}
+			var back ConstrainedSamplingConfig
+			if err := json.Unmarshal(raw, &back); err != nil {
+				t.Fatal(err)
+			}
+			if back != tc.cfg {
+				t.Fatalf("round trip = %#v, want %#v", back, tc.cfg)
+			}
+		})
+	}
+
+	// A tool carrying `false` decodes to the disabled config, not an error.
+	var tool Tool
+	if err := json.Unmarshal([]byte(`{"name":"t","description":"d","constrainedSampling":false}`), &tool); err != nil {
+		t.Fatalf("constrainedSampling:false must decode: %v", err)
+	}
+	if tool.ConstrainedSampling == nil || tool.ConstrainedSampling.Type != "" {
+		t.Fatalf("constrainedSampling:false = %#v", tool.ConstrainedSampling)
+	}
+}

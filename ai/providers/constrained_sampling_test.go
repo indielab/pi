@@ -1,0 +1,274 @@
+package providers
+
+import (
+	"testing"
+
+	"github.com/sky-valley/pi/ai"
+)
+
+// Ground truth for this file comes from pi 0.82.0
+// (dist/api/constrained-sampling.js, run directly under node). Every expected
+// string below is a verbatim capture of that run.
+
+func grammarParams() *ai.Schema {
+	return ai.Object(ai.Prop("query", ai.String()))
+}
+
+func jsonSchemaTool(name, strict string) ai.Tool {
+	return ai.Tool{
+		Name: name, Description: "d", Parameters: grammarParams(),
+		ConstrainedSampling: &ai.ConstrainedSamplingConfig{
+			Type: ai.ConstrainedSamplingJSONSchema, Strict: strict,
+		},
+	}
+}
+
+func grammarTool(name string, variants ai.GrammarVariants) ai.Tool {
+	return ai.Tool{
+		Name: name, Description: "d", Parameters: grammarParams(),
+		ConstrainedSampling: &ai.ConstrainedSamplingConfig{
+			Type: ai.ConstrainedSamplingGrammar, Variants: variants,
+		},
+	}
+}
+
+func TestResolveJSONSchemaStrictSampling(t *testing.T) {
+	plain := ai.Tool{Name: "plain", Description: "d", Parameters: grammarParams()}
+	for _, tc := range []struct {
+		name           string
+		tool           ai.Tool
+		supportsStrict bool
+		want           bool
+		wantErr        string
+	}{
+		{"no config", plain, true, false, ""},
+		{"disabled config", ai.Tool{Name: "x", Parameters: grammarParams(), ConstrainedSampling: &ai.ConstrainedSamplingConfig{}}, true, false, ""},
+		{"grammar config is not json_schema", grammarTool("g", ai.GrammarVariants{OpenAILark: "s"}), true, false, ""},
+		{"prefer, supported", jsonSchemaTool("js_prefer", ai.ConstrainedSamplingPrefer), true, true, ""},
+		{"prefer, unsupported", jsonSchemaTool("js_prefer", ai.ConstrainedSamplingPrefer), false, false, ""},
+		{"require, supported", jsonSchemaTool("js_require", ai.ConstrainedSamplingRequire), true, true, ""},
+		{
+			"require, unsupported", jsonSchemaTool("js_require", ai.ConstrainedSamplingRequire), false, false,
+			`Tool "js_require" requires JSON-schema constrained sampling, but strict tools are unsupported.`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveJSONSchemaStrictSampling(tc.tool, tc.supportsStrict)
+			assertErrString(t, err, tc.wantErr)
+			if err == nil && got != tc.want {
+				t.Fatalf("strict = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestResolveGrammarSampling(t *testing.T) {
+	twoRequired := grammarTool("gram_bad", ai.GrammarVariants{OpenAILark: "s"})
+	twoRequired.Parameters = ai.Object(ai.Prop("a", ai.String()), ai.Prop("b", ai.String()))
+	noProp := grammarTool("gram_noprop", ai.GrammarVariants{OpenAILark: "s"})
+	noProp.Parameters = &ai.Schema{Type: "object", Required: []string{"query"}}
+	notString := grammarTool("gram_notstr", ai.GrammarVariants{OpenAILark: "s"})
+	notString.Parameters = ai.Object(ai.Prop("query", ai.Number()))
+	notObject := grammarTool("gram_notobj", ai.GrammarVariants{OpenAILark: "s"})
+	notObject.Parameters = ai.String()
+
+	for _, tc := range []struct {
+		name           string
+		tool           ai.Tool
+		supports       bool
+		wantFormat     string
+		wantDefinition string
+		wantErr        string
+	}{
+		{"unsupported provider falls back", grammarTool("g", ai.GrammarVariants{OpenAILark: "s"}), false, "", "", ""},
+		{"no config", ai.Tool{Name: "plain", Parameters: grammarParams()}, true, "", "", ""},
+		{"lark", grammarTool("gram", ai.GrammarVariants{OpenAILark: "start: /.+/"}), true, "lark", "start: /.+/", ""},
+		{"regex", grammarTool("gram_re", ai.GrammarVariants{OpenAIRegex: "[a-z]+"}), true, "regex", "[a-z]+", ""},
+		{
+			"blank lark falls through to regex, definition untrimmed",
+			grammarTool("gram_both", ai.GrammarVariants{OpenAILark: "  ", OpenAIRegex: " [a-z]+ "}),
+			true, "regex", " [a-z]+ ", "",
+		},
+		{
+			"no variant", grammarTool("gram_none", ai.GrammarVariants{}), true, "", "",
+			`Tool "gram_none" cannot use grammar constrained sampling: no supported grammar variant was provided.`,
+		},
+		{
+			"two required properties", twoRequired, true, "", "",
+			`Tool "gram_bad" cannot use grammar constrained sampling: grammar constrained sampling requires exactly one required string property.`,
+		},
+		{
+			"missing properties entry", noProp, true, "", "",
+			`Tool "gram_noprop" cannot use grammar constrained sampling: grammar constrained sampling requires a properties entry for query.`,
+		},
+		{
+			"property is not a string", notString, true, "", "",
+			`Tool "gram_notstr" cannot use grammar constrained sampling: grammar constrained sampling property query must have type string.`,
+		},
+		{
+			"schema is not an object", notObject, true, "", "",
+			`Tool "gram_notobj" cannot use grammar constrained sampling: grammar constrained sampling requires an object parameter schema.`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := resolveGrammarSampling(tc.tool, tc.supports)
+			assertErrString(t, err, tc.wantErr)
+			if err != nil {
+				return
+			}
+			if tc.wantFormat == "" {
+				if got != nil {
+					t.Fatalf("expected no grammar, got %#v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("expected a grammar config, got nil")
+			}
+			if got.format != tc.wantFormat || got.definition != tc.wantDefinition || got.inputProperty != "query" {
+				t.Fatalf("grammar = %#v", got)
+			}
+		})
+	}
+}
+
+func TestGrammarToolInputProperties(t *testing.T) {
+	tools := []ai.Tool{
+		{Name: "plain", Parameters: grammarParams()},
+		grammarTool("gram", ai.GrammarVariants{OpenAILark: "s"}),
+	}
+	props, err := grammarToolInputProperties(tools, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(props) != 1 || props["gram"] != "query" {
+		t.Fatalf("props = %#v", props)
+	}
+	if props, err = grammarToolInputProperties(tools, false); err != nil || len(props) != 0 {
+		t.Fatalf("grammar support off must yield no properties: %#v / %v", props, err)
+	}
+	if _, err := grammarToolInputProperties([]ai.Tool{grammarTool("gram_none", ai.GrammarVariants{})}, true); err == nil {
+		t.Fatal("a bad grammar tool must propagate its error")
+	}
+}
+
+func TestGrammarToolInput(t *testing.T) {
+	got, err := grammarToolInput("gram", map[string]any{"query": "SELECT 1"}, "query")
+	if err != nil || got != "SELECT 1" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+	_, err = grammarToolInput("gram", map[string]any{"query": 7}, "query")
+	assertErrString(t, err, `Grammar tool call "gram" requires argument "query" to be a string.`)
+	_, err = grammarToolInput("gram", map[string]any{}, "query")
+	assertErrString(t, err, `Grammar tool call "gram" requires argument "query" to be a string.`)
+}
+
+// Sequences and expectations captured from pi's appendGrammarToolInputJsonDelta.
+func TestGrammarInputBuffer(t *testing.T) {
+	type step struct {
+		next  string
+		final bool
+		// want is the emitted delta; wantNone means pi returned undefined.
+		want     string
+		wantNone bool
+		wantErr  string
+	}
+	for _, tc := range []struct {
+		name     string
+		property string
+		steps    []step
+	}{
+		{"streamed in three chunks", "query", []step{
+			{next: "SEL", want: `{"query":"SEL`},
+			{next: "SELECT ", want: "ECT "},
+			{next: "SELECT 1", final: true, want: `1"}`},
+		}},
+		{"escapes the delta and the property name", "in put", []step{
+			{next: `a"b`, want: `{"in put":"a\"b`},
+			{next: `a"b\c`, want: `\\c`},
+			{next: `a"b\c`, final: true, want: `"}`},
+		}},
+		{"empty input closes immediately", "q", []step{
+			{next: "", final: true, want: `{"q":""}`},
+		}},
+		{"empty non-final delta emits nothing; re-close is a no-op", "q", []step{
+			{next: "x", want: `{"q":"x`},
+			{next: "x", wantNone: true},
+			{next: "x", final: true, want: `"}`},
+			{next: "x", final: true, wantNone: true},
+		}},
+		{"non-monotonic input", "q", []step{
+			{next: "ab", want: `{"q":"ab`},
+			{next: "a", wantErr: `grammar tool input for property "q" changed non-monotonically`},
+		}},
+		{"change after close", "q", []step{
+			{next: "a", final: true, want: `{"q":"a"}`},
+			// Only a repeated CLOSE with the same input is tolerated.
+			{next: "a", wantErr: `grammar tool input for property "q" changed after it was closed`},
+			{next: "a", final: true, wantNone: true},
+			{next: "b", final: true, wantErr: `grammar tool input for property "q" changed after it was closed`},
+		}},
+		{"HTML-significant characters are not escaped", "<p>&", []step{
+			{next: "<x>& ", final: true, want: `{"<p>&":"<x>& "}`},
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			buf := newGrammarInputBuffer(tc.property)
+			for i, s := range tc.steps {
+				delta, ok, err := buf.append(s.next, s.final)
+				assertErrString(t, err, s.wantErr)
+				if err != nil {
+					continue
+				}
+				if s.wantNone {
+					if ok {
+						t.Fatalf("step %d: expected no delta, got %q", i, delta)
+					}
+					continue
+				}
+				if !ok || delta != s.want {
+					t.Fatalf("step %d: delta = %q (ok=%v), want %q", i, delta, ok, s.want)
+				}
+			}
+		})
+	}
+}
+
+// jsQuote must match JavaScript's JSON.stringify, which differs from Go's
+// encoding/json on <, >, &, U+2028/U+2029 and unpaired surrogates. Expectations
+// are verbatim node output.
+func TestJSQuoteMatchesJavaScript(t *testing.T) {
+	for _, tc := range []struct{ in, want string }{
+		{"", `""`},
+		{"plain", `"plain"`},
+		{`he said "hi"`, `"he said \"hi\""`},
+		{`back\slash`, `"back\\slash"`},
+		{"<script>&</script>", `"<script>&</script>"`},
+		{"line\nbreak\ttab\r\b\f", `"line\nbreak\ttab\r\b\f"`},
+		{"\x00\x01\x1f\x7f", "\"\\u0000\\u0001\\u001f\x7f\""},
+		{"unicode é ü 漢字 🎉", `"unicode é ü 漢字 🎉"`},
+		{"\u2028\u2029", "\"\u2028\u2029\""},
+		{"slash / not escaped", `"slash / not escaped"`},
+		// Lone UTF-16 surrogates (WTF-8 encoded) become \udXXX, like ES2019
+		// well-formed JSON.stringify; a well-formed pair stays literal.
+		{"\xed\xa0\x80", `"\ud800"`},
+		{"a\xed\xbf\xbfb", `"a\udfffb"`},
+		{"x\xed\xa0\x80\xed\xb0\x80y", `"x𐀀y"`},
+	} {
+		if got := jsQuote(tc.in); got != tc.want {
+			t.Fatalf("jsQuote(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
+func assertErrString(t *testing.T, err error, want string) {
+	t.Helper()
+	switch {
+	case want == "" && err != nil:
+		t.Fatalf("unexpected error: %v", err)
+	case want != "" && err == nil:
+		t.Fatalf("expected error %q, got nil", want)
+	case want != "" && err.Error() != want:
+		t.Fatalf("error = %q, want %q", err.Error(), want)
+	}
+}
