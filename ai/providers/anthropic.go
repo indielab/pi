@@ -394,7 +394,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 			applyAnthropicHeaders(r, model, opts, oauth, apiKey, len(req.Tools) > 0, req.Messages)
 			return r, nil
 		}
-		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions))
+		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, anthropicSDKErrorMessage))
 		if err != nil {
 			fail(err)
 			return

@@ -374,7 +374,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			}
 			return r, nil
 		}
-		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions))
+		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, openaiSDKErrorMessage))
 		if err != nil {
 			fail(err)
 			return

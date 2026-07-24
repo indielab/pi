@@ -340,7 +340,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 			}
 			return r, nil
 		}
-		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions))
+		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, nil))
 		if err != nil {
 			fail(err)
 			return

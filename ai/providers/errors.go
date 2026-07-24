@@ -107,6 +107,48 @@ func openaiSDKErrorMessage(status int, body []byte) string {
 	return fmt.Sprintf("%d %s", status, msg)
 }
 
+// anthropicSDKErrorMessage replicates the Anthropic SDK's APIError message for
+// a non-2xx response. Both SDKs share a byte-identical makeMessage; they differ
+// in APIError.generate, which decides what makeMessage receives as `error`:
+// openai passes `errorResponse['error']` (so the message is the nested
+// error.message), while anthropic passes the WHOLE parsed body. For a
+// conformant anthropic body — {"type":"error","error":{...}} — the body has no
+// top-level `message`, so makeMessage falls through to JSON.stringify(body) and
+// the result is `${status} {"type":"error",...}`, not the nested message.
+func anthropicSDKErrorMessage(status int, body []byte) string {
+	errText := string(body)
+	var errJSON any
+	jsonOK := strings.TrimSpace(errText) != "" && json.Unmarshal(body, &errJSON) == nil
+
+	var msg string
+	switch {
+	case !jsonOK:
+		msg = errText
+	default:
+		if obj, ok := errJSON.(map[string]any); ok {
+			if m, has := obj["message"]; has && jsTruthy(m) {
+				if s, ok := m.(string); ok {
+					msg = s
+				} else if j, err := json.Marshal(m); err == nil {
+					msg = string(j)
+				}
+			}
+		}
+		// `error ? JSON.stringify(error) : message` — the whole body, with JS
+		// key ordering and escaping rather than encoding/json's.
+		if msg == "" && jsTruthy(errJSON) {
+			if s, ok := jsStringify(body); ok {
+				msg = s
+			}
+		}
+	}
+	if msg == "" {
+		return fmt.Sprintf("%d status code (no body)", status)
+	}
+	msg = truncateErrorText(msg, maxProviderErrorBodyChars)
+	return fmt.Sprintf("%d %s", status, msg)
+}
+
 // jsTruthy reports JavaScript truthiness for a JSON-decoded value.
 func jsTruthy(v any) bool {
 	switch t := v.(type) {

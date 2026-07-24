@@ -1,8 +1,12 @@
 package providers
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
+	"math"
+	"strconv"
 	"strings"
 	"unicode/utf16"
 )
@@ -125,6 +129,129 @@ func jsEscape(s string) string {
 
 // jsQuote renders s the way `JSON.stringify(s)` does, quotes included.
 func jsQuote(s string) string { return `"` + jsEscape(s) + `"` }
+
+// jsStringify renders a JSON document the way JavaScript's
+// `JSON.stringify(JSON.parse(raw))` does. Go's encoding/json cannot be used:
+// marshalling a decoded map sorts its keys, whereas JS preserves the order the
+// keys were parsed in, and Go escapes strings differently (see jsEscape).
+// Returns ok=false when raw is not a single well-formed JSON value.
+//
+// Two JS behaviors are deliberately approximated, both unreachable for the
+// conformant provider error bodies this serves: duplicate object keys (JS keeps
+// the last, this keeps every occurrence) and exotic number formatting (see
+// jsNumber).
+func jsStringify(raw []byte) (string, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	var b strings.Builder
+	if err := jsStringifyValue(dec, &b); err != nil {
+		return "", false
+	}
+	// Reject trailing content, which JSON.parse would also reject.
+	if _, err := dec.Token(); err != io.EOF {
+		return "", false
+	}
+	return b.String(), true
+}
+
+func jsStringifyValue(dec *json.Decoder, b *strings.Builder) error {
+	tok, err := dec.Token()
+	if err != nil {
+		return err
+	}
+	return jsStringifyToken(dec, b, tok)
+}
+
+func jsStringifyToken(dec *json.Decoder, b *strings.Builder, tok json.Token) error {
+	switch t := tok.(type) {
+	case json.Delim:
+		switch t {
+		case '{':
+			b.WriteByte('{')
+			for i := 0; dec.More(); i++ {
+				if i > 0 {
+					b.WriteByte(',')
+				}
+				key, err := dec.Token()
+				if err != nil {
+					return err
+				}
+				name, ok := key.(string)
+				if !ok {
+					return fmt.Errorf("object key is not a string")
+				}
+				b.WriteString(jsQuote(name))
+				b.WriteByte(':')
+				if err := jsStringifyValue(dec, b); err != nil {
+					return err
+				}
+			}
+			b.WriteByte('}')
+		case '[':
+			b.WriteByte('[')
+			for i := 0; dec.More(); i++ {
+				if i > 0 {
+					b.WriteByte(',')
+				}
+				if err := jsStringifyValue(dec, b); err != nil {
+					return err
+				}
+			}
+			b.WriteByte(']')
+		default:
+			return fmt.Errorf("unexpected delimiter %q", t)
+		}
+		// Consume the matching closing delimiter.
+		if _, err := dec.Token(); err != nil {
+			return err
+		}
+	case string:
+		b.WriteString(jsQuote(t))
+	case json.Number:
+		b.WriteString(jsNumber(t.String()))
+	case bool:
+		b.WriteString(strconv.FormatBool(t))
+	case nil:
+		b.WriteString("null")
+	default:
+		return fmt.Errorf("unexpected token %T", tok)
+	}
+	return nil
+}
+
+// jsNumber renders a JSON number the way JavaScript's Number-to-String
+// conversion does, so `1.0` becomes "1" and `1e2` becomes "100". JS switches to
+// exponential notation only outside [1e-7, 1e21); Go's %g switches on a
+// different threshold, so the ranges are selected explicitly. Values that do not
+// parse as a float are passed through unchanged.
+func jsNumber(src string) string {
+	f, err := strconv.ParseFloat(src, 64)
+	if err != nil {
+		return src
+	}
+	// JS String(-0) is "0", where Go's FormatFloat keeps the sign.
+	if f == 0 {
+		return "0"
+	}
+	if abs := math.Abs(f); abs >= 1e-7 && abs < 1e21 {
+		return strconv.FormatFloat(f, 'f', -1, 64)
+	}
+	// Go pads the exponent to two digits ("1e-08"); JS does not ("1e-8").
+	out := strconv.FormatFloat(f, 'e', -1, 64)
+	if i := strings.IndexByte(out, 'e'); i >= 0 {
+		mant, exp := out[:i], out[i+1:]
+		sign := ""
+		if len(exp) > 0 && (exp[0] == '+' || exp[0] == '-') {
+			sign, exp = string(exp[0]), exp[1:]
+		}
+		exp = strings.TrimLeft(exp, "0")
+		if exp == "" {
+			exp = "0"
+		}
+		out = mant + "e" + sign + exp
+	}
+	return out
+}
 
 // parseJSONWithRepair parses JSON, retrying once with repairs on failure.
 func parseJSONWithRepair(s string, out any) error {

@@ -2,7 +2,9 @@ package providers
 
 import (
 	"context"
+	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -178,7 +180,7 @@ func TestRetryAfterMsPreferredOverRetryAfter(t *testing.T) {
 	resp.Header.Set("retry-after-ms", "5")
 	resp.Header.Set("Retry-After", "30") // 30s — would dominate if used
 
-	d := retryDelay(resp, 0, defaultMaxRetryDelayMs)
+	d := mustRetryDelay(t, resp, 0, defaultMaxRetryDelayMs)
 	if d != 5*time.Millisecond {
 		t.Fatalf("expected 5ms from retry-after-ms, got %v", d)
 	}
@@ -188,7 +190,7 @@ func TestRetryAfterMsPreferredOverRetryAfter(t *testing.T) {
 func TestRetryAfterSecondsParsed(t *testing.T) {
 	resp := &http.Response{Header: http.Header{}}
 	resp.Header.Set("Retry-After", "2")
-	d := retryDelay(resp, 0, defaultMaxRetryDelayMs)
+	d := mustRetryDelay(t, resp, 0, defaultMaxRetryDelayMs)
 	if d != 2*time.Second {
 		t.Fatalf("expected 2s from Retry-After seconds, got %v", d)
 	}
@@ -198,55 +200,169 @@ func TestRetryAfterSecondsParsed(t *testing.T) {
 func TestRetryAfterHTTPDateParsed(t *testing.T) {
 	resp := &http.Response{Header: http.Header{}}
 	resp.Header.Set("Retry-After", time.Now().Add(10*time.Second).UTC().Format(http.TimeFormat))
-	d := retryDelay(resp, 0, defaultMaxRetryDelayMs)
+	d := mustRetryDelay(t, resp, 0, defaultMaxRetryDelayMs)
 	if d < 8*time.Second || d > 10*time.Second {
 		t.Fatalf("expected ~10s from Retry-After http-date, got %v", d)
 	}
 }
 
-// TestRetryAfterAbove60sIgnoredUsesBackoff: a server delay >= 60s is IGNORED
-// (not fail-fast) and the computed backoff is used instead — the old surface-
-// the-response behavior came from the excluded codex provider.
-func TestRetryAfterAbove60sIgnoredUsesBackoff(t *testing.T) {
-	resp := &http.Response{Header: http.Header{}}
+// TestServerRetryDelayAboveLimitFailsFast locks pi's validateServerRetryDelayMs
+// (provider-retry.ts): an oversized server-requested delay is no longer ignored
+// in favor of backoff — it aborts the request. The message is byte-exact against
+// pi's template, including the trailing SDK provider message.
+func TestServerRetryDelayAboveLimitFailsFast(t *testing.T) {
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
 	resp.Header.Set("Retry-After", "3600") // 1 hour
-	d := retryDelay(resp, 0, defaultMaxRetryDelayMs)
-	// attempt 0 backoff: 500ms with up to 25% downward jitter.
-	if d < 375*time.Millisecond || d > 500*time.Millisecond {
-		t.Fatalf("expected backoff in [375ms,500ms] when RA>60s is ignored, got %v", d)
+	body := []byte(`{"error":{"message":"slow down"}}`)
+
+	_, err := retryDelay(resp, 0, wrapCfg(defaultMaxRetryDelayMs), openaiSDKErrorMessage(resp.StatusCode, body))
+	if err == nil {
+		t.Fatal("expected an oversized server delay to fail fast, got nil error")
+	}
+	const want = "Server requested 3600s retry delay (max: 60s). 429 slow down"
+	if err.Error() != want {
+		t.Fatalf("message mismatch\n got: %q\nwant: %q", err.Error(), want)
 	}
 }
 
-// TestRetryAfterAbove60sStillRetries: end-to-end — a huge Retry-After does not
-// abort retrying and does not block; the request is retried after backoff.
-func TestRetryAfterAbove60sStillRetries(t *testing.T) {
-	var calls int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		n := atomic.AddInt32(&calls, 1)
-		if n == 1 {
-			w.Header().Set("Retry-After", "3600")
-			w.WriteHeader(http.StatusTooManyRequests)
-			return
-		}
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer server.Close()
+// TestServerRetryDelayCeilsToSeconds: pi renders both sides with Math.ceil on a
+// float division, so sub-second remainders round up.
+func TestServerRetryDelayCeilsToSeconds(t *testing.T) {
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
+	resp.Header.Set("retry-after-ms", "1200.5")
 
-	start := time.Now()
-	build := func() (*http.Request, error) { return http.NewRequest("GET", server.URL, nil) }
-	resp, err := sendWithRetry(context.Background(), build, retryConfig{maxRetries: 1, maxRetryDelayMs: defaultMaxRetryDelayMs, timeoutMs: defaultTimeoutMs})
+	_, err := retryDelay(resp, 0, wrapCfg(1001), openaiSDKErrorMessage(resp.StatusCode, nil))
+	if err == nil {
+		t.Fatal("expected fail-fast for 1200.5ms against a 1001ms limit")
+	}
+	const want = "Server requested 2s retry delay (max: 2s). 429 status code (no body)"
+	if err.Error() != want {
+		t.Fatalf("message mismatch\n got: %q\nwant: %q", err.Error(), want)
+	}
+}
+
+// TestServerRetryDelayEqualToLimitHonored: pi's comparison is `delayMs >
+// maxDelayMs`, so a delay exactly at the limit is slept, not rejected.
+func TestServerRetryDelayEqualToLimitHonored(t *testing.T) {
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
+	resp.Header.Set("retry-after-ms", "1000")
+
+	d, err := retryDelay(resp, 0, wrapCfg(1000), "")
+	if err != nil {
+		t.Fatalf("delay equal to the limit must be honored, got %v", err)
+	}
+	if d != time.Second {
+		t.Fatalf("expected 1s honored at the limit, got %v", d)
+	}
+}
+
+// TestServerRetryDelayLimitDisabled: maxRetryDelayMs of 0 disables the limit
+// (pi: `maxDelayMs > 0 && ...`), so an hour-long delay is honored verbatim.
+func TestServerRetryDelayLimitDisabled(t *testing.T) {
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
+	resp.Header.Set("Retry-After", "3600")
+
+	d, err := retryDelay(resp, 0, wrapCfg(0), "")
+	if err != nil {
+		t.Fatalf("limit disabled, expected no error, got %v", err)
+	}
+	if d != time.Hour {
+		t.Fatalf("expected the full 1h delay honored, got %v", d)
+	}
+}
+
+// TestServerRetryDelayNonPositiveHonored: pi has no lower gate on the server
+// delay; zero and negative values are honored and clamp to an immediate retry
+// instead of falling back to exponential backoff.
+func TestServerRetryDelayNonPositiveHonored(t *testing.T) {
+	for _, header := range []string{"0", "-30"} {
+		resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
+		resp.Header.Set("Retry-After", header)
+		d, err := retryDelay(resp, 0, wrapCfg(defaultMaxRetryDelayMs), "")
+		if err != nil {
+			t.Fatalf("Retry-After %q: unexpected error %v", header, err)
+		}
+		if d != 0 {
+			t.Fatalf("Retry-After %q: expected an immediate retry, got %v", header, d)
+		}
+	}
+}
+
+// TestServerRetryDelayUnparseableDateIsImmediate: a present-but-unparseable
+// Retry-After still counts as server-dictated. pi computes `Date.parse(...) -
+// Date.now()` = NaN, which its sleep clamps to zero rather than falling back to
+// the exponential backoff.
+func TestServerRetryDelayUnparseableDateIsImmediate(t *testing.T) {
+	resp := &http.Response{StatusCode: http.StatusTooManyRequests, Header: http.Header{}}
+	resp.Header.Set("Retry-After", "later")
+	d, err := retryDelay(resp, 0, wrapCfg(defaultMaxRetryDelayMs), "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("expected success after ignoring huge Retry-After, got %d", resp.StatusCode)
+	if d != 0 {
+		t.Fatalf("expected an immediate retry for an unparseable Retry-After, got %v", d)
 	}
-	if elapsed := time.Since(start); elapsed > 2*time.Second {
-		t.Fatalf("retry waited too long (%v); huge Retry-After should be ignored", elapsed)
+}
+
+// TestRetryAfterAboveLimitAbortsRequest: end-to-end — a huge Retry-After stops
+// the retry loop with the fail-fast error instead of retrying after backoff.
+func TestRetryAfterAboveLimitAbortsRequest(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&calls, 1)
+		w.Header().Set("Retry-After", "3600")
+		w.WriteHeader(http.StatusTooManyRequests)
+		io.WriteString(w, `{"error":{"message":"slow down"}}`)
+	}))
+	defer server.Close()
+
+	build := func() (*http.Request, error) { return http.NewRequest("GET", server.URL, nil) }
+	resp, err := sendWithRetry(context.Background(), build, retryConfig{
+		maxRetries: 1, maxRetryDelayMs: defaultMaxRetryDelayMs, timeoutMs: defaultTimeoutMs,
+		providerError: openaiSDKErrorMessage,
+	})
+	if err == nil {
+		resp.Body.Close()
+		t.Fatal("expected the oversized Retry-After to abort the request")
 	}
-	if atomic.LoadInt32(&calls) != 2 {
-		t.Fatalf("expected 2 attempts, got %d", calls)
+	if !errors.Is(err, errServerRetryDelayTooLong) {
+		t.Fatalf("fail-fast error should match the sentinel, got %#v", err)
+	}
+	const want = "Server requested 3600s retry delay (max: 60s). 429 slow down"
+	if err.Error() != want {
+		t.Fatalf("message mismatch\n got: %q\nwant: %q", err.Error(), want)
+	}
+	if atomic.LoadInt32(&calls) != 1 {
+		t.Fatalf("expected exactly 1 attempt before failing fast, got %d", calls)
+	}
+}
+
+// TestParseFloatPrefix locks JS Number.parseFloat semantics on the Retry-After
+// headers: a numeric prefix wins over trailing junk, and only a value with no
+// numeric prefix at all is NaN (ok=false).
+func TestParseFloatPrefix(t *testing.T) {
+	cases := []struct {
+		in   string
+		want float64
+		ok   bool
+	}{
+		{"3600", 3600, true},
+		{"3600s", 3600, true}, // JS parseFloat stops at the unit suffix
+		{" 12.5 ", 12.5, true},
+		{"1e3", 1000, true},
+		{"1e", 1, true}, // dangling exponent is not consumed
+		{"-30", -30, true},
+		{".5", 0.5, true},
+		{"0x10", 0, true}, // JS stops at 'x'; Go's ParseFloat would read hex
+		{"later", 0, false},
+		{"", 0, false},
+		{"Infinity", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := parseFloatPrefix(c.in)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Fatalf("parseFloatPrefix(%q) = (%v, %v), want (%v, %v)", c.in, got, ok, c.want, c.ok)
+		}
 	}
 }
 
@@ -257,7 +373,7 @@ func TestRetryBackoffJitterBounds(t *testing.T) {
 		lo := time.Duration(float64(baseMs)*0.75) * time.Millisecond
 		hi := time.Duration(baseMs) * time.Millisecond
 		for i := 0; i < 200; i++ {
-			d := retryDelay(nil, attempt, defaultMaxRetryDelayMs)
+			d := mustRetryDelay(t, nil, attempt, defaultMaxRetryDelayMs)
 			if d < lo || d > hi {
 				t.Fatalf("attempt %d: delay %v outside jitter bounds [%v,%v]", attempt, d, lo, hi)
 			}
@@ -269,7 +385,7 @@ func TestRetryBackoffJitterBounds(t *testing.T) {
 // SDK's 8s cap, jitter included.
 func TestRetryBackoffCappedAt8s(t *testing.T) {
 	for i := 0; i < 200; i++ {
-		d := retryDelay(nil, 10, defaultMaxRetryDelayMs) // 0.5s*2^10 = 512s uncapped
+		d := mustRetryDelay(t, nil, 10, defaultMaxRetryDelayMs) // 0.5s*2^10 = 512s uncapped
 		if d > 8*time.Second {
 			t.Fatalf("backoff exceeded 8s cap: %v", d)
 		}
@@ -279,37 +395,101 @@ func TestRetryBackoffCappedAt8s(t *testing.T) {
 	}
 }
 
-// TestRetryMaxRetryDelayOptionCapsBackoff: an explicit MaxRetryDelayMs below
-// 8s caps the computed backoff.
-func TestRetryMaxRetryDelayOptionCapsBackoff(t *testing.T) {
+// TestRetryMaxRetryDelayDoesNotCapBackoff: maxRetryDelayMs bounds only the
+// server-requested delay. pi's getRetryDelayMs applies no maximum to the
+// exponential path, so a 1s limit must not shrink the 8s backoff.
+func TestRetryMaxRetryDelayDoesNotCapBackoff(t *testing.T) {
 	for i := 0; i < 200; i++ {
-		d := retryDelay(nil, 10, 1000)
-		if d > time.Second {
-			t.Fatalf("backoff exceeded maxRetryDelayMs override: %v", d)
-		}
-		if d < 750*time.Millisecond {
-			t.Fatalf("capped backoff below jitter floor: %v", d)
+		d := mustRetryDelay(t, nil, 10, 1000)
+		if d < 6*time.Second || d > 8*time.Second {
+			t.Fatalf("expected the uncapped 8s backoff (jitter floor 6s), got %v", d)
 		}
 	}
+}
+
+// TestUnwrappedProviderDoesNotFailFast: pi wraps only the providers whose
+// requests go through retryProviderRequest (anthropic-messages,
+// openai-completions, openai-responses). Its Google provider streams via
+// @google/genai and was untouched by 7af8533c, so an oversized server delay
+// there must NOT abort the request — it falls back to the computed backoff,
+// exactly as every provider did before this change.
+func TestUnwrappedProviderDoesNotFailFast(t *testing.T) {
+	resp := &http.Response{StatusCode: 429, Header: http.Header{}}
+	resp.Header.Set("Retry-After", "3600") // 1h, far above the 60s limit
+
+	cfg := retryConfig{maxRetryDelayMs: defaultMaxRetryDelayMs} // providerError nil
+	d, err := retryDelay(resp, 0, cfg, "")
+	if err != nil {
+		t.Fatalf("an unwrapped provider must not fail fast, got %v", err)
+	}
+	// Falls through to backoff: 0.5s with up to 25% downward jitter.
+	if d < 375*time.Millisecond || d > 500*time.Millisecond {
+		t.Fatalf("expected the computed backoff, got %v", d)
+	}
+}
+
+// TestServerRetryDelayOverflowClamped: a delay that overflows float64 is
+// Infinity in JS (not NaN), so it fails fast — and must not wrap int64
+// nanoseconds into a negative Duration on the way there.
+func TestServerRetryDelayOverflowClamped(t *testing.T) {
+	if f, ok := parseFloatPrefix("1e400"); !ok || !math.IsInf(f, 1) {
+		t.Fatalf("parseFloatPrefix(1e400) = (%v, %v), want (+Inf, true)", f, ok)
+	}
+	resp := &http.Response{StatusCode: 429, Header: http.Header{}}
+	resp.Header.Set("retry-after-ms", "1e400")
+
+	_, err := retryDelay(resp, 0, wrapCfg(defaultMaxRetryDelayMs), "429 slow down")
+	if err == nil {
+		t.Fatal("an infinite server delay must fail fast")
+	}
+	// pi: `${Math.ceil(Infinity / 1000)}s` renders as "Infinitys".
+	const want = "Server requested Infinitys retry delay (max: 60s). 429 slow down"
+	if err.Error() != want {
+		t.Fatalf("message mismatch\n got: %q\nwant: %q", err.Error(), want)
+	}
+
+	// With the limit disabled, the same value must clamp rather than wrap.
+	d, err := retryDelay(resp, 0, retryConfig{maxRetryDelayMs: 0, providerError: openaiSDKErrorMessage}, "")
+	if err != nil {
+		t.Fatalf("limit disabled should not fail fast, got %v", err)
+	}
+	if d < 0 {
+		t.Fatalf("clamped delay must not be negative, got %v", d)
+	}
+}
+
+// wrapCfg builds a retryConfig for a provider pi wraps with
+// retryProviderRequest, i.e. one where an oversized server delay fails fast.
+func wrapCfg(maxRetryDelayMs int) retryConfig {
+	return retryConfig{maxRetryDelayMs: maxRetryDelayMs, providerError: openaiSDKErrorMessage}
+}
+
+func mustRetryDelay(t *testing.T, resp *http.Response, attempt, maxRetryDelayMs int) time.Duration {
+	t.Helper()
+	d, err := retryDelay(resp, attempt, wrapCfg(maxRetryDelayMs), "")
+	if err != nil {
+		t.Fatalf("retryDelay: unexpected error: %v", err)
+	}
+	return d
 }
 
 // TestRetryFromOptionsDefaults locks the config resolution: MaxRetries
 // zero-value stays 0, negatives clamp to 0, explicit values pass through.
 func TestRetryFromOptionsDefaults(t *testing.T) {
-	if got := retryFromOptions(ai.StreamOptions{}); got.maxRetries != 0 {
+	if got := retryFromOptions(ai.StreamOptions{}, openaiSDKErrorMessage); got.maxRetries != 0 {
 		t.Fatalf("default maxRetries = %d, want 0", got.maxRetries)
 	}
-	if got := retryFromOptions(ai.StreamOptions{MaxRetries: -3}); got.maxRetries != 0 {
+	if got := retryFromOptions(ai.StreamOptions{MaxRetries: -3}, openaiSDKErrorMessage); got.maxRetries != 0 {
 		t.Fatalf("negative maxRetries = %d, want 0", got.maxRetries)
 	}
-	if got := retryFromOptions(ai.StreamOptions{MaxRetries: 4}); got.maxRetries != 4 {
+	if got := retryFromOptions(ai.StreamOptions{MaxRetries: 4}, openaiSDKErrorMessage); got.maxRetries != 4 {
 		t.Fatalf("explicit maxRetries = %d, want 4", got.maxRetries)
 	}
 	cap := 1234
-	if got := retryFromOptions(ai.StreamOptions{MaxRetryDelayMs: &cap}); got.maxRetryDelayMs != 1234 {
+	if got := retryFromOptions(ai.StreamOptions{MaxRetryDelayMs: &cap}, openaiSDKErrorMessage); got.maxRetryDelayMs != 1234 {
 		t.Fatalf("maxRetryDelayMs override = %d, want 1234", got.maxRetryDelayMs)
 	}
-	if got := retryFromOptions(ai.StreamOptions{}); got.maxRetryDelayMs != defaultMaxRetryDelayMs {
+	if got := retryFromOptions(ai.StreamOptions{}, openaiSDKErrorMessage); got.maxRetryDelayMs != defaultMaxRetryDelayMs {
 		t.Fatalf("default maxRetryDelayMs = %d, want %d", got.maxRetryDelayMs, defaultMaxRetryDelayMs)
 	}
 }
