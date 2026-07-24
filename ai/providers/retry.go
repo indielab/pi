@@ -135,9 +135,9 @@ func shouldRetryResponse(resp *http.Response) bool {
 // numeric prefix is consumed, and trailing junk is ignored (so "3600s" parses as
 // 3600). ok=false stands for JS NaN — no numeric prefix at all. A prefix that
 // overflows float64 yields ±Inf, matching JS ("1e400" is Infinity, not NaN);
-// the caller clamps it before building a Duration. The "Infinity" literal
-// itself is deliberately not accepted — pi reads these headers only through
-// parseFloat, which does not accept it either.
+// the caller clamps it before building a Duration. The "Infinity" literal is
+// accepted too, because parseFloat does accept it — case-sensitively and as a
+// prefix, so "Infinityx" is Infinity while "Inf" and "infinity" are NaN.
 func parseFloatPrefix(s string) (float64, bool) {
 	// JS StrWhiteSpace is the Unicode space separators plus the BOM; Go's
 	// unicode.IsSpace covers the former (U+1680, U+2000-200A, U+2028/9,
@@ -148,6 +148,13 @@ func parseFloatPrefix(s string) (float64, bool) {
 	i := 0
 	if i < len(s) && (s[i] == '+' || s[i] == '-') {
 		i++
+	}
+	// parseFloat accepts the Infinity literal, exact-case, as a prefix.
+	if strings.HasPrefix(s[i:], "Infinity") {
+		if s[0] == '-' {
+			return math.Inf(-1), true
+		}
+		return math.Inf(1), true
 	}
 	digits := 0
 	for ; i < len(s) && s[i] >= '0' && s[i] <= '9'; i++ {

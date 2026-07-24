@@ -93,7 +93,13 @@ func escapeControlChar(ch byte) string {
 // JavaScript: only `"`, `\` and control characters are escaped, and unpaired
 // UTF-16 surrogates become \udXXX (ES2019 well-formed stringify). Go's
 // encoding/json cannot be used here — it additionally escapes <, >, & and
-// U+2028/U+2029, and replaces lone surrogates with U+FFFD.
+// U+2028/U+2029.
+//
+// The lone-surrogate handling only reaches strings that did NOT arrive through
+// encoding/json: Unmarshal replaces an unpaired surrogate escape with U+FFFD
+// before this function ever sees it, and that loss is not recoverable here. It
+// applies to values a caller built in Go (where a WTF-8 triple can survive), so
+// the compensation is partial, not total.
 func jsEscape(s string) string {
 	var b strings.Builder
 	b.Grow(len(s))
@@ -233,7 +239,9 @@ func jsNumber(src string) string {
 	if f == 0 {
 		return "0"
 	}
-	if abs := math.Abs(f); abs >= 1e-7 && abs < 1e21 {
+	// JS uses fixed notation on [1e-6, 1e21) and exponential outside it:
+	// String(1e-6) is "0.000001" but String(9.9e-7) is "9.9e-7".
+	if abs := math.Abs(f); abs >= 1e-6 && abs < 1e21 {
 		return strconv.FormatFloat(f, 'f', -1, 64)
 	}
 	// Go pads the exponent to two digits ("1e-08"); JS does not ("1e-8").

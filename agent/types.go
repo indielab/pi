@@ -86,6 +86,11 @@ type AgentTool struct {
 	// PromptGuidelines are optional bullet lines the system prompt builder folds
 	// into its Guidelines section (port of pi's tool promptGuidelines).
 	PromptGuidelines []string
+	// ConstrainedSampling optionally asks the provider to constrain sampling for
+	// this tool (JSON schema or grammar). pi carries this on AgentTool for free
+	// because its AgentTool extends Tool; Go has to forward it explicitly, and
+	// asAITool is the only path from a tool to the provider request.
+	ConstrainedSampling *ai.ConstrainedSamplingConfig
 	// Execute runs the tool. Return an error on failure (the loop converts it to
 	// an error tool result) rather than encoding errors in Content.
 	Execute func(ctx context.Context, toolCallID string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error)
@@ -94,7 +99,12 @@ type AgentTool struct {
 // asAITool returns the ai.Tool definition used for schema validation and the
 // provider request.
 func (t AgentTool) asAITool() ai.Tool {
-	return ai.Tool{Name: t.Name, Description: t.Description, Parameters: t.Parameters}
+	return ai.Tool{
+		Name:                t.Name,
+		Description:         t.Description,
+		Parameters:          t.Parameters,
+		ConstrainedSampling: t.ConstrainedSampling,
+	}
 }
 
 // AgentContext is the snapshot passed into the low-level loop.

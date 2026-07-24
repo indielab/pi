@@ -101,3 +101,28 @@ func TestJSStringifyRejectsMalformed(t *testing.T) {
 		}
 	}
 }
+
+// TestJSNumberExponentialThreshold pins JS's fixed-vs-exponential boundary,
+// which is 1e-6 and NOT 1e-7: String(1e-6) is "0.000001" but String(9.9e-7) is
+// "9.9e-7". Values captured from node.
+func TestJSNumberExponentialThreshold(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"0.00001", "0.00001"},
+		{"0.000001", "0.000001"}, // 1e-6 — last fixed value
+		{"0.0000015", "0.0000015"},
+		{"9.9e-7", "9.9e-7"}, // just below 1e-6 — exponential
+		{"5e-7", "5e-7"},
+		{"1e-7", "1e-7"},
+		{"1e-8", "1e-8"},
+		{"1e21", "1e+21"},
+		{"1e20", "100000000000000000000"},
+		{"-0", "0"},
+		{"1.0", "1"},
+		{"1e2", "100"},
+	}
+	for _, c := range cases {
+		if got := jsNumber(c.in); got != c.want {
+			t.Errorf("jsNumber(%s) = %s, want %s", c.in, got, c.want)
+		}
+	}
+}

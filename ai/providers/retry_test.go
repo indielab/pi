@@ -356,7 +356,7 @@ func TestParseFloatPrefix(t *testing.T) {
 		{"0x10", 0, true}, // JS stops at 'x'; Go's ParseFloat would read hex
 		{"later", 0, false},
 		{"", 0, false},
-		{"Infinity", 0, false},
+		// "Infinity" IS accepted by parseFloat; see TestParseFloatPrefixInfinityLiteral.
 	}
 	for _, c := range cases {
 		got, ok := parseFloatPrefix(c.in)
@@ -563,5 +563,47 @@ func TestResponsesPromptCacheKey(t *testing.T) {
 
 	if gotBody["prompt_cache_key"] != "sess-123" {
 		t.Fatalf("prompt_cache_key not sent: %v", gotBody["prompt_cache_key"])
+	}
+}
+
+// TestParseFloatPrefixInfinityLiteral: JS Number.parseFloat accepts the
+// "Infinity" literal — exact-case and as a prefix. Rejecting it inverted the
+// outcome for `Retry-After: Infinity`: pi fails fast, and a NaN reading would
+// instead retry immediately. Values captured from node.
+func TestParseFloatPrefixInfinityLiteral(t *testing.T) {
+	cases := []struct {
+		in   string
+		want float64
+		ok   bool
+	}{
+		{"Infinity", math.Inf(1), true},
+		{"+Infinity", math.Inf(1), true},
+		{"-Infinity", math.Inf(-1), true},
+		{"Infinityx", math.Inf(1), true}, // prefix match, trailing junk ignored
+		{"  Infinity", math.Inf(1), true},
+		{"Inf", 0, false},      // not the full literal
+		{"infinity", 0, false}, // case-sensitive
+		{"INFINITY", 0, false},
+	}
+	for _, c := range cases {
+		got, ok := parseFloatPrefix(c.in)
+		if ok != c.ok || (ok && got != c.want) {
+			t.Errorf("parseFloatPrefix(%q) = (%v, %v), want (%v, %v)", c.in, got, ok, c.want, c.ok)
+		}
+	}
+}
+
+// TestRetryAfterInfinityFailsFast: the end-to-end consequence — an Infinity
+// Retry-After must abort, not retry immediately.
+func TestRetryAfterInfinityFailsFast(t *testing.T) {
+	resp := &http.Response{StatusCode: 429, Header: http.Header{}}
+	resp.Header.Set("Retry-After", "Infinity")
+	_, err := retryDelay(resp, 0, wrapCfg(defaultMaxRetryDelayMs), "429 slow down")
+	if err == nil {
+		t.Fatal("an Infinity Retry-After must fail fast")
+	}
+	const want = "Server requested Infinitys retry delay (max: 60s). 429 slow down"
+	if err.Error() != want {
+		t.Fatalf("message mismatch\n got: %q\nwant: %q", err.Error(), want)
 	}
 }
