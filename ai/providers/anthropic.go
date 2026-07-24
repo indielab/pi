@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -751,7 +752,13 @@ func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bo
 		var required []string
 		if t.Parameters != nil {
 			if raw, err := json.Marshal(t.Parameters); err == nil {
-				_ = json.Unmarshal(raw, &full)
+				if strict {
+					// Only strict tools carry the full schema, so skip this
+					// decode on the common path (it runs per tool per request).
+					// Errors are ignored throughout: a schema that will not
+					// round-trip yields the legacy shape, as pi's spread does.
+					_ = json.Unmarshal(raw, &full)
+				}
 				var sch struct {
 					Properties json.RawMessage `json:"properties"`
 					Required   []string        `json:"required"`
@@ -778,9 +785,7 @@ func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bo
 			if full == nil {
 				full = map[string]any{}
 			}
-			for k, v := range inputSchema {
-				full[k] = v
-			}
+			maps.Copy(full, inputSchema)
 			inputSchema = full
 		}
 		tool := map[string]any{

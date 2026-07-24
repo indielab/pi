@@ -213,3 +213,48 @@ func TestConstrainedSamplingConfigJSON(t *testing.T) {
 		t.Fatalf("constrainedSampling:false = %#v", tool.ConstrainedSampling)
 	}
 }
+
+// TestConstrainedSamplingUnknownTypeRejected: the discriminant is a typed
+// string, and an unrecognized value must be a loud error on BOTH sides rather
+// than silently round-tripping to `false` — which would quietly drop the
+// caller's constrained-sampling request.
+func TestConstrainedSamplingUnknownTypeRejected(t *testing.T) {
+	t.Run("marshal", func(t *testing.T) {
+		_, err := json.Marshal(ConstrainedSamplingConfig{Type: "bogus"})
+		if err == nil {
+			t.Fatal("marshalling an unknown type must fail, not emit false")
+		}
+		if !strings.Contains(err.Error(), "bogus") {
+			t.Errorf("error should name the offending type, got %v", err)
+		}
+	})
+	t.Run("unmarshal", func(t *testing.T) {
+		var c ConstrainedSamplingConfig
+		if err := json.Unmarshal([]byte(`{"type":"bogus"}`), &c); err == nil {
+			t.Fatal("unmarshalling an unknown type must fail")
+		}
+	})
+	t.Run("unmarshal true leaks no internal type", func(t *testing.T) {
+		var c ConstrainedSamplingConfig
+		err := json.Unmarshal([]byte(`true`), &c)
+		if err == nil {
+			t.Fatal("`true` is not a valid constrainedSampling value")
+		}
+		if strings.Contains(err.Error(), "alias") {
+			t.Errorf("error leaks the private shim type: %v", err)
+		}
+		if !strings.Contains(err.Error(), "json_schema") {
+			t.Errorf("error should hint the valid spellings, got %v", err)
+		}
+	})
+	t.Run("empty strict defaults to prefer on the wire", func(t *testing.T) {
+		b, err := json.Marshal(ConstrainedSamplingConfig{Type: ConstrainedSamplingJSONSchema})
+		if err != nil {
+			t.Fatal(err)
+		}
+		// pi's union admits only "prefer"|"require"; "" is not a value it accepts.
+		if got, want := string(b), `{"type":"json_schema","strict":"prefer"}`; got != want {
+			t.Errorf("marshal = %s, want %s", got, want)
+		}
+	})
+}

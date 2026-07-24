@@ -428,11 +428,11 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 					b.partialJSON.WriteString(delta)
 					b.args = parseStreamingJSON(b.partialJSON.String())
 				} else if tcDelta.Custom != nil && tcDelta.Custom.Input != "" {
-					d, gerr := appendGrammarInput(b, grammarInput(b)+tcDelta.Custom.Input, false)
+					jsonDelta, gerr := appendGrammarInput(b, grammarInput(b)+tcDelta.Custom.Input, false)
 					if gerr != nil {
 						return gerr
 					}
-					delta = d
+					delta = jsonDelta
 				}
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: indexOf(b), Delta: delta, Partial: output.Clone()})

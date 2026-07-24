@@ -491,9 +491,15 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				if !ok {
 					property = "input"
 				}
+				// pi seeds the slot with `item.input || ""`; the buffer itself
+				// deliberately starts empty so the first delta re-emits the seed.
+				var seed string
+				if item.Input != nil {
+					seed = *item.Input
+				}
 				b = &blockBuilder{
 					kind: "toolCall", toolID: item.CallID + "|" + item.ID, toolName: item.Name,
-					args: map[string]any{property: item.Input}, grammar: newGrammarInputBuffer(property),
+					args: map[string]any{property: seed}, grammar: newGrammarInputBuffer(property),
 				}
 				startEvent = ai.EventToolCallStart
 			default:
@@ -754,9 +760,9 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 					delete(outputSlots, ev.OutputIndex)
 				case ev.Item.Type == "custom_tool_call" && slot != nil && slot.block.grammar != nil:
 					// pi: item.input ?? the input accumulated so far.
-					finalInput := ev.Item.Input
-					if !ev.ItemHasInput {
-						finalInput = grammarInput(slot.block)
+					finalInput := grammarInput(slot.block)
+					if ev.Item.Input != nil {
+						finalInput = *ev.Item.Input
 					}
 					if gerr := appendGrammarInput(slot, finalInput, true); gerr != nil {
 						return gerr
@@ -1351,26 +1357,25 @@ type responsesEvent struct {
 	Delta     string `json:"delta"`
 	Arguments string `json:"arguments"`
 	// Input carries response.custom_tool_call_input.done's final raw input.
-	Input string `json:"input"`
-	// ItemHasInput records whether item.input was present at all (pi's
-	// `item.input ?? …` distinguishes an absent field from an empty string).
-	ItemHasInput bool                  `json:"-"`
-	Code         string                `json:"code"`
-	Message      string                `json:"message"`
-	OutputIndex  int                   `json:"output_index"`
-	Part         *responsesContentPart `json:"part"`
-	Item         *responsesItem        `json:"item"`
-	RawItem      json.RawMessage       `json:"-"`
-	Response     *responsesPayload     `json:"response"`
+	Input       string                `json:"input"`
+	Code        string                `json:"code"`
+	Message     string                `json:"message"`
+	OutputIndex int                   `json:"output_index"`
+	Part        *responsesContentPart `json:"part"`
+	Item        *responsesItem        `json:"item"`
+	RawItem     json.RawMessage       `json:"-"`
+	Response    *responsesPayload     `json:"response"`
 }
 
 type responsesItem struct {
-	Type             string                 `json:"type"`
-	ID               string                 `json:"id"`
-	CallID           string                 `json:"call_id"`
-	Name             string                 `json:"name"`
-	Arguments        string                 `json:"arguments"`
-	Input            string                 `json:"input"`
+	Type      string `json:"type"`
+	ID        string `json:"id"`
+	CallID    string `json:"call_id"`
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
+	// Input is a pointer so an absent field is distinguishable from an
+	// empty string, which pi's `item.input ?? …` depends on.
+	Input            *string                `json:"input"`
 	Phase            string                 `json:"phase"`
 	EncryptedContent string                 `json:"encrypted_content"`
 	Summary          []responsesContentPart `json:"summary"`
@@ -1428,12 +1433,6 @@ func iterateOpenAISSE2(body io.Reader, ctx context.Context, handle func(response
 		}
 		if json.Unmarshal([]byte(data), &probe) == nil {
 			ev.RawItem = probe.Item
-			var itemProbe struct {
-				Input *string `json:"input"`
-			}
-			if json.Unmarshal(probe.Item, &itemProbe) == nil {
-				ev.ItemHasInput = itemProbe.Input != nil
-			}
 		}
 		if err := handle(ev); err != nil {
 			return err

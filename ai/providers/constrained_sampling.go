@@ -150,7 +150,7 @@ func resolveGrammarSampling(tool ai.Tool, supportsOpenAIGrammarTools bool) (*gra
 	}
 	inputProperty, err := inferGrammarInputProperty(tool)
 	if err != nil {
-		return nil, fmt.Errorf("Tool %s cannot use grammar constrained sampling: %s.", quoteRaw(tool.Name), err)
+		return nil, fmt.Errorf("Tool %s cannot use grammar constrained sampling: %w.", quoteRaw(tool.Name), err)
 	}
 	return &grammarSampling{format: format, definition: definition, inputProperty: inputProperty}, nil
 }

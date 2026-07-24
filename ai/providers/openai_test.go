@@ -1417,7 +1417,7 @@ func TestOpenAIGrammarToolSerialization(t *testing.T) {
 // pi: a json_schema-constrained tool sends strict:true where strict is supported
 // and fails outright where "require" cannot be honored.
 func TestOpenAIJSONSchemaStrictSampling(t *testing.T) {
-	tool := func(strict string) ai.Tool {
+	tool := func(strict ai.ConstrainedSamplingStrictness) ai.Tool {
 		return ai.Tool{
 			Name: "js", Description: "d", Parameters: ai.Object(ai.Prop("x", ai.Integer())),
 			ConstrainedSampling: &ai.ConstrainedSamplingConfig{Type: ai.ConstrainedSamplingJSONSchema, Strict: strict},

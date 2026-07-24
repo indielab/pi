@@ -435,24 +435,30 @@ func UnmarshalMessage(data []byte) (Message, error) {
 // Tools and context
 // ---------------------------------------------------------------------------
 
+// ConstrainedSamplingType is the discriminant of ConstrainedSamplingConfig.
+type ConstrainedSamplingType string
+
 // Constrained-sampling kinds (ConstrainedSamplingConfig.Type).
 const (
 	// ConstrainedSamplingJSONSchema asks the provider to constrain sampling to
 	// the tool's JSON schema — the concept most APIs expose as `strict`.
-	ConstrainedSamplingJSONSchema = "json_schema"
+	ConstrainedSamplingJSONSchema ConstrainedSamplingType = "json_schema"
 	// ConstrainedSamplingGrammar asks the provider to constrain sampling to a
 	// grammar supplied in one of the provider-specific Variants.
-	ConstrainedSamplingGrammar = "grammar"
+	ConstrainedSamplingGrammar ConstrainedSamplingType = "grammar"
 )
+
+// ConstrainedSamplingStrictness is how hard a json_schema config insists.
+type ConstrainedSamplingStrictness string
 
 // Constrained-sampling strictness levels (ConstrainedSamplingConfig.Strict).
 const (
 	// ConstrainedSamplingPrefer uses strict sampling where available and falls
 	// back to unconstrained sampling elsewhere.
-	ConstrainedSamplingPrefer = "prefer"
+	ConstrainedSamplingPrefer ConstrainedSamplingStrictness = "prefer"
 	// ConstrainedSamplingRequire fails the request when the model cannot
 	// constrain sampling to the schema.
-	ConstrainedSamplingRequire = "require"
+	ConstrainedSamplingRequire ConstrainedSamplingStrictness = "require"
 )
 
 // GrammarVariants holds provider-specific encodings of the same intended
@@ -471,27 +477,38 @@ type GrammarVariants struct {
 // (and unmarshals from) JSON `false`, pi's "explicitly unconstrained" spelling,
 // and is treated exactly like no config at all.
 type ConstrainedSamplingConfig struct {
-	Type     string          `json:"type"`
-	Strict   string          `json:"strict,omitempty"`
-	Variants GrammarVariants `json:"variants,omitempty"`
+	Type     ConstrainedSamplingType       `json:"type"`
+	Strict   ConstrainedSamplingStrictness `json:"strict"`
+	Variants GrammarVariants               `json:"variants"`
 }
 
 // MarshalJSON emits only the fields belonging to the configured Type, matching
-// pi's discriminated union (and `false` for the disabled zero value).
+// pi's discriminated union (and `false` for the disabled zero value). An
+// unrecognized Type is an error rather than a silent downgrade to `false`,
+// which would quietly drop the caller's constrained-sampling request.
 func (c ConstrainedSamplingConfig) MarshalJSON() ([]byte, error) {
 	switch c.Type {
 	case ConstrainedSamplingJSONSchema:
+		strict := c.Strict
+		if strict == "" {
+			// pi's union admits only "prefer"|"require"; "" is not a value a
+			// pi consumer would accept, and prefer is this field's default.
+			strict = ConstrainedSamplingPrefer
+		}
 		return json.Marshal(struct {
-			Type   string `json:"type"`
-			Strict string `json:"strict"`
-		}{c.Type, c.Strict})
+			Type   ConstrainedSamplingType       `json:"type"`
+			Strict ConstrainedSamplingStrictness `json:"strict"`
+		}{c.Type, strict})
 	case ConstrainedSamplingGrammar:
 		return json.Marshal(struct {
-			Type     string          `json:"type"`
-			Variants GrammarVariants `json:"variants"`
+			Type     ConstrainedSamplingType `json:"type"`
+			Variants GrammarVariants         `json:"variants"`
 		}{c.Type, c.Variants})
-	default:
+	case "":
 		return []byte("false"), nil
+	default:
+		return nil, fmt.Errorf("ai: unknown constrained sampling type %q, want %q or %q",
+			c.Type, ConstrainedSamplingJSONSchema, ConstrainedSamplingGrammar)
 	}
 }
 
@@ -501,8 +518,24 @@ func (c *ConstrainedSamplingConfig) UnmarshalJSON(data []byte) error {
 		*c = ConstrainedSamplingConfig{}
 		return nil
 	}
+	// Reject a non-object outright: wrapping json's error here would surface
+	// the private shim type ("cannot unmarshal bool into ... ai.alias"), which
+	// tells a caller nothing about the spellings this field accepts.
+	if s := bytes.TrimSpace(data); len(s) == 0 || s[0] != '{' {
+		return fmt.Errorf("ai: constrainedSampling: want false or an object with type %q or %q",
+			ConstrainedSamplingJSONSchema, ConstrainedSamplingGrammar)
+	}
 	type alias ConstrainedSamplingConfig
-	return json.Unmarshal(data, (*alias)(c))
+	if err := json.Unmarshal(data, (*alias)(c)); err != nil {
+		return fmt.Errorf("ai: constrainedSampling: %w", err)
+	}
+	switch c.Type {
+	case ConstrainedSamplingJSONSchema, ConstrainedSamplingGrammar:
+		return nil
+	default:
+		return fmt.Errorf("ai: unknown constrained sampling type %q, want %q or %q",
+			c.Type, ConstrainedSamplingJSONSchema, ConstrainedSamplingGrammar)
+	}
 }
 
 // Tool is a tool definition exposed to the model.

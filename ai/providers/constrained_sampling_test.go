@@ -14,7 +14,7 @@ func grammarParams() *ai.Schema {
 	return ai.Object(ai.Prop("query", ai.String()))
 }
 
-func jsonSchemaTool(name, strict string) ai.Tool {
+func jsonSchemaTool(name string, strict ai.ConstrainedSamplingStrictness) ai.Tool {
 	return ai.Tool{
 		Name: name, Description: "d", Parameters: grammarParams(),
 		ConstrainedSampling: &ai.ConstrainedSamplingConfig{

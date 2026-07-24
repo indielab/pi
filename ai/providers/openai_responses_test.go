@@ -1792,3 +1792,102 @@ data: [DONE]
 		t.Fatalf("final tool call = %#v", final.Content)
 	}
 }
+
+// TestResponsesGrammarSeededInput: output_item.added may carry a non-empty
+// `input`, which pi seeds the tool-call arguments with (`item.input || ""`)
+// while leaving the delta buffer empty — so the first emitted delta re-emits the
+// seed together with the first streamed chunk.
+//
+// Expectation captured from pi 0.82.0 (dist/api/openai-responses.js) driven over
+// a local SSE server: deltas were ["{\"query\":\"SELECT 1", "\"}"].
+func TestResponsesGrammarSeededInput(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r1"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":"SEL"}}
+
+data: {"type":"response.custom_tool_call_input.delta","output_index":0,"delta":"ECT 1"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":"SELECT 1"}}
+
+data: {"type":"response.completed","response":{"id":"r1","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}
+
+data: [DONE]
+
+`
+	deltas, final := runResponsesGrammarSSE(t, sse)
+	assertDeltas(t, deltas, []string{`{"query":"SELECT 1`, `"}`})
+	assertGrammarArgs(t, final, "query", "SELECT 1")
+}
+
+// TestResponsesGrammarDoneWithoutInput: output_item.done may omit `input`
+// entirely, where pi's `item.input ?? …` falls back to the input accumulated so
+// far. An absent field is NOT the same as an empty string, which is why
+// responsesItem.Input is a *string.
+//
+// Expectation captured from pi 0.82.0 the same way: ["{\"query\":\"SELECT 2", "\"}"].
+func TestResponsesGrammarDoneWithoutInput(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r1"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":""}}
+
+data: {"type":"response.custom_tool_call_input.delta","output_index":0,"delta":"SELECT 2"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram"}}
+
+data: {"type":"response.completed","response":{"id":"r1","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}
+
+data: [DONE]
+
+`
+	deltas, final := runResponsesGrammarSSE(t, sse)
+	assertDeltas(t, deltas, []string{`{"query":"SELECT 2`, `"}`})
+	assertGrammarArgs(t, final, "query", "SELECT 2")
+}
+
+func runResponsesGrammarSSE(t *testing.T, sse string) ([]string, *ai.AssistantMessage) {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+
+	model := grammarResponsesModel(`{"supportsOpenAIGrammarTools":true}`)
+	model.BaseURL = server.URL
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
+	stream := StreamOpenAIResponses(context.Background(), model, req,
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{APIKey: "sk"}})
+
+	var deltas []string
+	for ev := range stream.Events() {
+		if ev.Type == ai.EventToolCallDelta {
+			deltas = append(deltas, ev.Delta)
+		}
+	}
+	return deltas, stream.Result()
+}
+
+func assertDeltas(t *testing.T, got, want []string) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("deltas = %#v, want %#v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("delta %d = %q, want %q", i, got[i], want[i])
+		}
+	}
+}
+
+func assertGrammarArgs(t *testing.T, final *ai.AssistantMessage, property, want string) {
+	t.Helper()
+	for _, c := range final.Content {
+		if tc, ok := c.(ai.ToolCall); ok {
+			if got, _ := tc.Arguments[property].(string); got != want {
+				t.Fatalf("arguments[%q] = %q, want %q", property, got, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("no tool call in final message (stop=%s err=%s)", final.StopReason, final.ErrorMessage)
+}
