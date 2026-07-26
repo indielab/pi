@@ -17,6 +17,11 @@ type ModelsStoreEntry struct {
 	// CheckedAt is the Unix-millisecond timestamp of the last completed remote
 	// check; 0 when never checked (pi checkedAt?).
 	CheckedAt int64 `json:"checkedAt,omitempty"`
+	// Etag is the opaque validator from the remote catalog's ETag header, stored
+	// verbatim (quotes included) and echoed back as If-None-Match; "" when unknown
+	// (pi etag?, upstream b1c444d9). Latent in the SDK: consumed by hosts that
+	// revalidate remote catalogs against their last-seen ETag.
+	Etag string `json:"etag,omitempty"`
 }
 
 // ModelsStore is persistent model-catalog storage keyed by provider id. Apps
@@ -60,7 +65,7 @@ func (s *InMemoryModelsStore) Read(providerID string) (*ModelsStoreEntry, error)
 	if !ok {
 		return nil, nil
 	}
-	out := ModelsStoreEntry{Models: make([]*Model, len(stored.Models)), LastModified: stored.LastModified, CheckedAt: stored.CheckedAt}
+	out := ModelsStoreEntry{Models: make([]*Model, len(stored.Models)), LastModified: stored.LastModified, CheckedAt: stored.CheckedAt, Etag: stored.Etag}
 	copy(out.Models, stored.Models)
 	return &out, nil
 }
@@ -69,7 +74,7 @@ func (s *InMemoryModelsStore) Read(providerID string) (*ModelsStoreEntry, error)
 func (s *InMemoryModelsStore) Write(providerID string, entry ModelsStoreEntry) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	stored := ModelsStoreEntry{Models: make([]*Model, len(entry.Models)), LastModified: entry.LastModified, CheckedAt: entry.CheckedAt}
+	stored := ModelsStoreEntry{Models: make([]*Model, len(entry.Models)), LastModified: entry.LastModified, CheckedAt: entry.CheckedAt, Etag: entry.Etag}
 	copy(stored.Models, entry.Models)
 	s.entries[providerID] = stored
 	return nil

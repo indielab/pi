@@ -20,3 +20,19 @@ func TestModelsStoreEntryLastModifiedRoundTrip(t *testing.T) {
 		t.Errorf("CheckedAt = %d, want 1721577601000", got.CheckedAt)
 	}
 }
+
+// TestModelsStoreEntryEtagRoundTrip locks that the store preserves the ETag
+// validator across Write/Read (upstream b1c444d9).
+func TestModelsStoreEntryEtagRoundTrip(t *testing.T) {
+	store := NewInMemoryModelsStore()
+	if err := store.Write("p", ModelsStoreEntry{Etag: `"abc123"`}); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+	got, err := store.Read("p")
+	if err != nil || got == nil {
+		t.Fatalf("read: %+v (err %v)", got, err)
+	}
+	if got.Etag != `"abc123"` {
+		t.Errorf("Etag = %q, want %q", got.Etag, `"abc123"`)
+	}
+}
