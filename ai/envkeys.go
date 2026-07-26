@@ -5,6 +5,13 @@ import (
 	"path/filepath"
 )
 
+// AnthropicAuthTokenEnv holds a bearer token sent as Authorization: Bearer
+// rather than x-api-key. It participates in env discovery/status, but
+// GetEnvApiKey skips it because it is not an API key (pi env-api-keys.ts
+// ANTHROPIC_AUTH_TOKEN_ENV, upstream 24e5cc04). The anthropic provider reads it
+// directly and, when present, authenticates via the Authorization header.
+const AnthropicAuthTokenEnv = "ANTHROPIC_AUTH_TOKEN"
+
 // apiKeyEnvVars returns the environment variable names that can provide an API
 // key for a provider, in precedence order.
 func apiKeyEnvVars(provider string) []string {
@@ -12,8 +19,10 @@ func apiKeyEnvVars(provider string) []string {
 	case "github-copilot":
 		return []string{"COPILOT_GITHUB_TOKEN"}
 	case "anthropic":
-		// ANTHROPIC_OAUTH_TOKEN takes precedence over ANTHROPIC_API_KEY.
-		return []string{"ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}
+		// ANTHROPIC_AUTH_TOKEN participates in discovery/status but is sent as
+		// Authorization: Bearer (see GetEnvApiKey); ANTHROPIC_OAUTH_TOKEN takes
+		// precedence over ANTHROPIC_API_KEY.
+		return []string{AnthropicAuthTokenEnv, "ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"}
 	}
 	envMap := map[string]string{
 		"ant-ling":               "ANT_LING_API_KEY",
@@ -92,7 +101,22 @@ const ambientAuthMarker = "<authenticated>"
 // the OS environment.
 func GetEnvApiKey(provider string, env map[string]string) string {
 	if keys := FindEnvKeys(provider, env); len(keys) > 0 {
-		return ProviderEnvValue(keys[0], env)
+		// ANTHROPIC_AUTH_TOKEN is a bearer token, not an API key: skip it so the
+		// key slot falls to ANTHROPIC_OAUTH_TOKEN/ANTHROPIC_API_KEY (pi getEnvApiKey,
+		// upstream 24e5cc04). The provider consults the auth token separately.
+		apiKeyEnv := keys[0]
+		if provider == "anthropic" {
+			apiKeyEnv = ""
+			for _, k := range keys {
+				if k != AnthropicAuthTokenEnv {
+					apiKeyEnv = k
+					break
+				}
+			}
+		}
+		if apiKeyEnv != "" {
+			return ProviderEnvValue(apiKeyEnv, env)
+		}
 	}
 
 	switch provider {

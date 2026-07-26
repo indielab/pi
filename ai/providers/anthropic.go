@@ -335,15 +335,26 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 		}
 
 		apiKey := opts.APIKey
-		if apiKey == "" {
+		// pi anthropicApiKeyAuth.resolve() consults ANTHROPIC_AUTH_TOKEN ahead of
+		// the OAuth/API-key env vars and, when set, authenticates via
+		// Authorization: Bearer (upstream 24e5cc04). GetEnvApiKey deliberately
+		// skips it, so the compat path never surfaces it as opts.APIKey; read it
+		// here so the auth token wins over a stored ANTHROPIC_API_KEY, matching pi.
+		authToken := ""
+		if model.Provider == "anthropic" {
+			authToken = ai.ProviderEnvValue(ai.AnthropicAuthTokenEnv, opts.Env)
+		}
+		if apiKey == "" && authToken == "" {
 			fail(fmt.Errorf("No API key for provider: %s", model.Provider))
 			return
 		}
 		// pi createClient checks the cloudflare-ai-gateway and github-copilot
 		// provider branches BEFORE sniffing the key for an OAuth token
 		// (anthropic.ts:802,826,848) — those branches always report
-		// isOAuthToken=false even for sk-ant-oat keys.
-		oauth := model.Provider != "cloudflare-ai-gateway" &&
+		// isOAuthToken=false even for sk-ant-oat keys. An auth-token request is a
+		// plain bearer credential, not OAuth, so it never triggers the OAuth body.
+		oauth := authToken == "" &&
+			model.Provider != "cloudflare-ai-gateway" &&
 			model.Provider != "github-copilot" &&
 			isOAuthToken(apiKey)
 
@@ -392,7 +403,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 			if err != nil {
 				return nil, err
 			}
-			applyAnthropicHeaders(r, model, opts, oauth, apiKey, len(req.Tools) > 0, req.Messages)
+			applyAnthropicHeaders(r, model, opts, oauth, apiKey, authToken, len(req.Tools) > 0, req.Messages)
 			return r, nil
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, anthropicSDKErrorMessage))
@@ -1027,7 +1038,7 @@ func convertContentBlocks(content ai.ContentList) any {
 	return blocks
 }
 
-func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey string, hasTools bool, messages []ai.Message) {
+func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey, authToken string, hasTools bool, messages []ai.Message) {
 	r.Header.Set("content-type", "application/json")
 	r.Header.Set("accept", "application/json")
 	r.Header.Set("anthropic-version", anthropicVersion)
@@ -1054,8 +1065,15 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 
 	// Branch order mirrors pi createClient (anthropic.ts:802,826,848,870):
 	// cloudflare-ai-gateway, then github-copilot, then the OAuth sniff, then
-	// plain api-key auth.
+	// plain api-key auth. The ANTHROPIC_AUTH_TOKEN bearer path (upstream 24e5cc04)
+	// sits ahead of them: it is set only for the anthropic provider and, like pi's
+	// resolve(), sends Authorization: Bearer with the normal (non-OAuth) betas.
 	switch {
+	case authToken != "":
+		r.Header.Set("authorization", "Bearer "+authToken)
+		if len(betas) > 0 {
+			r.Header.Set("anthropic-beta", strings.Join(betas, ","))
+		}
 	case model.Provider == "cloudflare-ai-gateway":
 		// pi: cf-aig-authorization carries the key; x-api-key and
 		// Authorization are explicitly nulled (anthropic.ts:812-814).

@@ -669,6 +669,55 @@ func TestAnthropicCopilotDynamicHeaders(t *testing.T) {
 	}
 }
 
+// --- E2b: ANTHROPIC_AUTH_TOKEN bearer auth (upstream 24e5cc04) ---
+
+func TestAnthropicAuthTokenBearerHeader(t *testing.T) {
+	model := &ai.Model{
+		ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", MaxTokens: 4096,
+	}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	// No API key: the auth token alone must authenticate the request.
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{
+		Env: map[string]string{ai.AnthropicAuthTokenEnv: "my-auth-token"},
+	}}
+	headers, _ := anthropicCapture(t, model, req, opts, anthropicSSE)
+
+	if got := headers.Get("authorization"); got != "Bearer my-auth-token" {
+		t.Fatalf("authorization wrong: %q", got)
+	}
+	if got := headers.Get("x-api-key"); got != "" {
+		t.Fatalf("x-api-key must not be set for auth-token auth: %q", got)
+	}
+	// Auth token is a plain bearer credential, not OAuth: no Claude Code identity.
+	if strings.Contains(headers.Get("anthropic-beta"), "oauth-2025-04-20") {
+		t.Fatalf("oauth betas must not be sent for auth-token auth: %q", headers.Get("anthropic-beta"))
+	}
+	if headers.Get("x-app") != "" {
+		t.Fatalf("x-app must not be set for auth-token auth")
+	}
+}
+
+func TestAnthropicAuthTokenWinsOverApiKey(t *testing.T) {
+	model := &ai.Model{
+		ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", MaxTokens: 4096,
+	}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	// pi resolve() checks ANTHROPIC_AUTH_TOKEN before falling back to the API key,
+	// so the bearer token wins even when a key is also present.
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{
+		APIKey: "sk-ant-plain-key",
+		Env:    map[string]string{ai.AnthropicAuthTokenEnv: "tok"},
+	}}
+	headers, _ := anthropicCapture(t, model, req, opts, anthropicSSE)
+
+	if got := headers.Get("authorization"); got != "Bearer tok" {
+		t.Fatalf("authorization wrong: %q", got)
+	}
+	if got := headers.Get("x-api-key"); got != "" {
+		t.Fatalf("x-api-key must not be set when auth token wins: %q", got)
+	}
+}
+
 // --- E3: thinking tri-state ---
 
 func TestAnthropicThinkingOmittedWhenNotProvided(t *testing.T) {

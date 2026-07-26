@@ -132,3 +132,33 @@ func TestQwenTokenPlanEnvKeys(t *testing.T) {
 		}
 	}
 }
+
+// pi 24e5cc04: ANTHROPIC_AUTH_TOKEN participates in discovery/status but is a
+// bearer token, not an API key, so GetEnvApiKey skips it and the key slot falls
+// to ANTHROPIC_OAUTH_TOKEN/ANTHROPIC_API_KEY.
+func TestAnthropicAuthTokenSkippedByGetEnvApiKey(t *testing.T) {
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_OAUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+
+	// Discovery lists the auth token first, ahead of oauth and api-key.
+	if vars := apiKeyEnvVars("anthropic"); len(vars) != 3 || vars[0] != AnthropicAuthTokenEnv ||
+		vars[1] != "ANTHROPIC_OAUTH_TOKEN" || vars[2] != "ANTHROPIC_API_KEY" {
+		t.Fatalf("apiKeyEnvVars(anthropic) = %v", vars)
+	}
+
+	// Only the auth token set: it is discovered, but the key slot is empty.
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "tok")
+	if keys := FindEnvKeys("anthropic", nil); len(keys) != 1 || keys[0] != AnthropicAuthTokenEnv {
+		t.Fatalf("FindEnvKeys should discover the auth token: %v", keys)
+	}
+	if got := GetEnvApiKey("anthropic", nil); got != "" {
+		t.Fatalf("GetEnvApiKey must skip the auth token: got %q", got)
+	}
+
+	// With an API key also set, the key slot uses it (never the auth token).
+	t.Setenv("ANTHROPIC_API_KEY", "sk-real")
+	if got := GetEnvApiKey("anthropic", nil); got != "sk-real" {
+		t.Fatalf("GetEnvApiKey should return the api key: got %q", got)
+	}
+}
