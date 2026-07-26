@@ -343,6 +343,40 @@ func TestModelsRefreshOAuthBeforeModels(t *testing.T) {
 	}
 }
 
+// TestModelsErrorKeepsCause mirrors pi "keeps the underlying reason in wrapped
+// oauth refresh errors" (upstream 4cf0a729). Go's ModelsError.Error() already
+// composes code + message + cause, so the wrapped reason is surfaced to callers
+// that print err.Error(); this locks that a failed OAuth refresh keeps its cause.
+func TestModelsErrorKeepsCause(t *testing.T) {
+	creds := NewInMemoryCredentialStore()
+	_, _ = creds.Modify("p1", func(*Credential) (*Credential, error) {
+		return &Credential{Type: CredentialOAuth, Refresh: "r", Access: "old", Expires: 0}, nil
+	})
+	m := modelsWithEnv(nil, &CreateModelsOptions{Credentials: creds})
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID: "p1",
+		Auth: ProviderAuth{OAuth: &OAuthAuth{
+			Name: "p1",
+			Refresh: func(context.Context, OAuthCredentials) (OAuthCredentials, error) {
+				return OAuthCredentials{}, errors.New("token refresh failed (400): invalid_grant")
+			},
+			ToAuth: func(c OAuthCredentials) (ModelAuth, error) { return ModelAuth{APIKey: c.Access}, nil },
+		}},
+	}))
+
+	_, err := m.GetAuth(&Model{Provider: "p1", ID: "m", Api: "api"}, nil)
+	var me *ModelsError
+	if !errors.As(err, &me) || me.Code != ErrOAuth {
+		t.Fatalf("want an ErrOAuth ModelsError, got %v", err)
+	}
+	if !strings.Contains(err.Error(), "OAuth refresh failed for p1") {
+		t.Fatalf("error must keep the wrapper message: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "token refresh failed (400): invalid_grant") {
+		t.Fatalf("error must keep the underlying cause: %q", err.Error())
+	}
+}
+
 // TestModelsRefreshAborted mirrors pi "returns aborted state without
 // reporting cancellation as a provider error".
 func TestModelsRefreshAborted(t *testing.T) {
