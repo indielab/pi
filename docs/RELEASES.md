@@ -20,6 +20,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.82.15`](#v08215) | 2026-07-26 | `b3785a1` | `5bc1c2c0` | pi-ai 0.82.1 | Release v0.82.1 crossed but catalog byte-identical to 0.82.0 (no regen); `ANTHROPIC_AUTH_TOKEN` bearer auth via a custom anthropic resolver (credential-first precedence, `Authorization: Bearer`, never `x-api-key`); `ModelsStoreEntry.etag` for remote-catalog ETag revalidation (latent); ModelsError keeps its underlying cause (already faithful in Go, locked) |
 | [`v0.82.14`](#v08214) | 2026-07-24 | `b017378` | `7df73a00` | pi-ai 0.82.0 | Catalog 0.81.1→0.82.0 (456,576 B, +19/−1 models); constrained sampling — JSON-schema `strict` and Lark/regex grammar tools across anthropic/openai-completions/openai-responses/google, incl. `custom` tool calls and streaming grammar deltas; abortable provider retries with fail-fast on oversized `Retry-After`; explicit prompt-cache mode for GPT-5.6+ |
 | [`v0.81.13`](#v08113) | 2026-07-21 | `b224be0` | `dd6bea41` | pi-ai 0.81.1 | Catalog 0.80.10→0.81.1 (2 upstream tags, 431,732 B) + Qwen Token Plan built-ins; tool_call_id item-level uniqueness ({call_id}_{item_id}); RetryAssistantCall bounded-backoff retry loop; compaction retainedTail reconstruction; credential env-section passthrough on env-key + ambient resolvers |
 | [`v0.80.12`](#v08012) | 2026-07-17 | `7cc7772` | `a9f6a315` | pi-ai 0.80.10 | Catalog 0.80.7→0.80.10 (3 upstream tags); model-runtime facade ported SDK-scoped (ModelsStore, refresh/checkAuth/getAvailable/login/logout, header transforms, force flag); Kimi K3 deferred tools live on openai-completions; xai default grok-4.5 + encrypted-reasoning include; Responses early-EOF retry |
@@ -38,6 +39,36 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.82.15
+
+- **Tagged commit**: `b3785a1`
+- **Upstream pin**: `5bc1c2c0` (delta `7df73a00..5bc1c2c0`, 19 first-parent changes — 3 ports, 15 n/a, 0 decides)
+- **npm catalog**: `@earendil-works/pi-ai` 0.82.1 / `pi-coding-agent` 0.82.1
+- **Release crossed**: v0.82.1 (`b4f29368`), one tag — but `models.generated.ts`
+  is unchanged across the range, so the catalog is **byte-identical to 0.82.0**
+  (456,576 B) and no re-derivation ran; every byte-golden is untouched.
+
+Headline is **`ANTHROPIC_AUTH_TOKEN` support** (upstream `24e5cc04`, #6148): the
+token participates in env discovery/status but authenticates as
+`Authorization: Bearer` — never `x-api-key`. Upstream swaps anthropic from the
+generic env-key auth to a custom `anthropicApiKeyAuth` whose precedence is
+**stored/explicit credential → `ANTHROPIC_AUTH_TOKEN` (header) →
+`ANTHROPIC_OAUTH_TOKEN`/`ANTHROPIC_API_KEY` (api key)**. The Go port mirrors that
+with a custom resolver on the facade (`ModelAuth.Headers`) plus compat-path
+handling (`withEnvAPIKey` leaves the api key empty when the token is active; the
+provider reads it only when no key resolved), so credential-first precedence
+holds on both paths — an explicit request key beats the env token, and the env
+token beats a plain `ANTHROPIC_API_KEY`.
+
+The initial port inverted that precedence (the env token overrode an explicit
+key, and the facade `GetAuth` surfaced the token as an api key); both independent
+reviews caught it and it was fixed before shipping.
+
+Also this cycle: **`ModelsStoreEntry.etag`** (`b1c444d9`) — a latent field
+carrying the remote catalog's ETag validator for host-side revalidation; and a
+regression lock that **`ModelsError` keeps its underlying cause** (`4cf0a729`),
+which Go's `Error()` already did.
 
 ### v0.82.14
 
