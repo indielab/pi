@@ -48,6 +48,13 @@ func BuiltinModels() MutableModels {
 // resolver that defers to GetEnvApiKey, preserving the exact ambient-detection
 // behavior of the compat path.
 func builtinProviderAuth(providerID string) ProviderAuth {
+	if providerID == "anthropic" {
+		// Anthropic resolves auth in a custom order (upstream 24e5cc04): a stored
+		// key wins, then ANTHROPIC_AUTH_TOKEN authenticates via an Authorization
+		// header, then the oauth/api-key env vars. The generic EnvAPIKeyAuth would
+		// wrongly surface the auth token as an api key (→ x-api-key).
+		return ProviderAuth{APIKey: anthropicAPIKeyAuth()}
+	}
 	if vars := apiKeyEnvVars(providerID); len(vars) > 0 {
 		return ProviderAuth{APIKey: EnvAPIKeyAuth(providerID, vars...)}
 	}
@@ -67,6 +74,39 @@ func builtinProviderAuth(providerID string) ProviderAuth {
 			return &AuthResult{Auth: ModelAuth{APIKey: key}}, nil
 		},
 	}}
+}
+
+// anthropicAPIKeyAuth mirrors pi anthropicApiKeyAuth() (upstream 24e5cc04): a
+// stored credential key wins; otherwise ANTHROPIC_AUTH_TOKEN authenticates via
+// an Authorization: Bearer header (never x-api-key), and only if it is absent do
+// ANTHROPIC_OAUTH_TOKEN/ANTHROPIC_API_KEY resolve as api keys. This keeps the
+// facade GetAuth/Stream path byte-faithful and preserves pi's credential-first
+// precedence, which the generic env-key resolver could not express.
+func anthropicAPIKeyAuth() *ApiKeyAuth {
+	return &ApiKeyAuth{
+		Name: "Anthropic API key",
+		Login: func(interaction AuthInteraction) (*Credential, error) {
+			key, err := interaction.Prompt(AuthPrompt{Type: AuthPromptSecret, Message: "Enter Anthropic API key"})
+			if err != nil {
+				return nil, err
+			}
+			return &Credential{Type: CredentialAPIKey, Key: key}, nil
+		},
+		Resolve: func(ctx AuthContext, credential *Credential) (*AuthResult, error) {
+			if credential != nil && credential.Key != "" {
+				return &AuthResult{Auth: ModelAuth{APIKey: credential.Key}, Env: credential.Env, Source: "stored credential"}, nil
+			}
+			if token := ctx.Env(AnthropicAuthTokenEnv); token != "" {
+				return &AuthResult{Auth: ModelAuth{Headers: map[string]string{"Authorization": "Bearer " + token}}, Source: AnthropicAuthTokenEnv}, nil
+			}
+			for _, envVar := range []string{"ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
+				if value := ctx.Env(envVar); value != "" {
+					return &AuthResult{Auth: ModelAuth{APIKey: value}, Source: envVar}, nil
+				}
+			}
+			return nil, nil
+		},
+	}
 }
 
 // builtinFilterModels returns the credential-specific availability policy for

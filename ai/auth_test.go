@@ -199,6 +199,42 @@ func TestEnvAPIKeyAuthResolve(t *testing.T) {
 	}
 }
 
+// TestAnthropicAPIKeyAuthResolve locks pi's anthropicApiKeyAuth precedence
+// (upstream 24e5cc04): stored key → ANTHROPIC_AUTH_TOKEN (Authorization header) →
+// ANTHROPIC_OAUTH_TOKEN/ANTHROPIC_API_KEY (api key).
+func TestAnthropicAPIKeyAuthResolve(t *testing.T) {
+	auth := anthropicAPIKeyAuth()
+
+	// Stored credential key wins over both the auth token and the api-key envs.
+	ctx := fakeAuthContext{env: map[string]string{
+		AnthropicAuthTokenEnv: "tok", "ANTHROPIC_API_KEY": "sk-env",
+	}}
+	res, err := auth.Resolve(ctx, &Credential{Type: CredentialAPIKey, Key: "stored"})
+	if err != nil || res == nil || res.Auth.APIKey != "stored" || res.Source != "stored credential" {
+		t.Fatalf("stored key should win: %+v (err %v)", res, err)
+	}
+
+	// Auth token authenticates via an Authorization header, never x-api-key, and
+	// beats a plain ANTHROPIC_API_KEY.
+	res, _ = auth.Resolve(fakeAuthContext{env: map[string]string{
+		AnthropicAuthTokenEnv: "tok", "ANTHROPIC_API_KEY": "sk-env",
+	}}, nil)
+	if res == nil || res.Auth.APIKey != "" || res.Auth.Headers["Authorization"] != "Bearer tok" || res.Source != AnthropicAuthTokenEnv {
+		t.Fatalf("auth token should resolve to a bearer header: %+v", res)
+	}
+
+	// Without the auth token, the api-key envs resolve as a key.
+	res, _ = auth.Resolve(fakeAuthContext{env: map[string]string{"ANTHROPIC_API_KEY": "sk-env"}}, nil)
+	if res == nil || res.Auth.APIKey != "sk-env" || res.Source != "ANTHROPIC_API_KEY" {
+		t.Fatalf("api-key fallback wrong: %+v", res)
+	}
+
+	// Unconfigured -> nil.
+	if res, _ := auth.Resolve(fakeAuthContext{}, nil); res != nil {
+		t.Fatalf("unconfigured should be nil, got %+v", res)
+	}
+}
+
 func TestResolveProviderAuthAPIKeyAmbient(t *testing.T) {
 	auth := ProviderAuth{APIKey: EnvAPIKeyAuth("Test", "TEST_KEY")}
 	store := NewInMemoryCredentialStore()

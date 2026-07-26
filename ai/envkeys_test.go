@@ -62,6 +62,37 @@ func TestWithEnvAPIKeyUsesScopedEnv(t *testing.T) {
 	}
 }
 
+// pi 24e5cc04: on the compat path, ANTHROPIC_AUTH_TOKEN must NOT resolve into
+// APIKey (it is a bearer credential the provider applies as an Authorization
+// header). withEnvAPIKey leaves APIKey empty when the token is active, so it
+// beats an env ANTHROPIC_API_KEY yet still yields to an explicit request key.
+func TestWithEnvAPIKeyLeavesAnthropicAuthTokenForProvider(t *testing.T) {
+	t.Setenv("ANTHROPIC_AUTH_TOKEN", "")
+	t.Setenv("ANTHROPIC_API_KEY", "")
+	model := &Model{Provider: "anthropic"}
+
+	// Auth token present (even alongside an api key): APIKey stays empty so the
+	// provider emits the bearer, matching pi's AUTH_TOKEN-beats-env-api-key order.
+	got := withEnvAPIKey(model, &StreamOptions{Env: map[string]string{
+		"ANTHROPIC_AUTH_TOKEN": "tok", "ANTHROPIC_API_KEY": "sk-env",
+	}})
+	if got.APIKey != "" {
+		t.Errorf("auth token must not resolve into APIKey: got %q", got.APIKey)
+	}
+
+	// No auth token: the env api key resolves normally.
+	got = withEnvAPIKey(model, &StreamOptions{Env: map[string]string{"ANTHROPIC_API_KEY": "sk-env"}})
+	if got.APIKey != "sk-env" {
+		t.Errorf("env api key should resolve when no auth token: got %q", got.APIKey)
+	}
+
+	// An explicit request key wins over the auth token.
+	got = withEnvAPIKey(model, &StreamOptions{APIKey: "explicit", Env: map[string]string{"ANTHROPIC_AUTH_TOKEN": "tok"}})
+	if got.APIKey != "explicit" {
+		t.Errorf("explicit key should win over the auth token: got %q", got.APIKey)
+	}
+}
+
 // The ambient-auth marker (GetEnvApiKey returns "<authenticated>" when a
 // provider is usable via ambient credentials with no explicit key — e.g. AWS
 // SDK default chain) must never be injected as a real API key by the compat

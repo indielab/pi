@@ -338,10 +338,12 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 		// pi anthropicApiKeyAuth.resolve() consults ANTHROPIC_AUTH_TOKEN ahead of
 		// the OAuth/API-key env vars and, when set, authenticates via
 		// Authorization: Bearer (upstream 24e5cc04). GetEnvApiKey deliberately
-		// skips it, so the compat path never surfaces it as opts.APIKey; read it
-		// here so the auth token wins over a stored ANTHROPIC_API_KEY, matching pi.
+		// skips it and withEnvAPIKey leaves APIKey empty when it is active, so the
+		// token surfaces here only when no key was resolved — an explicit request
+		// key or a stored credential (apiKey != "") wins over it, matching pi's
+		// credential-first precedence.
 		authToken := ""
-		if model.Provider == "anthropic" {
+		if model.Provider == "anthropic" && apiKey == "" {
 			authToken = ai.ProviderEnvValue(ai.AnthropicAuthTokenEnv, opts.Env)
 		}
 		if apiKey == "" && authToken == "" {

@@ -10,6 +10,13 @@ func hasExplicitAPIKey(key string) bool {
 	return strings.TrimSpace(key) != ""
 }
 
+// anthropicAuthTokenActive reports whether the anthropic bearer auth token is
+// set for this request. When it is, the compat path leaves APIKey unresolved so
+// the provider emits it as an Authorization header rather than x-api-key.
+func anthropicAuthTokenActive(model *Model, env map[string]string) bool {
+	return model.Provider == "anthropic" && ProviderEnvValue(AnthropicAuthTokenEnv, env) != ""
+}
+
 // scopedEnv returns the per-stream provider env overrides, or nil. Nil-safe so
 // callers can pass options that may be nil. These overrides are consulted ahead
 // of the OS environment when resolving the API key (pi 8eeaa2bc).
@@ -22,6 +29,13 @@ func scopedEnv(opts *StreamOptions) map[string]string {
 
 func withEnvAPIKey(model *Model, opts *StreamOptions) *StreamOptions {
 	if opts != nil && hasExplicitAPIKey(opts.APIKey) {
+		return opts
+	}
+	// ANTHROPIC_AUTH_TOKEN is a bearer credential the provider applies as an
+	// Authorization header, ahead of the env api keys (pi 24e5cc04). Leave APIKey
+	// empty so it never resolves to x-api-key; StreamAnthropic reads the token and
+	// emits the bearer. An explicit key (handled above) still wins over it.
+	if anthropicAuthTokenActive(model, scopedEnv(opts)) {
 		return opts
 	}
 	key := GetEnvApiKey(model.Provider, scopedEnv(opts))
@@ -45,6 +59,9 @@ func withEnvAPIKeySimple(model *Model, opts *SimpleStreamOptions) *SimpleStreamO
 	var simpleEnv map[string]string
 	if opts != nil {
 		simpleEnv = opts.Env
+	}
+	if anthropicAuthTokenActive(model, simpleEnv) {
+		return opts
 	}
 	key := GetEnvApiKey(model.Provider, simpleEnv)
 	if key == "" || key == ambientAuthMarker {

@@ -697,24 +697,25 @@ func TestAnthropicAuthTokenBearerHeader(t *testing.T) {
 	}
 }
 
-func TestAnthropicAuthTokenWinsOverApiKey(t *testing.T) {
+func TestAnthropicExplicitKeyBeatsAuthToken(t *testing.T) {
 	model := &ai.Model{
 		ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", MaxTokens: 4096,
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	// pi resolve() checks ANTHROPIC_AUTH_TOKEN before falling back to the API key,
-	// so the bearer token wins even when a key is also present.
+	// pi resolve() checks the stored/explicit credential key BEFORE the auth
+	// token, so a resolved apiKey wins over ANTHROPIC_AUTH_TOKEN. The provider
+	// only reads the token when no key was resolved (apiKey == "").
 	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{
 		APIKey: "sk-ant-plain-key",
 		Env:    map[string]string{ai.AnthropicAuthTokenEnv: "tok"},
 	}}
 	headers, _ := anthropicCapture(t, model, req, opts, anthropicSSE)
 
-	if got := headers.Get("authorization"); got != "Bearer tok" {
-		t.Fatalf("authorization wrong: %q", got)
+	if got := headers.Get("x-api-key"); got != "sk-ant-plain-key" {
+		t.Fatalf("explicit key must win: x-api-key = %q", got)
 	}
-	if got := headers.Get("x-api-key"); got != "" {
-		t.Fatalf("x-api-key must not be set when auth token wins: %q", got)
+	if got := headers.Get("authorization"); got != "" {
+		t.Fatalf("authorization must not be set when an explicit key wins: %q", got)
 	}
 }
 
