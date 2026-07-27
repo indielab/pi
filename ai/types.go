@@ -79,6 +79,11 @@ const (
 type StopReason string
 
 const (
+	// StopPending marks a partial assistant message whose stream has not yet
+	// reported a terminal reason. It is reserved for in-flight streaming events;
+	// a provider must replace it with a completion reason before the stream ends,
+	// so it never appears on a persisted (done/error) message.
+	StopPending StopReason = "pending"
 	StopStop    StopReason = "stop"
 	StopLength  StopReason = "length"
 	StopToolUse StopReason = "toolUse"

@@ -1379,6 +1379,128 @@ data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","
 	}
 }
 
+// Upstream f9a49869: the streaming partial starts with a pending stop reason and
+// resolves to "stop" as soon as a message item reaches the "final_answer" phase,
+// exposing the terminal reason mid-stream before response.completed arrives.
+func TestResponsesFinalAnswerPhaseResolvesPendingStop(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r"}}
+
+data: {"type":"response.output_item.added","item":{"type":"message","id":"msg_1"}}
+
+data: {"type":"response.content_part.added","part":{"type":"output_text","text":""}}
+
+data: {"type":"response.output_text.delta","delta":"Answer: 42"}
+
+data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1","phase":"final_answer","content":[{"type":"output_text","text":"Answer: 42"}]}}
+
+data: {"type":"response.completed","response":{"id":"r","status":"completed","usage":{"input_tokens":5,"output_tokens":3,"total_tokens":8}}}
+
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	t.Cleanup(server.Close)
+	model := reasoningModel()
+	model.BaseURL = server.URL
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	stream := StreamOpenAIResponses(context.Background(), model, req,
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{APIKey: "sk"}})
+
+	var startStop, textEndStop ai.StopReason
+	sawStart, sawTextEnd := false, false
+	for e := range stream.Events() {
+		switch e.Type {
+		case ai.EventStart:
+			sawStart = true
+			startStop = e.Partial.StopReason
+		case ai.EventTextEnd:
+			sawTextEnd = true
+			textEndStop = e.Partial.StopReason
+		}
+	}
+	final := stream.Result()
+
+	if !sawStart || startStop != ai.StopPending {
+		t.Fatalf("stream should start pending, got start=%v stop=%q", sawStart, startStop)
+	}
+	if !sawTextEnd || textEndStop != ai.StopStop {
+		t.Fatalf("final_answer phase must resolve partial to stop before terminal, got textEnd=%v stop=%q", sawTextEnd, textEndStop)
+	}
+	if final.StopReason != ai.StopStop {
+		t.Fatalf("final stop reason wrong: %s (%s)", final.StopReason, final.ErrorMessage)
+	}
+}
+
+// Upstream f9a49869: the final_answer phase also resolves the pending stop when
+// it arrives on the output_item.added event (the createSlot call site), not only
+// on output_item.done — the partial is stop from the very first *_start event.
+func TestResponsesFinalAnswerPhaseOnAddedResolvesStop(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r"}}
+
+data: {"type":"response.output_item.added","item":{"type":"message","id":"msg_1","phase":"final_answer"}}
+
+data: {"type":"response.content_part.added","part":{"type":"output_text","text":""}}
+
+data: {"type":"response.output_text.delta","delta":"hi"}
+
+data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1","phase":"final_answer","content":[{"type":"output_text","text":"hi"}]}}
+
+data: {"type":"response.completed","response":{"id":"r","status":"completed","usage":{"input_tokens":5,"output_tokens":1,"total_tokens":6}}}
+
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	t.Cleanup(server.Close)
+	model := reasoningModel()
+	model.BaseURL = server.URL
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	stream := StreamOpenAIResponses(context.Background(), model, req,
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{APIKey: "sk"}})
+
+	var textStartStop ai.StopReason
+	sawTextStart := false
+	for e := range stream.Events() {
+		if e.Type == ai.EventTextStart {
+			sawTextStart = true
+			textStartStop = e.Partial.StopReason
+		}
+	}
+	final := stream.Result()
+
+	if !sawTextStart || textStartStop != ai.StopStop {
+		t.Fatalf("phase on output_item.added must resolve partial to stop at text start, got textStart=%v stop=%q", sawTextStart, textStartStop)
+	}
+	if final.StopReason != ai.StopStop {
+		t.Fatalf("final stop reason wrong: %s (%s)", final.StopReason, final.ErrorMessage)
+	}
+}
+
+// Upstream f9a49869: a provisional "stop" set by the final_answer phase must be
+// overridden by the terminal event's real reason — an incomplete response still
+// maps to length, not the phase's stop.
+func TestResponsesIncompleteOverridesFinalAnswerStop(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r"}}
+
+data: {"type":"response.output_item.added","item":{"type":"message","id":"msg_1"}}
+
+data: {"type":"response.content_part.added","part":{"type":"output_text","text":""}}
+
+data: {"type":"response.output_text.delta","delta":"partial answer"}
+
+data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1","phase":"final_answer","content":[{"type":"output_text","text":"partial answer"}]}}
+
+data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","usage":{"input_tokens":20,"output_tokens":8,"total_tokens":28}}}
+
+`
+	final := runResponsesSSE(t, reasoningModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, sse)
+	if final.StopReason != ai.StopLength {
+		t.Fatalf("terminal incomplete must override the provisional final_answer stop, got %s (%s)", final.StopReason, final.ErrorMessage)
+	}
+}
+
 // Upstream cd95c274: a stream that ends without response.completed/.incomplete/
 // .failed fails with this exact message.
 func TestResponsesNoTerminalEventFailsStream(t *testing.T) {

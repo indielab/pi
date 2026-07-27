@@ -205,7 +205,7 @@ func newPiMessagesConverter(model *ai.Model) *piMessagesConverter {
 			Provider:   model.Provider,
 			Model:      model.ID,
 			Usage:      ai.Usage{},
-			StopReason: ai.StopStop,
+			StopReason: ai.StopPending,
 			Timestamp:  nowMillis(),
 		},
 		toolJSON: map[int]string{},

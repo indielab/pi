@@ -84,7 +84,13 @@ func TestPiMessagesStreamsTextAndToolCalls(t *testing.T) {
 	})
 
 	var sawTextDelta, toolEndCount int
+	var startStop ai.StopReason
+	sawStart := false
 	for ev := range es.Events() {
+		if ev.Type == ai.EventStart && ev.Partial != nil {
+			sawStart = true
+			startStop = ev.Partial.StopReason
+		}
 		if ev.Type == ai.EventTextDelta {
 			sawTextDelta++
 		}
@@ -94,6 +100,11 @@ func TestPiMessagesStreamsTextAndToolCalls(t *testing.T) {
 	}
 	final := es.Result()
 
+	// Upstream f9a49869: the in-flight partial carries a pending stop reason
+	// until the terminal `done` event resolves it.
+	if !sawStart || startStop != ai.StopPending {
+		t.Fatalf("in-flight partial should be pending, got start=%v stop=%q", sawStart, startStop)
+	}
 	if final.StopReason != ai.StopToolUse {
 		t.Fatalf("stopReason = %s, want toolUse (%s)", final.StopReason, final.ErrorMessage)
 	}

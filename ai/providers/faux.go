@@ -273,6 +273,8 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 func (r *FauxProviderRegistration) streamWithDeltas(ctx context.Context, stream *ai.AssistantMessageEventStream, message *ai.AssistantMessage) {
 	partial := message.Clone()
 	partial.Content = ai.ContentList{}
+	// The in-flight partial carries no terminal reason yet (upstream f9a49869).
+	partial.StopReason = ai.StopPending
 
 	abortNow := func() bool {
 		if ctx != nil && ctx.Err() != nil {
@@ -341,6 +343,14 @@ func (r *FauxProviderRegistration) streamWithDeltas(ctx context.Context, stream 
 		}
 	}
 
+	// A faux response that never resolved its stop reason is a test-authoring
+	// error; pi throws here (upstream f9a49869), which we surface as a stream error.
+	if message.StopReason == ai.StopPending {
+		errMsg := fauxErrorMessage(fmt.Errorf("Faux response ended without a stop reason"), message.Api, message.Provider, message.Model)
+		stream.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: ai.StopError, Error: errMsg})
+		stream.End()
+		return
+	}
 	if message.StopReason == ai.StopError || message.StopReason == ai.StopAborted {
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: message.StopReason, Error: message})
 		stream.End()

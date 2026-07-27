@@ -321,7 +321,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 	go func() {
 		output := &ai.AssistantMessage{
 			Content: ai.ContentList{}, Api: model.Api, Provider: model.Provider, Model: model.ID,
-			StopReason: ai.StopStop, Timestamp: nowMillis(),
+			StopReason: ai.StopPending, Timestamp: nowMillis(),
 		}
 		fail := func(err error) {
 			if ctx != nil && ctx.Err() != nil {
@@ -563,6 +563,10 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 		}
 		if ctx != nil && ctx.Err() != nil {
 			fail(fmt.Errorf("Request was aborted"))
+			return
+		}
+		if output.StopReason == ai.StopPending {
+			fail(fmt.Errorf("Anthropic stream ended without a stop reason"))
 			return
 		}
 		if output.StopReason == ai.StopAborted || output.StopReason == ai.StopError {

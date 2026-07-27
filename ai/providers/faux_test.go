@@ -24,10 +24,14 @@ func TestFauxProviderStreamsProtocol(t *testing.T) {
 	stream := ai.StreamSimple(context.Background(), model, req, nil)
 
 	var sawStart, sawTextDelta, sawThinkingDelta, sawDone bool
+	var startStop ai.StopReason
 	for e := range stream.Events() {
 		switch e.Type {
 		case ai.EventStart:
 			sawStart = true
+			if e.Partial != nil {
+				startStop = e.Partial.StopReason
+			}
 		case ai.EventTextDelta:
 			sawTextDelta = true
 		case ai.EventThinkingDelta:
@@ -39,6 +43,11 @@ func TestFauxProviderStreamsProtocol(t *testing.T) {
 	final := stream.Result()
 	if !sawStart || !sawTextDelta || !sawThinkingDelta || !sawDone {
 		t.Fatalf("missing protocol events: start=%v textDelta=%v thinkDelta=%v done=%v", sawStart, sawTextDelta, sawThinkingDelta, sawDone)
+	}
+	// Upstream f9a49869: even though the resolved message is a normal stop, the
+	// in-flight partial reports pending until the terminal event.
+	if startStop != ai.StopPending {
+		t.Fatalf("in-flight partial should be pending, got %q", startStop)
 	}
 	if final == nil || final.StopReason != ai.StopStop {
 		t.Fatalf("unexpected final message: %#v", final)
@@ -52,6 +61,60 @@ func TestFauxProviderStreamsProtocol(t *testing.T) {
 	}
 	if gotText != "hello world this is a longer message to force multiple deltas" {
 		t.Fatalf("text not assembled correctly: %q", gotText)
+	}
+}
+
+// Upstream f9a49869: a faux response whose stop reason was never resolved
+// (still "pending") is a test-authoring error — the stream fails rather than
+// emitting done, and the in-flight partial carries the pending reason.
+func TestFauxProviderPendingStopReasonFailsStream(t *testing.T) {
+	reg := RegisterFauxProvider(RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+
+	// Build the message directly so we bypass FauxAssistantMessage's "" → stop
+	// coercion and leave the stop reason genuinely pending.
+	pending := &ai.AssistantMessage{
+		Content:    ai.ContentList{FauxText("half a thought")},
+		Api:        reg.Api,
+		Provider:   reg.Models[0].Provider,
+		Model:      reg.Models[0].ID,
+		StopReason: ai.StopPending,
+	}
+	reg.SetResponses([]FauxResponseStep{FauxStatic(pending)})
+
+	model := reg.GetModel()
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+
+	stream := ai.StreamSimple(context.Background(), model, req, nil)
+
+	var startPartialStop ai.StopReason
+	sawStart, sawDone, sawError := false, false, false
+	for e := range stream.Events() {
+		switch e.Type {
+		case ai.EventStart:
+			sawStart = true
+			if e.Partial != nil {
+				startPartialStop = e.Partial.StopReason
+			}
+		case ai.EventDone:
+			sawDone = true
+		case ai.EventError:
+			sawError = true
+		}
+	}
+	final := stream.Result()
+
+	if !sawStart || startPartialStop != ai.StopPending {
+		t.Fatalf("in-flight partial should be pending, got start=%v stop=%q", sawStart, startPartialStop)
+	}
+	if sawDone || !sawError {
+		t.Fatalf("pending faux response must error, not complete: done=%v error=%v", sawDone, sawError)
+	}
+	if final.StopReason != ai.StopError {
+		t.Fatalf("expected error stop, got %s", final.StopReason)
+	}
+	if final.ErrorMessage != "Faux response ended without a stop reason" {
+		t.Fatalf("error message wrong: %q", final.ErrorMessage)
 	}
 }
 

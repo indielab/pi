@@ -120,6 +120,42 @@ func TestAnthropicProviderParsesStream(t *testing.T) {
 	}
 }
 
+// Upstream f9a49869: a stream that reaches message_stop without ever reporting a
+// stop reason (no message_delta) leaves the reason pending, which must fail
+// rather than silently defaulting to "stop".
+func TestAnthropicPendingStopReasonFailsStream(t *testing.T) {
+	sse := "event: message_start\n" +
+		`data: {"type":"message_start","message":{"id":"msg_1","usage":{"input_tokens":10,"output_tokens":1}}}` + "\n\n" +
+		"event: content_block_start\n" +
+		`data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}` + "\n\n" +
+		"event: content_block_delta\n" +
+		`data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}` + "\n\n" +
+		"event: content_block_stop\n" +
+		`data: {"type":"content_block_stop","index":0}` + "\n\n" +
+		"event: message_stop\n" +
+		`data: {"type":"message_stop"}` + "\n\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+
+	model := &ai.Model{
+		ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic",
+		BaseURL: server.URL, MaxTokens: 4096,
+	}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	final := StreamAnthropic(context.Background(), model, req,
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "test-key"}}).Result()
+
+	if final.StopReason != ai.StopError {
+		t.Fatalf("pending stop reason should fail, got %s", final.StopReason)
+	}
+	if final.ErrorMessage != "Anthropic stream ended without a stop reason" {
+		t.Fatalf("error message wrong: %q", final.ErrorMessage)
+	}
+}
+
 // TestAnthropicReasoningTokens checks that output_tokens_details.thinking_tokens
 // on the final message_delta populates Usage.Reasoning, and that absence leaves
 // it 0 (pi sets reasoning only when the field is present).

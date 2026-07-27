@@ -257,7 +257,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 	go func() {
 		output := &ai.AssistantMessage{
 			Content: ai.ContentList{}, Api: model.Api, Provider: model.Provider, Model: model.ID,
-			StopReason: ai.StopStop, Timestamp: nowMillis(),
+			StopReason: ai.StopPending, Timestamp: nowMillis(),
 		}
 		fail := func(err error) {
 			if ctx != nil && ctx.Err() != nil {
@@ -467,6 +467,16 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			}
 			return nil
 		}
+		// applyMessagePhaseStopReason mirrors pi's openai-responses-shared helper
+		// (upstream f9a49869): a message item whose phase is "final_answer"
+		// resolves the still-pending stop reason to "stop". Called both when a
+		// message slot is first created and again on response.output_item.done,
+		// since the terminal item may be the first place the phase is seen.
+		applyMessagePhaseStopReason := func(item responsesItem) {
+			if item.Type == "message" && item.Phase == "final_answer" {
+				output.StopReason = ai.StopStop
+			}
+		}
 		// createSlot appends a new block for item and records the slot with its
 		// stable contentIndex, emitting the matching *_start event. Returns nil
 		// for item types that have no streaming block.
@@ -478,6 +488,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				b = &blockBuilder{kind: "thinking"}
 				startEvent = ai.EventThinkingStart
 			case "message":
+				applyMessagePhaseStopReason(item)
 				b = &blockBuilder{kind: "text"}
 				startEvent = ai.EventTextStart
 			case "function_call":
@@ -704,6 +715,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				if ev.Item == nil {
 					return nil
 				}
+				applyMessagePhaseStopReason(*ev.Item)
 				// getOrCreateSlot mirrors pi's new design: a done without a
 				// prior added still materializes the block (and its *_start
 				// event) before finalizing (port of 8c9dbffa).
@@ -803,6 +815,16 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 		// so a cancelled context still surfaces "Request was aborted".
 		if !sawTerminalResponseEvent {
 			fail(fmt.Errorf("OpenAI Responses stream ended before a terminal response event"))
+			return
+		}
+		// pi openai-responses.ts (upstream f9a49869): a stream that ended without
+		// resolving the pending stop reason must fail with this exact message.
+		// Unreachable today — the sawTerminalResponseEvent guard above only passes
+		// once finalizeResponse has assigned a concrete reason — but kept as
+		// defensive parity with pi in case a future terminal path sets the flag
+		// without resolving the reason.
+		if output.StopReason == ai.StopPending {
+			fail(fmt.Errorf("OpenAI Responses stream ended without a stop reason"))
 			return
 		}
 		// pi openai-responses.ts:140-142: a stream that ended with an error or

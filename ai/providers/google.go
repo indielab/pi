@@ -276,7 +276,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 	go func() {
 		output := &ai.AssistantMessage{
 			Content: ai.ContentList{}, Api: ai.APIGoogleGenerativeAI, Provider: model.Provider, Model: model.ID,
-			StopReason: ai.StopStop, Timestamp: nowMillis(),
+			StopReason: ai.StopPending, Timestamp: nowMillis(),
 		}
 		fail := func(err error) {
 			if ctx != nil && ctx.Err() != nil {
@@ -531,6 +531,12 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 		}
 		if ctx != nil && ctx.Err() != nil {
 			fail(fmt.Errorf("Request was aborted"))
+			return
+		}
+		// pi (upstream f9a49869): a stream that ended without resolving the
+		// pending stop reason fails with this exact message.
+		if output.StopReason == ai.StopPending {
+			fail(fmt.Errorf("Google stream ended without a finish reason"))
 			return
 		}
 		// pi: a terminal error/aborted stopReason surfaces as a thrown error.

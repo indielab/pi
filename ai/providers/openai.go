@@ -51,7 +51,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 	go func() {
 		output := &ai.AssistantMessage{
 			Content: ai.ContentList{}, Api: model.Api, Provider: model.Provider, Model: model.ID,
-			StopReason: ai.StopStop, Timestamp: nowMillis(),
+			StopReason: ai.StopPending, Timestamp: nowMillis(),
 		}
 		fail := func(err error) {
 			if ctx != nil && ctx.Err() != nil {
@@ -541,8 +541,9 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			return
 		}
 		// pi throws unconditionally when no finish_reason arrived (:402-404),
-		// including for zero-choice streams that only carried [DONE].
-		if !hasFinishReason {
+		// including for zero-choice streams that only carried [DONE]; and also
+		// when a finish_reason arrived but left the stop reason unresolved.
+		if !hasFinishReason || output.StopReason == ai.StopPending {
 			fail(fmt.Errorf("Stream ended without finish_reason"))
 			return
 		}
