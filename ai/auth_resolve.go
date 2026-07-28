@@ -47,6 +47,9 @@ func newModelsError(code ModelsErrorCode, message string, cause error) *ModelsEr
 type AuthResolutionOverrides struct {
 	APIKey string
 	Env    map[string]string
+	// MinOAuthValidityMs requires this much remaining OAuth-token validity;
+	// defaults to five minutes. Nil means unset (pi: undefined).
+	MinOAuthValidityMs *int64
 }
 
 // resolveProviderAuth is the auth resolution shared by the Models and
@@ -83,7 +86,11 @@ func resolveProviderAuth(
 	}
 	if stored != nil {
 		if stored.Type == CredentialOAuth && auth.OAuth != nil {
-			return resolveStoredOAuth(credentials, providerID, auth.OAuth, stored)
+			var minValidityMs *int64
+			if overrides != nil {
+				minValidityMs = overrides.MinOAuthValidityMs
+			}
+			return resolveStoredOAuth(credentials, providerID, auth.OAuth, stored, minValidityMs)
 		}
 		if stored.Type == CredentialAPIKey && auth.APIKey != nil {
 			credential := stored
@@ -124,24 +131,34 @@ func overlayEnvAuthContext(base AuthContext, env map[string]string) AuthContext 
 	return overlayAuthContext{base: base, env: env}
 }
 
-// resolveStoredOAuth resolves OAuth with double-checked locking: valid tokens
-// cost zero locks; expired tokens lock, re-check expiry under the lock, refresh
-// once globally, and persist the rotated credential before release.
+// defaultOAuthMinimumValidityMs is the remaining validity an OAuth token must
+// have to be used without a refresh.
+const defaultOAuthMinimumValidityMs int64 = 5 * 60 * 1000
+
+// resolveStoredOAuth resolves OAuth with double-checked locking: tokens with
+// less than five minutes remaining lock, re-check expiry under the lock,
+// refresh once globally, and persist the rotated credential before release.
 func resolveStoredOAuth(
 	credentials CredentialStore,
 	providerID string,
 	oauth *OAuthAuth,
 	stored *Credential,
+	minOAuthValidityMs *int64,
 ) (*AuthResult, error) {
+	minimumValidityMs := defaultOAuthMinimumValidityMs
+	if minOAuthValidityMs != nil && *minOAuthValidityMs > minimumValidityMs {
+		minimumValidityMs = *minOAuthValidityMs
+	}
+	expiresSoon := func(expires int64) bool { return nowMillis()+minimumValidityMs >= expires }
 	credential := stored.OAuthCredentials()
 
-	if nowMillis() >= credential.Expires {
+	if expiresSoon(credential.Expires) {
 		// Optimistic check said expired; the authoritative check runs under the lock.
 		post, err := credentials.Modify(providerID, func(current *Credential) (*Credential, error) {
 			if current == nil || current.Type != CredentialOAuth {
 				return nil, nil // logged out meanwhile
 			}
-			if nowMillis() < current.Expires {
+			if !expiresSoon(current.Expires) {
 				return nil, nil // another request refreshed
 			}
 			refreshed, rerr := oauth.Refresh(context.Background(), current.OAuthCredentials())
@@ -161,6 +178,13 @@ func resolveStoredOAuth(
 			return nil, nil // logged out meanwhile
 		}
 		credential = post.OAuthCredentials()
+		// The normal five-minute window triggers a refresh but does not impose a
+		// provider contract. Explicit callers (such as bearer-token export) do
+		// require the requested minimum after the refresh.
+		if minOAuthValidityMs != nil && expiresSoon(credential.Expires) {
+			return nil, newModelsError(ErrOAuth,
+				"OAuth refresh returned a token that expires too soon for "+providerID, nil)
+		}
 	}
 
 	auth, err := oauth.ToAuth(credential)
