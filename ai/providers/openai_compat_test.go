@@ -95,6 +95,44 @@ func TestOpenAICompatTogetherUsesMaxTokensAndReasoningObject(t *testing.T) {
 	}
 }
 
+// pi 2fe21b40 added isZai to detectCompat's useMaxTokens disjunction, so every
+// route into isZai (both providers and both base URLs) now yields max_tokens.
+func TestOpenAICompatZaiUsesMaxTokens(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		provider string
+		baseURL  string
+	}{
+		{"provider zai", "zai", ""},
+		{"provider zai-coding-cn", "zai-coding-cn", ""},
+		{"baseUrl api.z.ai", "custom", "https://api.z.ai/api/coding/paas/v4"},
+		{"baseUrl open.bigmodel.cn", "custom", "https://open.bigmodel.cn/api/paas/v4"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &ai.Model{ID: "glm-5.1", Api: ai.APIOpenAICompletions, Provider: tc.provider, BaseURL: tc.baseURL, Reasoning: true, MaxTokens: 1000}
+			if got := getOpenAICompat(model).MaxTokensField; got != "max_tokens" {
+				t.Fatalf("zai maxTokensField = %q, want max_tokens", got)
+			}
+		})
+	}
+}
+
+func TestOpenAICompatZaiSendsMaxTokensInBody(t *testing.T) {
+	model := &ai.Model{ID: "glm-5.1", Api: ai.APIOpenAICompletions, Provider: "zai", Reasoning: true, MaxTokens: 1000}
+	mt := 123
+	// captureOpenAIBody rewrites BaseURL to the stub server, so this pins the
+	// provider-name route into isZai; the URL routes are covered above.
+	body := captureOpenAIBody(t, model,
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+		&ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{MaxTokens: &mt}})
+	if v, _ := body["max_tokens"].(float64); v != 123 {
+		t.Fatalf("zai max_tokens = %v, want 123 (keys %v)", body["max_tokens"], keysOf(body))
+	}
+	if _, ok := body["max_completion_tokens"]; ok {
+		t.Fatalf("zai must not use max_completion_tokens")
+	}
+}
+
 func TestOpenAICompatDeepSeekReasoningContent(t *testing.T) {
 	model := &ai.Model{ID: "deepseek-reasoner", Api: ai.APIOpenAICompletions, Provider: "deepseek", Reasoning: true, MaxTokens: 1000}
 	body := captureOpenAIBody(t, model,

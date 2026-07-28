@@ -311,7 +311,7 @@ func TestDiffDetectZai(t *testing.T) {
 	c := getOpenAICompat(model)
 	// pi: zai is nonStandard -> supportsStore=false, supportsReasoningEffort=false,
 	// thinkingFormat=zai, supportsLongCacheRetention=true (zai not excluded),
-	// maxTokensField=max_completion_tokens (zai not in useMaxTokens).
+	// maxTokensField=max_tokens (pi 2fe21b40 added isZai to useMaxTokens).
 	if c.SupportsStore {
 		t.Fatalf("zai supportsStore should be false")
 	}
@@ -324,8 +324,8 @@ func TestDiffDetectZai(t *testing.T) {
 	if !c.SupportsLongCacheRetention {
 		t.Fatalf("zai supportsLongCacheRetention should be true")
 	}
-	if c.MaxTokensField != "max_completion_tokens" {
-		t.Fatalf("zai maxTokensField = %q, want max_completion_tokens", c.MaxTokensField)
+	if c.MaxTokensField != "max_tokens" {
+		t.Fatalf("zai maxTokensField = %q, want max_tokens", c.MaxTokensField)
 	}
 
 	// Request shape (pi 64b51efb): thinking: {type:"enabled"|"disabled"} driven

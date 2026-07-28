@@ -95,7 +95,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		has("deepseek.com") || isZai || isMoonshot || provider == "opencode" ||
 		has("opencode.ai") || isCloudflareWorkersAI || isCloudflareAiGateway || isAntLing
 
-	useMaxTokens := has("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing
+	useMaxTokens := has("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing || isZai
 
 	isGrok := provider == "xai" || has("api.x.ai")
 	isDeepSeek := provider == "deepseek" || has("deepseek.com")
