@@ -6,6 +6,7 @@ import (
 	"errors"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 )
 
@@ -335,24 +336,25 @@ func TestCredentialStoreList(t *testing.T) {
 func ctx() AuthContext { return fakeAuthContext{} }
 
 // oauthProviderAuth builds an OAuth provider whose refresh yields a token
-// expiring in expiresInMs and counts its calls.
-func oauthProviderAuth(calls *int, expiresInMs int64) ProviderAuth {
+// expiring in expiresInMs and counts its calls. The counter is atomic because
+// refresh runs inside the credential store's modify callback.
+func oauthProviderAuth(calls *atomic.Int64, expiresInMs int64) ProviderAuth {
 	return ProviderAuth{OAuth: &OAuthAuth{
 		Name: "Test OAuth",
 		Refresh: func(_ context.Context, c OAuthCredentials) (OAuthCredentials, error) {
-			*calls++
+			calls.Add(1)
 			return OAuthCredentials{Refresh: "r1", Access: "new", Expires: nowMillis() + expiresInMs}, nil
 		},
 		ToAuth: func(c OAuthCredentials) (ModelAuth, error) { return ModelAuth{APIKey: c.Access}, nil },
 	}}
 }
 
-// seedOAuth stores an OAuth credential expiring in expiresInMs.
-func seedOAuth(store CredentialStore, providerID string, expiresInMs int64) {
-	_, _ = store.Modify(providerID, func(*Credential) (*Credential, error) {
-		return &Credential{
-			Type: CredentialOAuth, Refresh: "r0", Access: "old", Expires: nowMillis() + expiresInMs,
-		}, nil
+// seedOAuthStore returns a store holding an OAuth credential expiring in
+// expiresInMs.
+func seedOAuthStore(t *testing.T, providerID string, expiresInMs int64) CredentialStore {
+	t.Helper()
+	return seededStore(t, providerID, &Credential{
+		Type: CredentialOAuth, Refresh: "r0", Access: "old", Expires: nowMillis() + expiresInMs,
 	})
 }
 
@@ -360,34 +362,34 @@ func seedOAuth(store CredentialStore, providerID string, expiresInMs int64) {
 // 99e34013: a token still valid but expiring inside the default five-minute
 // window is refreshed, where previously only a fully expired token was.
 func TestResolveStoredOAuthRefreshesWithinDefaultValidityWindow(t *testing.T) {
-	store := NewInMemoryCredentialStore()
-	seedOAuth(store, "oauthp", 2*60*1000) // two minutes left
+	store := seedOAuthStore(t, "oauthp", 2*60*1000) // two minutes left
 
-	calls := 0
+	var calls atomic.Int64
 	auth := oauthProviderAuth(&calls, 3_600_000)
 
 	res, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
 	if err != nil || res == nil || res.Auth.APIKey != "new" {
 		t.Fatalf("token inside the five-minute window must refresh: %+v (err %v)", res, err)
 	}
-	if calls != 1 {
-		t.Fatalf("expected exactly one refresh, got %d", calls)
+	if calls.Load() != 1 {
+		t.Fatalf("expected exactly one refresh, got %d", calls.Load())
 	}
 }
 
-// lockRaceStore reports an expired credential to the optimistic read but hands
-// the under-lock callback a credential that is unexpired yet expires soon, so
-// only the re-check's validity window decides whether a refresh happens.
-type lockRaceStore struct {
+// divergentReadStore reports an expired credential to the optimistic read but
+// hands the under-lock callback a credential that is unexpired yet expires
+// soon, so only the re-check's validity window decides whether a refresh
+// happens. It is single-goroutine: it models divergent reads, not a race.
+type divergentReadStore struct {
 	CredentialStore
 	underLock *Credential
 }
 
-func (s lockRaceStore) Read(string) (*Credential, error) {
+func (s divergentReadStore) Read(string) (*Credential, error) {
 	return &Credential{Type: CredentialOAuth, Refresh: "r0", Access: "old", Expires: 1}, nil
 }
 
-func (s lockRaceStore) Modify(_ string, fn func(*Credential) (*Credential, error)) (*Credential, error) {
+func (s divergentReadStore) Modify(_ string, fn func(*Credential) (*Credential, error)) (*Credential, error) {
 	next, err := fn(s.underLock)
 	if err != nil {
 		return nil, err
@@ -402,22 +404,22 @@ func (s lockRaceStore) Modify(_ string, fn func(*Credential) (*Credential, error
 // double-checked re-check uses the same window as the optimistic check: a
 // credential another request left with two minutes of life still refreshes.
 func TestResolveStoredOAuthUnderLockUsesValidityWindow(t *testing.T) {
-	store := lockRaceStore{
+	store := divergentReadStore{
 		CredentialStore: NewInMemoryCredentialStore(),
 		underLock: &Credential{
 			Type: CredentialOAuth, Refresh: "r0", Access: "short", Expires: nowMillis() + 2*60*1000,
 		},
 	}
 
-	calls := 0
+	var calls atomic.Int64
 	auth := oauthProviderAuth(&calls, 3_600_000)
 
 	res, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
 	if err != nil || res == nil || res.Auth.APIKey != "new" {
 		t.Fatalf("under-lock re-check must apply the validity window: %+v (err %v)", res, err)
 	}
-	if calls != 1 {
-		t.Fatalf("expected exactly one refresh, got %d", calls)
+	if calls.Load() != 1 {
+		t.Fatalf("expected exactly one refresh, got %d", calls.Load())
 	}
 }
 
@@ -425,10 +427,9 @@ func TestResolveStoredOAuthUnderLockUsesValidityWindow(t *testing.T) {
 // contract that only explicit callers get: a refreshed token that still expires
 // inside the requested window is an error.
 func TestResolveStoredOAuthExplicitMinValidityUnsatisfied(t *testing.T) {
-	store := NewInMemoryCredentialStore()
-	seedOAuth(store, "oauthp", 1000)
+	store := seedOAuthStore(t, "oauthp", 1000)
 
-	calls := 0
+	var calls atomic.Int64
 	auth := oauthProviderAuth(&calls, 10*60*1000) // ten minutes, short of the hour asked for
 
 	min := int64(60 * 60 * 1000)
@@ -445,10 +446,9 @@ func TestResolveStoredOAuthExplicitMinValidityUnsatisfied(t *testing.T) {
 // TestResolveStoredOAuthDefaultWindowImposesNoContract locks the asymmetry: the
 // default window triggers a refresh but never rejects the refreshed token.
 func TestResolveStoredOAuthDefaultWindowImposesNoContract(t *testing.T) {
-	store := NewInMemoryCredentialStore()
-	seedOAuth(store, "oauthp", 1000)
+	store := seedOAuthStore(t, "oauthp", 1000)
 
-	calls := 0
+	var calls atomic.Int64
 	auth := oauthProviderAuth(&calls, 60*1000) // still inside the five-minute window
 
 	res, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
@@ -457,13 +457,29 @@ func TestResolveStoredOAuthDefaultWindowImposesNoContract(t *testing.T) {
 	}
 }
 
+// TestResolveStoredOAuthZeroMinValidityArmsContract pins the gate at "set at
+// all", not "set to something positive": pi tests `!== undefined`, so an
+// explicit zero still arms the post-refresh contract under the default window.
+func TestResolveStoredOAuthZeroMinValidityArmsContract(t *testing.T) {
+	store := seedOAuthStore(t, "oauthp", 1000)
+
+	var calls atomic.Int64
+	auth := oauthProviderAuth(&calls, 60*1000) // refreshes to 60s: inside the default window
+
+	min := int64(0)
+	_, err := resolveProviderAuth("oauthp", auth, store, ctx(), &AuthResolutionOverrides{MinOAuthValidityMs: &min})
+	var me *ModelsError
+	if !errors.As(err, &me) || me.Code != ErrOAuth {
+		t.Fatalf("an explicit zero minimum must still arm the contract, got %v", err)
+	}
+}
+
 // TestResolveStoredOAuthMinValidityCannotShrinkWindow locks the max(): an
 // override below five minutes leaves the default window in force.
 func TestResolveStoredOAuthMinValidityCannotShrinkWindow(t *testing.T) {
-	store := NewInMemoryCredentialStore()
-	seedOAuth(store, "oauthp", 2*60*1000) // two minutes: inside the default window only
+	store := seedOAuthStore(t, "oauthp", 2*60*1000) // two minutes: inside the default window only
 
-	calls := 0
+	var calls atomic.Int64
 	auth := oauthProviderAuth(&calls, 3_600_000)
 
 	min := int64(1000)
@@ -471,7 +487,7 @@ func TestResolveStoredOAuthMinValidityCannotShrinkWindow(t *testing.T) {
 	if err != nil || res == nil || res.Auth.APIKey != "new" {
 		t.Fatalf("a smaller override must not shrink the window: %+v (err %v)", res, err)
 	}
-	if calls != 1 {
-		t.Fatalf("expected exactly one refresh, got %d", calls)
+	if calls.Load() != 1 {
+		t.Fatalf("expected exactly one refresh, got %d", calls.Load())
 	}
 }

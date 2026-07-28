@@ -48,7 +48,11 @@ type AuthResolutionOverrides struct {
 	APIKey string
 	Env    map[string]string
 	// MinOAuthValidityMs requires this much remaining OAuth-token validity;
-	// defaults to five minutes. Nil means unset (pi: undefined).
+	// defaults to five minutes. Nil means unset (pi: undefined). The effective
+	// window is max(this, five minutes), so a smaller value does not relax when
+	// a refresh triggers. Setting it at all — unlike leaving it nil — also arms a
+	// contract: resolution fails with ErrOAuth if the refreshed token still
+	// expires inside that window.
 	MinOAuthValidityMs *int64
 }
 
@@ -131,13 +135,15 @@ func overlayEnvAuthContext(base AuthContext, env map[string]string) AuthContext 
 	return overlayAuthContext{base: base, env: env}
 }
 
-// defaultOAuthMinimumValidityMs is the remaining validity an OAuth token must
-// have to be used without a refresh.
+// defaultOAuthMinimumValidityMs is the default floor for the remaining validity
+// an OAuth token must have to be used without a refresh.
 const defaultOAuthMinimumValidityMs int64 = 5 * 60 * 1000
 
 // resolveStoredOAuth resolves OAuth with double-checked locking: tokens with
 // less than five minutes remaining lock, re-check expiry under the lock,
 // refresh once globally, and persist the rotated credential before release.
+// minOAuthValidityMs widens that window (never shrinks it) and, when non-nil,
+// additionally requires the refreshed token to clear it.
 func resolveStoredOAuth(
 	credentials CredentialStore,
 	providerID string,
@@ -179,8 +185,10 @@ func resolveStoredOAuth(
 		}
 		credential = post.OAuthCredentials()
 		// The normal five-minute window triggers a refresh but does not impose a
-		// provider contract. Explicit callers (such as bearer-token export) do
-		// require the requested minimum after the refresh.
+		// provider contract. Callers that set the minimum explicitly do require it
+		// after the refresh. pi's such caller is its bearer-token export CLI, which
+		// is host-side and unported; here the branch is reachable only through the
+		// exported overrides.
 		if minOAuthValidityMs != nil && expiresSoon(credential.Expires) {
 			return nil, newModelsError(ErrOAuth,
 				"OAuth refresh returned a token that expires too soon for "+providerID, nil)
