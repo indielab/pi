@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"net/http"
 )
 
 // Api identifies a wire protocol / API shape. Known values mirror pi's KnownApi
@@ -613,6 +614,12 @@ type ProviderResponse struct {
 	Headers map[string]string
 }
 
+// HTTPDoer performs a provider HTTP request. It is the Go stand-in for pi's
+// injectable `fetch`: *http.Client satisfies it, so callers usually pass one.
+type HTTPDoer interface {
+	Do(req *http.Request) (*http.Response, error)
+}
+
 // StreamOptions are the base options shared by all providers.
 type StreamOptions struct {
 	Temperature               *float64
@@ -629,6 +636,16 @@ type StreamOptions struct {
 	MaxRetries                int
 	MaxRetryDelayMs           *int
 	Metadata                  map[string]any
+	// HTTPClient overrides the client used for provider HTTP requests (pi
+	// StreamOptions.fetch). Nil keeps each provider's default client, which is
+	// also what a provider that cannot honor an override compares against: the
+	// google-generative-ai adapter rejects any other value, mirroring pi's
+	// `options.fetch !== globalThis.fetch` guard.
+	//
+	// An override owns its own transport, so the TimeoutMs response-header cap
+	// that the default client applies is the caller's to reproduce. It does not
+	// affect WebSocket transports.
+	HTTPClient HTTPDoer
 	// Env holds provider-scoped environment overrides. When set, a non-empty
 	// value here takes precedence over os.Getenv for provider configuration such
 	// as PI_CACHE_RETENTION and Cloudflare base-URL placeholders (pi 7f29e7a3).

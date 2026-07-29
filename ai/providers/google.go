@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -287,6 +288,15 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 			output.ErrorMessage = err.Error()
 			stream.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: output.StopReason, Error: output})
 			stream.End()
+		}
+
+		// pi guards `options.fetch && options.fetch !== globalThis.fetch`: the
+		// @google/genai client cannot take a custom fetch, so only the default
+		// one is accepted. http.DefaultClient is the Go stand-in for that
+		// default. The check precedes the api-key check, as it does in pi.
+		if opts.HTTPClient != nil && opts.HTTPClient != ai.HTTPDoer(http.DefaultClient) {
+			fail(errors.New("Custom fetch is not supported by the Google Generative AI adapter"))
+			return
 		}
 
 		if opts.APIKey == "" {

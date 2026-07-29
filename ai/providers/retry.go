@@ -41,6 +41,9 @@ type retryConfig struct {
 	// renderer therefore means "pi does not fail fast here", and an oversized
 	// server delay keeps the pre-7af8533c behavior of falling back to backoff.
 	providerError func(status int, body []byte) string
+	// httpClient overrides the shared client (pi StreamOptions.fetch). Nil keeps
+	// sharedClient, whose transport carries the timeoutMs response-header cap.
+	httpClient ai.HTTPDoer
 }
 
 // retryFromOptions mirrors pi's `maxRetries: options?.maxRetries ?? 0` passed
@@ -52,6 +55,7 @@ func retryFromOptions(o ai.StreamOptions, providerError func(status int, body []
 		maxRetryDelayMs: defaultMaxRetryDelayMs,
 		timeoutMs:       o.TimeoutMs,
 		providerError:   providerError,
+		httpClient:      o.HTTPClient,
 	}
 	if cfg.maxRetries < 0 {
 		cfg.maxRetries = 0
@@ -321,7 +325,10 @@ func retryDelay(resp *http.Response, attempt int, cfg retryConfig, providerMsg s
 // above cfg.maxRetryDelayMs terminates the loop with the fail-fast error from
 // validateServerRetryDelay.
 func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg retryConfig) (*http.Response, error) {
-	client := sharedClient(cfg.timeoutMs)
+	client := cfg.httpClient
+	if client == nil {
+		client = sharedClient(cfg.timeoutMs)
+	}
 	attempts := cfg.maxRetries + 1
 	var lastErr error
 
