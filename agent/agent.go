@@ -72,9 +72,10 @@ type AgentOptions struct {
 	MaxRetryDelayMs  *int
 	MaxRetries       int
 	TimeoutMs        int
-	// WebSocketConnectTimeoutMs is forwarded to the stream options
-	// (pi AgentLoopConfig extends SimpleStreamOptions).
+	// WebSocketConnectTimeoutMs and HTTPClient are forwarded to the stream
+	// options (pi AgentLoopConfig extends SimpleStreamOptions).
 	WebSocketConnectTimeoutMs int
+	HTTPClient                ai.HTTPDoer
 	Temperature               *float64
 	MaxTokens                 *int
 	CacheRetention            ai.CacheRetention
@@ -118,6 +119,7 @@ type Agent struct {
 	MaxRetries                int
 	TimeoutMs                 int
 	WebSocketConnectTimeoutMs int
+	HTTPClient                ai.HTTPDoer
 	Temperature               *float64
 	MaxTokens                 *int
 	CacheRetention            ai.CacheRetention
@@ -167,6 +169,7 @@ func NewAgent(opts AgentOptions) *Agent {
 		MaxRetries:                opts.MaxRetries,
 		TimeoutMs:                 opts.TimeoutMs,
 		WebSocketConnectTimeoutMs: opts.WebSocketConnectTimeoutMs,
+		HTTPClient:                opts.HTTPClient,
 		Temperature:               opts.Temperature,
 		MaxTokens:                 opts.MaxTokens,
 		CacheRetention:            opts.CacheRetention,
@@ -461,6 +464,7 @@ func (a *Agent) loopConfig(skipInitialSteeringPoll bool) AgentLoopConfig {
 		MaxRetries:                a.MaxRetries,
 		TimeoutMs:                 a.TimeoutMs,
 		WebSocketConnectTimeoutMs: a.WebSocketConnectTimeoutMs,
+		HTTPClient:                a.HTTPClient,
 		Temperature:               a.Temperature,
 		MaxTokens:                 a.MaxTokens,
 		CacheRetention:            a.CacheRetention,

@@ -13,8 +13,8 @@ import (
 
 // Upstream 027a5847 makes the HTTP client injectable per request
 // (pi StreamOptions.fetch). These tests pin that each ported provider honors the
-// override, that the default path is unchanged, and that google rejects an
-// override with pi's byte-exact message.
+// override, that http.DefaultClient means "unset" as globalThis.fetch does in
+// pi, and that google rejects an override with pi's byte-exact message.
 
 // countingClient records how many requests it performed and delegates to the
 // real transport, so the stream under test still parses a live response.
@@ -28,86 +28,143 @@ func (c *countingClient) Do(req *http.Request) (*http.Response, error) {
 	return c.inner.Do(req)
 }
 
-func TestAnthropicUsesInjectedHTTPClient(t *testing.T) {
+const completionsInjectionSSE = `data: {"id":"c1","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+
+// injectionProviders covers every ported provider that issues HTTP requests:
+// the first three share the retry loop, pi-messages calls out directly.
+var injectionProviders = []struct {
+	name string
+	api  ai.Api
+	sse  string
+	run  func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessage
+}{
+	{
+		name: "anthropic-messages", api: ai.APIAnthropicMessages, sse: anthropicSSE,
+		run: func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessage {
+			model := &ai.Model{ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", BaseURL: baseURL, MaxTokens: 4096}
+			return StreamAnthropic(context.Background(), model, injectionContext(), &AnthropicOptions{StreamOptions: opts}).Result()
+		},
+	},
+	{
+		name: "openai-completions", api: ai.APIOpenAICompletions, sse: completionsInjectionSSE,
+		run: func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessage {
+			model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: baseURL, MaxTokens: 4096}
+			return StreamOpenAICompletions(context.Background(), model, injectionContext(), &OpenAIOptions{StreamOptions: opts}).Result()
+		},
+	},
+	{
+		name: "openai-responses", api: ai.APIOpenAIResponses, sse: responsesSSE,
+		run: func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessage {
+			model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAIResponses, Provider: "openai", BaseURL: baseURL, MaxTokens: 4096}
+			return StreamOpenAIResponses(context.Background(), model, injectionContext(), &OpenAIResponsesOptions{StreamOptions: opts}).Result()
+		},
+	},
+	{
+		name: "pi-messages", api: ai.APIPiMessages,
+		sse: piMessagesSSE(`{"type":"start"}`, `{"type":"done","reason":"stop","usage":`+piMessagesUsageJSON+`}`),
+		run: func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessage {
+			return StreamPiMessages(context.Background(), piMessagesTestModel(baseURL+"/v1"), piMessagesTestContext(),
+				&PiMessagesOptions{StreamOptions: opts}).Result()
+		},
+	},
+}
+
+func injectionContext() ai.Context {
+	return ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+}
+
+func sseServer(t *testing.T, body string) *httptest.Server {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
-		io.WriteString(w, anthropicSSE)
+		io.WriteString(w, body)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
+	return server
+}
 
-	client := &countingClient{inner: server.Client()}
-	model := &ai.Model{
-		ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic",
-		BaseURL: server.URL, MaxTokens: 4096,
-	}
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+func TestProvidersUseInjectedHTTPClient(t *testing.T) {
+	for _, p := range injectionProviders {
+		t.Run(p.name, func(t *testing.T) {
+			server := sseServer(t, p.sse)
+			client := &countingClient{inner: server.Client()}
 
-	final := StreamAnthropic(context.Background(), model, req, &AnthropicOptions{
-		StreamOptions: ai.StreamOptions{APIKey: "test-key", HTTPClient: client},
-	}).Result()
+			final := p.run(server.URL, ai.StreamOptions{APIKey: "test-key", HTTPClient: client})
 
-	if final.StopReason == ai.StopError {
-		t.Fatalf("stream failed: %s", final.ErrorMessage)
-	}
-	if got := client.calls.Load(); got != 1 {
-		t.Fatalf("injected client performed %d requests, want 1", got)
+			if final.StopReason == ai.StopError {
+				t.Fatalf("stream failed: %s", final.ErrorMessage)
+			}
+			if got := client.calls.Load(); got != 1 {
+				t.Fatalf("injected client performed %d requests, want 1", got)
+			}
+		})
 	}
 }
 
-func TestOpenAICompletionsUsesInjectedHTTPClient(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("content-type", "text/event-stream")
-		io.WriteString(w, "data: {\"id\":\"c1\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
-	}))
-	defer server.Close()
+// pi blesses `fetch === globalThis.fetch` as equivalent to unset, so its Go
+// stand-in must not displace the provider's own default client.
+func TestDefaultHTTPClientCountsAsUnset(t *testing.T) {
+	for _, p := range injectionProviders {
+		t.Run(p.name, func(t *testing.T) {
+			server := sseServer(t, p.sse)
 
-	client := &countingClient{inner: server.Client()}
-	model := &ai.Model{
-		ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai",
-		BaseURL: server.URL, MaxTokens: 4096,
+			final := p.run(server.URL, ai.StreamOptions{APIKey: "test-key", HTTPClient: http.DefaultClient})
+
+			if final.StopReason == ai.StopError {
+				t.Fatalf("stream failed: %s", final.ErrorMessage)
+			}
+		})
 	}
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-
-	final := StreamOpenAICompletions(context.Background(), model, req, &OpenAIOptions{
-		StreamOptions: ai.StreamOptions{APIKey: "test-key", HTTPClient: client},
-	}).Result()
-
-	if final.StopReason == ai.StopError {
-		t.Fatalf("stream failed: %s", final.ErrorMessage)
+	if _, custom := customHTTPClient(http.DefaultClient); custom {
+		t.Fatalf("http.DefaultClient must not count as an override")
 	}
-	if got := client.calls.Load(); got != 1 {
-		t.Fatalf("injected client performed %d requests, want 1", got)
+	if _, custom := customHTTPClient(nil); custom {
+		t.Fatalf("nil must not count as an override")
+	}
+	if _, custom := customHTTPClient(&countingClient{inner: http.DefaultClient}); !custom {
+		t.Fatalf("a real client must count as an override")
 	}
 }
 
-func TestPiMessagesUsesInjectedHTTPClient(t *testing.T) {
+// The retry loop falls back to sharedClient, whose transport carries the
+// TimeoutMs response-header cap, when no override is set.
+func TestSendWithRetryFallsBackToSharedClient(t *testing.T) {
+	var served atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("content-type", "text/event-stream")
-		io.WriteString(w, piMessagesSSE(
-			`{"type":"start"}`,
-			`{"type":"done","reason":"stop","usage":`+piMessagesUsageJSON+`}`,
-		))
+		served.Add(1)
+		w.WriteHeader(200)
 	}))
 	defer server.Close()
 
-	client := &countingClient{inner: server.Client()}
-	final := StreamPiMessages(context.Background(), piMessagesTestModel(server.URL+"/v1"), piMessagesTestContext(),
-		&PiMessagesOptions{StreamOptions: ai.StreamOptions{APIKey: "test-key", HTTPClient: client}}).Result()
-
-	if final.StopReason == ai.StopError {
-		t.Fatalf("stream failed: %s", final.ErrorMessage)
+	cfg := retryFromOptions(ai.StreamOptions{TimeoutMs: 1234}, nil)
+	if cfg.httpClient != nil {
+		t.Fatalf("expected no override, got %#v", cfg.httpClient)
 	}
-	if got := client.calls.Load(); got != 1 {
-		t.Fatalf("injected client performed %d requests, want 1", got)
+	resp, err := sendWithRetry(context.Background(), func() (*http.Request, error) {
+		return http.NewRequest(http.MethodGet, server.URL, nil)
+	}, cfg)
+	if err != nil {
+		t.Fatalf("sendWithRetry: %v", err)
+	}
+	resp.Body.Close()
+	if served.Load() != 1 {
+		t.Fatalf("server saw %d requests, want 1", served.Load())
+	}
+	if got := sharedClient(1234).Transport.(*http.Transport).ResponseHeaderTimeout; got.Milliseconds() != 1234 {
+		t.Fatalf("shared client header timeout = %v, want 1234ms", got)
 	}
 }
 
 // pi's google adapter throws rather than silently ignoring a custom fetch,
 // because @google/genai cannot accept one. The message is byte-exact.
 func TestGoogleRejectsCustomHTTPClient(t *testing.T) {
-	reached := false
+	var reached atomic.Bool
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		reached = true
+		reached.Store(true)
 		w.Header().Set("content-type", "text/event-stream")
 		io.WriteString(w, googleSSE)
 	}))
@@ -117,9 +174,8 @@ func TestGoogleRejectsCustomHTTPClient(t *testing.T) {
 		ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google",
 		BaseURL: server.URL, MaxTokens: 8192,
 	}
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 
-	final := StreamGoogle(context.Background(), model, req, &GoogleOptions{
+	final := StreamGoogle(context.Background(), model, injectionContext(), &GoogleOptions{
 		StreamOptions: ai.StreamOptions{APIKey: "g-key", HTTPClient: &countingClient{inner: server.Client()}},
 	}).Result()
 
@@ -129,7 +185,7 @@ func TestGoogleRejectsCustomHTTPClient(t *testing.T) {
 	if final.ErrorMessage != "Custom fetch is not supported by the Google Generative AI adapter" {
 		t.Fatalf("error message wrong: %q", final.ErrorMessage)
 	}
-	if reached {
+	if reached.Load() {
 		t.Fatalf("request must not be issued when the override is rejected")
 	}
 }
@@ -139,7 +195,7 @@ func TestGoogleRejectsCustomHTTPClient(t *testing.T) {
 func TestGoogleRejectsCustomHTTPClientBeforeAPIKeyCheck(t *testing.T) {
 	final := StreamGoogle(context.Background(),
 		&ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", MaxTokens: 8192},
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+		injectionContext(),
 		&GoogleOptions{StreamOptions: ai.StreamOptions{HTTPClient: &countingClient{inner: http.DefaultClient}}},
 	).Result()
 
@@ -151,35 +207,17 @@ func TestGoogleRejectsCustomHTTPClientBeforeAPIKeyCheck(t *testing.T) {
 // pi rejects only a fetch that is not globalThis.fetch; http.DefaultClient is
 // the Go stand-in for that default and must stream normally.
 func TestGoogleAcceptsDefaultHTTPClient(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("content-type", "text/event-stream")
-		io.WriteString(w, googleSSE)
-	}))
-	defer server.Close()
-
+	server := sseServer(t, googleSSE)
 	model := &ai.Model{
 		ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google",
 		BaseURL: server.URL, MaxTokens: 8192,
 	}
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 
-	final := StreamGoogle(context.Background(), model, req, &GoogleOptions{
+	final := StreamGoogle(context.Background(), model, injectionContext(), &GoogleOptions{
 		StreamOptions: ai.StreamOptions{APIKey: "g-key", HTTPClient: http.DefaultClient},
 	}).Result()
 
 	if final.StopReason == ai.StopError {
 		t.Fatalf("default client must be accepted, got error: %s", final.ErrorMessage)
-	}
-}
-
-// A nil override keeps the retry loop's shared client, whose transport carries
-// the TimeoutMs response-header cap.
-func TestNilHTTPClientKeepsSharedClient(t *testing.T) {
-	cfg := retryFromOptions(ai.StreamOptions{TimeoutMs: 1234}, nil)
-	if cfg.httpClient != nil {
-		t.Fatalf("expected nil httpClient for an unset override, got %#v", cfg.httpClient)
-	}
-	if got := sharedClient(1234); got == nil {
-		t.Fatalf("sharedClient returned nil")
 	}
 }

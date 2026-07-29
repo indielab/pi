@@ -180,6 +180,7 @@ type AgentLoopConfig struct {
 	MaxRetries                int
 	TimeoutMs                 int
 	WebSocketConnectTimeoutMs int
+	HTTPClient                ai.HTTPDoer
 	Temperature               *float64
 	MaxTokens                 *int
 	CacheRetention            ai.CacheRetention

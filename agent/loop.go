@@ -277,6 +277,7 @@ func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config
 			MaxRetries:                config.MaxRetries,
 			TimeoutMs:                 config.TimeoutMs,
 			WebSocketConnectTimeoutMs: config.WebSocketConnectTimeoutMs,
+			HTTPClient:                config.HTTPClient,
 			Temperature:               config.Temperature,
 			MaxTokens:                 config.MaxTokens,
 			CacheRetention:            config.CacheRetention,

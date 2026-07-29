@@ -40,8 +40,9 @@ func linkWorktree(t *testing.T, mainDir, worktreeDir, name string) {
 // context file cannot join the results.
 func isolatedHome(t *testing.T) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("USERPROFILE", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 }
 
 func contextContents(files []ContextFile) []string {
@@ -219,4 +220,40 @@ func TestNonexistentGitdirTargetClimbsNormally(t *testing.T) {
 
 	assertContents(t, contextContents(LoadProjectContextFiles(src)),
 		"repo instructions", "src instructions")
+}
+
+// `git worktree add` writes the .git file's gitdir: target in realpath form
+// while cwd may still be reached through a symlink, so the shadow check must
+// compare canonicalized paths. The other cases cannot see this: they build the
+// gitdir: target from the same uncanonicalized temp path, so a port with no
+// canonicalization at all still passes them.
+func TestWorktreeShadowSurvivesSymlinkedCwd(t *testing.T) {
+	isolatedHome(t)
+	tempDir := t.TempDir()
+	real := filepath.Join(tempDir, "real")
+	main := filepath.Join(real, "main")
+	worktree := filepath.Join(main, "worktrees", "feat")
+	worktreeSrc := filepath.Join(worktree, "src")
+	if err := os.MkdirAll(worktreeSrc, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+
+	// The skeleton records realpaths, as git does.
+	realMain := canonicalizePath(main)
+	gitDir := filepath.Join(realMain, ".git", "worktrees", "feat")
+	writeFile(t, filepath.Join(realMain, ".git", "HEAD"), "ref: refs/heads/main\n")
+	writeFile(t, filepath.Join(gitDir, "HEAD"), "ref: refs/heads/feat\n")
+	writeFile(t, filepath.Join(gitDir, "commondir"), "../..")
+	writeFile(t, filepath.Join(worktree, ".git"), "gitdir: "+gitDir+"\n")
+	writeFile(t, filepath.Join(main, "AGENTS.md"), "main repo instructions")
+	writeFile(t, filepath.Join(worktree, "AGENTS.md"), "worktree instructions")
+
+	// cwd is reached through a symlink that git never recorded.
+	link := filepath.Join(tempDir, "link")
+	if err := os.Symlink(real, link); err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+	linkedSrc := filepath.Join(link, "main", "worktrees", "feat", "src")
+
+	assertContents(t, contextContents(LoadProjectContextFiles(linkedSrc)), "worktree instructions")
 }

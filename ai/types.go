@@ -637,14 +637,17 @@ type StreamOptions struct {
 	MaxRetryDelayMs           *int
 	Metadata                  map[string]any
 	// HTTPClient overrides the client used for provider HTTP requests (pi
-	// StreamOptions.fetch). Nil keeps each provider's default client, which is
-	// also what a provider that cannot honor an override compares against: the
-	// google-generative-ai adapter rejects any other value, mirroring pi's
-	// `options.fetch !== globalThis.fetch` guard.
+	// StreamOptions.fetch). Nil keeps each provider's default client, and so
+	// does http.DefaultClient: it is the Go stand-in for the globalThis.fetch
+	// that pi treats as equivalent to unset. The google-generative-ai adapter
+	// rejects any other value, mirroring pi's `options.fetch !== globalThis.fetch`
+	// guard, because @google/genai cannot take a custom fetch.
 	//
 	// An override owns its own transport, so the TimeoutMs response-header cap
-	// that the default client applies is the caller's to reproduce. It does not
-	// affect WebSocket transports.
+	// that the default client applies is the caller's to reproduce — pi keeps
+	// that timeout because its SDKs apply it outside fetch, so this is a
+	// deliberate divergence (see docs/UPSTREAM.md). It does not affect
+	// WebSocket transports.
 	HTTPClient HTTPDoer
 	// Env holds provider-scoped environment overrides. When set, a non-empty
 	// value here takes precedence over os.Getenv for provider configuration such

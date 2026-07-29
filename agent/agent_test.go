@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -1297,4 +1298,34 @@ func assertContains(t *testing.T, events []EventType, want EventType) {
 		}
 	}
 	t.Fatalf("expected events to contain %s, got %v", want, events)
+}
+
+// Upstream 027a5847: pi's AgentLoopConfig extends SimpleStreamOptions and the
+// whole config is spread into the stream call, so an injected HTTP client is
+// reachable from the agent layer. The Go loop forwards StreamOptions field by
+// field, so the new field needs its own check.
+func TestAgentForwardsHTTPClientToStreamOptions(t *testing.T) {
+	client := &http.Client{}
+	var got ai.HTTPDoer
+	var seen atomic.Bool
+
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel},
+		HTTPClient:   client,
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			got = opts.HTTPClient
+			seen.Store(true)
+			return scriptedStream()(ctx, model, req, opts)
+		},
+	})
+
+	if err := a.Prompt(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if !seen.Load() {
+		t.Fatal("stream fn never ran")
+	}
+	if got != ai.HTTPDoer(client) {
+		t.Fatalf("HTTPClient not forwarded to stream options: got %#v", got)
+	}
 }

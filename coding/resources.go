@@ -68,6 +68,17 @@ func loadContextFileFromDir(dir string) (ContextFile, bool) {
 	return ContextFile{}, false
 }
 
+// contextFileNameInDir returns the name of the context file dir would yield,
+// without reading it — the shadow check needs only the name.
+func contextFileNameInDir(dir string) (string, bool) {
+	for _, name := range contextFileCandidates {
+		if fileExists(filepath.Join(dir, name)) {
+			return name, true
+		}
+	}
+	return "", false
+}
+
 // canonicalizePath resolves symlinks, falling back to the input when the path
 // cannot be resolved (pi utils/paths.ts canonicalizePath).
 func canonicalizePath(p string) string {
@@ -91,16 +102,19 @@ type gitPaths struct {
 // holding `gitdir: <path>` whose commondir points back at the main repo's git
 // dir. Reports false when no repo is found, when the located git dir has no
 // HEAD, or when a .git entry exists but cannot be read.
+//
+// glob.go's findRepoRoot cannot be reused: it only Lstats .git, so it stops at
+// a linked worktree without resolving the gitdir:/commondir chain this needs.
 func findGitPaths(cwd string) (gitPaths, bool) {
 	dir := cwd
 	for {
 		gitPath := filepath.Join(dir, ".git")
 		st, err := os.Stat(gitPath)
 		switch {
-		case err != nil && !os.IsNotExist(err):
-			// pi's statSync throws inside the try, which returns null.
-			return gitPaths{}, false
-		case err == nil && st.Mode().IsRegular():
+		case err != nil:
+			// pi guards on existsSync, which swallows any error and keeps
+			// climbing; its try/catch is only reachable once that returned true.
+		case st.Mode().IsRegular():
 			content, rerr := os.ReadFile(gitPath)
 			if rerr != nil {
 				return gitPaths{}, false
@@ -118,7 +132,7 @@ func findGitPaths(cwd string) (gitPaths, bool) {
 				}
 				return gitPaths{repoDir: dir, commonGitDir: commonGitDir}, true
 			}
-		case err == nil && st.IsDir():
+		case st.IsDir():
 			if !fileExists(filepath.Join(gitPath, "HEAD")) {
 				return gitPaths{}, false
 			}
@@ -172,11 +186,11 @@ func findShadowedContextFile(cwd string) (string, bool) {
 	if canonicalizePath(filepath.Join(mainRepoRoot, ".git")) != commonGitDir {
 		return "", false
 	}
-	cf, ok := loadContextFileFromDir(worktreeRoot)
+	name, ok := contextFileNameInDir(worktreeRoot)
 	if !ok {
 		return "", false
 	}
-	return filepath.Join(mainRepoRoot, filepath.Base(cf.Path)), true
+	return filepath.Join(mainRepoRoot, name), true
 }
 
 // LoadProjectContextFiles discovers AGENTS.md/CLAUDE.md context files: the global
@@ -201,9 +215,9 @@ func LoadProjectContextFiles(cwd string) []ContextFile {
 	var ancestors []ContextFile
 	current := cwd
 	for {
-		cf, ok := loadContextFileFromDir(current)
-		isShadowed := ok && hasShadowed && canonicalizePath(cf.Path) == shadowed
-		if ok && !isShadowed && !seen[cf.Path] {
+		if cf, ok := loadContextFileFromDir(current); ok &&
+			!(hasShadowed && canonicalizePath(cf.Path) == shadowed) &&
+			!seen[cf.Path] {
 			ancestors = append([]ContextFile{cf}, ancestors...)
 			seen[cf.Path] = true
 		}

@@ -55,7 +55,9 @@ func retryFromOptions(o ai.StreamOptions, providerError func(status int, body []
 		maxRetryDelayMs: defaultMaxRetryDelayMs,
 		timeoutMs:       o.TimeoutMs,
 		providerError:   providerError,
-		httpClient:      o.HTTPClient,
+	}
+	if c, ok := customHTTPClient(o.HTTPClient); ok {
+		cfg.httpClient = c
 	}
 	if cfg.maxRetries < 0 {
 		cfg.maxRetries = 0
@@ -67,6 +69,18 @@ func retryFromOptions(o ai.StreamOptions, providerError func(status int, body []
 		cfg.timeoutMs = defaultTimeoutMs
 	}
 	return cfg
+}
+
+// customHTTPClient reports whether opts carries an HTTP client that actually
+// overrides the provider default, and returns it. pi blesses
+// `fetch === globalThis.fetch` as equivalent to unset, so http.DefaultClient —
+// the Go stand-in for that default — must mean "unset" everywhere, not just in
+// the google adapter's guard.
+func customHTTPClient(c ai.HTTPDoer) (ai.HTTPDoer, bool) {
+	if c == nil || c == ai.HTTPDoer(http.DefaultClient) {
+		return nil, false
+	}
+	return c, true
 }
 
 // clientCache memoizes http.Clients keyed by response-header timeout so we reuse

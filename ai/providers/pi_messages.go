@@ -529,8 +529,8 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.Context, opts
 		// fetch directly rather than through an SDK, so the default stays
 		// http.DefaultClient rather than the retry loop's shared client.
 		var client ai.HTTPDoer = http.DefaultClient
-		if opts.HTTPClient != nil {
-			client = opts.HTTPClient
+		if c, ok := customHTTPClient(opts.HTTPClient); ok {
+			client = c
 		}
 		resp, err := client.Do(httpReq)
 		if err != nil {
