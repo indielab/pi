@@ -122,6 +122,12 @@ func TestDefaultHTTPClientCountsAsUnset(t *testing.T) {
 	if _, custom := customHTTPClient(http.DefaultClient); custom {
 		t.Fatalf("http.DefaultClient must not count as an override")
 	}
+	// The normalization has to happen in retryFromOptions, not just in the
+	// google guard: otherwise the default client displaces sharedClient and the
+	// TimeoutMs response-header cap goes with it.
+	if cfg := retryFromOptions(ai.StreamOptions{TimeoutMs: 1234, HTTPClient: http.DefaultClient}, nil); cfg.httpClient != nil {
+		t.Fatalf("http.DefaultClient must leave the retry loop on sharedClient, got %#v", cfg.httpClient)
+	}
 	if _, custom := customHTTPClient(nil); custom {
 		t.Fatalf("nil must not count as an override")
 	}

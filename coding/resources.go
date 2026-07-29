@@ -68,17 +68,6 @@ func loadContextFileFromDir(dir string) (ContextFile, bool) {
 	return ContextFile{}, false
 }
 
-// contextFileNameInDir returns the name of the context file dir would yield,
-// without reading it — the shadow check needs only the name.
-func contextFileNameInDir(dir string) (string, bool) {
-	for _, name := range contextFileCandidates {
-		if fileExists(filepath.Join(dir, name)) {
-			return name, true
-		}
-	}
-	return "", false
-}
-
 // canonicalizePath resolves symlinks, falling back to the input when the path
 // cannot be resolved (pi utils/paths.ts canonicalizePath).
 func canonicalizePath(p string) string {
@@ -186,11 +175,14 @@ func findShadowedContextFile(cwd string) (string, bool) {
 	if canonicalizePath(filepath.Join(mainRepoRoot, ".git")) != commonGitDir {
 		return "", false
 	}
-	name, ok := contextFileNameInDir(worktreeRoot)
+	// Selection must go through loadContextFileFromDir, not a cheaper
+	// existence check: an unreadable candidate is skipped in favour of the next
+	// one there and in pi, so a name-only probe would shadow the wrong file.
+	cf, ok := loadContextFileFromDir(worktreeRoot)
 	if !ok {
 		return "", false
 	}
-	return filepath.Join(mainRepoRoot, name), true
+	return filepath.Join(mainRepoRoot, filepath.Base(cf.Path)), true
 }
 
 // LoadProjectContextFiles discovers AGENTS.md/CLAUDE.md context files: the global

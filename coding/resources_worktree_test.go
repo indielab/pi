@@ -257,3 +257,26 @@ func TestWorktreeShadowSurvivesSymlinkedCwd(t *testing.T) {
 
 	assertContents(t, contextContents(LoadProjectContextFiles(linkedSrc)), "worktree instructions")
 }
+
+// An unreadable candidate is skipped in favour of the next one, so the shadow
+// must follow the file that would actually be loaded. A name-only existence
+// probe would shadow main/AGENTS.md here and drop its content entirely.
+func TestWorktreeShadowFollowsTheLoadableCandidate(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root reads mode-000 files")
+	}
+	isolatedHome(t)
+	_, main, worktree, worktreeSrc := nestedWorktree(t)
+	writeFile(t, filepath.Join(main, "AGENTS.md"), "main agents")
+	writeFile(t, filepath.Join(main, "CLAUDE.md"), "main claude")
+	writeFile(t, filepath.Join(worktree, "AGENTS.md"), "worktree agents")
+	writeFile(t, filepath.Join(worktree, "CLAUDE.md"), "worktree claude")
+	if err := os.Chmod(filepath.Join(worktree, "AGENTS.md"), 0o000); err != nil {
+		t.Skipf("chmod unavailable: %v", err)
+	}
+
+	// The worktree yields CLAUDE.md, so main's CLAUDE.md is the duplicate and
+	// main's AGENTS.md must survive.
+	assertContents(t, contextContents(LoadProjectContextFiles(worktreeSrc)),
+		"main agents", "worktree claude")
+}
