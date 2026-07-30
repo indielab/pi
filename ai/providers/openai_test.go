@@ -1594,3 +1594,68 @@ func TestOpenAICompletionsRawStopReason(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenAIEmptyCustomOnFunctionToolCall mirrors pi's
+// openai-completions-tool-choice.test.ts "ignores empty custom objects on
+// function tool call deltas" (34239180): a delta carrying BOTH custom and
+// function is a function call, so its arguments must survive rather than being
+// replaced by an empty grammar input.
+func TestOpenAIEmptyCustomOnFunctionToolCall(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolCall string
+		wantArgs map[string]any
+	}{
+		{
+			name:     "empty custom alongside function",
+			toolCall: `{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":"{\"path\":\"README.md\"}"},"custom":{}}`,
+			wantArgs: map[string]any{"path": "README.md"},
+		},
+		{
+			name:     "populated custom alongside function still loses to function",
+			toolCall: `{"index":0,"id":"call_1","type":"function","function":{"name":"read","arguments":"{\"path\":\"README.md\"}"},"custom":{"name":"read","input":"ignored"}}`,
+			wantArgs: map[string]any{"path": "README.md"},
+		},
+		{
+			name:     "custom with no function is still a grammar call",
+			toolCall: `{"index":0,"id":"call_1","type":"custom","custom":{"name":"read","input":"raw text"}}`,
+			wantArgs: map[string]any{"input": "raw text"},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sse := `data: {"id":"chatcmpl-empty-custom","choices":[{"index":0,"delta":{"tool_calls":[` + tt.toolCall + `]},"finish_reason":"tool_calls"}]}` + "\n\n" +
+				"data: [DONE]\n\n"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				io.WriteString(w, sse)
+			}))
+			defer server.Close()
+
+			model := &ai.Model{ID: "gpt-4o-mini", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 4096}
+			req := ai.Context{
+				Messages: []ai.Message{ai.NewUserText("Read README.md", 1)},
+				Tools:    []ai.Tool{{Name: "read", Description: "Read a file", Parameters: ai.Object()}},
+			}
+			final := StreamOpenAICompletions(context.Background(), model, req,
+				&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "test"}}).Result()
+
+			if final.StopReason != ai.StopToolUse {
+				t.Fatalf("stopReason = %s (%s)", final.StopReason, final.ErrorMessage)
+			}
+			if len(final.Content) != 1 {
+				t.Fatalf("content = %#v, want one tool call", final.Content)
+			}
+			tc, ok := final.Content[0].(ai.ToolCall)
+			if !ok {
+				t.Fatalf("content[0] = %#v, want a tool call", final.Content[0])
+			}
+			if tc.ID != "call_1" || tc.Name != "read" {
+				t.Fatalf("tool call id/name = %q/%q", tc.ID, tc.Name)
+			}
+			if mustJSON(t, tc.Arguments) != mustJSON(t, tt.wantArgs) {
+				t.Fatalf("arguments = %v, want %v", tc.Arguments, tt.wantArgs)
+			}
+		})
+	}
+}
