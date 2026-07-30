@@ -255,12 +255,6 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 		// startGrammarBuffer switches a block to the custom-tool (grammar) shape.
 		// The "input" fallback should never be taken; it only gives a made-up tool
 		// we know nothing about somewhere to stash its input.
-		//
-		// Both call sites gate on `custom && !function` (upstream 34239180): some
-		// providers attach an empty `custom: {}` to an ordinary function tool call,
-		// and treating that as a grammar call discards the streamed arguments. A
-		// present-but-empty JSON object decodes to a non-nil pointer, matching JS,
-		// where `{}` is truthy.
 		startGrammarBuffer := func(b *blockBuilder) {
 			property, ok := grammarProps[b.toolName]
 			if !ok {
@@ -301,7 +295,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			}
 			if b == nil {
 				b = &blockBuilder{kind: "toolCall", toolID: tcDelta.ID, toolName: tcDelta.name(), args: map[string]any{}}
-				if tcDelta.Custom != nil && tcDelta.Function == nil {
+				if tcDelta.isGrammarCall() {
 					startGrammarBuffer(b)
 				}
 				if tcDelta.Index != nil {
@@ -325,7 +319,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			if b.toolName == "" {
 				b.toolName = tcDelta.name()
 			}
-			if tcDelta.Custom != nil && tcDelta.Function == nil && b.grammar == nil {
+			if tcDelta.isGrammarCall() && b.grammar == nil {
 				startGrammarBuffer(b)
 			}
 			applyPendingReasoningDetail(b)
@@ -1160,9 +1154,9 @@ func applyReasoningFormat(params map[string]any, model *ai.Model, compat openAIC
 		// pi (4c1a0b92): Qwen Token Plan reasoning models also take a native
 		// reasoning_effort. Unlike the zai branch above, pi uses `??` here, so a
 		// present-null mapping falls back to the raw level exactly like an absent
-		// one — that is effortValue, not mappedEffortOrRaw. pi's extra
-		// `typeof effort === "string"` guard cannot fail after the `??` (the raw
-		// level is always a string), so it has no Go counterpart.
+		// one — that is effortValue, not mappedEffortOrRaw. pi's follow-on
+		// `typeof effort === "string"` guard cannot fail after the `??` —
+		// effortValue returns string — so it has no Go counterpart.
 		if enabled && compat.SupportsReasoningEffort {
 			params["reasoning_effort"] = effortValue(model, level)
 		}
@@ -1396,28 +1390,39 @@ type openAIToolCallDelta struct {
 	Index    *int   `json:"index"`
 	ID       string `json:"id"`
 	Function *struct {
-		Name      string `json:"name"`
-		Arguments string `json:"arguments"`
+		// Name is a pointer so an absent name (JS undefined) stays
+		// distinguishable from an explicit "", which name() below relies on.
+		Name      *string `json:"name"`
+		Arguments string  `json:"arguments"`
 	} `json:"function"`
 	// Custom carries the OpenAI custom-tool (grammar) variant of a tool call,
 	// whose raw input replaces function.arguments.
 	Custom *struct {
-		Name  string `json:"name"`
-		Input string `json:"input"`
+		Name  *string `json:"name"`
+		Input string  `json:"input"`
 	} `json:"custom"`
 }
 
 // name is the tool name carried by either tool-call variant (pi:
-// `toolCall.function?.name ?? toolCall.custom?.name`).
+// `toolCall.function?.name ?? toolCall.custom?.name ?? ""`). `??` only falls
+// through on null/undefined, so a function payload carrying an explicit empty
+// name wins over a populated custom name — hence the pointer fields.
 func (d openAIToolCallDelta) name() string {
-	if d.Function != nil && d.Function.Name != "" {
-		return d.Function.Name
+	if d.Function != nil && d.Function.Name != nil {
+		return *d.Function.Name
 	}
-	if d.Custom != nil {
-		return d.Custom.Name
+	if d.Custom != nil && d.Custom.Name != nil {
+		return *d.Custom.Name
 	}
 	return ""
 }
+
+// isGrammarCall reports whether this delta is the custom-tool (grammar) variant.
+// pi 34239180: a delta carrying both custom and function is an ordinary function
+// call — some providers attach an empty `custom: {}` to one, and treating that as
+// a grammar call discards the streamed arguments. `{}` decodes to a non-nil
+// pointer, matching JS truthiness; `null` decodes to nil, matching JS falsiness.
+func (d openAIToolCallDelta) isGrammarCall() bool { return d.Custom != nil && d.Function == nil }
 
 type openAIChunk struct {
 	ID      string `json:"id"`

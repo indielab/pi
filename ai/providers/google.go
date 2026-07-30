@@ -552,9 +552,13 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 		}
 		// pi: a terminal error/aborted stopReason surfaces as a thrown error. Since
 		// d7b02636 the provider's own finish reason is named when we captured one.
+		// RawStopReason is assigned above under the same non-empty finishReason
+		// guard that is the only route to an error/aborted stop reason, so the
+		// "unknown error" fallback is unreachable today — but it is kept as
+		// defensive parity with pi's ternary.
 		if output.StopReason == ai.StopError || output.StopReason == ai.StopAborted {
 			if output.RawStopReason != "" {
-				fail(fmt.Errorf("Provider stopped with: %s", output.RawStopReason))
+				fail(fmt.Errorf("%s%s", providerStoppedPrefix, output.RawStopReason))
 			} else {
 				fail(fmt.Errorf("An unknown error occurred"))
 			}

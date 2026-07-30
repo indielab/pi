@@ -13,6 +13,12 @@ import (
 // message (the string can land in a recorded error turn's session JSON).
 const maxProviderErrorBodyChars = 4000
 
+// providerStoppedPrefix is the prefix pi puts in front of a provider's own
+// terminal stop reason (anthropic-messages.ts, google-generative-ai.ts). This
+// package reproduces pi's user-facing strings byte-exactly, capitalization
+// included.
+const providerStoppedPrefix = "Provider stopped with: "
+
 // truncateErrorText ports pi's truncateErrorText (error-body.ts). JS measures
 // with String.length / String.slice, i.e. UTF-16 code units, so the cap and the
 // "[truncated N chars]" count are UTF-16-unit based, not byte- or rune-based.

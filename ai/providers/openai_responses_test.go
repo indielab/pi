@@ -723,6 +723,17 @@ func TestResponsesRawStopReason(t *testing.T) {
 			wantStop: ai.StopStop,
 			wantRaw:  "",
 		},
+		{
+			// pi assigns `event.response?.status` unconditionally on
+			// response.failed, so a failure event carrying no response CLEARS the
+			// status an earlier terminal event recorded — it must not report a
+			// stale "completed".
+			name: "failed without a response object clears an earlier status",
+			event: `data: {"type":"response.completed","response":{"id":"r","status":"completed"}}` + "\n\n" +
+				`data: {"type":"response.failed"}`,
+			wantStop: ai.StopError,
+			wantRaw:  "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

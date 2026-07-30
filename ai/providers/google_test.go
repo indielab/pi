@@ -383,16 +383,18 @@ func googleStreamWithFinish(t *testing.T, finish string) *ai.AssistantMessage {
 // generic "An unknown error occurred".
 func TestGoogleFinishReasonSafety(t *testing.T) {
 	for _, finish := range []string{"SAFETY", "MALFORMED_FUNCTION_CALL"} {
-		final := googleStreamWithFinish(t, finish)
-		if final.StopReason != ai.StopError {
-			t.Fatalf("%s should be error, got %s", finish, final.StopReason)
-		}
-		if final.RawStopReason != finish {
-			t.Fatalf("%s rawStopReason = %q, want %q", finish, final.RawStopReason, finish)
-		}
-		if want := "Provider stopped with: " + finish; final.ErrorMessage != want {
-			t.Fatalf("%s error message = %q, want %q", finish, final.ErrorMessage, want)
-		}
+		t.Run(finish, func(t *testing.T) {
+			final := googleStreamWithFinish(t, finish)
+			if final.StopReason != ai.StopError {
+				t.Fatalf("should be error, got %s", final.StopReason)
+			}
+			if final.RawStopReason != finish {
+				t.Fatalf("rawStopReason = %q, want %q", final.RawStopReason, finish)
+			}
+			if want := "Provider stopped with: " + finish; final.ErrorMessage != want {
+				t.Fatalf("error message = %q, want %q", final.ErrorMessage, want)
+			}
+		})
 	}
 }
 

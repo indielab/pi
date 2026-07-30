@@ -1659,3 +1659,63 @@ func TestOpenAIEmptyCustomOnFunctionToolCall(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenAIToolCallNameNullishCoalescing pins pi's
+// `toolCall.function?.name ?? toolCall.custom?.name ?? ""`: `??` falls through
+// only on null/undefined, so an EXPLICIT empty function.name wins over a
+// populated custom.name, while an ABSENT function.name falls through to it.
+// 34239180 made both-payloads-present a first-class case, which is what makes
+// the distinction reachable.
+func TestOpenAIToolCallNameNullishCoalescing(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolCall string
+		wantName string
+	}{
+		{
+			name:     "explicit empty function name beats custom name",
+			toolCall: `{"index":0,"id":"call_1","function":{"name":"","arguments":"{}"},"custom":{"name":"read","input":"ignored"}}`,
+			wantName: "",
+		},
+		{
+			name:     "absent function name falls through to custom name",
+			toolCall: `{"index":0,"id":"call_1","function":{"arguments":"{}"},"custom":{"name":"read","input":"ignored"}}`,
+			wantName: "read",
+		},
+		{
+			name:     "null function name falls through to custom name",
+			toolCall: `{"index":0,"id":"call_1","function":{"name":null,"arguments":"{}"},"custom":{"name":"read","input":"ignored"}}`,
+			wantName: "read",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sse := `data: {"id":"chatcmpl-name","choices":[{"index":0,"delta":{"tool_calls":[` + tt.toolCall + `]},"finish_reason":"tool_calls"}]}` + "\n\n" +
+				"data: [DONE]\n\n"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				io.WriteString(w, sse)
+			}))
+			defer server.Close()
+
+			model := &ai.Model{ID: "gpt-4o-mini", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 4096}
+			req := ai.Context{
+				Messages: []ai.Message{ai.NewUserText("Read README.md", 1)},
+				Tools:    []ai.Tool{{Name: "read", Description: "Read a file", Parameters: ai.Object()}},
+			}
+			final := StreamOpenAICompletions(context.Background(), model, req,
+				&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "test"}}).Result()
+
+			if len(final.Content) != 1 {
+				t.Fatalf("content = %#v, want one tool call", final.Content)
+			}
+			tc, ok := final.Content[0].(ai.ToolCall)
+			if !ok {
+				t.Fatalf("content[0] = %#v, want a tool call", final.Content[0])
+			}
+			if tc.Name != tt.wantName {
+				t.Fatalf("tool call name = %q, want %q", tc.Name, tt.wantName)
+			}
+		})
+	}
+}
