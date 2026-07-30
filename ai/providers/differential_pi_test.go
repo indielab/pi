@@ -776,34 +776,63 @@ func TestDiffQwenReasoningEffort(t *testing.T) {
 }
 
 // TestQwenTokenPlanReasoningEffortLive drives the catalog-resolved Qwen Token
-// Plan models end-to-end, mirroring pi's qwen-token-plan-models.test.ts. The
-// thinkingLevelMap data from 4c1a0b92's generator hunk has not been regenerated
-// upstream yet, so every level currently falls through to the raw value — which
-// is what pi's `??` does for an absent map too.
+// Plan models end-to-end, mirroring pi's qwen-token-plan-models.test.ts.
+//
+// The expectations below come from the regenerated 0.83.0 catalog, which is
+// where 4c1a0b92's generator hunk first ships. Three distinct shapes matter:
+//
+//   - glm-5*: supportsReasoningEffort with the high/max map, so "high" maps to
+//     itself and is emitted.
+//   - qwen3.8-max-preview: supportsReasoningEffort with the qwen3.8 map, whose
+//     "high" entry is an explicit null. pi uses `??` here, so a present-null
+//     falls back to the RAW level and is still emitted — the distinction from
+//     the zai branch's `=== undefined`, which would omit it.
+//   - deepseek-v3.2 / kimi-k2.5: supportsReasoningEffort:false, so no
+//     reasoning_effort is emitted at all — these are exactly the models
+//     4c1a0b92 was written to exclude. enable_thinking is still set, because
+//     pi assigns it before the supportsReasoningEffort guard.
 func TestQwenTokenPlanReasoningEffortLive(t *testing.T) {
+	cases := []struct {
+		id            string
+		wantEffort    string // "" means reasoning_effort must be absent
+		wantSupported bool
+	}{
+		{"glm-5", "high", true},
+		{"glm-5.1", "high", true},
+		{"glm-5.2", "high", true},
+		{"qwen3.8-max-preview", "high", true},
+		{"deepseek-v3.2", "", false},
+		{"kimi-k2.5", "", false},
+	}
 	for _, provider := range []string{"qwen-token-plan", "qwen-token-plan-cn"} {
-		for _, id := range []string{"glm-5", "glm-5.1", "glm-5.2", "deepseek-v3.2", "kimi-k2.5"} {
-			m := ai.GetModel(provider, id)
-			if m == nil {
-				t.Fatalf("%s/%s missing from catalog", provider, id)
-			}
-			compat := getOpenAICompat(m)
-			if compat.ThinkingFormat != "qwen" {
-				t.Fatalf("%s/%s thinkingFormat = %q, want qwen", provider, id, compat.ThinkingFormat)
-			}
-			if !compat.SupportsReasoningEffort {
-				t.Fatalf("%s/%s supportsReasoningEffort = false, want true", provider, id)
-			}
-			body := mustBuildOpenAIParams(t, m, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
-			if body["enable_thinking"] != true {
-				t.Fatalf("%s/%s enable_thinking = %v, want true", provider, id, body["enable_thinking"])
-			}
-			if body["reasoning_effort"] != "high" {
-				t.Fatalf("%s/%s reasoning_effort = %v, want high", provider, id, body["reasoning_effort"])
-			}
-			if has(body, "thinking") {
-				t.Fatalf("%s/%s should not send a thinking key, got %v", provider, id, body["thinking"])
-			}
+		for _, tt := range cases {
+			t.Run(provider+"/"+tt.id, func(t *testing.T) {
+				m := ai.GetModel(provider, tt.id)
+				if m == nil {
+					t.Fatalf("missing from catalog")
+				}
+				compat := getOpenAICompat(m)
+				if compat.ThinkingFormat != "qwen" {
+					t.Fatalf("thinkingFormat = %q, want qwen", compat.ThinkingFormat)
+				}
+				if compat.SupportsReasoningEffort != tt.wantSupported {
+					t.Fatalf("supportsReasoningEffort = %v, want %v", compat.SupportsReasoningEffort, tt.wantSupported)
+				}
+				body := mustBuildOpenAIParams(t, m, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+				if body["enable_thinking"] != true {
+					t.Fatalf("enable_thinking = %v, want true", body["enable_thinking"])
+				}
+				if tt.wantEffort == "" {
+					if has(body, "reasoning_effort") {
+						t.Fatalf("reasoning_effort should be absent, got %v", body["reasoning_effort"])
+					}
+				} else if body["reasoning_effort"] != tt.wantEffort {
+					t.Fatalf("reasoning_effort = %v, want %v", body["reasoning_effort"], tt.wantEffort)
+				}
+				if has(body, "thinking") {
+					t.Fatalf("should not send a thinking key, got %v", body["thinking"])
+				}
+			})
 		}
 	}
 }
