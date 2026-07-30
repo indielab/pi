@@ -1150,6 +1150,15 @@ func applyReasoningFormat(params map[string]any, model *ai.Model, compat openAIC
 		}
 	case compat.ThinkingFormat == "qwen" && model.Reasoning:
 		params["enable_thinking"] = enabled
+		// pi (4c1a0b92): Qwen Token Plan reasoning models also take a native
+		// reasoning_effort. Unlike the zai branch above, pi uses `??` here, so a
+		// present-null mapping falls back to the raw level exactly like an absent
+		// one — that is effortValue, not mappedEffortOrRaw. pi's extra
+		// `typeof effort === "string"` guard cannot fail after the `??` (the raw
+		// level is always a string), so it has no Go counterpart.
+		if enabled && compat.SupportsReasoningEffort {
+			params["reasoning_effort"] = effortValue(model, level)
+		}
 	case compat.ThinkingFormat == "qwen-chat-template" && model.Reasoning:
 		params["chat_template_kwargs"] = map[string]any{"enable_thinking": enabled, "preserve_thinking": true}
 	case compat.ThinkingFormat == "chat-template" && model.Reasoning:

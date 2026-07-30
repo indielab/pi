@@ -687,6 +687,125 @@ func TestDiffQwenThinkingFormat(t *testing.T) {
 	if bodyOff["enable_thinking"] != false {
 		t.Fatalf("qwen off: enable_thinking = %v, want false", bodyOff["enable_thinking"])
 	}
+	// pi 4c1a0b92: with an effort and supportsReasoningEffort, the raw level rides
+	// along as reasoning_effort; with no effort the key stays absent.
+	if body["reasoning_effort"] != "high" {
+		t.Fatalf("qwen on: reasoning_effort = %v, want high", body["reasoning_effort"])
+	}
+	if has(bodyOff, "reasoning_effort") {
+		t.Fatalf("qwen off should omit reasoning_effort, got %v", bodyOff["reasoning_effort"])
+	}
+}
+
+// TestDiffQwenReasoningEffort mirrors pi's qwen-token-plan-models.test.ts
+// ("sends Qwen reasoning_effort for ...", "sends qwen3.8 max reasoning_effort").
+// pi 4c1a0b92 uses `thinkingLevelMap?.[effort] ?? effort` here — `??`, NOT the
+// zai branch's `=== undefined` — so a present-null mapping falls back to the raw
+// level rather than omitting the field.
+func TestDiffQwenReasoningEffort(t *testing.T) {
+	tests := []struct {
+		name        string
+		compat      string
+		thinkingMap ai.ThinkingLevelMap
+		effort      string
+		want        string // "" means the key must be absent
+	}{
+		{
+			name:   "no map sends the raw level",
+			effort: "high",
+			want:   "high",
+		},
+		{
+			name:        "mapped level sends the mapped value",
+			thinkingMap: ai.ThinkingLevelMap{"max": strPtr("xhigh")},
+			effort:      "max",
+			want:        "xhigh",
+		},
+		{
+			name:        "level absent from the map falls back to the raw level",
+			thinkingMap: ai.ThinkingLevelMap{"max": strPtr("max")},
+			effort:      "high",
+			want:        "high",
+		},
+		{
+			// pi's `??` treats present-null exactly like absent — unlike the zai
+			// branch, which omits the field for a null mapping.
+			name:        "present-null mapping falls back to the raw level",
+			thinkingMap: ai.ThinkingLevelMap{"high": nil, "max": strPtr("max")},
+			effort:      "high",
+			want:        "high",
+		},
+		{
+			name:   "supportsReasoningEffort=false omits the field",
+			compat: `{"thinkingFormat":"qwen","supportsReasoningEffort":false}`,
+			effort: "high",
+			want:   "",
+		},
+		{
+			name:   "no effort omits the field",
+			effort: "",
+			want:   "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			compat := tt.compat
+			if compat == "" {
+				compat = `{"thinkingFormat":"qwen"}`
+			}
+			model := openAIModel(func(m *ai.Model) {
+				m.ID = "qwen3"
+				m.Provider = "custom"
+				m.BaseURL = "https://proxy.example.com/v1"
+				m.Reasoning = true
+				m.ThinkingLevelMap = tt.thinkingMap
+				m.Compat = json.RawMessage(compat)
+			})
+			body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{ReasoningEffort: tt.effort})
+			if tt.want == "" {
+				if has(body, "reasoning_effort") {
+					t.Fatalf("reasoning_effort should be absent, got %v", body["reasoning_effort"])
+				}
+				return
+			}
+			if body["reasoning_effort"] != tt.want {
+				t.Fatalf("reasoning_effort = %v, want %v", body["reasoning_effort"], tt.want)
+			}
+		})
+	}
+}
+
+// TestQwenTokenPlanReasoningEffortLive drives the catalog-resolved Qwen Token
+// Plan models end-to-end, mirroring pi's qwen-token-plan-models.test.ts. The
+// thinkingLevelMap data from 4c1a0b92's generator hunk has not been regenerated
+// upstream yet, so every level currently falls through to the raw value — which
+// is what pi's `??` does for an absent map too.
+func TestQwenTokenPlanReasoningEffortLive(t *testing.T) {
+	for _, provider := range []string{"qwen-token-plan", "qwen-token-plan-cn"} {
+		for _, id := range []string{"glm-5", "glm-5.1", "glm-5.2", "deepseek-v3.2", "kimi-k2.5"} {
+			m := ai.GetModel(provider, id)
+			if m == nil {
+				t.Fatalf("%s/%s missing from catalog", provider, id)
+			}
+			compat := getOpenAICompat(m)
+			if compat.ThinkingFormat != "qwen" {
+				t.Fatalf("%s/%s thinkingFormat = %q, want qwen", provider, id, compat.ThinkingFormat)
+			}
+			if !compat.SupportsReasoningEffort {
+				t.Fatalf("%s/%s supportsReasoningEffort = false, want true", provider, id)
+			}
+			body := mustBuildOpenAIParams(t, m, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+			if body["enable_thinking"] != true {
+				t.Fatalf("%s/%s enable_thinking = %v, want true", provider, id, body["enable_thinking"])
+			}
+			if body["reasoning_effort"] != "high" {
+				t.Fatalf("%s/%s reasoning_effort = %v, want high", provider, id, body["reasoning_effort"])
+			}
+			if has(body, "thinking") {
+				t.Fatalf("%s/%s should not send a thinking key, got %v", provider, id, body["thinking"])
+			}
+		}
+	}
 }
 
 func TestDiffOpenAIOffTriState(t *testing.T) {
