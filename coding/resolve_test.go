@@ -3,6 +3,8 @@ package coding
 import (
 	"strings"
 	"testing"
+
+	"github.com/sky-valley/pi/ai"
 )
 
 // I12: model resolution ports pi's resolveCliModel (model-resolver.ts).
@@ -205,6 +207,43 @@ func TestDefaultModelPerProviderOpenAI(t *testing.T) {
 		if got := defaultModelPerProvider[provider]; got != want {
 			t.Fatalf("default model for %q: got %q, want %q", provider, got, want)
 		}
+	}
+}
+
+// The port was missing three of pi's defaultModelPerProvider entries. The two
+// qwen-token-plan ones are load-bearing: without them a custom model id under
+// those providers falls through to providerModels[0] — MiniMax-M2.5 after the
+// sort — and clones its contextWindow/maxTokens (196608/32768) instead of
+// qwen3.7-max's (1000000/131072), which changes the emitted max_tokens and the
+// context clamp. "radius" is absent from the catalog, so it is inert, but it is
+// carried for faithfulness. Values taken from pi 0.83.0's model-resolver.
+func TestDefaultModelPerProviderQwenTokenPlanAndRadius(t *testing.T) {
+	cases := map[string]string{
+		"qwen-token-plan":    "qwen3.7-max",
+		"qwen-token-plan-cn": "qwen3.7-max",
+		"radius":             "auto",
+	}
+	for provider, want := range cases {
+		t.Run(provider, func(t *testing.T) {
+			if got := defaultModelPerProvider[provider]; got != want {
+				t.Fatalf("default model for %q: got %q, want %q", provider, got, want)
+			}
+		})
+	}
+
+	// Lock the consequence, not just the table entry: the qwen-token-plan
+	// fallback must inherit qwen3.7-max's limits, never MiniMax-M2.5's.
+	for _, provider := range []string{"qwen-token-plan", "qwen-token-plan-cn"} {
+		t.Run(provider+"/limits", func(t *testing.T) {
+			tmpl := ai.GetModel(provider, defaultModelPerProvider[provider])
+			if tmpl == nil {
+				t.Fatalf("%s/%s missing from catalog", provider, defaultModelPerProvider[provider])
+			}
+			if tmpl.ContextWindow != 1000000 || tmpl.MaxTokens != 131072 {
+				t.Fatalf("%s template limits = %d/%d, want 1000000/131072",
+					provider, tmpl.ContextWindow, tmpl.MaxTokens)
+			}
+		})
 	}
 }
 

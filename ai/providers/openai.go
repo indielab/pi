@@ -70,9 +70,12 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			return
 		}
 
-		// pi createClient runs before onPayload: Cloudflare providers resolve
-		// {VAR} placeholders in baseUrl from the environment, failing the stream
-		// when a variable is unset (openai-completions.ts:490).
+		// Cloudflare providers carry {VAR} placeholders in baseUrl. pi resolves
+		// them in its cloudflareStreams wrapper (providers/cloudflare-stream.ts),
+		// not in createClient, and it never fails: an absent env var is left in
+		// the URL as the literal {CLOUDFLARE_ACCOUNT_ID}. We fail fast instead —
+		// a deliberate divergence (docs/UPSTREAM.md, 2026-06-24 ruling items 2-3).
+		// With the vars set, the emitted request matches pi byte-for-byte.
 		baseURL := model.BaseURL
 		if baseURL == "" {
 			baseURL = "https://api.openai.com/v1"
