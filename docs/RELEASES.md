@@ -20,6 +20,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.83.16`](#v08316) | 2026-07-30 | `13088d2` | `c13ffe18` | pi-ai 0.83.0 | First catalog move since 0.82.0 — 1116→1153 models (477,229 B), regenerated from the 0.83.0 build and endpoint-pinned both ends; Qwen token-plan `reasoning_effort` via `thinkingLevelMap` under `??` semantics (a live request-body change for 27 models); `rawStopReason` preserved across the four ported providers with pi's `Provider stopped with: …` strings; tool calls carrying both `custom` and `function` treated as function calls; three missing `defaultModelPerProvider` entries restored (qwen-token-plan fallbacks were cloning the wrong context/token limits) |
 | [`v0.82.15`](#v08215) | 2026-07-26 | `b3785a1` | `5bc1c2c0` | pi-ai 0.82.1 | Release v0.82.1 crossed but catalog byte-identical to 0.82.0 (no regen); `ANTHROPIC_AUTH_TOKEN` bearer auth via a custom anthropic resolver (credential-first precedence, `Authorization: Bearer`, never `x-api-key`); `ModelsStoreEntry.etag` for remote-catalog ETag revalidation (latent); ModelsError keeps its underlying cause (already faithful in Go, locked) |
 | [`v0.82.14`](#v08214) | 2026-07-24 | `b017378` | `7df73a00` | pi-ai 0.82.0 | Catalog 0.81.1→0.82.0 (456,576 B, +19/−1 models); constrained sampling — JSON-schema `strict` and Lark/regex grammar tools across anthropic/openai-completions/openai-responses/google, incl. `custom` tool calls and streaming grammar deltas; abortable provider retries with fail-fast on oversized `Retry-After`; explicit prompt-cache mode for GPT-5.6+ |
 | [`v0.81.13`](#v08113) | 2026-07-21 | `b224be0` | `dd6bea41` | pi-ai 0.81.1 | Catalog 0.80.10→0.81.1 (2 upstream tags, 431,732 B) + Qwen Token Plan built-ins; tool_call_id item-level uniqueness ({call_id}_{item_id}); RetryAssistantCall bounded-backoff retry loop; compaction retainedTail reconstruction; credential env-section passthrough on env-key + ambient resolvers |
@@ -39,6 +40,52 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.83.16
+
+- **Tagged commit**: `13088d2`
+- **Upstream pin**: `c13ffe18` (delta `cced6a21..c13ffe18`, 17 first-parent changes — 3 ports, 13 n/a, 0 decides)
+- **npm catalog**: `@earendil-works/pi-ai` 0.83.0 / `pi-coding-agent` 0.83.0
+- **Release crossed**: v0.83.0 (`845d6ff1`). Unlike the last four cycles the
+  catalog **did** move: 456,576 → 477,229 B, 1116 → 1153 models (+64/−27/91
+  changed), no schema drift.
+
+Headline is the **Qwen token-plan thinking controls** (upstream `4c1a0b92`),
+which is really two halves that only work together. The code half emits
+`reasoning_effort` on the qwen branch when the model supports it, mapped through
+`model.thinkingLevelMap`; the data half — the generator rewrite — ships only in
+the 0.83.0 build. The subtle part is that pi uses **`??`** here, not the zai
+branch's `=== undefined`: a *present-null* map entry is nullish, so it falls back
+to the raw level and is still emitted. Go routes this through `effortValue`
+rather than `mappedEffortOrRaw` for exactly that reason.
+
+Shipping the code without the data would have sent `reasoning_effort` to
+precisely the nine model ids the upstream fix was written to exclude — a state
+no published pi ever had. The parity review demonstrated this by crossing 0.83.0
+code against 0.82.0 data, which is why the regen landed in the same cycle.
+
+This cycle also produced a **procedural correction worth keeping**: the model
+data lives in `dist/providers/data/*.json`, generated at publish time and never
+committed upstream, and `dist/models.generated.js` is a 4,373-byte aggregator
+that is byte-identical between 0.82.0 and 0.83.0. A git-diff sweep and a
+file-level `cmp` both said "no catalog change"; both were wrong. Whether a regen
+is needed must be decided by **executing** `JSON.stringify(MODELS)` against both
+builds.
+
+Also in: `AssistantMessage.rawStopReason` preserved by anthropic,
+openai-completions, openai-responses and google, with pi's byte-exact
+`Provider stopped with: …` messages (upstream `d7b02636`); tool-call deltas
+carrying both `custom` and `function` treated as ordinary function calls so
+streamed arguments are no longer discarded (upstream `34239180`); and a
+pre-existing fix found by the parity re-gate — `coding/resolve.go` was missing
+three of pi's 38 `defaultModelPerProvider` entries, so a custom model id under
+`qwen-token-plan(-cn)` fell through to MiniMax-M2.5 and cloned its
+196608/32768 limits instead of qwen3.7-max's 1000000/131072, changing the
+emitted `max_tokens` and the context clamp.
+
+Verification: live pi-vs-Go request diff **8310/8310** (554 openai-completions
+models × 15 scenarios), catalog endpoint-pinned at both ends, in-repo
+differential 38/38, `-race` green.
 
 ### v0.82.15
 
