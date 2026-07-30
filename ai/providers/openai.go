@@ -352,6 +352,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			}
 
 			if choice.FinishReason != "" {
+				output.RawStopReason = choice.FinishReason
 				stopReason, errMsg := mapOpenAIFinishReason(choice.FinishReason)
 				output.StopReason = stopReason
 				if errMsg != "" {

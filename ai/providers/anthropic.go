@@ -534,6 +534,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 				}
 			case "message_delta":
 				if ev.Delta != nil && ev.Delta.StopReason != "" {
+					output.RawStopReason = ev.Delta.StopReason
 					sr, errMsg, err := mapAnthropicStopReason(ev.Delta.StopReason, ev.Delta.StopDetails)
 					if err != nil {
 						return err
@@ -1152,7 +1153,7 @@ func mapAnthropicStopReason(reason string, stopDetails *struct {
 	case "pause_turn", "stop_sequence":
 		return ai.StopStop, "", nil
 	case "sensitive": // Content flagged by safety filters (not yet in SDK types)
-		return ai.StopError, "", nil
+		return ai.StopError, "Provider stopped with: sensitive", nil
 	default:
 		return "", "", fmt.Errorf("Unhandled stop reason: %s", reason)
 	}

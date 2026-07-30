@@ -1114,6 +1114,52 @@ func TestAnthropicRefusalWithoutExplanationFallback(t *testing.T) {
 	}
 }
 
+// TestAnthropicRawStopReason mirrors pi's anthropic-sse-parsing.test.ts additions
+// in d7b02636: the wire stop_reason is preserved verbatim on rawStopReason, and
+// "sensitive" now carries a descriptive error message instead of a bare error.
+func TestAnthropicRawStopReason(t *testing.T) {
+	tests := []struct {
+		name       string
+		stopReason string
+		wantStop   ai.StopReason
+		wantErrMsg string
+	}{
+		{name: "end_turn", stopReason: "end_turn", wantStop: ai.StopStop},
+		{name: "max_tokens", stopReason: "max_tokens", wantStop: ai.StopLength},
+		{name: "sensitive", stopReason: "sensitive", wantStop: ai.StopError, wantErrMsg: "Provider stopped with: sensitive"},
+		{name: "refusal", stopReason: "refusal", wantStop: ai.StopError, wantErrMsg: "The model refused to complete the request"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sse := "event: message_start\n" +
+				`data: {"type":"message_start","message":{"id":"msg_sensitive","usage":{"input_tokens":12,"output_tokens":0}}}` + "\n\n" +
+				"event: message_delta\n" +
+				`data: {"type":"message_delta","delta":{"stop_reason":"` + tt.stopReason + `"},"usage":{"output_tokens":0}}` + "\n\n" +
+				"event: message_stop\n" +
+				`data: {"type":"message_stop"}` + "\n\n"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				io.WriteString(w, sse)
+			}))
+			defer server.Close()
+
+			model := &ai.Model{ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", BaseURL: server.URL, MaxTokens: 4096}
+			final := StreamAnthropic(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("blocked request", 1)}},
+				&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+
+			if final.StopReason != tt.wantStop {
+				t.Fatalf("stopReason = %s, want %s", final.StopReason, tt.wantStop)
+			}
+			if final.RawStopReason != tt.stopReason {
+				t.Fatalf("rawStopReason = %q, want %q", final.RawStopReason, tt.stopReason)
+			}
+			if final.ErrorMessage != tt.wantErrMsg {
+				t.Fatalf("errorMessage = %q, want %q", final.ErrorMessage, tt.wantErrMsg)
+			}
+		})
+	}
+}
+
 // TestAnthropic1hCacheWriteCost mirrors upstream 0be5bb6c
 // (anthropic-cache-write-1h-cost): the 1h slice of cacheWrite is priced at 2x the
 // model's input rate, the remaining (5m) slice at the normal cacheWrite rate.

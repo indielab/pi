@@ -372,7 +372,10 @@ type AssistantMessage struct {
 	Usage         Usage        `json:"usage"`
 	StopReason    StopReason   `json:"stopReason"`
 	ErrorMessage  string       `json:"errorMessage,omitempty"`
-	Timestamp     int64        `json:"timestamp"`
+	// RawStopReason preserves the provider's own stop/finish reason verbatim,
+	// before it was mapped onto StopReason (pi d7b02636 `rawStopReason?`).
+	RawStopReason string `json:"rawStopReason,omitempty"`
+	Timestamp     int64  `json:"timestamp"`
 }
 
 func (AssistantMessage) MessageRole() Role { return RoleAssistant }

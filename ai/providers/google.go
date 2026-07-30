@@ -506,6 +506,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 					}
 				}
 				if cand.FinishReason != "" {
+					output.RawStopReason = cand.FinishReason
 					reason, rerr := mapGoogleStopReason(cand.FinishReason)
 					if rerr != nil {
 						return rerr
@@ -549,9 +550,14 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 			fail(fmt.Errorf("Google stream ended without a finish reason"))
 			return
 		}
-		// pi: a terminal error/aborted stopReason surfaces as a thrown error.
+		// pi: a terminal error/aborted stopReason surfaces as a thrown error. Since
+		// d7b02636 the provider's own finish reason is named when we captured one.
 		if output.StopReason == ai.StopError || output.StopReason == ai.StopAborted {
-			fail(fmt.Errorf("An unknown error occurred"))
+			if output.RawStopReason != "" {
+				fail(fmt.Errorf("Provider stopped with: %s", output.RawStopReason))
+			} else {
+				fail(fmt.Errorf("An unknown error occurred"))
+			}
 			return
 		}
 		materialize()

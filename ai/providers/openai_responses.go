@@ -608,6 +608,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			if r != nil {
 				status = r.Status
 			}
+			output.RawStopReason = status
 			reason, statusErr := mapResponsesStatus(status)
 			if statusErr != nil {
 				return statusErr
@@ -797,6 +798,12 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				// Upstream cd95c274: response.failed is a terminal event too,
 				// recorded before its error is thrown.
 				sawTerminalResponseEvent = true
+				// pi assigns `event.response?.status` unconditionally, so an event
+				// without a response clears any earlier raw stop reason.
+				output.RawStopReason = ""
+				if ev.Response != nil {
+					output.RawStopReason = ev.Response.Status
+				}
 				return fmt.Errorf("%s", responsesFailedMessage(ev))
 			}
 			return nil

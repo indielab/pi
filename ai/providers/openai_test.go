@@ -1547,3 +1547,50 @@ func mustJSON(t *testing.T, v any) string {
 	}
 	return string(b)
 }
+
+// TestOpenAICompletionsRawStopReason mirrors pi's
+// openai-completions-raw-stop-reason.test.ts (d7b02636): the wire finish_reason
+// is preserved verbatim on rawStopReason, whether it maps to a stop or an error.
+func TestOpenAICompletionsRawStopReason(t *testing.T) {
+	tests := []struct {
+		name         string
+		finishReason string
+		wantStop     ai.StopReason
+		wantErrMsg   string
+	}{
+		{name: "stop", finishReason: "stop", wantStop: ai.StopStop},
+		{name: "length", finishReason: "length", wantStop: ai.StopLength},
+		{
+			name:         "content_filter",
+			finishReason: "content_filter",
+			wantStop:     ai.StopError,
+			wantErrMsg:   "Provider finish_reason: content_filter",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sse := `data: {"id":"chatcmpl-1","choices":[{"index":0,"delta":{},"finish_reason":"` + tt.finishReason + `"}]}` + "\n\n" +
+				"data: [DONE]\n\n"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				io.WriteString(w, sse)
+			}))
+			defer server.Close()
+
+			model := &ai.Model{ID: "test-model", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 4096}
+			final := StreamOpenAICompletions(context.Background(), model,
+				ai.Context{Messages: []ai.Message{ai.NewUserText("hello", 1)}},
+				&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "test"}}).Result()
+
+			if final.StopReason != tt.wantStop {
+				t.Fatalf("stopReason = %s, want %s", final.StopReason, tt.wantStop)
+			}
+			if final.RawStopReason != tt.finishReason {
+				t.Fatalf("rawStopReason = %q, want %q", final.RawStopReason, tt.finishReason)
+			}
+			if final.ErrorMessage != tt.wantErrMsg {
+				t.Fatalf("errorMessage = %q, want %q", final.ErrorMessage, tt.wantErrMsg)
+			}
+		})
+	}
+}

@@ -687,6 +687,57 @@ data: {"type":"response.failed","response":{"id":"r","status":"failed","error":{
 	}
 }
 
+// TestResponsesRawStopReason mirrors pi's openai-responses-terminal-event.test.ts
+// additions in d7b02636: the response status is preserved verbatim on
+// rawStopReason from every terminal event, including response.failed.
+func TestResponsesRawStopReason(t *testing.T) {
+	tests := []struct {
+		name     string
+		event    string
+		wantStop ai.StopReason
+		wantRaw  string
+	}{
+		{
+			name:     "completed",
+			event:    `data: {"type":"response.completed","response":{"id":"r","status":"completed"}}`,
+			wantStop: ai.StopStop,
+			wantRaw:  "completed",
+		},
+		{
+			name:     "incomplete",
+			event:    `data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete"}}`,
+			wantStop: ai.StopLength,
+			wantRaw:  "incomplete",
+		},
+		{
+			name:     "failed",
+			event:    `data: {"type":"response.failed","response":{"id":"r","status":"failed","error":{"code":"server_error","message":"boom"}}}`,
+			wantStop: ai.StopError,
+			wantRaw:  "failed",
+		},
+		{
+			// pi reads `response?.status`, so a terminal event without a response
+			// leaves rawStopReason unset.
+			name:     "completed without a response object",
+			event:    `data: {"type":"response.completed"}`,
+			wantStop: ai.StopStop,
+			wantRaw:  "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sse := `data: {"type":"response.created","response":{"id":"r"}}` + "\n\n" + tt.event + "\n\n"
+			final := runResponsesSSE(t, reasoningModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, sse)
+			if final.StopReason != tt.wantStop {
+				t.Fatalf("stopReason = %s, want %s (%s)", final.StopReason, tt.wantStop, final.ErrorMessage)
+			}
+			if final.RawStopReason != tt.wantRaw {
+				t.Fatalf("rawStopReason = %q, want %q", final.RawStopReason, tt.wantRaw)
+			}
+		})
+	}
+}
+
 // Unknown response.completed status fails the stream (pi throws).
 func TestResponsesUnknownStatusFails(t *testing.T) {
 	sse := `data: {"type":"response.created","response":{"id":"r"}}

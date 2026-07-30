@@ -378,13 +378,33 @@ func googleStreamWithFinish(t *testing.T, finish string) *ai.AssistantMessage {
 	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
 }
 
+// TestGoogleFinishReasonSafety mirrors pi's google-raw-stop-reason.test.ts. Since
+// d7b02636 a terminal error names the provider's own finish reason instead of the
+// generic "An unknown error occurred".
 func TestGoogleFinishReasonSafety(t *testing.T) {
-	final := googleStreamWithFinish(t, "SAFETY")
-	if final.StopReason != ai.StopError {
-		t.Fatalf("SAFETY should be error, got %s", final.StopReason)
+	for _, finish := range []string{"SAFETY", "MALFORMED_FUNCTION_CALL"} {
+		final := googleStreamWithFinish(t, finish)
+		if final.StopReason != ai.StopError {
+			t.Fatalf("%s should be error, got %s", finish, final.StopReason)
+		}
+		if final.RawStopReason != finish {
+			t.Fatalf("%s rawStopReason = %q, want %q", finish, final.RawStopReason, finish)
+		}
+		if want := "Provider stopped with: " + finish; final.ErrorMessage != want {
+			t.Fatalf("%s error message = %q, want %q", finish, final.ErrorMessage, want)
+		}
 	}
-	if final.ErrorMessage != "An unknown error occurred" {
-		t.Fatalf("SAFETY error message wrong: %q", final.ErrorMessage)
+}
+
+// TestGoogleRawStopReasonPreservedOnStop pins that the raw finish reason rides
+// along on a non-error stop too (pi assigns it before mapping).
+func TestGoogleRawStopReasonPreservedOnStop(t *testing.T) {
+	final := googleStreamWithFinish(t, "STOP")
+	if final.StopReason != ai.StopStop {
+		t.Fatalf("STOP should map to stop, got %s", final.StopReason)
+	}
+	if final.RawStopReason != "STOP" {
+		t.Fatalf("rawStopReason = %q, want STOP", final.RawStopReason)
 	}
 }
 
