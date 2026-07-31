@@ -538,8 +538,12 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 		}
 		// Some OpenAI-compatible providers never emit finish_reason. When compat
 		// says so, infer the stop reason from the content instead of failing
-		// (upstream 2c3041242). pi does this after the aborted guard but before
-		// the error guard, so an aborted stream still wins.
+		// (upstream 2c3041242). pi places this after the aborted guard and before
+		// the error guard; in Go only the ctx.Err() check above can actually
+		// preempt it, since a StopAborted/StopError stop reason implies
+		// hasFinishReason (only mapOpenAIFinishReason sets them) and is therefore
+		// mutually exclusive with the !hasFinishReason gate. The placement is
+		// shape parity, not a live ordering.
 		supportsFinishReason := getOpenAICompat(model).SupportsFinishReason
 		if !hasFinishReason && !supportsFinishReason {
 			output.StopReason = ai.StopStop

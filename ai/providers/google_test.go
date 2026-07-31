@@ -571,9 +571,12 @@ func TestGoogleUnsignedEmptyBlocksStillDropped(t *testing.T) {
 	}
 }
 
-// Cross provider/model the signature is unusable, so the empty blocks stay dropped
-// even though they carry one.
-func TestGoogleSignedEmptyBlocksDroppedCrossModel(t *testing.T) {
+// Locked one layer up, not by the converter's cross-model branch: transformMessages
+// strips cross-model thinking and signatures before googleContents runs, so the
+// loosened empty-block skips above cannot leak a signature cross-model. Invariant
+// under the 6138f5a07 port by design — a regression lock on the risk that port
+// introduces, not coverage of the (unreachable) cross-model branch itself.
+func TestGoogleCrossModelSignaturesNeverReachRequest(t *testing.T) {
 	parts := googleModelParts(t, ai.AssistantMessage{
 		Provider: "google", Model: "other-model", Api: ai.APIGoogleGenerativeAI,
 		Content: ai.ContentList{

@@ -754,8 +754,14 @@ func googleContents(model *ai.Model, req ai.Context) []any {
 						}
 						parts = append(parts, p)
 					} else {
-						// Cross-provider/model: the signature is unusable, so empty
-						// thinking stays dropped unconditionally.
+						// Unreachable: transformMessages (transform.go:122) already
+						// rewrites cross-model thinking to text and drops the empty
+						// ones before googleContents runs, and isSame here
+						// (provider+model) is strictly weaker than transform's
+						// isSameModel (provider+api+model), so isSame == false implies
+						// no ThinkingContent survives to this branch. pi's converter has
+						// the same dead branch behind the same ordering
+						// (google-shared.ts:99); kept for shape parity.
 						if strings.TrimSpace(v.Thinking) == "" {
 							continue
 						}
