@@ -1347,3 +1347,90 @@ func TestAnthropicStrictToolsRequireFails(t *testing.T) {
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// Upstream 59ad3dea: content_block_start may already carry the block's first
+// chunk (text, or thinking + signature). It must be kept and the following
+// deltas appended to it, not used to replace it.
+func TestAnthropicPreservesContentBlockStartContent(t *testing.T) {
+	sse := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_initial_content","usage":{"input_tokens":12,"output_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":"Initial text"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" plus delta"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: content_block_start
+data: {"type":"content_block_start","index":1,"content_block":{"type":"thinking","thinking":"Initial thinking","signature":"initial signature"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"thinking_delta","thinking":" plus delta"}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":1,"delta":{"type":"signature_delta","signature":" plus delta"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":1}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}
+
+event: message_stop
+data: {"type":"message_stop"}
+
+`
+	model := &ai.Model{ID: "m", Api: ai.APIAnthropicMessages, Provider: "anthropic", Input: []string{"text"}, MaxTokens: 100}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("Say hello.", 1)}}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+	model.BaseURL = server.URL
+
+	stream := StreamAnthropic(context.Background(), model, req,
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}})
+	// The start events themselves must already expose the seeded content: the
+	// builder is seeded before the partial snapshot is taken.
+	var textStart, thinkingStart string
+	for ev := range stream.Events() {
+		switch ev.Type {
+		case ai.EventTextStart:
+			if c, ok := ev.Partial.Content[ev.ContentIndex].(ai.TextContent); ok {
+				textStart = c.Text
+			}
+		case ai.EventThinkingStart:
+			if c, ok := ev.Partial.Content[ev.ContentIndex].(ai.ThinkingContent); ok {
+				thinkingStart = c.Thinking + "|" + c.ThinkingSignature
+			}
+		}
+	}
+	final := stream.Result()
+	if final.StopReason != ai.StopStop {
+		t.Fatalf("stream failed: %s (%s)", final.StopReason, final.ErrorMessage)
+	}
+	if textStart != "Initial text" {
+		t.Fatalf("text_start partial lost initial content: %q", textStart)
+	}
+	if thinkingStart != "Initial thinking|initial signature" {
+		t.Fatalf("thinking_start partial lost initial content: %q", thinkingStart)
+	}
+	if len(final.Content) != 2 {
+		t.Fatalf("expected 2 content blocks, got %#v", final.Content)
+	}
+	text, ok := final.Content[0].(ai.TextContent)
+	if !ok || text.Text != "Initial text plus delta" {
+		t.Fatalf("text block wrong: %#v", final.Content[0])
+	}
+	think, ok := final.Content[1].(ai.ThinkingContent)
+	if !ok || think.Thinking != "Initial thinking plus delta" {
+		t.Fatalf("thinking block wrong: %#v", final.Content[1])
+	}
+	if think.ThinkingSignature != "initial signature plus delta" {
+		t.Fatalf("thinking signature wrong: %q", think.ThinkingSignature)
+	}
+}

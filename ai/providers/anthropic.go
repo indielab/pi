@@ -454,10 +454,14 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 				var evType ai.EventType
 				switch ev.ContentBlock.Type {
 				case "text":
+					// The start event may already carry the block's first chunk; seed
+					// the builder with it so the deltas that follow append to it.
 					b = &blockBuilder{kind: "text"}
+					b.text.WriteString(ev.ContentBlock.Text)
 					evType = ai.EventTextStart
 				case "thinking":
-					b = &blockBuilder{kind: "thinking"}
+					b = &blockBuilder{kind: "thinking", thinkingSig: ev.ContentBlock.Signature}
+					b.thinking.WriteString(ev.ContentBlock.Thinking)
 					evType = ai.EventThinkingStart
 				case "redacted_thinking":
 					b = &blockBuilder{kind: "thinking", redacted: true, thinkingSig: ev.ContentBlock.Data}
@@ -1186,12 +1190,16 @@ type anthropicStreamEvent struct {
 		Usage anthropicUsage `json:"usage"`
 	} `json:"message"`
 	ContentBlock *struct {
-		Type  string          `json:"type"`
-		Text  string          `json:"text"`
-		ID    string          `json:"id"`
-		Name  string          `json:"name"`
-		Input json.RawMessage `json:"input"`
-		Data  string          `json:"data"`
+		Type string `json:"type"`
+		// Text/Thinking/Signature can already carry content on content_block_start;
+		// later deltas append to it rather than replacing it.
+		Text      string          `json:"text"`
+		Thinking  string          `json:"thinking"`
+		Signature string          `json:"signature"`
+		ID        string          `json:"id"`
+		Name      string          `json:"name"`
+		Input     json.RawMessage `json:"input"`
+		Data      string          `json:"data"`
 	} `json:"content_block"`
 	Delta *struct {
 		Type        string `json:"type"`
