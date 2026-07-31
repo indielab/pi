@@ -463,6 +463,53 @@ data: [DONE]
 	}
 }
 
+func TestOpenAIMissingFinishReasonInferredWhenCompatDisablesIt(t *testing.T) {
+	// upstream 2c3041242: providers that never emit finish_reason opt out via
+	// compat.supportsFinishReason:false, and pi infers stop / toolUse instead of
+	// failing.
+	noFinishReason := func(m *ai.Model) { m.Compat = json.RawMessage(`{"supportsFinishReason":false}`) }
+
+	_, final := collectOpenAIEvents(t, `data: {"choices":[{"delta":{"content":"complete answer"},"finish_reason":null}]}
+
+data: [DONE]
+
+`, noFinishReason)
+	if final.StopReason != ai.StopStop || final.ErrorMessage != "" {
+		t.Fatalf("text-only stream should infer stop, got %s / %q", final.StopReason, final.ErrorMessage)
+	}
+	if len(final.Content) != 1 {
+		t.Fatalf("expected the text block to survive, got %#v", final.Content)
+	}
+
+	// A tool call anywhere in the content infers toolUse (pi: content.some).
+	_, final = collectOpenAIEvents(t, `data: {"choices":[{"delta":{"content":"calling"}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"c1","function":{"name":"f","arguments":"{}"}}]}}]}
+
+data: [DONE]
+
+`, noFinishReason)
+	if final.StopReason != ai.StopToolUse || final.ErrorMessage != "" {
+		t.Fatalf("tool-call stream should infer toolUse, got %s / %q", final.StopReason, final.ErrorMessage)
+	}
+
+	// A finish_reason that did arrive still decides the stop reason.
+	_, final = collectOpenAIEvents(t, `data: {"choices":[{"delta":{"content":"cut"},"finish_reason":"length"}]}
+
+data: [DONE]
+
+`, noFinishReason)
+	if final.StopReason != ai.StopLength {
+		t.Fatalf("finish_reason must win over inference, got %s / %q", final.StopReason, final.ErrorMessage)
+	}
+
+	// Default is true: without the compat opt-out the same stream still errors.
+	_, final = collectOpenAIEvents(t, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\ndata: [DONE]\n\n", nil)
+	if final.StopReason != ai.StopError || final.ErrorMessage != "Stream ended without finish_reason" {
+		t.Fatalf("supportsFinishReason defaults to true, got %s / %q", final.StopReason, final.ErrorMessage)
+	}
+}
+
 // ---- A5: zero-choice stream errors like pi (no sawChoice guard) ----
 
 func TestOpenAIZeroChoiceStreamErrors(t *testing.T) {

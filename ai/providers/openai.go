@@ -536,6 +536,20 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			fail(fmt.Errorf("Request was aborted"))
 			return
 		}
+		// Some OpenAI-compatible providers never emit finish_reason. When compat
+		// says so, infer the stop reason from the content instead of failing
+		// (upstream 2c3041242). pi does this after the aborted guard but before
+		// the error guard, so an aborted stream still wins.
+		supportsFinishReason := getOpenAICompat(model).SupportsFinishReason
+		if !hasFinishReason && !supportsFinishReason {
+			output.StopReason = ai.StopStop
+			for _, c := range output.Content {
+				if _, ok := c.(ai.ToolCall); ok {
+					output.StopReason = ai.StopToolUse
+					break
+				}
+			}
+		}
 		if output.StopReason == ai.StopError {
 			msg := output.ErrorMessage
 			if msg == "" {
@@ -544,10 +558,11 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			fail(fmt.Errorf("%s", msg))
 			return
 		}
-		// pi throws unconditionally when no finish_reason arrived (:402-404),
-		// including for zero-choice streams that only carried [DONE]; and also
-		// when a finish_reason arrived but left the stop reason unresolved.
-		if !hasFinishReason || output.StopReason == ai.StopPending {
+		// pi throws when no finish_reason arrived (:402-404) — including for
+		// zero-choice streams that only carried [DONE] — unless compat waived
+		// finish_reason above; and also when a finish_reason arrived but left the
+		// stop reason unresolved.
+		if (supportsFinishReason && !hasFinishReason) || output.StopReason == ai.StopPending {
 			fail(fmt.Errorf("Stream ended without finish_reason"))
 			return
 		}

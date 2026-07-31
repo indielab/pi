@@ -37,9 +37,14 @@ type openAICompletionsCompat struct {
 	SupportsDeveloperRole    bool
 	SupportsReasoningEffort  bool
 	SupportsUsageInStreaming bool
-	MaxTokensField           string // "max_tokens" | "max_completion_tokens"
-	ThinkingFormat           string
-	SupportsStrictMode       bool
+	// SupportsFinishReason reports whether streamed responses include
+	// finish_reason. When false, pi infers stop/toolUse at end of stream instead
+	// of failing with "Stream ended without finish_reason" (upstream 2c3041242).
+	// Default: true.
+	SupportsFinishReason bool
+	MaxTokensField       string // "max_tokens" | "max_completion_tokens"
+	ThinkingFormat       string
+	SupportsStrictMode   bool
 	// SupportsOpenAIGrammarTools reports whether the provider accepts OpenAI
 	// custom tools with Lark/regex grammar formats. When false, grammar-
 	// constrained tools fall back to normal function tools. Default: false.
@@ -129,6 +134,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		SupportsDeveloperRole:                       isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
 		SupportsReasoningEffort:                     !isGrok && !isZai && !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isAntLing,
 		SupportsUsageInStreaming:                    true,
+		SupportsFinishReason:                        true,
 		MaxTokensField:                              maxTokensField,
 		ThinkingFormat:                              thinkingFormat,
 		SupportsStrictMode:                          !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
@@ -160,6 +166,7 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		SupportsDeveloperRole                       *bool                 `json:"supportsDeveloperRole"`
 		SupportsReasoningEffort                     *bool                 `json:"supportsReasoningEffort"`
 		SupportsUsageInStreaming                    *bool                 `json:"supportsUsageInStreaming"`
+		SupportsFinishReason                        *bool                 `json:"supportsFinishReason"`
 		MaxTokensField                              *string               `json:"maxTokensField"`
 		ThinkingFormat                              *string               `json:"thinkingFormat"`
 		SupportsStrictMode                          *bool                 `json:"supportsStrictMode"`
@@ -192,6 +199,9 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	}
 	if raw.SupportsUsageInStreaming != nil {
 		c.SupportsUsageInStreaming = *raw.SupportsUsageInStreaming
+	}
+	if raw.SupportsFinishReason != nil {
+		c.SupportsFinishReason = *raw.SupportsFinishReason
 	}
 	if raw.MaxTokensField != nil {
 		c.MaxTokensField = *raw.MaxTokensField
