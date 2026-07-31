@@ -480,6 +480,123 @@ func TestGoogleTextSignatureDroppedCrossModel(t *testing.T) {
 	}
 }
 
+// --- signed empty text/thinking blocks (pi 6138f5a07) ---
+
+// googleModelParts builds a request from one assistant turn and returns its
+// "model" content parts.
+func googleModelParts(t *testing.T, am ai.AssistantMessage) []any {
+	t.Helper()
+	model := &ai.Model{ID: "gemini-3-pro-preview", Api: ai.APIGoogleGenerativeAI, Provider: "google"}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("Hi", 1), am}}
+	body := roundtripBody(t, mustBuildGoogleParams(t, model, req, &GoogleOptions{}))
+	for _, c := range body["contents"].([]any) {
+		m := c.(map[string]any)
+		if m["role"] == "model" {
+			return m["parts"].([]any)
+		}
+	}
+	t.Fatalf("no model turn in contents: %v", body["contents"])
+	return nil
+}
+
+// Gemini can attach a thoughtSignature to a part whose visible text is empty and
+// requires it echoed back; dropping the block breaks the reasoning chain and the
+// model intermittently ends a mid-task turn with a thought-only STOP.
+func TestGoogleSignedEmptyThinkingKept(t *testing.T) {
+	parts := googleModelParts(t, ai.AssistantMessage{
+		Provider: "google", Model: "gemini-3-pro-preview", Api: ai.APIGoogleGenerativeAI,
+		Content: ai.ContentList{
+			ai.ThinkingContent{Thinking: "", ThinkingSignature: "AAAAAAAAAAAAAAAAAAAAAA=="},
+			ai.ToolCall{ID: "call_1", Name: "bash", Arguments: map[string]any{"command": "ls"}},
+		},
+	})
+	var signed []map[string]any
+	for _, p := range parts {
+		m := p.(map[string]any)
+		if m["thoughtSignature"] == "AAAAAAAAAAAAAAAAAAAAAA==" {
+			signed = append(signed, m)
+		}
+	}
+	if len(signed) != 1 {
+		t.Fatalf("want 1 signed part, got %d: %v", len(signed), parts)
+	}
+	if signed[0]["thought"] != true {
+		t.Fatalf("signed empty thinking must stay a thought part: %v", signed[0])
+	}
+	if signed[0]["text"] != "" {
+		t.Fatalf("signed empty thinking text should stay empty: %v", signed[0])
+	}
+}
+
+func TestGoogleSignedEmptyTextKept(t *testing.T) {
+	parts := googleModelParts(t, ai.AssistantMessage{
+		Provider: "google", Model: "gemini-3-pro-preview", Api: ai.APIGoogleGenerativeAI,
+		Content: ai.ContentList{
+			ai.TextContent{Text: "", TextSignature: "AAAAAAAAAAAAAAAAAAAAAA=="},
+			ai.ToolCall{ID: "call_1", Name: "bash", Arguments: map[string]any{"command": "ls"}},
+		},
+	})
+	var signed []map[string]any
+	for _, p := range parts {
+		m := p.(map[string]any)
+		if m["thoughtSignature"] == "AAAAAAAAAAAAAAAAAAAAAA==" {
+			signed = append(signed, m)
+		}
+	}
+	if len(signed) != 1 {
+		t.Fatalf("want 1 signed part, got %d: %v", len(signed), parts)
+	}
+	if _, ok := signed[0]["thought"]; ok {
+		t.Fatalf("signed empty text must not become a thought part: %v", signed[0])
+	}
+	if signed[0]["text"] != "" {
+		t.Fatalf("signed empty text should stay empty: %v", signed[0])
+	}
+}
+
+func TestGoogleUnsignedEmptyBlocksStillDropped(t *testing.T) {
+	parts := googleModelParts(t, ai.AssistantMessage{
+		Provider: "google", Model: "gemini-3-pro-preview", Api: ai.APIGoogleGenerativeAI,
+		Content: ai.ContentList{
+			ai.ThinkingContent{Thinking: ""},
+			ai.TextContent{Text: "   "},
+			ai.ToolCall{ID: "call_1", Name: "bash", Arguments: map[string]any{"command": "ls"}},
+		},
+	})
+	if len(parts) != 1 {
+		t.Fatalf("unsigned empty blocks must be dropped, got %v", parts)
+	}
+	if _, ok := parts[0].(map[string]any)["functionCall"]; !ok {
+		t.Fatalf("only the tool call should survive: %v", parts[0])
+	}
+}
+
+// Cross provider/model the signature is unusable, so the empty blocks stay dropped
+// even though they carry one.
+func TestGoogleSignedEmptyBlocksDroppedCrossModel(t *testing.T) {
+	parts := googleModelParts(t, ai.AssistantMessage{
+		Provider: "google", Model: "other-model", Api: ai.APIGoogleGenerativeAI,
+		Content: ai.ContentList{
+			ai.ThinkingContent{Thinking: "", ThinkingSignature: "AAAAAAAAAAAAAAAAAAAAAA=="},
+			ai.TextContent{Text: "", TextSignature: "AAAAAAAAAAAAAAAAAAAAAA=="},
+			ai.ToolCall{ID: "call_1", Name: "bash", Arguments: map[string]any{"command": "ls"}},
+		},
+	})
+	if len(parts) != 1 {
+		t.Fatalf("cross-model empty blocks must be dropped, got %v", parts)
+	}
+	if _, ok := parts[0].(map[string]any)["functionCall"]; !ok {
+		t.Fatalf("only the tool call should survive: %v", parts[0])
+	}
+	raw, err := json.Marshal(parts)
+	if err != nil {
+		t.Fatalf("marshal parts: %v", err)
+	}
+	if strings.Contains(string(raw), "AAAAAAAAAAAAAAAAAAAAAA==") {
+		t.Fatalf("cross-model signature must not leak: %s", raw)
+	}
+}
+
 // --- Task 8: duplicate / empty tool-call id ---
 
 func TestGoogleDuplicateAndEmptyToolCallIDs(t *testing.T) {

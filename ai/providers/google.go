@@ -724,27 +724,41 @@ func googleContents(model *ai.Model, req ai.Context) []any {
 			for _, c := range am.Content {
 				switch v := c.(type) {
 				case ai.TextContent:
-					if strings.TrimSpace(v.Text) == "" {
+					// thoughtSignature can ride on a text part for context replay
+					// (pi: textSignature). Only keep same-model + valid base64.
+					sig := resolveThoughtSignature(isSame, v.TextSignature)
+					// Empty text is dropped only when unsigned: Gemini can attach the
+					// signature to a part whose visible text is empty and requires it
+					// echoed back, and dropping it breaks the reasoning chain — the model
+					// then intermittently ends mid-task turns with a thought-only STOP
+					// (empty completion, no tool call).
+					if strings.TrimSpace(v.Text) == "" && sig == "" {
 						continue
 					}
 					p := map[string]any{"text": sanitizeSurrogates(v.Text)}
-					// thoughtSignature can ride on a text part for context replay
-					// (pi: textSignature). Only keep same-model + valid base64.
-					if sig := resolveThoughtSignature(isSame, v.TextSignature); sig != "" {
+					if sig != "" {
 						p["thoughtSignature"] = sig
 					}
 					parts = append(parts, p)
 				case ai.ThinkingContent:
-					if strings.TrimSpace(v.Thinking) == "" {
-						continue
-					}
 					if isSame {
+						sig := resolveThoughtSignature(isSame, v.ThinkingSignature)
+						// Same rule as text parts: an empty thinking block is dropped only
+						// when it carries no signature.
+						if strings.TrimSpace(v.Thinking) == "" && sig == "" {
+							continue
+						}
 						p := map[string]any{"thought": true, "text": sanitizeSurrogates(v.Thinking)}
-						if sig := resolveThoughtSignature(isSame, v.ThinkingSignature); sig != "" {
+						if sig != "" {
 							p["thoughtSignature"] = sig
 						}
 						parts = append(parts, p)
 					} else {
+						// Cross-provider/model: the signature is unusable, so empty
+						// thinking stays dropped unconditionally.
+						if strings.TrimSpace(v.Thinking) == "" {
+							continue
+						}
 						parts = append(parts, map[string]any{"text": sanitizeSurrogates(v.Thinking)})
 					}
 				case ai.ToolCall:
