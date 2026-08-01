@@ -32,6 +32,48 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
 
+- **2026-08-01 — the remote-session stack (protocol + client + server core) is
+  IN scope** (re: `06a1ceb8d` "coding-agent remote client controller", with
+  riders `5a38a1c12` (`packages/client`), `7d5fc9499` (unix transport),
+  `73b24639f` (`packages/server` core), `03eba409c` (server/protocol
+  invariants)). Owner call (noam): **full functionality of the pi SDK as
+  represented in Go — close faith to the source architecture while leaning into
+  Go's idioms and upsides.** Judgement: `pi-coding-agent/client` is a published,
+  programmatic entrypoint (new package subpath `./client`), i.e. exactly the SDK
+  use case the port exists to serve — not the TUI/host machinery the boundary
+  excludes. **All server core is in**, so a Go consumer can serve as well as
+  connect. **Port**: `packages/protocol/src` (cbor encoder/decoder/options,
+  `codec.ts`, `framing.ts`, `schemas.ts`) → new `protocol/` package;
+  `packages/client/src` (`client`/`connection`/`state`/`session-handle`/
+  `unix`/`promise`/`errors`/`transport`/`types`) → new `client/` package;
+  `packages/server/src` **minus `legacy/`** (`server`/`protocol`/`sessions`/
+  `snapshots`/`listener`/`connection`/`errors`/`types` + `transports/unix`) →
+  new `server/` package; `coding-agent/src/client/{remote-session,transcript}.ts`
+  → `coding/remotesession.go` + `coding/transcript.go`.
+  **Not ported**: `packages/server/src/legacy/**` (`radius.ts` OAuth acquisition,
+  `supervisor.ts`, `rpc-process.ts`, `cli.ts`, `serve.ts`, `config.ts`,
+  `storage.ts`, the `ipc/` pair) — process/CLI/OAuth-acquisition machinery,
+  excluded under the 2026-07-14 Radius ruling and the standing host-wiring
+  boundary. `packages/server/src/testing/**` is upstream's own fake backend;
+  port only if the Go server tests want the same shape.
+  **The agent-harness exclusion is UNAFFECTED**: dependency edges were traced at
+  ruling time — `server/src/{server,protocol,sessions,types}.ts` import only
+  `@earendil-works/pi-protocol` + `node:crypto`, with the agent runtime behind an
+  injected `Backend` interface (`server/src/types.ts`), and `remote-session.ts`
+  imports only `pi-client` + `pi-protocol` + its own `transcript.ts`. Nothing in
+  this stack reaches `AgentHarness`, so the "no `harness/` tree in the Go port"
+  ruling stands and the session-store refactors stay `n/a`.
+  **New golden class — the wire.** `protocol/` is byte-golden in a way no prior
+  ported surface is: CBOR encoding and frame layout are observable to a *peer*,
+  so a Go implementation must be byte-compatible with a Node one or interop
+  fails. This needs its own fixture corpus (encode/decode round-trips +
+  cross-implementation frame vectors), not the usual request-body diff. Note
+  `protocol/src/schemas.ts` moved twice in its first cycle (`73b24639f`,
+  `03eba409c`) — it is not frozen upstream; re-check it every sync.
+  Future commits to `packages/{protocol,client}/src`, `packages/server/src`
+  (non-`legacy/`), and `coding-agent/src/client/` are `port` under this ruling;
+  commits confined to `server/src/legacy/**` are `n/a`.
+
 - **2026-07-17 — the model-runtime facade is ported SDK-scoped** (re:
   `ff28097a` "merge model runtime facade" + rider `bd9e09db` "expose dynamic
   provider refresh"). Owner call (noam): maximum fidelity to source via
