@@ -4,7 +4,7 @@ import "slices"
 
 // TranscriptItem is one entry in a session transcript: UserTranscriptItem,
 // AssistantTranscriptItem, or ToolTranscriptItem, discriminated by role.
-type TranscriptItem interface{ role() string }
+type TranscriptItem interface{ ItemRole() string }
 
 // UserTranscriptItem is a prompt or steer from the user.
 type UserTranscriptItem struct {
@@ -14,7 +14,7 @@ type UserTranscriptItem struct {
 	Timestamp int64     `cbor:"timestamp"`
 }
 
-func (UserTranscriptItem) role() string { return "user" }
+func (UserTranscriptItem) ItemRole() string { return "user" }
 
 func (i *UserTranscriptItem) Validate() error {
 	if err := requireID("id", i.ID); err != nil {
@@ -70,7 +70,7 @@ type AssistantTranscriptItem struct {
 	ErrorMessage  *string         `cbor:"errorMessage,omitempty"`
 }
 
-func (AssistantTranscriptItem) role() string { return "assistant" }
+func (AssistantTranscriptItem) ItemRole() string { return "assistant" }
 
 func (i *AssistantTranscriptItem) Validate() error {
 	if err := requireID("id", i.ID); err != nil {
@@ -159,7 +159,7 @@ type ToolTranscriptItem struct {
 	IsError    bool       `cbor:"isError"`
 }
 
-func (ToolTranscriptItem) role() string { return "tool" }
+func (ToolTranscriptItem) ItemRole() string { return "tool" }
 
 func (i *ToolTranscriptItem) Validate() error {
 	if err := requireID("id", i.ID); err != nil {
@@ -216,8 +216,8 @@ func allowContent(name string, content []Content, allowed ...string) error {
 		if block == nil {
 			return invalidf("%s must not contain empty blocks", name)
 		}
-		if !slices.Contains(allowed, block.contentType()) {
-			return invalidf("%s must not contain a %q block", name, block.contentType())
+		if !slices.Contains(allowed, block.ContentType()) {
+			return invalidf("%s must not contain a %q block", name, block.ContentType())
 		}
 		if v, ok := block.(Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -230,7 +230,7 @@ func allowContent(name string, content []Content, allowed ...string) error {
 
 // TranscriptProgress is normalized incremental activity. Snapshots remain
 // authoritative; progress is an optimization, never the source of truth.
-type TranscriptProgress interface{ progressType() string }
+type TranscriptProgress interface{ ProgressType() string }
 
 // ItemStartedProgress announces a new transcript item.
 type ItemStartedProgress struct {
@@ -238,7 +238,7 @@ type ItemStartedProgress struct {
 	Item TranscriptItem `cbor:"item"`
 }
 
-func (ItemStartedProgress) progressType() string { return "item_started" }
+func (ItemStartedProgress) ProgressType() string { return "item_started" }
 
 func (p *ItemStartedProgress) Validate() error {
 	if err := requireLiteral("type", p.Type, "item_started"); err != nil {
@@ -268,7 +268,7 @@ type AssistantDeltaProgress struct {
 	Delta        string             `cbor:"delta"`
 }
 
-func (AssistantDeltaProgress) progressType() string { return "assistant_delta" }
+func (AssistantDeltaProgress) ProgressType() string { return "assistant_delta" }
 
 func (p *AssistantDeltaProgress) Validate() error {
 	if err := requireLiteral("type", p.Type, "assistant_delta"); err != nil {
@@ -292,7 +292,7 @@ type ItemUpdatedProgress struct {
 	Item TranscriptItem `cbor:"item"`
 }
 
-func (ItemUpdatedProgress) progressType() string { return "item_updated" }
+func (ItemUpdatedProgress) ProgressType() string { return "item_updated" }
 
 func (p *ItemUpdatedProgress) Validate() error {
 	if err := requireLiteral("type", p.Type, "item_updated"); err != nil {
@@ -314,7 +314,7 @@ type ItemFinishedProgress struct {
 	Item TranscriptItem `cbor:"item"`
 }
 
-func (ItemFinishedProgress) progressType() string { return "item_finished" }
+func (ItemFinishedProgress) ProgressType() string { return "item_finished" }
 
 func (p *ItemFinishedProgress) Validate() error {
 	if err := requireLiteral("type", p.Type, "item_finished"); err != nil {

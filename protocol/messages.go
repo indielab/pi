@@ -425,7 +425,7 @@ func NewRequest(id string, command Command) *RequestEnvelope {
 type ClientMessage interface{ clientMessage() }
 
 // ServerEvent is an unsolicited push from the server.
-type ServerEvent interface{ eventType() string }
+type ServerEvent interface{ EventType() string }
 
 // ServerSnapshotEvent republishes the whole-server view.
 type ServerSnapshotEvent struct {
@@ -433,7 +433,7 @@ type ServerSnapshotEvent struct {
 	Snapshot ServerSnapshot `cbor:"snapshot"`
 }
 
-func (ServerSnapshotEvent) eventType() string { return "server_snapshot" }
+func (ServerSnapshotEvent) EventType() string { return "server_snapshot" }
 
 func (e *ServerSnapshotEvent) Validate() error {
 	if err := requireLiteral("type", e.Type, "server_snapshot"); err != nil {
@@ -448,7 +448,7 @@ type SessionSnapshotEvent struct {
 	Snapshot SessionSnapshot `cbor:"snapshot"`
 }
 
-func (SessionSnapshotEvent) eventType() string { return "session_snapshot" }
+func (SessionSnapshotEvent) EventType() string { return "session_snapshot" }
 
 func (e *SessionSnapshotEvent) Validate() error {
 	if err := requireLiteral("type", e.Type, "session_snapshot"); err != nil {
@@ -464,7 +464,7 @@ type SessionProgressEvent struct {
 	Progress  TranscriptProgress `cbor:"progress"`
 }
 
-func (SessionProgressEvent) eventType() string { return "session_progress" }
+func (SessionProgressEvent) EventType() string { return "session_progress" }
 
 func (e *SessionProgressEvent) Validate() error {
 	if err := requireLiteral("type", e.Type, "session_progress"); err != nil {
@@ -488,7 +488,7 @@ type SessionRemovedEvent struct {
 	SessionID string `cbor:"sessionId"`
 }
 
-func (SessionRemovedEvent) eventType() string { return "session_removed" }
+func (SessionRemovedEvent) EventType() string { return "session_removed" }
 
 func (e *SessionRemovedEvent) Validate() error {
 	if err := requireLiteral("type", e.Type, "session_removed"); err != nil {

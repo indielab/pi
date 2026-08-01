@@ -154,7 +154,7 @@ func (m *ModelMetadata) Validate() error {
 // Content is a block inside a transcript item: TextContent, ThinkingContent,
 // ImageContent, or ToolCallContent. Which of those are legal depends on the
 // item's role, enforced when the item is validated.
-type Content interface{ contentType() string }
+type Content interface{ ContentType() string }
 
 // TextContent is plain text.
 type TextContent struct {
@@ -162,7 +162,7 @@ type TextContent struct {
 	Text string `cbor:"text"`
 }
 
-func (TextContent) contentType() string { return "text" }
+func (TextContent) ContentType() string { return "text" }
 func (c *TextContent) Validate() error  { return requireLiteral("type", c.Type, "text") }
 
 // ThinkingContent is reasoning text.
@@ -172,7 +172,7 @@ type ThinkingContent struct {
 	Redacted *bool  `cbor:"redacted,omitempty"`
 }
 
-func (ThinkingContent) contentType() string { return "thinking" }
+func (ThinkingContent) ContentType() string { return "thinking" }
 func (c *ThinkingContent) Validate() error  { return requireLiteral("type", c.Type, "thinking") }
 
 // ImageContent is a base64 image payload.
@@ -182,7 +182,7 @@ type ImageContent struct {
 	MimeType string `cbor:"mimeType"`
 }
 
-func (ImageContent) contentType() string { return "image" }
+func (ImageContent) ContentType() string { return "image" }
 func (c *ImageContent) Validate() error {
 	if err := requireLiteral("type", c.Type, "image"); err != nil {
 		return err
@@ -198,7 +198,7 @@ type ToolCallContent struct {
 	Input      any    `cbor:"input"`
 }
 
-func (ToolCallContent) contentType() string { return "toolCall" }
+func (ToolCallContent) ContentType() string { return "toolCall" }
 func (c *ToolCallContent) Validate() error {
 	if err := requireLiteral("type", c.Type, "toolCall"); err != nil {
 		return err
