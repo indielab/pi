@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sky-valley/pi/client"
 	"github.com/sky-valley/pi/protocol"
@@ -699,6 +700,20 @@ func TestRemoteSessionCloseIsIdempotentAndAwaitsDetach(t *testing.T) {
 	}
 
 	from := len(server.all())
+	defer func() {
+		// pi asserts the two calls returned the same promise. Here the equivalent
+		// is that the second caller joined the first disposal rather than starting
+		// one of its own: one detach, not two.
+		detachs := 0
+		for _, command := range server.commands()[from:] {
+			if command == "detach" {
+				detachs++
+			}
+		}
+		if detachs != 1 {
+			t.Errorf("issued %d detaches, want the second Close to have joined the first", detachs)
+		}
+	}()
 	first := goCall(func() error { return session.Close(remoteContext(t)) })
 	second := goCall(func() error { return session.Close(remoteContext(t)) })
 	detachRequest, _ := server.awaitCommand(t, "detach", from)
@@ -984,6 +999,332 @@ func TestRemoteSessionRequiresAnAttachedSession(t *testing.T) {
 				t.Fatalf("error = %v, want %v", err, ErrNoRemoteSession)
 			}
 		})
+	}
+}
+
+func TestRemoteSessionIgnoresASupersededBindingsSubscriptions(t *testing.T) {
+	server := newRemoteServer(t)
+	c := connectRemoteClient(t, server)
+	session := openTestSession(t, c, server, remoteSnapshot("session-1"), RemoteSessionOptions{})
+
+	// The binding session-1's subscriptions were registered under. Replacing the
+	// attachment retires it, and everything registered under it has to go quiet:
+	// bind installs the new state before it can unregister the old listeners, so
+	// a straggler delivered in that window would otherwise unbind a handle it
+	// knows nothing about, or fold the wrong session's snapshot into the
+	// projection.
+	session.mu.Lock()
+	superseded := session.binding
+	session.mu.Unlock()
+
+	from := len(server.all())
+	opening := goCall(func() error { return session.Open(remoteContext(t), "session-2") })
+	attachRequest, next := server.awaitCommand(t, "attach", from)
+	server.send(t, remoteOK(attachRequest.ID, &protocol.SessionResult{
+		Command: "attach", Session: *remoteSnapshot("session-2"),
+	}))
+	detachRequest, _ := server.awaitCommand(t, "detach", next+1)
+	server.send(t, remoteOK(detachRequest.ID, &protocol.DetachResult{Command: "detach", SessionID: "session-1"}))
+	if err := awaitErr(t, opening); err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+
+	session.handleEvent(superseded, &protocol.SessionRemovedEvent{Type: "session_removed", SessionID: "session-1"})
+	if got := session.ID(); got != "session-2" {
+		t.Fatalf("id = %q, want session-2 — a retired subscription unbound the attachment that replaced it", got)
+	}
+	session.applySnapshot(superseded, remoteSnapshot("session-1", withRevision(9)))
+	if got := session.Snapshot().ID; got != "session-2" {
+		t.Fatalf("snapshot = %q, want session-2's — a retired subscription rewrote the projection", got)
+	}
+	if got := session.State().Lifecycle; got != (RemoteSessionLifecycle{Status: LifecycleReady}) {
+		t.Fatalf("lifecycle = %+v, want ready", got)
+	}
+}
+
+func TestRemoteSessionCloseRefusesAnAttachmentItCannotAwait(t *testing.T) {
+	server := newRemoteServer(t)
+	c := connectRemoteClient(t, server)
+	session := openTestSession(t, c, server, remoteSnapshot("session-1"), RemoteSessionOptions{})
+	server.answerDetach(t)
+
+	// An operation that has passed its disposal check but has not registered its
+	// attachment yet is the one window Close cannot see into. Rather than race
+	// for it, the window is opened here and disposal run to completion inside it:
+	// what matters is that the acquisition on the far side never starts, because
+	// Close has already promised nobody is holding this session's lease.
+	started, err := session.start(OperationOpen, nil)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	if err := session.Close(remoteContext(t)); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	acquired := false
+	attachment, err := session.beginAttachment()
+	if err == nil {
+		err = session.runAttachment(remoteContext(t), attachment, func(context.Context) error {
+			acquired = true
+			return nil
+		})
+	}
+	session.end(started)
+
+	if acquired {
+		t.Fatal("an attachment was acquired after Close returned: the server keeps a lease nobody can release")
+	}
+	if !errors.Is(err, errDisposedAfterAwait) {
+		t.Fatalf("attachment error = %v, want the disposal to have refused it", err)
+	}
+}
+
+func TestRemoteSessionBindsTheReplacementBeforeItSubscribes(t *testing.T) {
+	server := newRemoteServer(t)
+	c := connectRemoteClient(t, server)
+	session := openTestSession(t, c, server, remoteSnapshot("session-1"), RemoteSessionOptions{})
+
+	// The replacement's lease dies between the detach that gave session-1 up and
+	// the subscriptions bind registers, so the client refuses them. pi has
+	// swapped the handle and the transcript by that point, and the session has to
+	// end up on the attachment it took over rather than on the one it just
+	// detached.
+	server.onMessage(func(message protocol.ClientMessage) {
+		request, ok := message.(*protocol.RequestEnvelope)
+		if !ok {
+			return
+		}
+		detach, ok := request.Request.(*protocol.DetachCommand)
+		if !ok || detach.SessionID != "session-1" {
+			return
+		}
+		server.send(t, remoteOK(request.ID, &protocol.DetachResult{Command: "detach", SessionID: "session-1"}))
+		server.send(t, remoteEvent(&protocol.SessionRemovedEvent{Type: "session_removed", SessionID: "session-2"}))
+	})
+
+	from := len(server.all())
+	opening := goCall(func() error { return session.Open(remoteContext(t), "session-2") })
+	attachRequest, _ := server.awaitCommand(t, "attach", from)
+	server.send(t, remoteOK(attachRequest.ID, &protocol.SessionResult{
+		Command: "attach", Session: *remoteSnapshot("session-2"),
+	}))
+
+	var detached *client.SessionDetachedError
+	if err := awaitErr(t, opening); !errors.As(err, &detached) {
+		t.Fatalf("Open error = %v, want the refused subscription", err)
+	}
+	if got := session.ID(); got != "session-2" {
+		t.Fatalf("id = %q, want session-2 — the session kept an attachment it had already detached", got)
+	}
+	if got := session.Snapshot().ID; got != "session-2" {
+		t.Fatalf("snapshot = %q, want session-2's", got)
+	}
+	if got := session.State().Lifecycle; got != (RemoteSessionLifecycle{Status: LifecycleReady}) {
+		t.Fatalf("lifecycle = %+v, want ready", got)
+	}
+}
+
+func TestRemoteSessionCloseDoesNotLatchItsFirstCallersDeadline(t *testing.T) {
+	server := newRemoteServer(t)
+	c := connectRemoteClient(t, server)
+	session := openTestSession(t, c, server, remoteSnapshot("session-1"), RemoteSessionOptions{})
+
+	c.Disconnect("test reconnect")
+	from := len(server.all())
+	reconnecting := goCall(func() error { return session.Reconnect(remoteContext(t)) })
+	attachRequest, next := server.awaitCommand(t, "attach", from)
+
+	// The first caller runs out of budget while the reacquired attachment is
+	// still being given up. That budget is its own: it says how long this caller
+	// waits, not what the disposal achieved.
+	impatient, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	if err := session.Close(impatient); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("first Close = %v, want its own deadline", err)
+	}
+	if err := awaitErr(t, reconnecting); !errors.Is(err, ErrRemoteSessionDisposed) {
+		t.Fatalf("Reconnect = %v, want the disposal", err)
+	}
+
+	server.send(t, remoteOK(attachRequest.ID, &protocol.SessionResult{
+		Command: "attach", Session: *remoteSnapshot("session-1", withRevision(2)),
+	}))
+	detachRequest, _ := server.awaitCommand(t, "detach", next+1)
+	server.send(t, remoteOK(detachRequest.ID, &protocol.DetachResult{Command: "detach", SessionID: "session-1"}))
+
+	if err := session.Close(remoteContext(t)); err != nil {
+		t.Fatalf("second Close = %v, want the disposal that actually happened", err)
+	}
+}
+
+func TestRemoteSessionCloseReportsOneFailurePerFailedCleanup(t *testing.T) {
+	server := newRemoteServer(t)
+	c := connectRemoteClient(t, server)
+	session := openTestSession(t, c, server, remoteSnapshot("session-1"), RemoteSessionOptions{})
+
+	from := len(server.all())
+	opening := goCall(func() error { return session.Open(remoteContext(t), "session-2") })
+	attachRequest, next := server.awaitCommand(t, "attach", from)
+
+	// Neither the replacement nor the detach that pays for it is answered, so the
+	// caller's budget expires with two cleanups outstanding. One expired budget is
+	// one failure, however many things were waiting on it.
+	impatient, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+	err := session.Close(impatient)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("Close = %v, want its own deadline", err)
+	}
+	var aggregate *aggregateError
+	if errors.As(err, &aggregate) {
+		t.Fatalf("Close = %v, want one failure rather than the same deadline collected per cleanup", err)
+	}
+	if err := awaitErr(t, opening); !errors.Is(err, ErrRemoteSessionDisposed) {
+		t.Fatalf("Open = %v, want the disposal", err)
+	}
+
+	// The cleanup runs on: the replacement lands, is given up unused, and the
+	// detach the session owed is answered too late to have been waited for.
+	currentDetach, _ := server.awaitCommand(t, "detach", next+1)
+	server.send(t, remoteOK(attachRequest.ID, &protocol.SessionResult{
+		Command: "attach", Session: *remoteSnapshot("session-2"),
+	}))
+	replacementDetach, _ := server.awaitCommand(t, "detach", currentDetach2Index(t, server, currentDetach))
+	server.send(t, remoteOK(replacementDetach.ID, &protocol.DetachResult{Command: "detach", SessionID: "session-2"}))
+	server.send(t, remoteOK(currentDetach.ID, &protocol.DetachResult{Command: "detach", SessionID: "session-1"}))
+
+	// A cleanup that genuinely failed stays reported, unlike a caller's deadline.
+	if err := session.Close(remoteContext(t)); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("second Close = %v, want the detach that ran out of budget", err)
+	}
+}
+
+func TestRemoteSessionNotifiesInOrder(t *testing.T) {
+	server := newRemoteServer(t)
+	c := connectRemoteClient(t, server)
+	session := openTestSession(t, c, server, remoteSnapshot("session-1"), RemoteSessionOptions{})
+
+	// One subscriber is slow to render the second revision. State changes behind
+	// it must queue up rather than overtake it: a subscriber that renders
+	// whatever it was handed last would otherwise be left showing a transcript
+	// the session has moved past, with no further event to correct it.
+	const slowRender = 100 * time.Millisecond
+	var (
+		mu        sync.Mutex
+		delivered []int64
+		rendering sync.Once
+	)
+	reached := make(chan struct{})
+	if _, err := session.Subscribe(func(state RemoteSessionState) {
+		revision := int64(0)
+		if state.Snapshot != nil {
+			revision = state.Snapshot.Revision
+		}
+		if revision == 2 {
+			rendering.Do(func() {
+				close(reached)
+				time.Sleep(slowRender)
+			})
+		}
+		mu.Lock()
+		delivered = append(delivered, revision)
+		mu.Unlock()
+	}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+
+	sending := goCall(func() error {
+		server.send(t, remoteEvent(&protocol.SessionSnapshotEvent{
+			Type: "session_snapshot", Snapshot: *remoteSnapshot("session-1", withRevision(2)),
+		}))
+		return nil
+	})
+	<-reached
+	server.send(t, remoteEvent(&protocol.SessionSnapshotEvent{
+		Type: "session_snapshot", Snapshot: *remoteSnapshot("session-1", withRevision(3)),
+	}))
+	if err := awaitErr(t, sending); err != nil {
+		t.Fatalf("send: %v", err)
+	}
+
+	mu.Lock()
+	got := append([]int64(nil), delivered...)
+	mu.Unlock()
+	for i := 1; i < len(got); i++ {
+		if got[i] < got[i-1] {
+			t.Fatalf("revisions delivered = %v, want them non-decreasing", got)
+		}
+	}
+	if len(got) == 0 || got[len(got)-1] != 3 {
+		t.Fatalf("revisions delivered = %v, want the newest one last", got)
+	}
+	if revision := session.Snapshot().Revision; revision != got[len(got)-1] {
+		t.Fatalf("session holds revision %d, subscribers were left on %d", revision, got[len(got)-1])
+	}
+}
+
+func TestRemoteSessionNotificationSkipsAPeerUnsubscribedDuringIt(t *testing.T) {
+	server := newRemoteServer(t)
+	c := connectRemoteClient(t, server)
+	session := openTestSession(t, c, server, remoteSnapshot("session-1"), RemoteSessionOptions{})
+
+	// pi notifies by iterating the listener set itself, so a subscriber that
+	// unsubscribes a peer the notification has not reached yet stops that peer
+	// from hearing about a state it just said it no longer wants.
+	var (
+		mu       sync.Mutex
+		peer     client.Unsubscribe
+		notified int
+	)
+	if _, err := session.Subscribe(func(RemoteSessionState) {
+		mu.Lock()
+		unsubscribe := peer
+		mu.Unlock()
+		if unsubscribe != nil {
+			unsubscribe()
+		}
+	}); err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	unsubscribe, err := session.Subscribe(func(RemoteSessionState) {
+		mu.Lock()
+		notified++
+		mu.Unlock()
+	})
+	if err != nil {
+		t.Fatalf("Subscribe: %v", err)
+	}
+	mu.Lock()
+	peer = unsubscribe
+	mu.Unlock()
+
+	server.send(t, remoteEvent(&protocol.SessionSnapshotEvent{
+		Type: "session_snapshot", Snapshot: *remoteSnapshot("session-1", withRevision(2)),
+	}))
+	eventually(t, "the snapshot to land", func() bool { return session.Snapshot().Revision == 2 })
+
+	mu.Lock()
+	got := notified
+	mu.Unlock()
+	if got != 1 {
+		t.Fatalf("the peer was notified %d times, want only its own immediate call", got)
+	}
+}
+
+func TestRemoteSessionModelsAndSessionsAreEmptyBeforeAServerSnapshot(t *testing.T) {
+	server := newRemoteServer(t)
+	c, err := client.New(client.Options{Token: "secret", TransportFactory: server.connect})
+	if err != nil {
+		t.Fatalf("client.New: %v", err)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+	session := newRemoteSession(c, RemoteSessionOptions{})
+
+	if got := session.Models(); got == nil {
+		t.Fatal("models = nil, want the empty view pi reports")
+	}
+	if got := session.Sessions(); got == nil {
+		t.Fatal("sessions = nil, want the empty view pi reports")
 	}
 }
 

@@ -16,10 +16,18 @@ const DefaultMaxFrameLength = 16 * 1024 * 1024
 // length must be range-checked before it is narrowed to int.
 const maxUint32 uint64 = 0xffff_ffff
 
-// FrameError is a malformed or over-long frame.
+// FrameError is a malformed or over-long frame — a peer's fault.
 type FrameError struct{ Msg string }
 
 func (e *FrameError) Error() string { return e.Msg }
+
+// RangeError is an out-of-range framing limit: a caller bug, not a peer's, which
+// is why it is a distinct type from FrameError. It mirrors the RangeError pi
+// throws from resolveMaxFrameLength and encodeFrame, and the one cbor already
+// raises for an invalid Options.
+type RangeError struct{ Msg string }
+
+func (e *RangeError) Error() string { return e.Msg }
 
 // FrameOptions bounds a single frame. A nil MaxFrameLength takes the default.
 type FrameOptions struct {
@@ -32,7 +40,7 @@ func resolveMaxFrameLength(o *FrameOptions) (int, error) {
 		v = *o.MaxFrameLength
 	}
 	if v < 0 || uint64(v) > maxUint32 {
-		return 0, fmt.Errorf("maxFrameLength must be an integer between 0 and %d", maxUint32)
+		return 0, &RangeError{Msg: fmt.Sprintf("maxFrameLength must be an integer between 0 and %d", maxUint32)}
 	}
 	return v, nil
 }
@@ -40,7 +48,10 @@ func resolveMaxFrameLength(o *FrameOptions) (int, error) {
 // EncodeFrame prefixes a payload with its unsigned 32-bit big-endian length.
 func EncodeFrame(payload []byte) ([]byte, error) {
 	if uint64(len(payload)) > maxUint32 {
-		return nil, fmt.Errorf("frame payload exceeds the unsigned 32-bit length limit")
+		return nil, &RangeError{
+			Msg: fmt.Sprintf("frame payload of %d bytes exceeds the unsigned 32-bit length limit of %d; "+
+				"split the payload across frames", len(payload), maxUint32),
+		}
 	}
 	frame := make([]byte, frameHeaderLength+len(payload))
 	binary.BigEndian.PutUint32(frame, uint32(len(payload)))
@@ -75,6 +86,16 @@ const (
 	decoderEnded
 	decoderFailed
 )
+
+// decoderFailedMessage is returned by every call on a poisoned decoder.
+//
+// DIVERGENCE (deliberate): pi says only "Frame decoder has failed". A failed
+// decoder is a dead end by construction — the stream position is unknown, so no
+// later byte can be interpreted — and there is exactly one way forward, which
+// the message now names instead of leaving the caller to retry into a permanent
+// error. The text is local to the process; it never reaches a peer.
+const decoderFailedMessage = "Frame decoder has failed: a framing error is unrecoverable by design, " +
+	"so discard this decoder and re-establish the connection"
 
 // FrameDecoder incrementally splits arbitrary byte chunks into length-prefixed
 // payloads.
@@ -116,7 +137,7 @@ func (d *FrameDecoder) Push(chunk []byte) ([][]byte, error) {
 	case decoderEnded:
 		return nil, &FrameError{Msg: "Frame decoder has ended"}
 	case decoderFailed:
-		return nil, &FrameError{Msg: "Frame decoder has failed"}
+		return nil, &FrameError{Msg: decoderFailedMessage}
 	}
 
 	var frames [][]byte
@@ -173,7 +194,7 @@ func (d *FrameDecoder) End() error {
 	case decoderEnded:
 		return &FrameError{Msg: "Frame decoder has ended"}
 	case decoderFailed:
-		return &FrameError{Msg: "Frame decoder has failed"}
+		return &FrameError{Msg: decoderFailedMessage}
 	}
 	if d.headerLength != 0 || d.hasExpected {
 		return d.fail("Truncated frame at end of stream")

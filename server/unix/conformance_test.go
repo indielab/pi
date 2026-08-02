@@ -5,9 +5,13 @@ package unix_test
 import (
 	"context"
 	"errors"
+	"io"
+	"net"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -204,6 +208,40 @@ func TestHandshakeRejections(t *testing.T) {
 		}
 		if err := client.WaitForClose(); err != nil {
 			t.Fatal(err)
+		}
+	})
+
+	// Two hellos in one write reach the server as one chunk, so the second is
+	// judged while the first one's handshake is still open. pi answers with
+	// the hello_error alone: the handshake it interrupted never gets to send
+	// its own hello.
+	t.Run("duplicate hello in one write", func(t *testing.T) {
+		client := h.connect()
+		frame, err := protocol.EncodeClientMessage(protocol.NewClientHello(servertest.Token), nil)
+		if err != nil {
+			t.Fatalf("encode: %v", err)
+		}
+		from := client.Count()
+		if err := client.SendBytes(append(append([]byte{}, frame...), frame...)); err != nil {
+			t.Fatalf("send: %v", err)
+		}
+		message, err := client.NextFrom(from, func(m protocol.ServerMessage) bool {
+			_, ok := m.(*protocol.ServerHelloError)
+			return ok
+		})
+		if err != nil {
+			t.Fatalf("next: %v", err)
+		}
+		if got := message.(*protocol.ServerHelloError).Error.Message; got != "hello may only be sent as the first message" {
+			t.Fatalf("message = %q", got)
+		}
+		if err := client.WaitForClose(); err != nil {
+			t.Fatal(err)
+		}
+		for _, received := range client.Messages()[from:] {
+			if _, ok := received.(*protocol.ServerHello); ok {
+				t.Fatal("the interrupted handshake must not also answer with a hello and a full server snapshot")
+			}
 		}
 	})
 
@@ -589,6 +627,48 @@ func TestBackendFailuresAreNotExposedToClients(t *testing.T) {
 	}
 }
 
+// Backend and SessionRuntime are exported extension points somebody else
+// implements. One that panics must fail the request it was called from, on the
+// goroutine the server gave it, rather than taking the process with it.
+func TestPanickingBackendFailsTheRequestNotTheProcess(t *testing.T) {
+	t.Parallel()
+	backend := servertest.NewBackend()
+	var exploding atomic.Bool
+	backend.SetListSessionsHook(func(int) error {
+		if exploding.Load() {
+			panic("backend exploded")
+		}
+		return nil
+	})
+	var errs errorLog
+	h := start(t, backend, func(o *unix.ServerOptions) { o.OnError = errs.record })
+	client := h.connected()
+
+	exploding.Store(true)
+	response := request(t, client, "list", protocol.NewListCommand())
+	exploding.Store(false)
+	if response.OK {
+		t.Fatalf("expected a failure, got %#v", response)
+	}
+	if response.Error.Code != protocol.ErrorInvalidRequest || response.Error.Message != "Internal server error" {
+		t.Fatalf("leaked the panic to the peer: %#v", response.Error)
+	}
+	found := false
+	for _, err := range errs.all() {
+		if strings.Contains(err.Error(), "backend exploded") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("the panic must reach the error observer, got %v", errs.all())
+	}
+
+	// The server is still the server: the next request is answered normally.
+	if listed := request(t, client, "after", protocol.NewListCommand()); !listed.OK {
+		t.Fatalf("the server stopped serving after a backend panic: %#v", listed.Error)
+	}
+}
+
 func TestResponsesMayCompleteOutOfOrder(t *testing.T) {
 	t.Parallel()
 	backend := servertest.NewBackend()
@@ -651,6 +731,33 @@ func TestGracefulShutdownReleasesEverything(t *testing.T) {
 	}
 	if err := h.server.Close(context.Background()); err != nil {
 		t.Fatalf("second close: %v", err)
+	}
+}
+
+// The read loop owns the socket, so the socket has to go when the read loop
+// does. A peer that only half-closes otherwise never sees a FIN, and a peer
+// that churns connections leaves one server-side descriptor behind per round —
+// only the netFD finaliser reclaims those, and running out of descriptors
+// creates no GC pressure to trigger it.
+func TestPeerHalfCloseEndsTheServerSocket(t *testing.T) {
+	t.Parallel()
+	// The handshake timeout would close the connection on its own; this is
+	// about the read loop, not about the timeout rescuing it.
+	h := start(t, nil, func(o *unix.ServerOptions) { o.HandshakeTimeout = time.Minute })
+	socket, err := net.DialTimeout("unix", h.path, servertest.Timeout)
+	if err != nil {
+		t.Fatalf("dial: %v", err)
+	}
+	defer socket.Close()
+
+	if err := socket.(*net.UnixConn).CloseWrite(); err != nil {
+		t.Fatalf("half-close: %v", err)
+	}
+	if err := socket.SetReadDeadline(time.Now().Add(servertest.Timeout)); err != nil {
+		t.Fatalf("read deadline: %v", err)
+	}
+	if _, err := socket.Read(make([]byte, 1)); !errors.Is(err, io.EOF) {
+		t.Fatalf("read after half-close = %v, want io.EOF: the server never closed its end of the socket", err)
 	}
 }
 

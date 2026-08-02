@@ -4,6 +4,7 @@ package unix_test
 
 import (
 	"context"
+	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -82,6 +83,77 @@ func TestServerSnapshotRevisionsAreSerialized(t *testing.T) {
 	}
 }
 
+// pi sends progress straight from the emit and only suspends on the snapshot
+// arm, so a runtime that emits a snapshot and then progress in one call stack
+// puts the progress on the wire first. A client applying deltas onto its last
+// snapshot double-applies one if the order is reversed.
+func TestProgressOvertakesASnapshotStillBeingBuilt(t *testing.T) {
+	t.Parallel()
+	backend := servertest.NewBackend()
+	backend.Seed("session-1")
+	h := start(t, backend, nil)
+	client := h.connected()
+	request(t, client, "attach", protocol.NewAttachCommand("session-1"))
+	runtime := backend.LatestRuntime("session-1")
+
+	from := client.Count()
+	// Holding the snapshot read open is what makes the order observable: the
+	// snapshot event cannot be built yet, and the progress must not be waiting
+	// on it.
+	runtime.BlockSnapshots()
+	// Released on the way out too, so a failure here does not leave the
+	// shutdown waiting on a snapshot that never comes.
+	defer runtime.ReleaseSnapshots()
+	runtime.EmitSnapshot()
+	runtime.EmitProgress(&protocol.AssistantDeltaProgress{
+		Type: "assistant_delta", MessageID: "assistant-1", ContentIndex: 0,
+		Kind: protocol.DeltaText, Delta: "hello",
+	})
+
+	if _, err := client.NextFrom(from, func(m protocol.ServerMessage) bool {
+		_, ok := isEvent[*protocol.SessionProgressEvent](m)
+		return ok
+	}); err != nil {
+		t.Fatalf("progress must reach the peer ahead of the snapshot emitted before it: %v", err)
+	}
+
+	runtime.ReleaseSnapshots()
+	if _, err := client.NextFrom(from, func(m protocol.ServerMessage) bool {
+		_, ok := isEvent[*protocol.SessionSnapshotEvent](m)
+		return ok
+	}); err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+}
+
+// A Close given a deadline must return by it. A backend that never answers
+// otherwise holds the caller for as long as it likes.
+func TestCloseGivesUpWhenItsContextExpires(t *testing.T) {
+	t.Parallel()
+	backend := servertest.NewBackend()
+	backend.Seed("session-1")
+	h := start(t, backend, nil)
+	client := h.connected()
+
+	gate := backend.DelayNextList()
+	request(t, client, "attach", protocol.NewAttachCommand("session-1"))
+	<-gate.Entered
+	defer gate.Open()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	closed := make(chan error, 1)
+	go func() { closed <- h.server.Close(ctx) }()
+	select {
+	case err := <-closed:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("close error = %v, want the deadline that was set", err)
+		}
+	case <-time.After(servertest.Timeout):
+		t.Fatal("Close ignored its context and waited on a backend that never answered")
+	}
+}
+
 func TestCreateListAttachDetach(t *testing.T) {
 	t.Parallel()
 	h := start(t, nil, nil)
@@ -107,11 +179,21 @@ func TestCreateListAttachDetach(t *testing.T) {
 		t.Fatalf("list returned %#v", list.Sessions)
 	}
 
-	for _, id := range []string{"detach-1", "detach-2"} {
-		response := request(t, client, id, protocol.NewDetachCommand(created.ID))
-		if !response.OK {
-			t.Fatalf("detach %s failed: %#v", id, response.Error)
-		}
+	detached := request(t, client, "detach-1", protocol.NewDetachCommand(created.ID))
+	if !detached.OK {
+		t.Fatalf("detach failed: %#v", detached.Error)
+	}
+	// Detaching twice is not idempotent: the second one no longer holds the
+	// session, and pi answers that with invalid_request rather than pretending.
+	again := request(t, client, "detach-2", protocol.NewDetachCommand(created.ID))
+	if again.OK {
+		t.Fatalf("a second detach must fail, got %#v", again.Result)
+	}
+	if again.Error.Code != protocol.ErrorInvalidRequest {
+		t.Fatalf("code = %q, want invalid_request", again.Error.Code)
+	}
+	if again.Error.Message != "Connection is not attached to session "+created.ID {
+		t.Fatalf("message = %q", again.Error.Message)
 	}
 	if got := h.backend.LatestRuntime(created.ID).DisposeCount(); got != 1 {
 		t.Fatalf("dispose count = %d, want 1", got)
@@ -467,5 +549,23 @@ func TestPresetRejectsInvalidOptions(t *testing.T) {
 		Token: servertest.Token, Path: "/tmp/pi.sock", HandshakeTimeout: 2_147_483_648 * time.Millisecond,
 	}); err == nil {
 		t.Fatal("a handshake timeout above Node's maximum timer delay must be rejected")
+	}
+	if _, err := unix.NewServer(backend, unix.ServerOptions{
+		Token: servertest.Token, Path: "/tmp/pi.sock", GracefulCloseTimeout: 2_147_483_648 * time.Millisecond,
+	}); err == nil {
+		t.Fatal("a graceful close timeout above Node's maximum timer delay must be rejected")
+	}
+
+	// Both timeouts are Node timer delays in whole milliseconds; anything
+	// finer is a configuration a Node pi server refuses to start on.
+	if _, err := unix.NewServer(backend, unix.ServerOptions{
+		Token: servertest.Token, Path: "/tmp/pi.sock", HandshakeTimeout: 500 * time.Microsecond,
+	}); err == nil {
+		t.Fatal("a sub-millisecond handshake timeout must be rejected")
+	}
+	if _, err := unix.NewServer(backend, unix.ServerOptions{
+		Token: servertest.Token, Path: "/tmp/pi.sock", GracefulCloseTimeout: 500 * time.Microsecond,
+	}); err == nil {
+		t.Fatal("a sub-millisecond graceful close timeout must be rejected")
 	}
 }

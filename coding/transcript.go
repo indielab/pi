@@ -62,10 +62,10 @@ func (s *TranscriptState) ApplySnapshot(snapshot *protocol.SessionSnapshot) *Tra
 // ApplyProgress folds in one incremental update. It is pi's
 // applyTranscriptProgress.
 //
-// DIVERGENCE (deliberate): a progress variant this port does not recognize
-// leaves the state untouched. pi reaches its delta branch by elimination and
-// would fault on the unknown shape's missing fields; a projection is a view,
-// and dropping an update it cannot interpret is the only useful thing it can do.
+// A progress variant this port does not recognize leaves the state untouched,
+// which is what pi does with one too: it reaches its delta branch by
+// elimination, looks the unknown shape's absent message id up, finds nothing,
+// and returns the state it was given.
 func (s *TranscriptState) ApplyProgress(progress protocol.TranscriptProgress) *TranscriptState {
 	switch typed := progress.(type) {
 	case *protocol.ItemStartedProgress:
@@ -165,7 +165,7 @@ func (s *TranscriptState) applyAssistantDelta(delta *protocol.AssistantDeltaProg
 					buffered, _ = call.Input.(string)
 				}
 				buffered += delta.Delta
-				buffers = maps.Clone(s.toolCallBuffers)
+				buffers = cloneBuffers(s.toolCallBuffers)
 				buffers[key] = buffered
 				next := *call
 				next.Input = parsePartialToolInput(buffered)
@@ -176,33 +176,47 @@ func (s *TranscriptState) applyAssistantDelta(delta *protocol.AssistantDeltaProg
 
 	updated := *assistant
 	updated.Content = content
-	return s.withProgressItem(buffers, &updated)
+	// The item was built here out of values this projection already owns, so it
+	// is recorded as-is: cloning it would copy the whole content slice and
+	// deep-copy the tool input parsed one line above, once per streamed token.
+	return s.withOwnedProgressItem(buffers, &updated)
 }
 
-// withProgressItem records the newest version of one item. It is pi's
-// setProgressItem: replacing an item keeps its original position, and a new one
-// is appended to the projection order.
+// withProgressItem records the newest version of one item, deep copying it on
+// the way in. It is pi's setProgressItem, and the clone is pi's structuredClone:
+// the item comes from whoever produced the progress, and a producer that keeps
+// mutating it must not be able to reach into the projection.
 func (s *TranscriptState) withProgressItem(
+	buffers map[string]string,
+	item protocol.TranscriptItem,
+) *TranscriptState {
+	return s.withOwnedProgressItem(buffers, cloneTranscriptItem(item))
+}
+
+// withOwnedProgressItem records an item this projection already owns. Replacing
+// an item keeps its original position, and a new one is appended to the
+// projection order.
+func (s *TranscriptState) withOwnedProgressItem(
 	buffers map[string]string,
 	item protocol.TranscriptItem,
 ) *TranscriptState {
 	id := transcriptItemID(item)
 	next := &TranscriptState{
 		snapshot:        s.snapshot,
-		progressItems:   maps.Clone(s.progressItems),
+		progressItems:   cloneItems(s.progressItems),
 		progressOrder:   s.progressOrder,
 		toolCallBuffers: buffers,
 	}
 	if _, exists := s.progressItems[id]; !exists {
 		next.progressOrder = append(slices.Clip(s.progressOrder), id)
 	}
-	next.progressItems[id] = cloneTranscriptItem(item)
+	next.progressItems[id] = item
 	return next
 }
 
 // forgetToolCallBuffers drops every partial tool argument buffered for one item.
 func (s *TranscriptState) forgetToolCallBuffers(itemID string) map[string]string {
-	buffers := maps.Clone(s.toolCallBuffers)
+	buffers := cloneBuffers(s.toolCallBuffers)
 	prefix := itemID + ":"
 	for key := range buffers {
 		if strings.HasPrefix(key, prefix) {
@@ -210,6 +224,24 @@ func (s *TranscriptState) forgetToolCallBuffers(itemID string) map[string]string
 		}
 	}
 	return buffers
+}
+
+// cloneItems and cloneBuffers copy a projection's maps for the next state. They
+// exist because maps.Clone answers nil with nil, and the zero TranscriptState is
+// a value an exported type has to survive being handed: the next write would
+// otherwise land on a nil map and panic.
+func cloneItems(items map[string]protocol.TranscriptItem) map[string]protocol.TranscriptItem {
+	if items == nil {
+		return map[string]protocol.TranscriptItem{}
+	}
+	return maps.Clone(items)
+}
+
+func cloneBuffers(buffers map[string]string) map[string]string {
+	if buffers == nil {
+		return map[string]string{}
+	}
+	return maps.Clone(buffers)
 }
 
 // parsePartialToolInput renders a tool call's arguments as they stream in: the

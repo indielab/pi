@@ -30,6 +30,16 @@ const (
 	// maxUint32 is uint64 because it does not fit in an int on a 32-bit build.
 	maxUint32      uint64 = 0xffff_ffff
 	readBufferSize        = 64 * 1024
+
+	// maxGracefulCloseTimeout is Node's maximum timer delay, kept for the same
+	// reason server.maxHandshakeTimeout is: a configuration a Node pi server
+	// rejects is rejected here too.
+	maxGracefulCloseTimeout = 2147483647 * time.Millisecond
+
+	// minAcceptRetryDelay and maxAcceptRetryDelay are net/http.Server.Serve's
+	// backoff schedule for transient accept failures.
+	minAcceptRetryDelay = 5 * time.Millisecond
+	maxAcceptRetryDelay = 1 * time.Second
 )
 
 // maxSocketPathBytes is what fits in sockaddr_un.sun_path, which differs by
@@ -102,8 +112,12 @@ func resolveOptions(options ListenerOptions) (resolvedOptions, error) {
 	if gracefulCloseTimeout == 0 {
 		gracefulCloseTimeout = defaultGracefulCloseTimout
 	}
-	if gracefulCloseTimeout < 0 {
-		return resolvedOptions{}, errors.New("PiServer gracefulCloseTimeout must be positive")
+	if gracefulCloseTimeout < time.Millisecond ||
+		gracefulCloseTimeout > maxGracefulCloseTimeout ||
+		gracefulCloseTimeout%time.Millisecond != 0 {
+		return resolvedOptions{}, fmt.Errorf(
+			"PiServer gracefulCloseTimeout must be a whole number of milliseconds between 1ms and %s, or zero for the %s default",
+			maxGracefulCloseTimeout, defaultGracefulCloseTimout)
 	}
 	return resolvedOptions{
 		path:                 options.Path,
@@ -128,6 +142,10 @@ type Listener struct {
 	closed         chan struct{}
 	accept         server.Acceptor
 	acceptDone     chan struct{}
+	// stopAccept is closed as soon as Close begins, so an accept loop that is
+	// backing off after a transient failure gives up immediately instead of
+	// making Close wait out its delay.
+	stopAccept chan struct{}
 }
 
 var _ server.Listener = (*Listener)(nil)
@@ -207,6 +225,7 @@ func (l *Listener) Start(ctx context.Context, accept server.Acceptor) error {
 	l.mu.Lock()
 	l.boundPath = path
 	l.acceptDone = make(chan struct{})
+	l.stopAccept = make(chan struct{})
 	acceptDone := l.acceptDone
 	l.mu.Unlock()
 	go l.acceptLoop(netListener, acceptDone)
@@ -231,21 +250,60 @@ func (l *Listener) publish(_ context.Context, ownedBindPath, path string) error 
 	return setSocketMode(path, l.options.mode)
 }
 
-func (l *Listener) acceptLoop(netListener *net.UnixListener, done chan struct{}) {
+// acceptLoop serves the listener until it is closed.
+//
+// A transient accept failure — the process is out of descriptors, the peer
+// vanished between the connect and the accept — must not retire the transport:
+// Address would keep reporting a bound socket that answers nobody, for the life
+// of the process. The retry schedule is net/http.Server.Serve's, and the
+// backoff is abandoned as soon as Close asks it to stop.
+func (l *Listener) acceptLoop(netListener net.Listener, done chan struct{}) {
 	defer close(done)
+	delay := time.Duration(0)
 	for {
 		socket, err := netListener.Accept()
 		if err != nil {
 			l.mu.Lock()
 			closing := l.closing
+			stop := l.stopAccept
 			l.mu.Unlock()
-			if !closing {
-				l.reportError(err)
+			if closing || errors.Is(err, net.ErrClosed) {
+				return
 			}
-			return
+			if !isTemporaryAcceptError(err) {
+				l.reportError(err)
+				return
+			}
+			delay = min(max(2*delay, minAcceptRetryDelay), maxAcceptRetryDelay)
+			l.reportError(fmt.Errorf(
+				"Unix listener accept failed, retrying in %s; the process may be out of file descriptors: %w",
+				delay, err))
+			timer := time.NewTimer(delay)
+			select {
+			case <-timer.C:
+			case <-stop:
+				timer.Stop()
+				return
+			}
+			continue
 		}
+		delay = 0
 		l.serve(socket)
 	}
+}
+
+// isTemporaryAcceptError reports the accept failures that say nothing about
+// whether the next accept will work.
+func isTemporaryAcceptError(err error) bool {
+	for _, code := range []syscall.Errno{
+		syscall.EMFILE, syscall.ENFILE, syscall.ENOBUFS, syscall.ENOMEM,
+		syscall.ECONNABORTED, syscall.EINTR, syscall.EPERM, syscall.EPROTO,
+	} {
+		if errors.Is(err, code) {
+			return true
+		}
+	}
+	return false
 }
 
 func (l *Listener) serve(socket net.Conn) {
@@ -258,7 +316,7 @@ func (l *Listener) serve(socket net.Conn) {
 		return
 	}
 
-	c := newConn(socket, l.options.gracefulCloseTimeout, l.options.maxPendingBytes)
+	c := newConn(socket, l.options.gracefulCloseTimeout, l.options.maxPendingBytes, l.reportError)
 	l.mu.Lock()
 	l.connections[c] = struct{}{}
 	l.mu.Unlock()
@@ -280,11 +338,15 @@ func (l *Listener) readLoop(c *conn, handler server.ConnHandler) {
 		if err != nil {
 			if !errors.Is(err, io.EOF) && !isClosedConnError(err) {
 				handler.OnError(err)
-				_ = c.socket.Close()
 			}
 			break
 		}
 	}
+	// Nothing downstream closes the socket: conn.Close only half-closes, so a
+	// peer still reading gets the final frame, and markClosed merely records
+	// that the socket is gone. Closing it here is what releases the descriptor
+	// and what sends FIN to a peer that only closed its own write side.
+	_ = c.socket.Close()
 	c.markClosed()
 	l.mu.Lock()
 	delete(l.connections, c)
@@ -299,10 +361,15 @@ func (l *Listener) Close(ctx context.Context) error {
 	if l.closing {
 		closed := l.closed
 		l.mu.Unlock()
-		if closed != nil {
-			<-closed
+		if closed == nil {
+			return nil
 		}
-		return nil
+		select {
+		case <-closed:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 	l.closing = true
 	l.boundPath = ""
@@ -313,13 +380,23 @@ func (l *Listener) Close(ctx context.Context) error {
 	}
 	acceptDone := l.acceptDone
 	closed := l.closed
+	// Closed, not cleared: the accept loop reads it under this lock and a nil
+	// there would leave it waiting out a backoff it has already been told to
+	// abandon. The closing guard above is what keeps this to one close.
+	if l.stopAccept != nil {
+		close(l.stopAccept)
+	}
 	l.mu.Unlock()
 
 	var err error
 	if netListener != nil {
 		err = l.closeListenerAndCleanup(netListener)
 		if acceptDone != nil {
-			<-acceptDone
+			select {
+			case <-acceptDone:
+			case <-ctx.Done():
+				err = ctx.Err()
+			}
 		}
 	} else {
 		err = l.cleanupOwnedSocket()
@@ -343,7 +420,6 @@ func (l *Listener) Close(ctx context.Context) error {
 	if closed != nil {
 		close(closed)
 	}
-	_ = ctx
 	return err
 }
 

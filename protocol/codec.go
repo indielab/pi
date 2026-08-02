@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"fmt"
+	"unicode/utf8"
 
 	"github.com/sky-valley/pi/protocol/cbor"
 )
@@ -10,6 +11,10 @@ import (
 // package speaks.
 func IsSupportedVersion(version int64) bool { return version == ProtocolVersion }
 
+// maxEmbeddedErrorLength is pi's cap on an error message quoted inside another
+// error, including the ellipsis that replaces what was cut.
+const maxEmbeddedErrorLength = 500
+
 // boundedErrorMessage caps an error before it is embedded in another error, so
 // a hostile peer cannot make us build an unbounded string out of its input.
 func boundedErrorMessage(err error) string {
@@ -17,10 +22,21 @@ func boundedErrorMessage(err error) string {
 		return "Unknown codec error"
 	}
 	msg := err.Error()
-	if len(msg) <= 500 {
+	if len(msg) <= maxEmbeddedErrorLength {
 		return msg
 	}
-	return msg[:497] + "..."
+	// pi slices a UTF-16 string, where the cut cannot land inside a code unit.
+	// Go slices bytes, and the text being cut can carry a peer's own property
+	// name, so the cut is walked back to a rune boundary rather than emitting a
+	// replacement character for a rune the peer chose.
+	truncated := msg[:maxEmbeddedErrorLength-len("...")]
+	for len(truncated) > 0 {
+		if r, size := utf8.DecodeLastRuneInString(truncated); r != utf8.RuneError || size > 1 {
+			break
+		}
+		truncated = truncated[:len(truncated)-1]
+	}
+	return truncated + "..."
 }
 
 func encodeMessage(message any, kind string, opts *FrameOptions) ([]byte, error) {
@@ -97,9 +113,16 @@ func newMessageDecoder[T any](kind string, parse func(any) (T, error), opts *Fra
 	return &messageDecoder[T]{frames: frames, kind: kind, maxFrameLength: maxFrameLength, parse: parse}, nil
 }
 
+// failedMessage explains a poisoned decoder. See the note on
+// decoderFailedMessage in framing.go for why it says more than pi's.
+func (d *messageDecoder[T]) failedMessage() string {
+	return d.kind + " message decoder has failed: a peer that sent one invalid message " +
+		"has lost the right to be interpreted, so discard this decoder and re-establish the connection"
+}
+
 func (d *messageDecoder[T]) push(chunk []byte) ([]T, error) {
 	if d.failed {
-		return nil, &ValidationError{Msg: d.kind + " message decoder has failed"}
+		return nil, &ValidationError{Msg: d.failedMessage()}
 	}
 	frames, err := d.frames.Push(chunk)
 	if err != nil {
@@ -125,7 +148,7 @@ func (d *messageDecoder[T]) push(chunk []byte) ([]T, error) {
 
 func (d *messageDecoder[T]) end() error {
 	if d.failed {
-		return &ValidationError{Msg: d.kind + " message decoder has failed"}
+		return &ValidationError{Msg: d.failedMessage()}
 	}
 	if err := d.frames.End(); err != nil {
 		d.failed = true

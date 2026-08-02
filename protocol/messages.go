@@ -1,5 +1,7 @@
 package protocol
 
+import "slices"
+
 // SessionSummary is the cheap view of a session, carried in server snapshots.
 type SessionSummary struct {
 	ID            string        `cbor:"id"`
@@ -55,11 +57,9 @@ type SessionSnapshot struct {
 }
 
 func (s *SessionSnapshot) Validate() error {
-	summary := SessionSummary{
-		ID: s.ID, Name: s.Name, Cwd: s.Cwd, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
-		Phase: s.Phase, Model: s.Model, ThinkingLevel: s.ThinkingLevel,
-		Attached: s.Attached, Locked: s.Locked,
-	}
+	// The shared fields are checked through the projection rather than a second
+	// copy of the field list: one place to update when the summary changes.
+	summary := s.Summary()
 	if err := summary.Validate(); err != nil {
 		return err
 	}
@@ -135,7 +135,12 @@ type ListCommand struct {
 }
 
 func (*ListCommand) CommandName() string { return "list" }
-func (c *ListCommand) Validate() error   { return requireLiteral("command", c.Command, "list") }
+func (c *ListCommand) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
+	return requireLiteral("command", c.Command, "list")
+}
 
 // NewListCommand builds a well-formed list command.
 func NewListCommand() *ListCommand { return &ListCommand{Command: "list"} }
@@ -152,6 +157,9 @@ type CreateCommand struct {
 func (*CreateCommand) CommandName() string { return "create" }
 
 func (c *CreateCommand) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
 	if err := requireLiteral("command", c.Command, "create"); err != nil {
 		return err
 	}
@@ -189,7 +197,12 @@ func (c *sessionScopedCommand) validate(want string) error {
 type AttachCommand sessionScopedCommand
 
 func (*AttachCommand) CommandName() string { return "attach" }
-func (c *AttachCommand) Validate() error   { return (*sessionScopedCommand)(c).validate("attach") }
+func (c *AttachCommand) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
+	return (*sessionScopedCommand)(c).validate("attach")
+}
 
 // NewAttachCommand builds a well-formed attach command.
 func NewAttachCommand(sessionID string) *AttachCommand {
@@ -200,7 +213,12 @@ func NewAttachCommand(sessionID string) *AttachCommand {
 type DetachCommand sessionScopedCommand
 
 func (*DetachCommand) CommandName() string { return "detach" }
-func (c *DetachCommand) Validate() error   { return (*sessionScopedCommand)(c).validate("detach") }
+func (c *DetachCommand) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
+	return (*sessionScopedCommand)(c).validate("detach")
+}
 
 // NewDetachCommand builds a well-formed detach command.
 func NewDetachCommand(sessionID string) *DetachCommand {
@@ -211,7 +229,12 @@ func NewDetachCommand(sessionID string) *DetachCommand {
 type AbortCommand sessionScopedCommand
 
 func (*AbortCommand) CommandName() string { return "abort" }
-func (c *AbortCommand) Validate() error   { return (*sessionScopedCommand)(c).validate("abort") }
+func (c *AbortCommand) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
+	return (*sessionScopedCommand)(c).validate("abort")
+}
 
 // NewAbortCommand builds a well-formed abort command.
 func NewAbortCommand(sessionID string) *AbortCommand {
@@ -236,7 +259,12 @@ func (p *promptPayload) validate(want string) error {
 type PromptCommand promptPayload
 
 func (*PromptCommand) CommandName() string { return "prompt" }
-func (c *PromptCommand) Validate() error   { return (*promptPayload)(c).validate("prompt") }
+func (c *PromptCommand) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
+	return (*promptPayload)(c).validate("prompt")
+}
 
 // NewPromptCommand builds a well-formed prompt command.
 func NewPromptCommand(sessionID, text string) *PromptCommand {
@@ -247,7 +275,12 @@ func NewPromptCommand(sessionID, text string) *PromptCommand {
 type SteerCommand promptPayload
 
 func (*SteerCommand) CommandName() string { return "steer" }
-func (c *SteerCommand) Validate() error   { return (*promptPayload)(c).validate("steer") }
+func (c *SteerCommand) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
+	return (*promptPayload)(c).validate("steer")
+}
 
 // NewSteerCommand builds a well-formed steer command.
 func NewSteerCommand(sessionID, text string) *SteerCommand {
@@ -264,6 +297,9 @@ type SetModelCommand struct {
 func (*SetModelCommand) CommandName() string { return "set_model" }
 
 func (c *SetModelCommand) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
 	if err := requireLiteral("command", c.Command, "set_model"); err != nil {
 		return err
 	}
@@ -288,6 +324,9 @@ type SetThinkingCommand struct {
 func (*SetThinkingCommand) CommandName() string { return "set_thinking" }
 
 func (c *SetThinkingCommand) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
 	if err := requireLiteral("command", c.Command, "set_thinking"); err != nil {
 		return err
 	}
@@ -317,6 +356,9 @@ type ListResult struct {
 func (*ListResult) ResultCommandName() string { return "list" }
 
 func (r *ListResult) Validate() error {
+	if r == nil {
+		return nilMember(r)
+	}
 	if err := requireLiteral("command", r.Command, "list"); err != nil {
 		return err
 	}
@@ -337,6 +379,9 @@ type DetachResult struct {
 func (*DetachResult) ResultCommandName() string { return "detach" }
 
 func (r *DetachResult) Validate() error {
+	if r == nil {
+		return nilMember(r)
+	}
 	if err := requireLiteral("command", r.Command, "detach"); err != nil {
 		return err
 	}
@@ -359,14 +404,10 @@ var sessionResultCommands = []string{
 }
 
 func (r *SessionResult) Validate() error {
-	found := false
-	for _, name := range sessionResultCommands {
-		if r.Command == name {
-			found = true
-			break
-		}
+	if r == nil {
+		return nilMember(r)
 	}
-	if !found {
+	if !slices.Contains(sessionResultCommands, r.Command) {
 		return invalidf("unknown session result command %q", r.Command)
 	}
 	return r.Session.Validate()
@@ -383,6 +424,9 @@ type ClientHello struct {
 func (*ClientHello) clientMessage() {}
 
 func (m *ClientHello) Validate() error {
+	if m == nil {
+		return nilMember(m)
+	}
 	if err := requireLiteral("type", m.Type, "hello"); err != nil {
 		return err
 	}
@@ -407,6 +451,9 @@ type RequestEnvelope struct {
 func (*RequestEnvelope) clientMessage() {}
 
 func (m *RequestEnvelope) Validate() error {
+	if m == nil {
+		return nilMember(m)
+	}
 	if err := requireLiteral("type", m.Type, "request"); err != nil {
 		return err
 	}
@@ -445,6 +492,9 @@ type ServerSnapshotEvent struct {
 func (*ServerSnapshotEvent) EventType() string { return "server_snapshot" }
 
 func (e *ServerSnapshotEvent) Validate() error {
+	if e == nil {
+		return nilMember(e)
+	}
 	if err := requireLiteral("type", e.Type, "server_snapshot"); err != nil {
 		return err
 	}
@@ -460,6 +510,9 @@ type SessionSnapshotEvent struct {
 func (*SessionSnapshotEvent) EventType() string { return "session_snapshot" }
 
 func (e *SessionSnapshotEvent) Validate() error {
+	if e == nil {
+		return nilMember(e)
+	}
 	if err := requireLiteral("type", e.Type, "session_snapshot"); err != nil {
 		return err
 	}
@@ -476,6 +529,9 @@ type SessionProgressEvent struct {
 func (*SessionProgressEvent) EventType() string { return "session_progress" }
 
 func (e *SessionProgressEvent) Validate() error {
+	if e == nil {
+		return nilMember(e)
+	}
 	if err := requireLiteral("type", e.Type, "session_progress"); err != nil {
 		return err
 	}
@@ -500,6 +556,9 @@ type SessionRemovedEvent struct {
 func (*SessionRemovedEvent) EventType() string { return "session_removed" }
 
 func (e *SessionRemovedEvent) Validate() error {
+	if e == nil {
+		return nilMember(e)
+	}
 	if err := requireLiteral("type", e.Type, "session_removed"); err != nil {
 		return err
 	}
@@ -517,6 +576,9 @@ type ServerHello struct {
 func (*ServerHello) serverMessage() {}
 
 func (m *ServerHello) Validate() error {
+	if m == nil {
+		return nilMember(m)
+	}
 	if err := requireLiteral("type", m.Type, "hello"); err != nil {
 		return err
 	}
@@ -538,6 +600,9 @@ type ServerHelloError struct {
 func (*ServerHelloError) serverMessage() {}
 
 func (m *ServerHelloError) Validate() error {
+	if m == nil {
+		return nilMember(m)
+	}
 	if err := requireLiteral("type", m.Type, "hello_error"); err != nil {
 		return err
 	}
@@ -560,6 +625,9 @@ type ResponseEnvelope struct {
 func (*ResponseEnvelope) serverMessage() {}
 
 func (m *ResponseEnvelope) Validate() error {
+	if m == nil {
+		return nilMember(m)
+	}
 	if err := requireLiteral("type", m.Type, "response"); err != nil {
 		return err
 	}
@@ -596,6 +664,9 @@ type EventEnvelope struct {
 func (*EventEnvelope) serverMessage() {}
 
 func (m *EventEnvelope) Validate() error {
+	if m == nil {
+		return nilMember(m)
+	}
 	if err := requireLiteral("type", m.Type, "event"); err != nil {
 		return err
 	}

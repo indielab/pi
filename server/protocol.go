@@ -45,7 +45,10 @@ func toProtocolJSONValue(v reflect.Value, seen map[uintptr]struct{}, depth int) 
 	if depth > maxDetailDepth {
 		return nil, errors.New("Protocol JSON values must not be nested this deeply")
 	}
-	v, ok := deref(v)
+	v, ok, err := deref(v)
+	if err != nil {
+		return nil, err
+	}
 	if !ok {
 		return nil, nil
 	}
@@ -129,7 +132,10 @@ func sanitizeProtocolDetails(v reflect.Value, seen map[uintptr]struct{}, depth i
 	if depth > maxDetailDepth {
 		return "[MaxDepth]", true
 	}
-	v, ok := deref(v)
+	v, ok, err := deref(v)
+	if err != nil {
+		return "[Circular]", true
+	}
 	if !ok {
 		return nil, true
 	}
@@ -217,21 +223,28 @@ func sanitizeProtocolDetails(v reflect.Value, seen map[uintptr]struct{}, depth i
 
 // deref unwraps interfaces and pointers, reporting false for anything that is
 // or resolves to nil.
-func deref(v reflect.Value) (reflect.Value, bool) {
-	for {
+//
+// The chain is bounded because a pointer can refer to itself — `var x any; x =
+// &x` walks interface to pointer to interface forever. enter's cycle detection
+// cannot see that one: it only marks slices and maps, and this chain reaches
+// neither. A chain this long is a cycle whatever else it might be, so it is
+// reported as one; pi has no value that can express it.
+func deref(v reflect.Value) (reflect.Value, bool, error) {
+	for range maxDetailDepth {
 		if !v.IsValid() {
-			return v, false
+			return v, false, nil
 		}
 		switch v.Kind() {
 		case reflect.Interface, reflect.Pointer:
 			if v.IsNil() {
-				return v, false
+				return v, false, nil
 			}
 			v = v.Elem()
 		default:
-			return v, true
+			return v, true, nil
 		}
 	}
+	return v, false, errors.New("Protocol JSON values must not contain circular references")
 }
 
 // enter marks a reference value as being walked, so a cycle through it is
@@ -281,8 +294,13 @@ func identifier(value, label string) (string, error) {
 	return value, nil
 }
 
+// maxSafeInteger is JavaScript's Number.MAX_SAFE_INTEGER. A protocol timestamp
+// larger than this survives Go's int64 but not the peer's number, so pi refuses
+// it and so does this.
+const maxSafeInteger int64 = 1<<53 - 1
+
 func protocolTimestamp(value int64) (int64, error) {
-	if value < 0 {
+	if value < 0 || value > maxSafeInteger {
 		return 0, errors.New("Protocol timestamps must be non-negative integers")
 	}
 	return value, nil
@@ -591,6 +609,7 @@ func ToProtocolToolResultMessage(
 		Input:      input,
 		Content:    content,
 		Details:    SanitizeProtocolDetails(message.Details),
+		Usage:      ToProtocolUsage(message.Usage),
 		Timestamp:  timestamp,
 		IsError:    message.IsError,
 	}

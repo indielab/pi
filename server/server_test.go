@@ -301,6 +301,39 @@ func TestAcceptAfterCloseClosesTheConnection(t *testing.T) {
 	handler.OnClose()
 }
 
+// The sequential case is the easy half. A connection that arrives while Close
+// is running must be closed too — whichever side of the shutdown it lands on.
+func TestAcceptRacingCloseNeverOutlivesTheServer(t *testing.T) {
+	t.Parallel()
+	for round := range 3000 {
+		srv, err := server.New(servertest.NewBackend(), server.Options{
+			Token:     "secret",
+			Listeners: []server.Listener{},
+			// A minute, so it is the shutdown that closes the connection and
+			// never the handshake timeout stepping in to cover for it.
+			HandshakeTimeout: time.Minute,
+		})
+		if err != nil {
+			t.Fatalf("new: %v", err)
+		}
+		conn := newBlockedConn()
+		var accepted sync.WaitGroup
+		accepted.Add(1)
+		go func() {
+			defer accepted.Done()
+			srv.Accept(conn)
+		}()
+		if err := srv.Close(context.Background()); err != nil {
+			t.Fatalf("close: %v", err)
+		}
+		accepted.Wait()
+		if !conn.Closed() {
+			t.Fatalf("round %d: a connection accepted around Close was adopted and then left open, "+
+				"with its socket, its goroutines and its handshake timer outliving the server", round)
+		}
+	}
+}
+
 func TestServerIDIsStableAndGeneratedWhenAbsent(t *testing.T) {
 	t.Parallel()
 	explicit, err := server.New(servertest.NewBackend(), server.Options{

@@ -1,7 +1,6 @@
 package cbor
 
 import (
-	"cmp"
 	"math"
 	"reflect"
 	"slices"
@@ -276,7 +275,7 @@ func (e *encoder) encodeMap(v reflect.Value, depth int) error {
 	// encoding deterministic. CBOR maps are order-independent and pi's decoder
 	// accepts any order, so this is interop-safe. Struct encoding below keeps
 	// declaration order, which is what the protocol's own messages use.
-	slices.SortFunc(keys, func(a, b string) int { return cmp.Compare(a, b) })
+	slices.Sort(keys)
 
 	if len(keys) > e.opts.maxContainerLength {
 		return cborErrf("CBOR map length exceeds configured limit of %d", e.opts.maxContainerLength)
@@ -302,7 +301,10 @@ type structField struct {
 }
 
 func (e *encoder) encodeStruct(v reflect.Value, depth int) error {
-	fields := cachedStructFields(v.Type())
+	fields, err := cachedStructFields(v.Type())
+	if err != nil {
+		return err
+	}
 	type entry struct {
 		name string
 		val  reflect.Value
@@ -345,34 +347,87 @@ func isOmitted(v reflect.Value) bool {
 	}
 }
 
+// structLayout is a struct type's wire field list, or the reason the type has
+// no legal encoding.
+type structLayout struct {
+	fields []structField
+	err    error
+}
+
 var structFieldCache = newTypeCache()
 
-func cachedStructFields(t reflect.Type) []structField {
+func cachedStructFields(t reflect.Type) ([]structField, error) {
 	if cached, ok := structFieldCache.load(t); ok {
-		return cached
+		return cached.fields, cached.err
 	}
+	layout := buildStructLayout(t)
+	structFieldCache.store(t, layout)
+	return layout.fields, layout.err
+}
+
+// buildStructLayout resolves a struct's cbor tags, refusing any field set whose
+// encoding this package would not accept back. Encode is exported, so the check
+// runs once per type here rather than being left to whoever first notices that a
+// property went missing on the wire.
+func buildStructLayout(t reflect.Type) structLayout {
 	fields := make([]structField, 0, t.NumField())
+	declaredBy := make(map[string]string, t.NumField())
 	for i := range t.NumField() {
 		sf := t.Field(i)
-		if !sf.IsExported() {
-			continue
-		}
 		tag := sf.Tag.Get("cbor")
 		if tag == "-" {
 			continue
 		}
 		name, rest, _ := strings.Cut(tag, ",")
+
+		// DIVERGENCE (deliberate): encoding/json promotes an embedded struct's
+		// fields into the enclosing object. pi has no embedding to be faithful
+		// to and no protocol message embeds anything, so rather than port
+		// encoding/json's promotion and shadowing rules this encoder refuses an
+		// untagged embedded struct. What it must not do is what it did before:
+		// drop the embedded fields and encode a message that is quietly missing
+		// properties. A tagged embedded field is a plain named field, which is
+		// also how encoding/json reads a tag on an anonymous field.
+		if sf.Anonymous && name == "" && structLike(sf.Type) {
+			return structLayout{err: cborErrf(
+				"CBOR cannot encode %s: it embeds %s, and embedded structs are not flattened; "+
+					"give the field a name with a cbor tag, declare its fields on %s directly, or tag it cbor:\"-\"",
+				t, sf.Type, t)}
+		}
+		// An unexported field never reaches the wire, as in encoding/json. The
+		// exception is the escape the error above offers: a cbor name turns an
+		// embedded field into an ordinary named one even when its type is
+		// unexported, and such a value is still readable through reflection.
+		if !sf.IsExported() && !(sf.Anonymous && name != "") {
+			continue
+		}
 		if name == "" {
 			name = sf.Name
 		}
+		// A duplicate wire name encodes a map with a repeated key, which this
+		// package's own Decode rejects — so the value would be unreadable by
+		// every peer, including us.
+		if previous, duplicate := declaredBy[name]; duplicate {
+			return structLayout{err: cborErrf(
+				"CBOR cannot encode %s: fields %s and %s both encode to the property %q; "+
+					"rename one with a cbor tag or tag it cbor:\"-\"",
+				t, previous, sf.Name, name)}
+		}
+		declaredBy[name] = sf.Name
 		fields = append(fields, structField{
 			name:      name,
 			index:     sf.Index,
 			omitEmpty: slices.Contains(strings.Split(rest, ","), "omitempty"),
 		})
 	}
-	structFieldCache.store(t, fields)
-	return fields
+	return structLayout{fields: fields}
+}
+
+func structLike(t reflect.Type) bool {
+	if t.Kind() == reflect.Pointer {
+		t = t.Elem()
+	}
+	return t.Kind() == reflect.Struct
 }
 
 // Encode writes value as the protocol's strict, definite-length RFC 8949

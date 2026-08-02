@@ -1,8 +1,11 @@
+//go:build unix
+
 package unix
 
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"net"
 	"sync"
 	"time"
@@ -24,6 +27,14 @@ type conn struct {
 	socket               net.Conn
 	gracefulCloseTimeout time.Duration
 	maxPendingBytes      int
+	// reportError is the listener's error observer.
+	//
+	// DIVERGENCE (deliberate): pi's send returns a promise, so a write that
+	// fails rejects in the server's own sendMessage, which reports it. Send
+	// here only queues — the write happens later on the write goroutine, and
+	// there is no caller left to hand the failure to — so it goes straight to
+	// the observer instead of being swallowed.
+	reportError func(error)
 
 	notify   chan struct{}
 	closedCh chan struct{}
@@ -35,14 +46,20 @@ type conn struct {
 	closed       bool
 	finalChunk   []byte
 	closeTimer   *time.Timer
-	writeErr     error
+	writeFailed  bool
 }
 
-func newConn(socket net.Conn, gracefulCloseTimeout time.Duration, maxPendingBytes int) *conn {
+func newConn(
+	socket net.Conn,
+	gracefulCloseTimeout time.Duration,
+	maxPendingBytes int,
+	reportError func(error),
+) *conn {
 	c := &conn{
 		socket:               socket,
 		gracefulCloseTimeout: gracefulCloseTimeout,
 		maxPendingBytes:      maxPendingBytes,
+		reportError:          reportError,
 		notify:               make(chan struct{}, 1),
 		closedCh:             make(chan struct{}),
 	}
@@ -178,11 +195,20 @@ func (c *conn) halfClose() {
 	_ = c.socket.Close()
 }
 
+// recordWriteError reports the first write failure on this socket and tears it
+// down. Later failures are the same failure, so only the first is reported.
 func (c *conn) recordWriteError(err error) {
 	c.mu.Lock()
-	if c.writeErr == nil {
-		c.writeErr = err
-	}
+	first := !c.writeFailed
+	c.writeFailed = true
+	closing := c.closing
 	c.mu.Unlock()
+	// A write that fails while the connection is already closing is the peer
+	// hanging up on its own final bytes, which is not a failure worth telling
+	// anyone about.
+	if first && !closing && c.reportError != nil {
+		c.reportError(fmt.Errorf(
+			"Unix connection write failed and the connection was dropped; the peer stopped reading: %w", err))
+	}
 	_ = c.socket.Close()
 }

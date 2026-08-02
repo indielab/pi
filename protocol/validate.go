@@ -7,6 +7,17 @@ import "reflect"
 // and so on. Keeping them as named helpers means a schema change upstream maps
 // to one call site here rather than an open-coded comparison.
 
+// nilMember rejects a typed nil union member instead of dereferencing it.
+//
+// A typed nil satisfies a union interface, so ItemFinishedProgress{Item:
+// (*AssistantTranscriptItem)(nil)} type-checks and then panics inside Validate.
+// The decoder always allocates, so this is unreachable from the wire and only
+// ever fires on a hand-built message — the one caller that needs to be told
+// which member is empty rather than handed a nil dereference.
+func nilMember(member any) error {
+	return invalidf("%T must not be a nil pointer; build the value before validating or encoding it", member)
+}
+
 func requireNonEmpty(name, value string) error {
 	if value == "" {
 		return invalidf("%s must not be empty", name)

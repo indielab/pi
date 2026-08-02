@@ -166,7 +166,12 @@ type TextContent struct {
 }
 
 func (*TextContent) ContentType() string { return "text" }
-func (c *TextContent) Validate() error   { return requireLiteral("type", c.Type, "text") }
+func (c *TextContent) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
+	return requireLiteral("type", c.Type, "text")
+}
 
 // ThinkingContent is reasoning text.
 type ThinkingContent struct {
@@ -176,7 +181,12 @@ type ThinkingContent struct {
 }
 
 func (*ThinkingContent) ContentType() string { return "thinking" }
-func (c *ThinkingContent) Validate() error   { return requireLiteral("type", c.Type, "thinking") }
+func (c *ThinkingContent) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
+	return requireLiteral("type", c.Type, "thinking")
+}
 
 // ImageContent is a base64 image payload.
 type ImageContent struct {
@@ -187,6 +197,9 @@ type ImageContent struct {
 
 func (*ImageContent) ContentType() string { return "image" }
 func (c *ImageContent) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
 	if err := requireLiteral("type", c.Type, "image"); err != nil {
 		return err
 	}
@@ -203,6 +216,9 @@ type ToolCallContent struct {
 
 func (*ToolCallContent) ContentType() string { return "toolCall" }
 func (c *ToolCallContent) Validate() error {
+	if c == nil {
+		return nilMember(c)
+	}
 	if err := requireLiteral("type", c.Type, "toolCall"); err != nil {
 		return err
 	}

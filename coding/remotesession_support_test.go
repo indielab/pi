@@ -117,11 +117,16 @@ func (s *remoteServer) onMessage(listener func(protocol.ClientMessage)) {
 	s.listeners = append(s.listeners, listener)
 }
 
+// send pushes one message at the client. It reports failures with Errorf rather
+// than Fatalf because it runs on whatever goroutine the client is sending or
+// reading on: Fatalf there would unwind a client goroutine through Goexit and
+// hang the test instead of failing it.
 func (s *remoteServer) send(t *testing.T, message protocol.ServerMessage) {
 	t.Helper()
 	frame, err := protocol.EncodeServerMessage(message, nil)
 	if err != nil {
-		t.Fatalf("EncodeServerMessage: %v", err)
+		t.Errorf("EncodeServerMessage: %v", err)
+		return
 	}
 	s.mu.Lock()
 	handlers := s.handlers
@@ -364,7 +369,11 @@ func openTestSession(
 	}
 }
 
-// closeAtCleanup disposes session when the test ends.
+// closeAtCleanup disposes session when the test ends, and holds that disposal to
+// its contract: a cleanup that swallows the error is exactly what hides a
+// disposal that quietly failed to release what it owned. A session the test
+// disposed itself is left alone — it already owns that outcome, and closing it
+// again would only re-report it.
 //
 // pi's harness disposes nothing — vitest just drops the session. Go wants the
 // goroutines unwound, but Close awaits the detach round-trip (pi's
@@ -377,10 +386,15 @@ func openTestSession(
 func closeAtCleanup(t *testing.T, server *remoteServer, session *RemoteSession) {
 	t.Helper()
 	t.Cleanup(func() {
+		if session.Disposed() {
+			return
+		}
 		server.answerDetach(t)
 		ctx, cancel := context.WithTimeout(context.Background(), remoteTestTimeout)
 		defer cancel()
-		_ = session.Close(ctx)
+		if err := session.Close(ctx); err != nil {
+			t.Errorf("Close: %v", err)
+		}
 	})
 }
 

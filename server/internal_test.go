@@ -1,9 +1,12 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"strings"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Jobs run one at a time and in the order they were submitted; that ordering is
@@ -84,6 +87,61 @@ func TestSerialQueueWaitCoversLateSubmissions(t *testing.T) {
 	defer mu.Unlock()
 	if ran != 2 {
 		t.Fatalf("ran = %d, want 2", ran)
+	}
+}
+
+// A waiter that has been given a deadline must return by it. Shutdown waits on
+// these queues, and the jobs on them call into code this package does not own.
+func TestSerialQueueWaitContextGivesUp(t *testing.T) {
+	t.Parallel()
+	var queue serialQueue
+	release := make(chan struct{})
+	queue.Go(func() { <-release })
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	if err := queue.WaitContext(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("err = %v, want the deadline that was set", err)
+	}
+
+	// Giving up on the wait does not stop the queue: the job still runs.
+	close(release)
+	queue.Wait()
+}
+
+// Executed jobs must not be pinned by the queue's backing array: a long-lived
+// session's queue would otherwise hold every closure it has ever run.
+func TestSerialQueueReleasesExecutedJobs(t *testing.T) {
+	t.Parallel()
+	var queue serialQueue
+	started, release := make(chan struct{}), make(chan struct{})
+	queue.Go(func() {
+		close(started)
+		<-release
+	})
+	<-started
+	queue.Go(func() {})
+
+	// Captured while the queue is stalled on the first job, so this is the
+	// array the second job lands in. Reslicing past it after it has run would
+	// hide the reference without dropping it.
+	queue.mu.Lock()
+	backing := queue.jobs[:cap(queue.jobs)]
+	queue.mu.Unlock()
+	if len(backing) == 0 {
+		t.Fatal("expected the queued job to be visible in the backing array")
+	}
+
+	close(release)
+	queue.Wait()
+
+	queue.mu.Lock()
+	defer queue.mu.Unlock()
+	for i, job := range backing {
+		if job != nil {
+			t.Fatalf("executed job %d is still referenced by the queue's backing array, "+
+				"pinning it and everything it captured", i)
+		}
 	}
 }
 

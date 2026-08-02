@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"encoding/json"
 	"math"
 	"slices"
 	"strings"
@@ -301,6 +302,66 @@ func TestUserAndToolMessages(t *testing.T) {
 	assertServerPayload(t, errorItem)
 }
 
+// pi has carried usage on a tool result since 2026-05-04 and puts it on the
+// wire when it is there. The decoded form is what a caller receives from a
+// session file or an SDK, so that is what is mapped here.
+func TestToolResultUsageReachesTheWire(t *testing.T) {
+	t.Parallel()
+	const encoded = `{
+		"role": "toolResult",
+		"toolCallId": "call-1",
+		"toolName": "read",
+		"content": [{"type": "text", "text": "result"}],
+		"usage": {"input": 3, "output": 5, "cacheRead": 1, "cacheWrite": 2, "totalTokens": 8,
+			"cost": {"input": 0.5, "output": 0.25, "cacheRead": 0, "cacheWrite": 0, "total": 0.75}},
+		"isError": false,
+		"timestamp": 2
+	}`
+	var message ai.ToolResultMessage
+	if err := json.Unmarshal([]byte(encoded), &message); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	call := ai.ToolCall{ID: "call-1", Name: "read", Arguments: map[string]any{"path": "README.md"}}
+	item, err := server.ToProtocolToolResultMessage(message, "tool-1", call)
+	if err != nil {
+		t.Fatalf("tool: %v", err)
+	}
+	if item.Usage == nil {
+		t.Fatal("the tool result's usage never reached the transcript item")
+	}
+	if item.Usage.Input != 3 || item.Usage.Output != 5 || item.Usage.TotalTokens != 8 {
+		t.Fatalf("usage = %#v", item.Usage)
+	}
+	if item.Usage.Cost.Total != 0.75 {
+		t.Fatalf("cost = %#v", item.Usage.Cost)
+	}
+	assertServerPayload(t, item)
+
+	// Nothing populates it today, so a result without usage must stay exactly
+	// as it was — the field is absent from the frame, not null in it.
+	const withoutUsage = `{
+		"role": "toolResult",
+		"toolCallId": "call-1",
+		"toolName": "read",
+		"content": [{"type": "text", "text": "result"}],
+		"isError": false,
+		"timestamp": 2
+	}`
+	var bare ai.ToolResultMessage
+	if err := json.Unmarshal([]byte(withoutUsage), &bare); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	without, err := server.ToProtocolToolResultMessage(bare, "tool-1", call)
+	if err != nil {
+		t.Fatalf("tool: %v", err)
+	}
+	if without.Usage != nil {
+		t.Fatalf("usage = %#v, want it omitted", without.Usage)
+	}
+	assertServerPayload(t, without)
+}
+
 // A tool result is only meaningful against the call it answers; a mismatch is a
 // bug in the caller, not something to relabel.
 func TestToolResultMustMatchItsCall(t *testing.T) {
@@ -326,6 +387,41 @@ func TestToolResultMustMatchItsCall(t *testing.T) {
 	}
 }
 
+// A pointer that refers to itself is a cycle the seen-set never sees: nothing
+// in the chain is a slice or a map, so the walk never reaches the point where
+// cycles are detected. pi cannot express this value at all; Go can, and both
+// converters must still terminate.
+func TestSelfReferentialPointerTerminates(t *testing.T) {
+	t.Parallel()
+	var value any
+	value = &value
+
+	finished := make(chan error, 1)
+	go func() {
+		_, err := server.ToProtocolJSONValue(value)
+		finished <- err
+	}()
+	select {
+	case err := <-finished:
+		if err == nil || !strings.Contains(err.Error(), "circular") {
+			t.Fatalf("error = %v, want a circular-reference refusal", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ToProtocolJSONValue never returned for a self-referential pointer")
+	}
+
+	sanitized := make(chan *any, 1)
+	go func() { sanitized <- server.SanitizeProtocolDetails(value) }()
+	select {
+	case details := <-sanitized:
+		if details == nil || *details != "[Circular]" {
+			t.Fatalf("details = %v, want the cycle replaced", details)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("SanitizeProtocolDetails never returned for a self-referential pointer")
+	}
+}
+
 func TestInvalidIdentifiersAndTimestamps(t *testing.T) {
 	t.Parallel()
 	message := ai.AssistantMessage{
@@ -345,6 +441,16 @@ func TestInvalidIdentifiersAndTimestamps(t *testing.T) {
 	if _, err := server.ToProtocolUserMessage(user, "user-1"); err == nil ||
 		!strings.Contains(strings.ToLower(err.Error()), "timestamp") {
 		t.Fatalf("a negative timestamp must be rejected, got %v", err)
+	}
+	// pi's timestamps are JavaScript numbers, so anything past 2^53-1 is a
+	// value the peer cannot round-trip. Int64 can hold it; the wire cannot.
+	unsafe := ai.UserMessage{
+		Content:   ai.ContentList{ai.TextContent{Text: "hello"}},
+		Timestamp: 1<<53 + 1,
+	}
+	if _, err := server.ToProtocolUserMessage(unsafe, "user-1"); err == nil ||
+		!strings.Contains(strings.ToLower(err.Error()), "timestamp") {
+		t.Fatalf("a timestamp beyond the safe integer range must be rejected, got %v", err)
 	}
 	if _, err := server.ToProtocolUserMessage(ai.NewUserText("hello", 1), ""); err == nil {
 		t.Fatal("an empty transcript item id must be rejected")

@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 
@@ -69,10 +70,6 @@ func newSessionManager(srv *Server, backend Backend) *sessionManager {
 	}
 }
 
-func toSummary(snapshot *protocol.SessionSnapshot) protocol.SessionSummary {
-	return snapshot.Summary()
-}
-
 // executeCommand runs one client command on behalf of conn.
 func (m *sessionManager) executeCommand(
 	ctx context.Context,
@@ -124,7 +121,14 @@ func (m *sessionManager) executeCommand(
 		return &protocol.SessionResult{Command: "attach", Session: *session}, nil
 
 	case *protocol.DetachCommand:
-		if err := m.detach(ctx, conn, cmd.SessionID); err != nil {
+		// Detaching is a command like any other: it has to say so when the
+		// connection does not hold the session, or when the session is no
+		// longer live. Only the disconnect path detaches silently.
+		live, err := m.requireAttached(conn, cmd.SessionID)
+		if err != nil {
+			return nil, err
+		}
+		if err := m.detach(ctx, conn, live); err != nil {
 			return nil, err
 		}
 		return &protocol.DetachResult{Command: "detach", SessionID: cmd.SessionID}, nil
@@ -196,35 +200,32 @@ func (m *sessionManager) sessionOperation(
 	return &protocol.SessionResult{Command: name, Session: *snapshot}, nil
 }
 
-func (m *sessionManager) detach(ctx context.Context, conn *connState, sessionID string) error {
-	conn.mu.Lock()
-	_, held := conn.sessionIDs[sessionID]
-	if held {
-		delete(conn.sessionIDs, sessionID)
-	}
-	conn.mu.Unlock()
-	if !held {
-		return nil
-	}
-
+// detach releases one session from one connection. The caller has already
+// established, through requireAttached, that the connection holds it.
+func (m *sessionManager) detach(ctx context.Context, conn *connState, live *liveSession) error {
+	// Both halves of the attachment go under both locks, for the reason
+	// attach documents: a disconnect that sees only one of them undone leaves
+	// the other behind forever.
 	m.mu.Lock()
-	live := m.live[sessionID]
-	var broadcastSession bool
-	if live != nil {
-		delete(live.connections, conn)
-		broadcastSession = len(live.connections) > 0 && !live.terminal && live.disposing == nil
-	}
+	conn.mu.Lock()
+	delete(conn.sessionIDs, live.id)
+	delete(live.connections, conn)
+	// DIVERGENCE (deliberate): pi broadcasts whenever a connection is left.
+	// The terminal and disposing terms are Go's alone: a disposal that began
+	// concurrently would otherwise have this read a snapshot from a runtime
+	// that is already being released. pi is single-threaded and cannot get
+	// there.
+	broadcastSession := len(live.connections) > 0 && !live.terminal && live.disposing == nil
+	conn.mu.Unlock()
 	m.mu.Unlock()
 
-	if live != nil {
-		if broadcastSession {
-			if _, err := m.broadcastSnapshot(ctx, live); err != nil {
-				return err
-			}
-		}
-		if err := m.maybeDispose(ctx, live); err != nil {
+	if broadcastSession {
+		if _, err := m.broadcastSnapshot(ctx, live); err != nil {
 			return err
 		}
+	}
+	if err := m.maybeDispose(ctx, live); err != nil {
+		return err
 	}
 	m.srv.snapshots.broadcast()
 	return nil
@@ -296,7 +297,7 @@ func (m *sessionManager) listSummaries(ctx context.Context, conn *connState) ([]
 			continue
 		}
 		delete(byID, summary.ID)
-		merged := toSummary(snapshot)
+		merged := snapshot.Summary()
 		merged.Attached = conn.attachedTo(summary.ID)
 		summaries = append(summaries, merged)
 	}
@@ -305,7 +306,7 @@ func (m *sessionManager) listSummaries(ctx context.Context, conn *connState) ([]
 		if !ok {
 			continue
 		}
-		merged := toSummary(snapshot)
+		merged := snapshot.Summary()
 		merged.Attached = conn.attachedTo(id)
 		summaries = append(summaries, merged)
 	}
@@ -332,9 +333,15 @@ func (m *sessionManager) close(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 	for _, op := range opening {
-		<-op.done
-		if op.err != nil {
-			m.srv.reportError(op.err)
+		// Every wait here is bounded by ctx: an acquisition the backend never
+		// answers must not hold a bounded shutdown open forever.
+		select {
+		case <-op.done:
+			if op.err != nil {
+				m.srv.reportError(op.err)
+			}
+		case <-ctx.Done():
+			return ctx.Err()
 		}
 	}
 
@@ -351,7 +358,9 @@ func (m *sessionManager) close(ctx context.Context) error {
 
 	var firstErr error
 	for _, live := range sessions {
-		live.queue.Wait()
+		if err := live.queue.WaitContext(ctx); err != nil {
+			return err
+		}
 
 		m.mu.Lock()
 		disposing := live.disposing
@@ -359,18 +368,51 @@ func (m *sessionManager) close(ctx context.Context) error {
 		m.mu.Unlock()
 
 		if disposing != nil {
-			<-disposing
-			if live.disposeErr != nil && firstErr == nil {
-				firstErr = live.disposeErr
+			select {
+			case <-disposing:
+				if live.disposeErr != nil && firstErr == nil {
+					firstErr = live.disposeErr
+				}
+			case <-ctx.Done():
+				return ctx.Err()
 			}
 			continue
 		}
 		unsubscribe()
-		if err := live.runtime.Dispose(ctx); err != nil && firstErr == nil {
+		if err := m.disposeSafely(ctx, live.runtime); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
 	return firstErr
+}
+
+// disposeSafely releases a runtime behind a panic barrier. Shutdown is the
+// worst place to let a third-party implementation take the process down: every
+// runtime after this one would go unreleased, and so would its durable lock.
+func (m *sessionManager) disposeSafely(ctx context.Context, runtime SessionRuntime) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			err = panicError(recovered, "disposing a session runtime")
+		}
+	}()
+	return runtime.Dispose(ctx)
+}
+
+// goSafely queues one job on the session's serial queue behind a panic barrier.
+// The job calls into a Backend or a SessionRuntime from a goroutine their
+// implementer never handed us, so a panic there has nowhere to surface but the
+// error observer.
+func (m *sessionManager) goSafely(live *liveSession, what string, job func() error) {
+	live.queue.Go(func() {
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				m.srv.reportError(panicError(recovered, what))
+			}
+		}()
+		if err := job(); err != nil {
+			m.srv.reportError(err)
+		}
+	})
 }
 
 func (m *sessionManager) runOperation(
@@ -379,7 +421,16 @@ func (m *sessionManager) runOperation(
 	live *liveSession,
 	operation func(SessionRuntime) error,
 ) (*protocol.SessionSnapshot, error) {
+	// DIVERGENCE (deliberate): pi checks liveness in requireAttached and then
+	// counts the operation, with nothing able to run in between. Here a
+	// disposal can begin in that gap, so the count is taken under the same
+	// lock acquisition that re-reads it — otherwise the operation would run
+	// against a runtime that is already being released.
 	m.mu.Lock()
+	if live.terminal || live.disposing != nil {
+		m.mu.Unlock()
+		return nil, NewError(protocol.ErrorNotFound, "Session is not live: "+live.id, nil)
+	}
 	live.operationCount++
 	m.mu.Unlock()
 	defer func() {
@@ -454,7 +505,7 @@ func (m *sessionManager) create(
 	}
 	if m.srv.isClosing() {
 		m.disposeQuietly(ctx, runtime)
-		return nil, fmt.Errorf("PiServer closed while acquiring a session runtime")
+		return nil, errors.New("PiServer closed while acquiring a session runtime")
 	}
 
 	snapshot, err := runtime.Snapshot(ctx)
@@ -474,15 +525,26 @@ func (m *sessionManager) create(
 		connections: map[*connState]struct{}{},
 		unsubscribe: func() {},
 	}
-	live.unsubscribe = runtime.Subscribe(func(event RuntimeEvent) {
+	// A runtime may report a terminal failure from inside Subscribe, before it
+	// has handed back the canceller. That reaches the manager on the session's
+	// queue, which takes the lock — so the canceller is recorded under the same
+	// lock, as liveSession promises for every field but the queue. The
+	// placeholder covers the ordering the lock cannot: a teardown that got here
+	// first cancelled nothing, and this caller cancels for it.
+	unsubscribe := runtime.Subscribe(func(event RuntimeEvent) {
 		m.handleRuntimeEvent(live, event)
 	})
 
 	m.mu.Lock()
+	live.unsubscribe = unsubscribe
 	m.live[id] = live
 	m.liveOrder = append(m.liveOrder, id)
 	live.ready = true
+	terminated := live.terminal
 	m.mu.Unlock()
+	if terminated {
+		unsubscribe()
+	}
 	return live, nil
 }
 
@@ -494,21 +556,26 @@ func (m *sessionManager) disposeQuietly(ctx context.Context, runtime SessionRunt
 
 // handleRuntimeEvent is the subscriber the manager registers on every runtime.
 //
-// DIVERGENCE (deliberate): pi defers all three arms onto the microtask queue by
-// dropping the returned promise on the floor, which both gets the work off the
-// emitting call stack and keeps it in emission order. The session's serial
-// queue is the same guarantee stated directly: a burst of deltas still reaches
-// the peer in the order the runtime emitted it, and the work that calls back
-// into the runtime — reading a snapshot, disposing — never re-enters a runtime
-// that is mid-emit and may be holding its own lock.
+// The arms are split the way pi's are, and the split is observable. pi sends
+// progress synchronously from inside the emit, while its snapshot arm suspends
+// on `await this.normalizedSnapshot(live)` before it sends anything — so a
+// runtime that emits a snapshot and then progress in one call stack puts the
+// progress on the wire first. Running both through the queue instead reverses
+// that pair, and a client that applies deltas onto the last snapshot it saw
+// then applies the same delta twice: once from the delta, once from the
+// snapshot that already contained it.
+//
+// DIVERGENCE (deliberate): pi gets the snapshot and error arms off the emitting
+// call stack by dropping a promise on the floor. The session's serial queue is
+// the same guarantee stated directly — a burst still reaches the peer in
+// emission order, and the work that calls back into the runtime (reading a
+// snapshot, disposing) never re-enters a runtime that is mid-emit.
 func (m *sessionManager) handleRuntimeEvent(live *liveSession, event RuntimeEvent) {
 	ctx := m.srv.opContext()
 	switch event.Type {
 	case RuntimeErrorEvent:
-		live.queue.Go(func() {
-			if err := m.terminate(ctx, live, event.Err); err != nil {
-				m.srv.reportError(err)
-			}
+		m.goSafely(live, "terminating a session after a runtime failure", func() error {
+			return m.terminate(ctx, live, event.Err)
 		})
 	case RuntimeProgressEvent:
 		envelope := &protocol.EventEnvelope{
@@ -519,17 +586,17 @@ func (m *sessionManager) handleRuntimeEvent(live *liveSession, event RuntimeEven
 				Progress:  event.Progress,
 			},
 		}
-		live.queue.Go(func() {
-			for _, conn := range m.sessionConnections(live) {
-				m.srv.sendMessage(conn, envelope)
-			}
-		})
+		// Sent on the emitting goroutine, as pi does, which also settles who
+		// receives it: the connections attached at the moment of the emit, not
+		// whichever set exists by the time a queued job gets to run.
+		for _, conn := range m.sessionConnections(live) {
+			m.srv.sendMessage(conn, envelope)
+		}
 		m.scheduleMaybeDispose(live)
 	default:
-		live.queue.Go(func() {
-			if _, err := m.broadcastSnapshot(ctx, live); err != nil {
-				m.srv.reportError(err)
-			}
+		m.goSafely(live, "rebroadcasting a session snapshot", func() error {
+			_, err := m.broadcastSnapshot(ctx, live)
+			return err
 		})
 		m.scheduleMaybeDispose(live)
 	}
@@ -617,13 +684,34 @@ func (m *sessionManager) broadcastSnapshot(ctx context.Context, live *liveSessio
 	return snapshot, nil
 }
 
+// attach records one connection as a holder of one live session.
+//
+// The two halves of an attachment — the session on the connection and the
+// connection on the session — are written under both locks at once, so a
+// concurrent disconnect sees either a whole attachment or none of it. Written
+// separately, a disconnect landing between them clears the connection's half
+// and finds nothing to remove from the session's; attach then registers a dead
+// connection that nothing will ever remove, and the session stays acquired —
+// and so does the backend's lock on it — for the life of the process.
+//
+// The transport is asked whether it is closed before either lock is taken:
+// ByteConn is an interface a transport implements, and calling into it under
+// the manager's lock would invite a lock cycle through code this package does
+// not own. pi reads the flag inline; a flag that flips in the gap only means
+// the transport's own close path disconnects the connection a moment later,
+// which now unwinds the attachment cleanly.
 func (m *sessionManager) attach(ctx context.Context, conn *connState, live *liveSession) error {
+	closed := conn.conn.Closed()
+
+	m.mu.Lock()
 	conn.mu.Lock()
-	usable := !conn.disconnected && conn.stage == stageReady && !conn.conn.Closed()
+	usable := !conn.disconnected && conn.stage == stageReady && !closed
 	if usable {
 		conn.sessionIDs[live.id] = struct{}{}
+		live.connections[conn] = struct{}{}
 	}
 	conn.mu.Unlock()
+	m.mu.Unlock()
 
 	if !usable {
 		if err := m.maybeDispose(ctx, live); err != nil {
@@ -631,9 +719,6 @@ func (m *sessionManager) attach(ctx context.Context, conn *connState, live *live
 		}
 		return NewError(protocol.ErrorInvalidRequest, "Connection closed while attaching to a session", nil)
 	}
-	m.mu.Lock()
-	live.connections[conn] = struct{}{}
-	m.mu.Unlock()
 	return nil
 }
 
@@ -653,10 +738,8 @@ func (m *sessionManager) requireAttached(conn *connState, sessionID string) (*li
 }
 
 func (m *sessionManager) scheduleMaybeDispose(live *liveSession) {
-	live.queue.Go(func() {
-		if err := m.maybeDispose(m.srv.opContext(), live); err != nil {
-			m.srv.reportError(err)
-		}
+	m.goSafely(live, "releasing an idle session runtime", func() error {
+		return m.maybeDispose(m.srv.opContext(), live)
 	})
 }
 

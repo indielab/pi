@@ -89,9 +89,13 @@ type SessionRuntime interface {
 	// Subscribe registers an event listener and returns its canceller.
 	//
 	// The Server dispatches snapshot and error events on its own goroutine, so
-	// a runtime may emit them while holding its own lock. Progress events are
-	// forwarded to attached connections on the calling goroutine, which is what
-	// keeps a stream of deltas in order.
+	// a runtime may emit those while holding its own lock. Progress events are
+	// forwarded to the connections attached at the moment of the emit, on the
+	// emitting goroutine — that is what keeps a delta ahead of a snapshot
+	// emitted before it, which a client applying deltas depends on. It also
+	// means a runtime must not hold a lock the Server needs while emitting
+	// progress: a send that fails there disconnects the connection, and that
+	// path calls back into Phase.
 	Subscribe(listener func(RuntimeEvent)) Unsubscribe
 	// Dispose releases the runtime and whatever lock it holds on durable
 	// storage. The Server calls it exactly once per acquired runtime.

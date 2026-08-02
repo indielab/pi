@@ -354,6 +354,7 @@ type Runtime struct {
 	disposeCount int
 	steers       []server.SteerInput
 	pending      chan promptOutcome
+	snapshotGate chan struct{}
 
 	disposed  chan struct{}
 	closeOnce sync.Once
@@ -379,8 +380,36 @@ func (r *Runtime) Steers() []server.SteerInput {
 }
 
 func (r *Runtime) Snapshot(context.Context) (*protocol.SessionSnapshot, error) {
+	r.mu.Lock()
+	gate := r.snapshotGate
+	r.mu.Unlock()
+	if gate != nil {
+		<-gate
+	}
 	snapshot := r.stored.get()
 	return &snapshot, nil
+}
+
+// BlockSnapshots holds every Snapshot call open until ReleaseSnapshots. It is
+// how a test keeps one runtime event in flight while it provokes another.
+func (r *Runtime) BlockSnapshots() {
+	r.mu.Lock()
+	if r.snapshotGate == nil {
+		r.snapshotGate = make(chan struct{})
+	}
+	r.mu.Unlock()
+}
+
+// ReleaseSnapshots lets the blocked Snapshot calls, and every later one,
+// through.
+func (r *Runtime) ReleaseSnapshots() {
+	r.mu.Lock()
+	gate := r.snapshotGate
+	r.snapshotGate = nil
+	r.mu.Unlock()
+	if gate != nil {
+		close(gate)
+	}
 }
 
 // StoredSnapshot is the runtime's current view, for assertions.

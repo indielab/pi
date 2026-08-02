@@ -16,6 +16,8 @@ type Listener interface {
 	// not return until the transport is bound or has failed.
 	Start(ctx context.Context, accept Acceptor) error
 	// Close unbinds the transport and releases its resources. Repeated calls
-	// must be harmless.
+	// must be harmless. It should honour ctx at anything it waits on: Server
+	// closes its listeners with the context its own Close was given, and a
+	// caller that asked for a bounded shutdown must get one.
 	Close(ctx context.Context) error
 }

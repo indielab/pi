@@ -3,7 +3,9 @@ package protocol
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
+	"strings"
 	"testing"
 )
 
@@ -31,7 +33,7 @@ type upstreamFraming struct {
 	} `json:"assertCases"`
 }
 
-func loadFraming(t *testing.T) upstreamFraming {
+func loadFraming(t testing.TB) upstreamFraming {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/upstream_framing.json")
 	if err != nil {
@@ -44,7 +46,7 @@ func loadFraming(t *testing.T) upstreamFraming {
 	return v
 }
 
-func mustHex(t *testing.T, s string) []byte {
+func mustHex(t testing.TB, s string) []byte {
 	t.Helper()
 	b, err := hex.DecodeString(s)
 	if err != nil {
@@ -230,6 +232,11 @@ func TestFrameDecoderCasesMatchUpstream(t *testing.T) {
 // TestFrameDecoderPoisonedAfterFailure locks the "a framing error is
 // unrecoverable" rule: once the stream position is unknown, no later byte can
 // be interpreted.
+//
+// The message must keep upstream's wording as its lead — that is what a reader
+// comparing the two implementations greps for — and must also say what the
+// caller has to do, because "has failed" alone reads like a transient condition
+// worth retrying and no retry can ever succeed.
 func TestFrameDecoderPoisonedAfterFailure(t *testing.T) {
 	limit := 8
 	decoder, err := NewFrameDecoder(&FrameOptions{MaxFrameLength: &limit})
@@ -239,11 +246,59 @@ func TestFrameDecoderPoisonedAfterFailure(t *testing.T) {
 	if _, err := decoder.Push(mustHex(t, "00000010")); err == nil {
 		t.Fatal("expected an over-limit failure")
 	}
-	if _, err := decoder.Push([]byte{0x61}); err == nil || err.Error() != "Frame decoder has failed" {
-		t.Errorf("Push after failure: got %v, want \"Frame decoder has failed\"", err)
+
+	assertFailedMessage := func(what string, err error) {
+		t.Helper()
+		if err == nil {
+			t.Fatalf("%s after failure: got no error", what)
+		}
+		if !strings.HasPrefix(err.Error(), "Frame decoder has failed") {
+			t.Errorf("%s after failure: %q does not lead with upstream's wording", what, err)
+		}
+		if !strings.Contains(err.Error(), "re-establish the connection") {
+			t.Errorf("%s after failure: %q does not say the decoder is unrecoverable", what, err)
+		}
 	}
-	if err := decoder.End(); err == nil || err.Error() != "Frame decoder has failed" {
-		t.Errorf("End after failure: got %v, want \"Frame decoder has failed\"", err)
+	_, pushErr := decoder.Push([]byte{0x61})
+	assertFailedMessage("Push", pushErr)
+	assertFailedMessage("End", decoder.End())
+}
+
+// TestFrameOptionRangeErrorsAreTyped: an out-of-range limit is the caller's bug,
+// not the peer's, and callers branch on that distinction — server.go already
+// matches *FrameError to decide whether a connection is at fault. An untyped
+// error here made a configuration mistake indistinguishable from a hostile peer.
+func TestFrameOptionRangeErrorsAreTyped(t *testing.T) {
+	// Only the low end is portable to assert: the high end is 2^32, which is
+	// not representable as an int on a 32-bit build, and this package must keep
+	// compiling there.
+	limit := -1
+	opts := &FrameOptions{MaxFrameLength: &limit}
+
+	var rangeErr *RangeError
+	_, err := NewFrameDecoder(opts)
+	if err == nil {
+		t.Fatal("NewFrameDecoder accepted a negative maxFrameLength")
+	}
+	if !errors.As(err, &rangeErr) {
+		t.Errorf("NewFrameDecoder: got %T, want *RangeError", err)
+	}
+
+	err = AssertCompleteFrame(mustHex(t, "0000000161"), opts)
+	if err == nil {
+		t.Fatal("AssertCompleteFrame accepted a negative maxFrameLength")
+	}
+	if !errors.As(err, &rangeErr) {
+		t.Errorf("AssertCompleteFrame: got %T, want *RangeError", err)
+	}
+	var frameErr *FrameError
+	if errors.As(err, &frameErr) {
+		t.Error("a caller-configuration error is reported as *FrameError, i.e. as the peer's fault")
+	}
+
+	// The same distinction on the encode side, where pi also throws RangeError.
+	if _, err := NewClientMessageDecoder(opts); err == nil || !errors.As(err, &rangeErr) {
+		t.Errorf("NewClientMessageDecoder: got %v (%T), want *RangeError", err, err)
 	}
 }
 

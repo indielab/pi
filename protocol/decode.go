@@ -47,18 +47,16 @@ func registerUnion[T any](decode func(any) (T, error)) {
 // property is a rejection, not something to ignore. A peer that can smuggle
 // extra fields past the parser can reach code paths the schema was meant to
 // gate, so this is a security boundary rather than a tidiness rule.
+//
+// Validation is not repeated here: decodeStruct validates every struct it fills,
+// the top-level one included, so a second Validator check on target would run
+// the same constraints twice.
 func decodeInto(value any, target any) error {
 	rv := reflect.ValueOf(target)
 	if rv.Kind() != reflect.Pointer || rv.IsNil() {
 		return invalidf("decode target must be a non-nil pointer")
 	}
-	if err := decodeValue(value, rv.Elem(), ""); err != nil {
-		return err
-	}
-	if v, ok := target.(Validator); ok {
-		return v.Validate()
-	}
-	return nil
+	return decodeValue(value, rv.Elem(), "")
 }
 
 func path(prefix, field string) string {
@@ -176,6 +174,15 @@ func decodeValue(value any, target reflect.Value, at string) error {
 		return nil
 
 	case reflect.Map:
+		// A CBOR object always has string keys, so a map field with any other
+		// key type has no decodable form; without this the SetMapIndex below
+		// panics on the type mismatch, the way the encoder's guard prevents on
+		// the way out.
+		keyType := target.Type().Key()
+		if keyType.Kind() != reflect.String {
+			return invalidf("%s cannot decode into a map keyed by %s: protocol objects have string keys, "+
+				"so declare the field as a map with a string key type", describe(at), keyType)
+		}
 		entries, ok := value.(map[string]any)
 		if !ok {
 			return invalidf("%s must be an object", describe(at))
@@ -186,7 +193,9 @@ func decodeValue(value any, target reflect.Value, at string) error {
 			if err := decodeValue(item, elem, path(at, key)); err != nil {
 				return err
 			}
-			out.SetMapIndex(reflect.ValueOf(key), elem)
+			// Convert: a named string type is still a legal key type, but
+			// SetMapIndex demands the map's exact key type.
+			out.SetMapIndex(reflect.ValueOf(key).Convert(keyType), elem)
 		}
 		target.Set(out)
 		return nil

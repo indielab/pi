@@ -16,10 +16,12 @@ import (
 type snapshotPublisher struct {
 	srv     *Server
 	backend Backend
-	queue   serialQueue
 
 	mu       sync.Mutex
 	revision int64
+	running  bool
+	pending  bool
+	idle     chan struct{}
 }
 
 func newSnapshotPublisher(srv *Server, backend Backend) *snapshotPublisher {
@@ -66,17 +68,83 @@ func (p *snapshotPublisher) get(
 	}, nil
 }
 
-// broadcast queues one snapshot pass. It never blocks.
+// broadcast asks for a snapshot pass. It never blocks.
+//
+// DIVERGENCE (deliberate): pi chains every broadcast onto a promise, so N calls
+// run N passes. Every pass does the same thing — read the backend once, then
+// build and send the current state to each ready connection — so a pass that
+// has not started yet is indistinguishable from the one already running, and
+// at most one is kept waiting behind it. Without that, a peer pipelining
+// attach and detach enqueues passes faster than they retire, each of them
+// costing O(connections × live sessions) backend calls. What a client sees is
+// fewer server_snapshot events carrying the same information: the revision
+// still only moves forward, and every snapshot is still whole.
 func (p *snapshotPublisher) broadcast() {
-	p.queue.Go(func() {
-		if err := p.perform(); err != nil {
-			p.srv.reportError(err)
-		}
-	})
+	p.mu.Lock()
+	if p.running {
+		p.pending = true
+		p.mu.Unlock()
+		return
+	}
+	p.running = true
+	p.mu.Unlock()
+	go p.run()
 }
 
-// wait blocks until every queued broadcast has run.
-func (p *snapshotPublisher) wait() { p.queue.Wait() }
+func (p *snapshotPublisher) run() {
+	for {
+		p.performSafely()
+
+		p.mu.Lock()
+		if !p.pending {
+			p.running = false
+			if p.idle != nil {
+				close(p.idle)
+				p.idle = nil
+			}
+			p.mu.Unlock()
+			return
+		}
+		p.pending = false
+		p.mu.Unlock()
+	}
+}
+
+// wait blocks until no pass is running or waiting, giving up when ctx is done.
+func (p *snapshotPublisher) wait(ctx context.Context) error {
+	for {
+		p.mu.Lock()
+		if !p.running {
+			p.mu.Unlock()
+			return nil
+		}
+		if p.idle == nil {
+			p.idle = make(chan struct{})
+		}
+		idle := p.idle
+		p.mu.Unlock()
+
+		select {
+		case <-idle:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+}
+
+// performSafely runs one pass behind a panic barrier: the pass reads the
+// Backend from a goroutine nobody outside this package can see, and a panic
+// there would take the process rather than the broadcast.
+func (p *snapshotPublisher) performSafely() {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			p.srv.reportError(panicError(recovered, "broadcasting the server snapshot"))
+		}
+	}()
+	if err := p.perform(); err != nil {
+		p.srv.reportError(err)
+	}
+}
 
 func (p *snapshotPublisher) perform() error {
 	ready := p.srv.readyConnections()
@@ -95,6 +163,11 @@ func (p *snapshotPublisher) perform() error {
 		return err
 	}
 	for _, conn := range ready {
+		// Abandoning the pass on the first failure is pi's behaviour, not an
+		// oversight: its loop awaits each snapshot in turn, so a backend that
+		// fails for one connection ends the pass for the rest too. The
+		// revision it consumed is simply never delivered, and the next pass
+		// carries a later one.
 		snapshot, err := p.get(ctx, models, conn)
 		if err != nil {
 			return err

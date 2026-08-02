@@ -194,6 +194,72 @@ func TestTranscriptClearsToolCallBuffersWhenAnItemFinishes(t *testing.T) {
 	}
 }
 
+func TestTranscriptResumesFromAnEmptyBufferItAlreadyHas(t *testing.T) {
+	// A buffered prefix that happens to be empty is still a buffered prefix: pi
+	// reads the map with ?? and falls back to the item's own input only when the
+	// key is absent. Falling back on emptiness instead would splice an input the
+	// projection has already superseded onto the front of the stream.
+	snapshot := transcriptSnapshot(1, "unused")
+	snapshot.Transcript = []protocol.TranscriptItem{assistantItem("assistant-1", toolCall(nil))}
+	state := NewTranscriptState(snapshot)
+
+	// A zero-length delta buffers "" for this block.
+	state = state.ApplyProgress(textDelta(protocol.DeltaToolCall, 0, ""))
+	// The item is then replaced by one carrying a partial input of its own, which
+	// the live buffer outranks.
+	state = state.ApplyProgress(&protocol.ItemUpdatedProgress{
+		Type: "item_updated",
+		Item: assistantItem("assistant-1", toolCall(`{"a":`)),
+	})
+	state = state.ApplyProgress(textDelta(protocol.DeltaToolCall, 0, `1}`))
+
+	if got := firstToolInput(t, state.Transcript()); got != `1}` {
+		t.Fatalf("input = %#v, want the buffered prefix to have won", got)
+	}
+}
+
+func TestTranscriptZeroValueProjectsWithoutPanicking(t *testing.T) {
+	// TranscriptState and its methods are exported, so its zero value has to be
+	// an empty projection rather than a panic waiting for the first delta.
+	var state TranscriptState
+
+	next := state.ApplyProgress(&protocol.ItemStartedProgress{
+		Type: "item_started",
+		Item: assistantItem("assistant-1", toolCall(nil)),
+	})
+	if got := len(next.Transcript()); got != 1 {
+		t.Fatalf("transcript has %d items, want the one progress introduced", got)
+	}
+	next = next.ApplyProgress(textDelta(protocol.DeltaToolCall, 0, `{"a":1}`))
+
+	want := map[string]any{"a": float64(1)}
+	if got := firstToolInput(t, next.Transcript()); !reflect.DeepEqual(got, want) {
+		t.Fatalf("input = %#v, want %#v", got, want)
+	}
+	if got := len(state.Transcript()); got != 0 {
+		t.Fatalf("the zero state itself has %d items, want none", got)
+	}
+}
+
+func TestTranscriptDoesNotAliasACallerSuppliedProgressItem(t *testing.T) {
+	// The producer keeps mutating the item it handed over, exactly as it may with
+	// a snapshot. Only ingest is copied, so this is the copy that has to survive
+	// splitting it from the items the projection builds for itself.
+	state := NewTranscriptState(transcriptSnapshot(1, "saved"))
+	item := assistantItem("assistant-2", text("streaming"))
+	state = state.ApplyProgress(&protocol.ItemStartedProgress{Type: "item_started", Item: item})
+
+	item.Content[0].(*protocol.TextContent).Text = "tampered"
+	item.Content = append(item.Content, text("extra"))
+
+	if got := firstText(t, state.Transcript(), 1); got != "streaming" {
+		t.Fatalf("projection = %q, want %q", got, "streaming")
+	}
+	if got := len(state.Transcript()[1].(*protocol.AssistantTranscriptItem).Content); got != 1 {
+		t.Fatalf("projected content has %d blocks, want 1", got)
+	}
+}
+
 func TestTranscriptAppendsThinkingDeltas(t *testing.T) {
 	snapshot := transcriptSnapshot(1, "unused")
 	snapshot.Transcript = []protocol.TranscriptItem{

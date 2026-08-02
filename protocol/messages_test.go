@@ -30,7 +30,7 @@ type rejectVector struct {
 	Error    string `json:"error"`
 }
 
-func loadMessages(t *testing.T) upstreamMessages {
+func loadMessages(t testing.TB) upstreamMessages {
 	t.Helper()
 	raw, err := os.ReadFile("testdata/upstream_messages.json")
 	if err != nil {

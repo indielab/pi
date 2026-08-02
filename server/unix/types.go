@@ -1,3 +1,5 @@
+//go:build unix
+
 // Package unix is the Go port of pi's Unix-domain-socket transport for the
 // session server (@earendil-works/pi-server transports/unix): it binds a
 // filesystem socket and hands the connections it accepts to a server.Server.
@@ -7,6 +9,10 @@
 // after its device and inode have been confirmed to be the one this process
 // bound — so a listener never unlinks a file it does not own, and never removes
 // a replacement another process put there.
+//
+// Every file in the package is constrained to unix, so the package is empty on
+// a platform with no Unix-domain sockets rather than exporting option structs
+// nothing can construct a listener from.
 package unix
 
 import (

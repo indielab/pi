@@ -80,32 +80,30 @@ func resolveLimit(name string, value *int, def int, maximum uint64) (int, error)
 }
 
 func resolveOptions(o *Options) (resolved, error) {
+	// A nil Options means "every limit unset", which is what the zero value
+	// already says — pi's `options?.x ?? default` with the optional chain
+	// hoisted out of the three reads.
+	var opts Options
+	if o != nil {
+		opts = *o
+	}
 	var (
 		r   resolved
 		err error
 	)
-	if r.maxByteLength, err = resolveLimit("maxByteLength", fieldOf(o, func(o *Options) *int { return o.MaxByteLength }),
+	if r.maxByteLength, err = resolveLimit("maxByteLength", opts.MaxByteLength,
 		DefaultMaxByteLength, maxUint32); err != nil {
 		return resolved{}, err
 	}
-	if r.maxContainerLength, err = resolveLimit("maxContainerLength",
-		fieldOf(o, func(o *Options) *int { return o.MaxContainerLength }),
+	if r.maxContainerLength, err = resolveLimit("maxContainerLength", opts.MaxContainerLength,
 		DefaultMaxContainerLength, maxUint32); err != nil {
 		return resolved{}, err
 	}
-	if r.maxDepth, err = resolveLimit("maxDepth", fieldOf(o, func(o *Options) *int { return o.MaxDepth }),
+	if r.maxDepth, err = resolveLimit("maxDepth", opts.MaxDepth,
 		DefaultMaxDepth, maxConfiguredDepth); err != nil {
 		return resolved{}, err
 	}
 	return r, nil
-}
-
-// fieldOf reads a field from a possibly-nil Options, mirroring pi's `options?.x`.
-func fieldOf(o *Options, get func(*Options) *int) *int {
-	if o == nil {
-		return nil
-	}
-	return get(o)
 }
 
 // isIntegralFloat reports whether v is an integer value that pi would encode as

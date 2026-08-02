@@ -6,6 +6,7 @@ import (
 	"crypto/subtle"
 	"errors"
 	"fmt"
+	"runtime/debug"
 	"sync"
 	"time"
 
@@ -111,8 +112,15 @@ func New(backend Backend, options Options) (*Server, error) {
 	if handshakeTimeout == 0 {
 		handshakeTimeout = DefaultHandshakeTimeout
 	}
-	if handshakeTimeout < 0 || handshakeTimeout > maxHandshakeTimeout {
-		return nil, fmt.Errorf("server handshakeTimeout must be between 1ms and %s", maxHandshakeTimeout)
+	// Node's timer takes whole milliseconds, so a duration it cannot express is
+	// rejected here too rather than being silently rounded into a different
+	// configuration than a Node pi server would run.
+	if handshakeTimeout < time.Millisecond ||
+		handshakeTimeout > maxHandshakeTimeout ||
+		handshakeTimeout%time.Millisecond != 0 {
+		return nil, fmt.Errorf(
+			"server handshakeTimeout must be a whole number of milliseconds between 1ms and %s, or zero for the %s default",
+			maxHandshakeTimeout, DefaultHandshakeTimeout)
 	}
 
 	id := options.ServerID
@@ -205,15 +213,6 @@ func (s *Server) startListeners(ctx context.Context) error {
 // must drive. It is the Acceptor a Listener is given, and may also be called
 // directly to serve a connection the caller already has.
 func (s *Server) Accept(conn ByteConn) ConnHandler {
-	if s.isClosing() {
-		s.closeConnection(conn, nil)
-		return ConnHandler{
-			OnData:  func([]byte) {},
-			OnClose: func() {},
-			OnError: func(err error) { s.reportError(err) },
-		}
-	}
-
 	maxFrameLength := s.maxFrameLength
 	decoder, err := protocol.NewClientMessageDecoder(&protocol.FrameOptions{MaxFrameLength: &maxFrameLength})
 	if err != nil {
@@ -231,9 +230,31 @@ func (s *Server) Accept(conn ByteConn) ConnHandler {
 		sessionIDs: map[string]struct{}{},
 		stage:      stageAwaitingHello,
 	}
-	// The timer is armed under the connection's own lock, so the callback —
-	// which takes that lock before it touches anything — cannot observe the
-	// field before it has been assigned.
+
+	// Deciding whether the server is still open and adopting the connection is
+	// one step. Split in two, a connection arriving between them is adopted by
+	// a server that has already collected the connections it is about to close
+	// — and then nothing ever closes it: the socket, its goroutines and its
+	// running handshake timer outlive the server that owns them.
+	s.mu.Lock()
+	adopted := !s.closing
+	if adopted {
+		s.connections[state] = struct{}{}
+	}
+	s.mu.Unlock()
+	if !adopted {
+		s.closeConnection(conn, nil)
+		return ConnHandler{
+			OnData:  func([]byte) {},
+			OnClose: func() {},
+			OnError: func(err error) { s.reportError(err) },
+		}
+	}
+
+	// The timer is armed only once the connection has been adopted — a
+	// connection the server refused has nothing to time — and under the
+	// connection's own lock, so the callback cannot observe the field before it
+	// has been assigned.
 	state.mu.Lock()
 	state.handshakeTimer = time.AfterFunc(s.handshakeTimeout, func() {
 		s.failProtocol(state, &protocol.ProtocolError{
@@ -242,10 +263,6 @@ func (s *Server) Accept(conn ByteConn) ConnHandler {
 		})
 	})
 	state.mu.Unlock()
-
-	s.mu.Lock()
-	s.connections[state] = struct{}{}
-	s.mu.Unlock()
 
 	return ConnHandler{
 		OnData:  func(chunk []byte) { s.receive(state, chunk) },
@@ -261,12 +278,25 @@ func (s *Server) Accept(conn ByteConn) ConnHandler {
 // Close stops every listener, closes every connection, and disposes every live
 // session. It is idempotent: concurrent and repeated calls all wait for the
 // first one and return its result.
+//
+// It is bounded by ctx. A Backend that never answers must not be able to wedge
+// a caller that asked for a bounded shutdown, so every wait gives up when ctx
+// does and Close returns ctx.Err(). An abandoned shutdown is not resumed: the
+// server stays closing and accepts nothing new, and ctx is cancelled so a
+// backend bounded by it can unwind — but whatever had not been released by then
+// is not released later, and a later Close reports the same failure.
 func (s *Server) Close(ctx context.Context) error {
 	s.mu.Lock()
 	if s.closeDone != nil {
 		done := s.closeDone
 		s.mu.Unlock()
-		<-done
+		select {
+		case <-done:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
 		return s.closeErr
 	}
 	s.closing = true
@@ -275,8 +305,24 @@ func (s *Server) Close(ctx context.Context) error {
 	starting := s.startDone
 	s.mu.Unlock()
 
+	err := s.closeEverything(ctx, starting)
+
+	s.mu.Lock()
+	s.started = false
+	s.closeErr = err
+	s.mu.Unlock()
+	close(done)
+	s.cancel()
+	return err
+}
+
+func (s *Server) closeEverything(ctx context.Context, starting chan struct{}) error {
 	if starting != nil {
-		<-starting
+		select {
+		case <-starting:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
 
 	var firstErr error
@@ -288,16 +334,19 @@ func (s *Server) Close(ctx context.Context) error {
 	if err := s.closeServerState(ctx); err != nil && firstErr == nil {
 		firstErr = err
 	}
-
-	s.mu.Lock()
-	s.started = false
-	s.closeErr = firstErr
-	s.mu.Unlock()
-	close(done)
-	s.cancel()
 	return firstErr
 }
 
+// receive decodes one inbound chunk and acts on every message in it.
+//
+// DIVERGENCE (deliberate): pi runs the handshake as a promise and chains any
+// message that arrives during it onto that promise. Here every message in the
+// chunk is judged first and the handshake is completed afterwards, on the same
+// goroutine. That is the same ordering without the promise — a second hello
+// still ends the connection before the first one's answer goes out, and a
+// request that arrives during the handshake still waits for it — and a request
+// on a ready connection still gets a goroutine each, so a slow command cannot
+// hold up a fast one behind it.
 func (s *Server) receive(state *connState, chunk []byte) {
 	if state.terminal() {
 		return
@@ -307,57 +356,68 @@ func (s *Server) receive(state *connState, chunk []byte) {
 		s.failProtocol(state, s.toProtocolError(err))
 		return
 	}
+
+	var handshaking bool
+	var deferred []*protocol.RequestEnvelope
 	for _, message := range messages {
 		if state.terminal() {
 			return
 		}
-		s.dispatch(state, message)
-	}
-}
+		switch msg := message.(type) {
+		case *protocol.ClientHello:
+			if !s.beginHandshake(state, msg) {
+				return
+			}
+			handshaking = true
 
-// dispatch routes one decoded client message.
-//
-// DIVERGENCE (deliberate): pi runs the handshake as a promise and chains any
-// message that arrives during it onto that promise. Here the handshake runs
-// inline on the read goroutine, so nothing can arrive during it — the transport
-// serialises OnData, and the peer has nothing worth saying before its hello is
-// answered anyway. Requests after the handshake still get a goroutine each, so
-// a slow command cannot hold up a fast one behind it.
-func (s *Server) dispatch(state *connState, message protocol.ClientMessage) {
-	switch msg := message.(type) {
-	case *protocol.ClientHello:
-		state.mu.Lock()
-		first := state.stage == stageAwaitingHello
-		state.mu.Unlock()
-		if !first {
-			s.failProtocol(state, &protocol.ProtocolError{
-				Code:    protocol.ErrorInvalidRequest,
-				Message: "hello may only be sent as the first message",
-			})
+		case *protocol.RequestEnvelope:
+			switch state.currentStage() {
+			case stageAwaitingHello:
+				s.failProtocol(state, &protocol.ProtocolError{
+					Code:    protocol.ErrorInvalidRequest,
+					Message: "The first client message must be hello",
+				})
+				return
+			case stageHandshaking:
+				deferred = append(deferred, msg)
+			case stageReady:
+				go s.handleRequest(state, msg)
+			}
+		}
+	}
+
+	if handshaking && !s.finishHandshake(state) {
+		return
+	}
+	for _, request := range deferred {
+		if !state.ready() {
 			return
 		}
-		s.finishHandshake(state, msg)
-
-	case *protocol.RequestEnvelope:
-		state.mu.Lock()
-		stage := state.stage
-		state.mu.Unlock()
-		switch stage {
-		case stageAwaitingHello:
-			s.failProtocol(state, &protocol.ProtocolError{
-				Code:    protocol.ErrorInvalidRequest,
-				Message: "The first client message must be hello",
-			})
-		case stageReady:
-			go s.handleRequest(state, msg)
-		}
+		go s.handleRequest(state, request)
 	}
 }
 
-func (s *Server) finishHandshake(state *connState, hello *protocol.ClientHello) {
+// beginHandshake opens the handshake and runs everything pi runs synchronously
+// before it awaits the server snapshot. It reports whether the connection is
+// still worth answering.
+func (s *Server) beginHandshake(state *connState, hello *protocol.ClientHello) bool {
+	state.mu.Lock()
+	first := state.stage == stageAwaitingHello
+	if first {
+		state.stage = stageHandshaking
+	}
+	state.mu.Unlock()
+	if !first {
+		s.failProtocol(state, &protocol.ProtocolError{
+			Code:    protocol.ErrorInvalidRequest,
+			Message: "hello may only be sent as the first message",
+		})
+		return false
+	}
+
 	if !s.authenticate(hello) {
 		s.failProtocol(state, &protocol.ProtocolError{Code: protocol.ErrorAuth, Message: "Authentication failed"})
-		return
+		return false
 	}
 	if !protocol.IsSupportedVersion(hello.Version) {
 		s.failProtocol(state, &protocol.ProtocolError{
@@ -365,21 +425,31 @@ func (s *Server) finishHandshake(state *connState, hello *protocol.ClientHello) 
 			Message: fmt.Sprintf("Unsupported protocol version %d; expected %d",
 				hello.Version, protocol.ProtocolVersion),
 		})
-		return
+		return false
 	}
+	return true
+}
 
+// finishHandshake builds the snapshot the hello carries, sends it and promotes
+// the connection. It reports whether the connection reached ready.
+func (s *Server) finishHandshake(state *connState) bool {
 	ctx := s.opContext()
-	snapshot, err := s.snapshots.get(ctx, nil, state)
+	snapshot, err := s.serverSnapshot(ctx, state)
 	if err != nil {
 		s.failProtocol(state, s.toProtocolError(err))
-		return
+		return false
 	}
 
+	// The stage is re-read after the snapshot, because anything the peer sent
+	// while it was being built has already been judged against the handshaking
+	// stage — a second hello among it has ended the connection, and answering
+	// it now would put a hello on the wire behind the hello_error that
+	// replaced it.
 	state.mu.Lock()
-	abandon := state.disconnected || state.stage != stageAwaitingHello
+	abandon := state.disconnected || state.stage != stageHandshaking
 	state.mu.Unlock()
 	if s.isClosing() || abandon || state.conn.Closed() {
-		return
+		return false
 	}
 
 	sent := s.sendMessage(state, &protocol.ServerHello{
@@ -389,36 +459,37 @@ func (s *Server) finishHandshake(state *connState, hello *protocol.ClientHello) 
 		Snapshot:     *snapshot,
 	})
 	if !sent {
-		return
+		return false
 	}
 
 	state.mu.Lock()
-	promoted := !state.disconnected && state.stage == stageAwaitingHello
+	promoted := !state.disconnected && state.stage == stageHandshaking
 	if promoted {
 		state.handshakeComplete = true
 		state.stage = stageReady
-		state.handshakeTimer.Stop()
+		state.stopHandshakeTimerLocked()
 	}
 	state.mu.Unlock()
 	if !promoted {
-		return
+		return false
 	}
 
 	// A change that landed while the snapshot was being built would otherwise
 	// be invisible to this client until the next broadcast, because the
 	// broadcast that carried it went out before the connection was ready.
 	if snapshot.Revision == s.snapshots.currentRevision() {
-		return
+		return true
 	}
-	current, err := s.snapshots.get(ctx, nil, state)
+	current, err := s.serverSnapshot(ctx, state)
 	if err != nil {
 		s.failProtocol(state, s.toProtocolError(err))
-		return
+		return false
 	}
 	s.sendMessage(state, &protocol.EventEnvelope{
 		Type:  "event",
 		Event: &protocol.ServerSnapshotEvent{Type: "server_snapshot", Snapshot: *current},
 	})
+	return true
 }
 
 func (s *Server) authenticate(hello *protocol.ClientHello) bool {
@@ -427,7 +498,7 @@ func (s *Server) authenticate(hello *protocol.ClientHello) bool {
 }
 
 func (s *Server) handleRequest(state *connState, envelope *protocol.RequestEnvelope) {
-	result, err := s.sessions.executeCommand(s.opContext(), state, envelope.Request)
+	result, err := s.executeCommand(state, envelope)
 	if err != nil {
 		s.sendMessage(state, &protocol.ResponseEnvelope{
 			Type:  "response",
@@ -443,6 +514,48 @@ func (s *Server) handleRequest(state *connState, envelope *protocol.RequestEnvel
 		OK:     true,
 		Result: result,
 	})
+}
+
+// executeCommand runs one command behind a panic barrier. A panicking Backend
+// or SessionRuntime fails the request it was called from; the error it produces
+// is not an *Error, so the peer is told nothing beyond "internal server error".
+func (s *Server) executeCommand(
+	state *connState,
+	envelope *protocol.RequestEnvelope,
+) (result protocol.CommandResult, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			result = nil
+			err = panicError(recovered, "executing the "+envelope.Request.CommandName()+" command")
+		}
+	}()
+	return s.sessions.executeCommand(s.opContext(), state, envelope.Request)
+}
+
+// serverSnapshot builds the server snapshot behind the same barrier: the
+// handshake reads the backend from the connection's read goroutine, where a
+// panic would take the process down rather than the connection.
+func (s *Server) serverSnapshot(
+	ctx context.Context,
+	state *connState,
+) (snapshot *protocol.ServerSnapshot, err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			snapshot = nil
+			err = panicError(recovered, "building the server snapshot")
+		}
+	}()
+	return s.snapshots.get(ctx, nil, state)
+}
+
+// panicError turns a panic that crossed an extension-point boundary into an
+// error. Backend and SessionRuntime are implemented outside this package, and
+// they are called from goroutines their implementer never sees; a panic there
+// must fail the work in hand, not the process.
+func panicError(recovered any, what string) error {
+	return fmt.Errorf(
+		"panic while %s; a Backend or SessionRuntime must report failures as errors rather than panic: %v\n%s",
+		what, recovered, debug.Stack())
 }
 
 func (s *Server) transportClosed(state *connState) {
@@ -468,7 +581,7 @@ func (s *Server) disconnect(ctx context.Context, state *connState) {
 	handshakeComplete := state.handshakeComplete
 	state.disconnected = true
 	state.stage = stageClosed
-	state.handshakeTimer.Stop()
+	state.stopHandshakeTimerLocked()
 	state.mu.Unlock()
 
 	s.mu.Lock()
@@ -515,7 +628,7 @@ func (s *Server) failProtocol(state *connState, protocolError *protocol.Protocol
 		return
 	}
 	state.stage = stageClosing
-	state.handshakeTimer.Stop()
+	state.stopHandshakeTimerLocked()
 	state.mu.Unlock()
 
 	maxFrameLength := s.maxFrameLength
@@ -542,7 +655,7 @@ func (s *Server) closeServerState(ctx context.Context) error {
 	for _, state := range connections {
 		state.mu.Lock()
 		state.stage = stageClosing
-		state.handshakeTimer.Stop()
+		state.stopHandshakeTimerLocked()
 		state.mu.Unlock()
 	}
 	for _, state := range connections {
@@ -554,7 +667,9 @@ func (s *Server) closeServerState(ctx context.Context) error {
 
 	// Broadcasts are already no-ops once closing is set; waiting only makes
 	// sure none is still touching the backend when Close returns.
-	s.snapshots.wait()
+	if err := s.snapshots.wait(ctx); err != nil {
+		return err
+	}
 	err := s.sessions.close(ctx)
 
 	s.mu.Lock()
@@ -583,10 +698,6 @@ func (s *Server) toProtocolError(err error) *protocol.ProtocolError {
 	var validationError *protocol.ValidationError
 	if errors.As(err, &validationError) {
 		return &protocol.ProtocolError{Code: protocol.ErrorInvalidRequest, Message: validationError.Error()}
-	}
-	var frameError *protocol.FrameError
-	if errors.As(err, &frameError) {
-		return &protocol.ProtocolError{Code: protocol.ErrorInvalidRequest, Message: frameError.Error()}
 	}
 	s.reportError(err)
 	return &protocol.ProtocolError{Code: protocol.ErrorInvalidRequest, Message: "Internal server error"}

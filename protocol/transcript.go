@@ -20,6 +20,9 @@ type UserTranscriptItem struct {
 func (*UserTranscriptItem) ItemRole() string { return "user" }
 
 func (i *UserTranscriptItem) Validate() error {
+	if i == nil {
+		return nilMember(i)
+	}
 	if err := requireID("id", i.ID); err != nil {
 		return err
 	}
@@ -76,6 +79,9 @@ type AssistantTranscriptItem struct {
 func (*AssistantTranscriptItem) ItemRole() string { return "assistant" }
 
 func (i *AssistantTranscriptItem) Validate() error {
+	if i == nil {
+		return nilMember(i)
+	}
 	if err := requireID("id", i.ID); err != nil {
 		return err
 	}
@@ -165,6 +171,9 @@ type ToolTranscriptItem struct {
 func (*ToolTranscriptItem) ItemRole() string { return "tool" }
 
 func (i *ToolTranscriptItem) Validate() error {
+	if i == nil {
+		return nilMember(i)
+	}
 	if err := requireID("id", i.ID); err != nil {
 		return err
 	}
@@ -252,6 +261,9 @@ type ItemStartedProgress struct {
 func (*ItemStartedProgress) ProgressType() string { return "item_started" }
 
 func (p *ItemStartedProgress) Validate() error {
+	if p == nil {
+		return nilMember(p)
+	}
 	if err := requireLiteral("type", p.Type, "item_started"); err != nil {
 		return err
 	}
@@ -282,6 +294,9 @@ type AssistantDeltaProgress struct {
 func (*AssistantDeltaProgress) ProgressType() string { return "assistant_delta" }
 
 func (p *AssistantDeltaProgress) Validate() error {
+	if p == nil {
+		return nilMember(p)
+	}
 	if err := requireLiteral("type", p.Type, "assistant_delta"); err != nil {
 		return err
 	}
@@ -306,6 +321,9 @@ type ItemUpdatedProgress struct {
 func (*ItemUpdatedProgress) ProgressType() string { return "item_updated" }
 
 func (p *ItemUpdatedProgress) Validate() error {
+	if p == nil {
+		return nilMember(p)
+	}
 	if err := requireLiteral("type", p.Type, "item_updated"); err != nil {
 		return err
 	}
@@ -328,15 +346,27 @@ type ItemFinishedProgress struct {
 func (*ItemFinishedProgress) ProgressType() string { return "item_finished" }
 
 func (p *ItemFinishedProgress) Validate() error {
+	if p == nil {
+		return nilMember(p)
+	}
 	if err := requireLiteral("type", p.Type, "item_finished"); err != nil {
 		return err
 	}
+	// The nil checks come before the status reads: a typed nil satisfies
+	// TranscriptItem and matches its arm, so this switch is where a hand-built
+	// message dereferences nil unless it is stopped here.
 	switch item := p.Item.(type) {
 	case *AssistantTranscriptItem:
+		if item == nil {
+			return nilMember(item)
+		}
 		if item.Status == AssistantStreaming {
 			return invalidf("item_finished must not carry a streaming assistant item")
 		}
 	case *ToolTranscriptItem:
+		if item == nil {
+			return nilMember(item)
+		}
 		if item.Status == ToolRunning {
 			return invalidf("item_finished must not carry a running tool item")
 		}

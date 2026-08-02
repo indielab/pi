@@ -395,6 +395,11 @@ type ToolResultMessage struct {
 	ToolName   string      `json:"toolName"`
 	Content    ContentList `json:"content"` // TextContent | ImageContent
 	Details    any         `json:"details,omitempty"`
+	// Usage is what executing the tool cost, when whoever executed it accounted
+	// for that. pi has carried it since 2026-05-04 and no pi code path sets it;
+	// it is an affordance for SDK callers, and the server bridge puts it on the
+	// wire when it is there (pi: ToolResultMessage.usage, optional).
+	Usage *Usage `json:"usage,omitempty"`
 	// AddedToolNames lists names from Context.Tools that became available after
 	// this result. Providers with native deferred tool loading use this as the
 	// load point; other providers ignore it and use Context.Tools normally.

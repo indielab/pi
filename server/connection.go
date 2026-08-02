@@ -48,18 +48,17 @@ type connStage int
 
 const (
 	stageAwaitingHello connStage = iota
+	// stageHandshaking is the window pi opens synchronously when it accepts a
+	// hello and closes when the handshake resolves. Everything a peer sends in
+	// the meantime is judged against this stage: a second hello ends the
+	// connection there and then, and a request waits.
+	stageHandshaking
 	stageReady
 	stageClosing
 	stageClosed
 )
 
 // connState is one accepted connection.
-//
-// DIVERGENCE (deliberate): pi has a fifth "handshaking" stage because its
-// handshake is a promise that later messages chain onto. Here the handshake
-// runs inline on the connection's read goroutine, so no message can be
-// dispatched while it is in flight and the stage cannot be observed. Dropping
-// it removes the queue-behind-the-handshake path entirely.
 type connState struct {
 	id      string
 	conn    ByteConn
@@ -72,7 +71,24 @@ type connState struct {
 	stage             connStage
 	disconnected      bool
 	handshakeComplete bool
-	handshakeTimer    *time.Timer
+	// handshakeTimer is nil until the connection has been adopted, and stays
+	// nil for one the server refused. Stop it through stopHandshakeTimerLocked.
+	handshakeTimer *time.Timer
+}
+
+// stopHandshakeTimerLocked stops the handshake timer when there is one. A
+// connection the server declined to adopt never had one armed.
+func (c *connState) stopHandshakeTimerLocked() {
+	if c.handshakeTimer != nil {
+		c.handshakeTimer.Stop()
+	}
+}
+
+// currentStage reports where the connection sits right now.
+func (c *connState) currentStage() connStage {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stage
 }
 
 // terminal reports whether the connection can no longer process messages.
