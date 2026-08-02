@@ -389,6 +389,59 @@ func TestDisposeDropsListeners(t *testing.T) {
 	}
 }
 
+// TestDisposeIsALatch: the snapshot a disposed State drops must stay dropped.
+// Disposal cannot be ordered against the connection that feeds it — the
+// handshake callback runs with no lock held, so the check and the apply can
+// never be one step — and a snapshot landing a moment late would otherwise
+// resurrect the cache of a client its owner has already thrown away.
+func TestDisposeIsALatch(t *testing.T) {
+	state := NewState(nil)
+	state.Dispose()
+
+	state.ApplyServerSnapshot(serverSnapshot(1, summary("s1", true)))
+	if got := state.Snapshot(); got != nil {
+		t.Errorf("Snapshot() = %#v after Dispose, want nil", got)
+	}
+	if state.IsSessionAttached("s1") {
+		t.Error("a snapshot applied after Dispose re-attached a session")
+	}
+
+	state.ApplyEvent(&protocol.SessionSnapshotEvent{
+		Type: "session_snapshot", Snapshot: *sessionSnapshot("s1", 1, true),
+	})
+	if got := state.SessionSnapshot("s1"); got != nil {
+		t.Errorf("SessionSnapshot(s1) = %#v after Dispose, want nil", got)
+	}
+	if state.IsSessionAttached("s1") {
+		t.Error("an event applied after Dispose re-attached a session")
+	}
+
+	state.ApplyResult(&protocol.SessionResult{Command: "attach", Session: *sessionSnapshot("s2", 1, true)})
+	if got := state.SessionSnapshot("s2"); got != nil {
+		t.Errorf("SessionSnapshot(s2) = %#v after Dispose, want nil", got)
+	}
+}
+
+// TestDisposeKeepsListenerIdsUnique: Dispose drops the listeners but not the
+// counter that names them. Restarting it would let an unsubscribe held from
+// before disposal cancel a listener registered after it.
+func TestDisposeKeepsListenerIdsUnique(t *testing.T) {
+	state := NewState(nil)
+	stale := state.Subscribe(func(*protocol.ServerSnapshot) {})
+
+	state.Dispose()
+
+	calls := 0
+	state.Subscribe(func(*protocol.ServerSnapshot) { calls++ })
+	stale()
+
+	if state.snapshotListeners.len() != 1 {
+		t.Fatalf("listener count = %d, want the post-Dispose subscription to survive",
+			state.snapshotListeners.len())
+	}
+	_ = calls
+}
+
 // TestConcurrentReadsAndApplies is the reason State has a mutex at all: pi's
 // ClientState is single-threaded, but here the reader goroutine mutates while
 // callers read. Meaningful only under -race.
@@ -464,21 +517,97 @@ func TestUnsubscribeFromInsideListener(t *testing.T) {
 }
 
 // TestSubscribeFromInsideListener is the other half: registering during a
-// notification must not deadlock, and must not retroactively receive the change
-// being delivered.
+// notification must not deadlock, and the new subscriber is reached by the
+// notification it registered during. pi iterates a live Set, and a JS Set
+// iterator visits entries added while it runs — so the listener list cannot be
+// snapshotted before delivery.
 func TestSubscribeFromInsideListener(t *testing.T) {
 	state := NewState(nil)
 	late := 0
+	registered := false
 	state.Subscribe(func(*protocol.ServerSnapshot) {
+		if registered {
+			return
+		}
+		registered = true
 		state.Subscribe(func(*protocol.ServerSnapshot) { late++ })
 	})
 
 	state.ApplyServerSnapshot(serverSnapshot(1))
-	if late != 0 {
-		t.Errorf("late subscriber called %d times during its own registration, want 0", late)
+	if late != 1 {
+		t.Errorf("late subscriber called %d times during its own registration, want 1", late)
 	}
 	state.ApplyServerSnapshot(serverSnapshot(2))
-	if late == 0 {
-		t.Error("late subscriber never received a later change")
+	if late != 2 {
+		t.Errorf("late subscriber called %d times in total, want 2", late)
 	}
+}
+
+// TestUnsubscribeAPeerFromInsideListener is the mirror image: a listener
+// cancelled by an earlier listener during the same notification is not called.
+// Snapshotting the list first would deliver to a subscriber that has already
+// been told to stop — and the subscriber most likely to be cancelled mid-
+// notification is one whose owner has just been torn down.
+func TestUnsubscribeAPeerFromInsideListener(t *testing.T) {
+	state := NewState(nil)
+	var order []string
+	var stopSecond Unsubscribe
+	state.Subscribe(func(*protocol.ServerSnapshot) {
+		order = append(order, "a")
+		stopSecond()
+	})
+	stopSecond = state.Subscribe(func(*protocol.ServerSnapshot) { order = append(order, "b") })
+	state.Subscribe(func(*protocol.ServerSnapshot) { order = append(order, "c") })
+
+	state.ApplyServerSnapshot(serverSnapshot(1))
+
+	if len(order) != 2 || order[0] != "a" || order[1] != "c" {
+		t.Errorf("listeners fired %v, want [a c] — b was cancelled before its turn", order)
+	}
+}
+
+// TestSessionListenersAreIteratedLive: the per-session lists are reached
+// through a map, so they need the same treatment as the top-level ones.
+func TestSessionListenersAreIteratedLive(t *testing.T) {
+	state := NewState(nil)
+	var order []string
+	var stopSecond Unsubscribe
+	state.OnSessionEvent("s1", func(protocol.ServerEvent) {
+		order = append(order, "a")
+		stopSecond()
+		state.OnSessionEvent("s1", func(protocol.ServerEvent) { order = append(order, "late") })
+	})
+	stopSecond = state.OnSessionEvent("s1", func(protocol.ServerEvent) { order = append(order, "b") })
+	state.OnSessionEvent("s1", func(protocol.ServerEvent) { order = append(order, "c") })
+
+	state.ApplyEvent(&protocol.SessionRemovedEvent{Type: "session_removed", SessionID: "s1"})
+
+	want := []string{"a", "c", "late"}
+	if len(order) != len(want) {
+		t.Fatalf("listeners fired %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("listeners fired %v, want %v", order, want)
+		}
+	}
+}
+
+// TestUnsubscribeAfterDisposeKeepsALiveBucket: a per-session unsubscribe held
+// from before Dispose names a listener set that is no longer in the map. It
+// must not take the bucket that replaced it down with it.
+func TestUnsubscribeAfterDisposeKeepsALiveBucket(t *testing.T) {
+	state := NewState(nil)
+	stale := state.OnSessionEvent("s1", func(protocol.ServerEvent) {})
+
+	state.Dispose()
+	calls := 0
+	state.OnSessionEvent("s1", func(protocol.ServerEvent) { calls++ })
+	stale()
+
+	if len(state.sessionEventListeners) != 1 {
+		t.Fatalf("bucket count = %d, want the live bucket to survive a stale unsubscribe",
+			len(state.sessionEventListeners))
+	}
+	_ = calls
 }

@@ -60,7 +60,10 @@ func (h *SessionHandle) Attached() bool { return h.controller.isActive() }
 func (h *SessionHandle) Active() bool { return h.Attached() }
 
 // Snapshot returns the cached session snapshot, or nil if the lease is no
-// longer active or nothing has been cached yet.
+// longer active or nothing has been cached yet. It is the cached pointer, not a
+// copy, and is shared with every other holder and subscriber: treat it as
+// read-only, and expect new state to arrive as a replacement rather than as an
+// edit to this one.
 func (h *SessionHandle) Snapshot() *protocol.SessionSnapshot {
 	return h.controller.sessionSnapshot()
 }

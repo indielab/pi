@@ -1,6 +1,7 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -61,14 +62,21 @@ func NewUnixTransportFactory(opts UnixTransportOptions) (TransportFactory, error
 		return nil, errors.New("Unix transport is not supported on Windows")
 	}
 	path := opts.Path
-	return func(handlers TransportHandlers) (Transport, error) {
-		return dialUnix(path, maxPendingBytes, handlers)
+	return func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
+		return dialUnix(ctx, path, maxPendingBytes, handlers)
 	}, nil
 }
 
 // dialUnix connects and starts the transport's two goroutines.
-func dialUnix(path string, maxPendingBytes int, handlers TransportHandlers) (Transport, error) {
-	conn, err := net.Dial("unix", path)
+//
+// The dial is bounded by ctx: a socket whose accept backlog is full leaves
+// connect(2) blocked indefinitely, and a caller that gave up on the attempt
+// must not be held by it. ctx stops mattering the moment the connection is
+// established, which is the TransportFactory contract.
+//
+// DIVERGENCE (deliberate): pi's dial has no timeout or cancellation at all.
+func dialUnix(ctx context.Context, path string, maxPendingBytes int, handlers TransportHandlers) (Transport, error) {
+	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", path)
 	if err != nil {
 		// pi rejects the factory promise with the socket error; the caller
 		// turns it into a DisconnectedError.
@@ -166,6 +174,9 @@ func (t *unixTransport) readLoop() {
 		if !t.claimTerminal() {
 			return
 		}
+		// The read error below is the one that explains this transport's end;
+		// a close error on a socket that has already failed adds nothing and
+		// would displace it.
 		_ = t.conn.Close()
 		if errors.Is(err, io.EOF) {
 			t.handlers.OnClose()
@@ -203,6 +214,8 @@ func (t *unixTransport) writeLoop() {
 		if !t.claimTerminal() {
 			return
 		}
+		// Same as in readLoop: the write error is what OnError reports, and a
+		// close error on an already-broken socket would only hide it.
 		_ = t.conn.Close()
 		t.handlers.OnError(err)
 		return

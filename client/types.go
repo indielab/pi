@@ -1,5 +1,7 @@
 package client
 
+import "context"
+
 // ConnectionState is where a client sits in its connection lifecycle.
 type ConnectionState string
 
@@ -45,4 +47,14 @@ type TransportHandlers struct {
 
 // TransportFactory creates a fresh connected transport for each connection
 // attempt.
-type TransportFactory func(handlers TransportHandlers) (Transport, error)
+//
+// ctx bounds establishment only: a factory must abandon a connect that is still
+// in progress when ctx is done, and must ignore ctx once it has returned a
+// transport. It is Connect's context, and Connect cannot give up on an attempt
+// the factory is still setting up unless the factory cooperates.
+//
+// DIVERGENCE (deliberate): pi's ByteTransportFactory takes handlers only — it
+// has no cancellation anywhere, so a factory that never settles hangs connect()
+// forever. The context is surface this port invented; nothing upstream
+// corresponds to it.
+type TransportFactory func(ctx context.Context, handlers TransportHandlers) (Transport, error)

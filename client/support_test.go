@@ -91,7 +91,7 @@ type memoryTransport struct {
 	closed bool
 }
 
-func (s *memoryServer) connect(handlers TransportHandlers) (Transport, error) {
+func (s *memoryServer) connect(_ context.Context, handlers TransportHandlers) (Transport, error) {
 	s.mu.Lock()
 	s.handlers = handlers
 	s.mu.Unlock()

@@ -1,8 +1,11 @@
 package client
 
 import (
+	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"syscall"
 	"testing"
 
 	"github.com/sky-valley/pi/protocol"
@@ -110,6 +113,57 @@ func TestAsDisconnectedErrorHandlesNil(t *testing.T) {
 	}
 	if got.Error() != "Pi client is disconnected" {
 		t.Errorf("Error() = %q, want the default message", got.Error())
+	}
+}
+
+// TestAsDisconnectedErrorKeepsTheCauseMatchable: the whole premise of these
+// being types is that a caller branches with errors.As/Is, so the boundary that
+// turns a transport failure into a disconnect must not be where the failure's
+// identity is lost. Flattening it to a string kills errors.Is for every sentinel
+// a transport can plausibly report.
+func TestAsDisconnectedErrorKeepsTheCauseMatchable(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		cause error
+	}{
+		{"a filesystem sentinel", fmt.Errorf("dial unix: %w", fs.ErrNotExist)},
+		{"a syscall errno", fmt.Errorf("dial unix: %w", syscall.ECONNREFUSED)},
+		{"a cancelled context", context.Canceled},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := asDisconnectedError(tc.cause)
+			if !errors.Is(got, tc.cause) {
+				t.Errorf("errors.Is(%#v, %v) = false, want the cause to survive the boundary", got, tc.cause)
+			}
+			if got.Error() != tc.cause.Error() {
+				t.Errorf("Error() = %q, want the cause's message %q", got.Error(), tc.cause.Error())
+			}
+		})
+	}
+}
+
+// TestTransportFailureReachesCallersWithItsCause is the same rule end to end:
+// what a caller gets back from a request rejected by a dying connection has to
+// still identify what killed it.
+func TestTransportFailureReachesCallersWithItsCause(t *testing.T) {
+	server := newMemoryServer(t)
+	client := connectTestClient(t, server)
+	requests := recordRequests(server)
+	listErr := make(chan error, 1)
+	go func() {
+		_, err := client.ListSessions(testContext(t))
+		listErr <- err
+	}()
+	requests.await(t, 1)
+	server.fail(fmt.Errorf("read: %w", syscall.ECONNRESET))
+
+	err := <-listErr
+	if !errors.Is(err, syscall.ECONNRESET) {
+		t.Errorf("errors.Is(%#v, ECONNRESET) = false, want the transport's cause to survive", err)
+	}
+	var disconnected *DisconnectedError
+	if !errors.As(err, &disconnected) {
+		t.Errorf("error = %#v, want *DisconnectedError", err)
 	}
 }
 

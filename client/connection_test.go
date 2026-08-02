@@ -57,7 +57,7 @@ func TestConnectRejectsServerDataBeforeClientHello(t *testing.T) {
 	sendCount, closeCount := 0, 0
 	client, err := New(Options{
 		Token: "bearer-secret",
-		TransportFactory: func(handlers TransportHandlers) (Transport, error) {
+		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			handlers.OnData(encodeServer(t, serverHello(baseSnapshot(1))))
 			return &countingTransport{mu: &mu, sends: &sendCount, closes: &closeCount}, nil
 		},
@@ -197,15 +197,15 @@ func TestStaleHandshakeIsNotRestoredWhenListenerReconnects(t *testing.T) {
 	attempts := 0
 	client, err := New(Options{
 		Token: "bearer-secret",
-		TransportFactory: func(handlers TransportHandlers) (Transport, error) {
+		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			mu.Lock()
 			attempt := attempts
 			attempts++
 			mu.Unlock()
 			if attempt == 0 {
-				return first.connect(handlers)
+				return first.connect(ctx, handlers)
 			}
-			return second.connect(handlers)
+			return second.connect(ctx, handlers)
 		},
 	})
 	if err != nil {
@@ -243,6 +243,239 @@ func TestStaleHandshakeIsNotRestoredWhenListenerReconnects(t *testing.T) {
 	}
 	if got := first.clientCloseCount(); got != 1 {
 		t.Errorf("first transport closes = %d, want 1", got)
+	}
+}
+
+// TestReconnectFromEventListenerIgnoresTheRestOfTheChunk: a listener may
+// replace the connection from inside an event — the pattern ConnectionOptions
+// documents — and the bytes that shared that chunk belong to the transport that
+// is now dead. Handing them to the new connection attributes a stranger's
+// response to it, and an unsolicited response tears a connection down.
+func TestReconnectFromEventListenerIgnoresTheRestOfTheChunk(t *testing.T) {
+	first, second := newMemoryServer(t), newMemoryServer(t)
+	first.answerHandshake(t, baseSnapshot(1))
+	second.answerHandshake(t, baseSnapshot(2))
+	var mu sync.Mutex
+	attempts := 0
+	client, err := New(Options{
+		Token: "bearer-secret",
+		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
+			mu.Lock()
+			attempt := attempts
+			attempts++
+			mu.Unlock()
+			if attempt == 0 {
+				return first.connect(ctx, handlers)
+			}
+			return second.connect(ctx, handlers)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := client.Connect(testContext(t)); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+
+	var reconnectErr error
+	reconnects := 0
+	if _, err := client.OnEvent(func(event protocol.ServerEvent) {
+		if _, ok := event.(*protocol.SessionRemovedEvent); !ok || reconnects > 0 {
+			return
+		}
+		reconnects++
+		client.Disconnect("")
+		_, reconnectErr = client.Reconnect(testContext(t))
+	}); err != nil {
+		t.Fatalf("OnEvent: %v", err)
+	}
+
+	// One chunk, two messages: the event the listener reacts to, and a response
+	// the new connection never asked for.
+	first.sendTogether(t,
+		&protocol.EventEnvelope{
+			Type:  "event",
+			Event: &protocol.SessionRemovedEvent{Type: "session_removed", SessionID: "session-1"},
+		},
+		okResponse("request-stray", detachResult("session-1")),
+	)
+
+	if reconnects != 1 {
+		t.Fatalf("listener ran %d times, want 1", reconnects)
+	}
+	if reconnectErr != nil {
+		t.Fatalf("Reconnect: %v", reconnectErr)
+	}
+	if client.ConnectionState() != Connected {
+		t.Errorf("ConnectionState() = %q, want %q — the dead transport's trailing bytes"+
+			" were applied to the new connection", client.ConnectionState(), Connected)
+	}
+	if got := second.clientCloseCount(); got != 0 {
+		t.Errorf("the new transport was closed %d times, want 0", got)
+	}
+}
+
+// TestConnectResetsOnlyForTheAttemptItClaims: the owner's cache is dropped in
+// the same critical section that claims the attempt, so a Connect that is
+// refused because someone else got there first cannot wipe the cache that
+// someone else has already filled.
+func TestConnectResetsOnlyForTheAttemptItClaims(t *testing.T) {
+	server := newMemoryServer(t)
+	server.answerHandshake(t, baseSnapshot(1))
+	resets := 0
+	conn, err := NewConnection(ConnectionOptions{
+		Token:            "bearer-secret",
+		TransportFactory: server.connect,
+		OnReset:          func() { resets++ },
+		OnHandshake:      func(*protocol.ServerSnapshot) {},
+		OnMessage:        func(protocol.ServerMessage) {},
+		OnStateChange:    func(ConnectionStateChange) {},
+	})
+	if err != nil {
+		t.Fatalf("NewConnection: %v", err)
+	}
+
+	if _, err := conn.Connect(testContext(t)); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	if resets != 1 {
+		t.Fatalf("resets = %d after the first Connect, want 1", resets)
+	}
+
+	if _, err := conn.Connect(testContext(t)); err == nil {
+		t.Fatal("a second Connect on a connected Connection succeeded")
+	}
+	if resets != 1 {
+		t.Errorf("resets = %d, want 1 — a refused Connect must not reset the cache", resets)
+	}
+
+	conn.Disconnect(nil)
+	if _, err := conn.Connect(testContext(t)); err != nil {
+		t.Fatalf("reconnect: %v", err)
+	}
+	if resets != 2 {
+		t.Errorf("resets = %d, want 2 — a fresh attempt starts from a clean cache", resets)
+	}
+}
+
+// TestReconnectStartsFromACleanCache is the same rule seen from the Client: a
+// restarted server must not be described by the previous connection's
+// leftovers.
+func TestReconnectStartsFromACleanCache(t *testing.T) {
+	first, second := newMemoryServer(t), newMemoryServer(t)
+	first.answerHandshake(t, baseSnapshot(1))
+	second.answerHandshake(t, baseSnapshot(2))
+	var mu sync.Mutex
+	attempts := 0
+	client, err := New(Options{
+		Token: "bearer-secret",
+		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
+			mu.Lock()
+			attempt := attempts
+			attempts++
+			mu.Unlock()
+			if attempt == 0 {
+				return first.connect(ctx, handlers)
+			}
+			return second.connect(ctx, handlers)
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+	if _, err := client.Connect(testContext(t)); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	handle := attachTestSession(t, client, first, sessionSnapshot("session-1", 1, true))
+	if handle.Snapshot() == nil {
+		t.Fatal("the session snapshot was not cached")
+	}
+
+	client.Disconnect("")
+	if _, err := client.Reconnect(testContext(t)); err != nil {
+		t.Fatalf("Reconnect: %v", err)
+	}
+
+	if snapshot := client.Snapshot(); snapshot == nil || snapshot.Revision != 2 {
+		t.Errorf("Snapshot() = %#v, want the new server's revision 2", snapshot)
+	}
+	if got := client.state.SessionSnapshot("session-1"); got != nil {
+		t.Errorf("the previous connection's session snapshot survived the reconnect: %#v", got)
+	}
+}
+
+// TestHelloEncodeFailureIsReportedAsADisconnect: pi evaluates the hello encode
+// inside the try that wraps transport.send, so a token too large for the frame
+// limit comes back as PiDisconnectedError like any other failure to get the
+// hello out. Reporting the raw encoder error instead would make a caller
+// branching on the connection's failure mode miss this one.
+func TestHelloEncodeFailureIsReportedAsADisconnect(t *testing.T) {
+	server := newMemoryServer(t)
+	limit := 32
+	client, err := New(Options{
+		Token:            strings.Repeat("t", 1000),
+		MaxFrameLength:   &limit,
+		TransportFactory: server.connect,
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	_, connectErr := client.Connect(testContext(t))
+	var disconnected *DisconnectedError
+	if !errors.As(connectErr, &disconnected) {
+		t.Fatalf("Connect error = %#v, want *DisconnectedError", connectErr)
+	}
+	// The encoder's complaint is what the message has to say — pi's
+	// toDisconnectedError keeps it verbatim — and the cause stays matchable.
+	var validation *protocol.ValidationError
+	if !errors.As(connectErr, &validation) {
+		t.Fatalf("Connect error = %#v, want the encoder's failure as its cause", connectErr)
+	}
+	if disconnected.Error() != validation.Error() {
+		t.Errorf("message = %q, want the encoder's %q", disconnected.Error(), validation.Error())
+	}
+	if client.ConnectionState() != Disconnected {
+		t.Errorf("ConnectionState() = %q, want %q", client.ConnectionState(), Disconnected)
+	}
+	if got := server.clientCloseCount(); got != 1 {
+		t.Errorf("transport closes = %d, want 1", got)
+	}
+	if got := server.sentCount(); got != 0 {
+		t.Errorf("client sent %d chunks, want 0 — the hello never encoded", got)
+	}
+}
+
+// TestHandshakeCallbackPanicFailsTheConnection: ConnectionOptions is exported,
+// so OnHandshake can be a handler this package did not write. pi wraps it in
+// try/catch and fails the connection; letting a panic unwind through the
+// transport's reading goroutine instead would take the process with it.
+func TestHandshakeCallbackPanicFailsTheConnection(t *testing.T) {
+	server := newMemoryServer(t)
+	server.answerHandshake(t, baseSnapshot(1))
+	conn, err := NewConnection(ConnectionOptions{
+		Token:            "bearer-secret",
+		TransportFactory: server.connect,
+		OnHandshake:      func(*protocol.ServerSnapshot) { panic(errors.New("handler blew up")) },
+		OnMessage:        func(protocol.ServerMessage) {},
+		OnStateChange:    func(ConnectionStateChange) {},
+	})
+	if err != nil {
+		t.Fatalf("NewConnection: %v", err)
+	}
+
+	_, connectErr := conn.Connect(testContext(t))
+	if connectErr == nil || connectErr.Error() != "handler blew up" {
+		t.Fatalf("Connect error = %#v, want the handler's failure", connectErr)
+	}
+	if conn.State() != Disconnected {
+		t.Errorf("State() = %q, want %q", conn.State(), Disconnected)
+	}
+	if got := server.clientCloseCount(); got != 1 {
+		t.Errorf("transport closes = %d, want 1", got)
 	}
 }
 
@@ -285,15 +518,15 @@ func TestCloseRejectsPendingRequestsAndAllowsReconnect(t *testing.T) {
 	attempts := 0
 	client, err := New(Options{
 		Token: "bearer-secret",
-		TransportFactory: func(handlers TransportHandlers) (Transport, error) {
+		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			mu.Lock()
 			attempt := attempts
 			attempts++
 			mu.Unlock()
 			if attempt == 0 {
-				return first.connect(handlers)
+				return first.connect(ctx, handlers)
 			}
-			return second.connect(handlers)
+			return second.connect(ctx, handlers)
 		},
 	})
 	if err != nil {
@@ -360,15 +593,15 @@ func TestReconnectFromDisconnectionListener(t *testing.T) {
 	attempts := 0
 	client, err := New(Options{
 		Token: "bearer-secret",
-		TransportFactory: func(handlers TransportHandlers) (Transport, error) {
+		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			mu.Lock()
 			attempt := attempts
 			attempts++
 			mu.Unlock()
 			if attempt == 0 {
-				return first.connect(handlers)
+				return first.connect(ctx, handlers)
 			}
-			return second.connect(handlers)
+			return second.connect(ctx, handlers)
 		},
 	})
 	if err != nil {
@@ -451,10 +684,12 @@ func TestFrameLimitAppliesBothDirections(t *testing.T) {
 
 	sentBefore := server.sentCount()
 	_, err = handle.Prompt(testContext(t), strings.Repeat("x", 1000))
+	// EncodeClientMessage reports every refusal as a ValidationError, framing
+	// included. Accepting a FrameError as well would let a regression that
+	// changed which error the encoder produced pass unnoticed.
 	var validation *protocol.ValidationError
-	var frameErr *protocol.FrameError
-	if !errors.As(err, &validation) && !errors.As(err, &frameErr) {
-		t.Fatalf("Prompt error = %#v, want a protocol framing/validation error", err)
+	if !errors.As(err, &validation) {
+		t.Fatalf("Prompt error = %#v, want *protocol.ValidationError", err)
 	}
 	if got := server.sentCount(); got != sentBefore {
 		t.Errorf("client sent %d chunks after the over-long prompt, want %d", got, sentBefore)
@@ -573,6 +808,54 @@ func TestConnectHonoursContextCancellation(t *testing.T) {
 
 	if _, err := client.Connect(ctx); err == nil {
 		t.Fatal("Connect returned no error for a cancelled context")
+	}
+	if client.ConnectionState() != Disconnected {
+		t.Errorf("ConnectionState() = %q, want %q", client.ConnectionState(), Disconnected)
+	}
+}
+
+// TestConnectCancelsTransportEstablishment: the context has to reach the
+// transport factory, not just the wait for the handshake. A dial that blocks —
+// a Unix socket whose accept backlog is full does exactly this — would
+// otherwise hold Connect for as long as the kernel felt like, deadline or not.
+func TestConnectCancelsTransportEstablishment(t *testing.T) {
+	dialing := make(chan struct{})
+	abandoned := make(chan error, 1)
+	client, err := New(Options{
+		Token: "bearer-secret",
+		TransportFactory: func(ctx context.Context, _ TransportHandlers) (Transport, error) {
+			close(dialing)
+			<-ctx.Done()
+			abandoned <- ctx.Err()
+			return nil, ctx.Err()
+		},
+	})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	t.Cleanup(func() { _ = client.Close() })
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go func() {
+		<-dialing
+		cancel()
+	}()
+
+	_, connectErr := client.Connect(ctx)
+	if connectErr == nil {
+		t.Fatal("Connect succeeded against a factory that never returned a transport")
+	}
+	if !errors.Is(connectErr, context.Canceled) {
+		t.Errorf("Connect error = %#v, want it to carry context.Canceled", connectErr)
+	}
+	select {
+	case err := <-abandoned:
+		if !errors.Is(err, context.Canceled) {
+			t.Errorf("factory saw %v, want context.Canceled", err)
+		}
+	case <-time.After(testTimeout):
+		t.Fatal("the factory was never told to give up")
 	}
 	if client.ConnectionState() != Disconnected {
 		t.Errorf("ConnectionState() = %q, want %q", client.ConnectionState(), Disconnected)

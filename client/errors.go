@@ -26,7 +26,19 @@ type ServerError struct {
 func (e *ServerError) Error() string { return e.Message }
 
 // DisconnectedError means the connection is not usable.
-type DisconnectedError struct{ Message string }
+type DisconnectedError struct {
+	Message string
+	// Cause is the failure that ended the connection, when there was one: the
+	// transport's own error, or the context error that abandoned the attempt.
+	// It is nil for a disconnect this side asked for.
+	//
+	// DIVERGENCE (deliberate): pi's PiDisconnectedError carries a message only,
+	// because toDisconnectedError flattens whatever it was handed into one.
+	// Keeping the cause is what makes errors.Is work across the boundary — a
+	// caller retrying on syscall.ECONNREFUSED, or distinguishing its own
+	// cancellation from a server that went away, has nothing else to branch on.
+	Cause error
+}
 
 func (e *DisconnectedError) Error() string {
 	if e.Message == "" {
@@ -34,6 +46,9 @@ func (e *DisconnectedError) Error() string {
 	}
 	return e.Message
 }
+
+// Unwrap exposes the cause to errors.Is and errors.As.
+func (e *DisconnectedError) Unwrap() error { return e.Cause }
 
 // DisposedError means the client has been disposed and will not reconnect.
 type DisposedError struct{}
@@ -90,5 +105,5 @@ func asDisconnectedError(err error) *DisconnectedError {
 	if errors.As(err, &disconnected) {
 		return disconnected
 	}
-	return &DisconnectedError{Message: err.Error()}
+	return &DisconnectedError{Message: err.Error(), Cause: err}
 }

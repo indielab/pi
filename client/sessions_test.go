@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/sky-valley/pi/protocol"
@@ -303,6 +304,62 @@ func TestClosedLeaseAfterFailedDetachReconciles(t *testing.T) {
 		t.Fatalf("reacquisition: %v", err)
 	}
 	assertCommands(t, requests, "attach", "detach", "detach", "attach")
+}
+
+// TestAcquisitionParkedOnAFailedDetachReconciles is the concurrent half of
+// TestClosedLeaseAfterFailedDetachReconciles: the acquisition is already
+// waiting on the detachment when it fails, rather than arriving after the
+// failure was recorded. Whether the session still owes the server a detach can
+// only be known once that wait is over — so the acquisition must read it after
+// the wait, and the detachment must not report itself over until the failure
+// has been booked. Get either wrong and the lease is minted on a stale
+// "attached" bit, with the owed detach left to fire later against a session a
+// live lease is holding.
+//
+// The test pins both. synctest.Wait names the moment the acquisition has parked
+// with no sleep standing in for it, and holding the lease's own mutex freezes
+// the failed Close between its detach and its bookkeeping — which is precisely
+// the window a detachment settled too early lets an acquirer through.
+func TestAcquisitionParkedOnAFailedDetachReconciles(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		server := newMemoryServer(t)
+		client := connectTestClient(t, server)
+		requests := recordRequests(server)
+		ctx := testContext(t)
+
+		handle := attachTestSession(t, client, server, attachedSnapshot("session-1"))
+
+		closed := make(chan error, 1)
+		go func() { closed <- handle.Close(ctx) }()
+		requests.await(t, 2)
+		failedDetach := requests.last(t)
+
+		reacquiring := make(chan error, 1)
+		go func() {
+			_, err := client.AttachSession(ctx, "session-1")
+			reacquiring <- err
+		}()
+		synctest.Wait()
+		// Nothing was sent: the acquisition is parked on the in-flight detach
+		// rather than racing it.
+		assertCommands(t, requests, "attach", "detach")
+
+		server.send(t, errorResponse(failedDetach.ID, protocol.ErrorInvalidRequest, "nope"))
+		if err := <-closed; err == nil {
+			t.Fatal("Close swallowed the failed detach")
+		}
+
+		// The parked acquisition inherits the detach the failed Close still owes,
+		// pays it off, and only then reattaches.
+		requests.await(t, 3)
+		server.send(t, okResponse(requests.last(t).ID, detachResult("session-1")))
+		requests.await(t, 4)
+		server.send(t, okResponse(requests.last(t).ID, attachResult(attachedSnapshot("session-1"))))
+		if err := <-reacquiring; err != nil {
+			t.Fatalf("reacquisition: %v", err)
+		}
+		assertCommands(t, requests, "attach", "detach", "detach", "attach")
+	})
 }
 
 // TestReacquisitionSerializesBehindDetach: reattaching while a detach is still

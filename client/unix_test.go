@@ -2,6 +2,7 @@ package client
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"net"
 	"os"
@@ -378,10 +379,12 @@ func TestClientRejectsTruncatedFrameFromUnixSocket(t *testing.T) {
 	if err == nil {
 		t.Fatal("ListSessions succeeded against a truncated stream")
 	}
-	var frameErr *protocol.FrameError
+	// The decoder wraps every framing failure as a ValidationError, so that is
+	// the only thing this can be; accepting a FrameError too would hide a
+	// regression in which error the decoder produced.
 	var validation *protocol.ValidationError
-	if !errors.As(err, &frameErr) && !errors.As(err, &validation) {
-		t.Fatalf("error = %#v, want a protocol framing error", err)
+	if !errors.As(err, &validation) {
+		t.Fatalf("error = %#v, want *protocol.ValidationError", err)
 	}
 	waitFor(t, func() bool { return client.ConnectionState() == Disconnected })
 }
@@ -402,7 +405,7 @@ func TestUnixTransportFactoryReportsDialFailures(t *testing.T) {
 		t.Fatalf("NewUnixTransportFactory: %v", err)
 	}
 
-	_, err = factory(TransportHandlers{
+	_, err = factory(testContext(t), TransportHandlers{
 		OnData:  func([]byte) {},
 		OnClose: func() {},
 		OnError: func(error) {},
@@ -412,6 +415,36 @@ func TestUnixTransportFactoryReportsDialFailures(t *testing.T) {
 	}
 	if !errors.Is(err, os.ErrNotExist) && !strings.Contains(err.Error(), "no such file") {
 		t.Errorf("error = %v, want a missing-socket report", err)
+	}
+}
+
+// TestUnixTransportFactoryHonoursContext: the dial is the part of a connection
+// attempt that can block longest — connect(2) on a socket whose accept backlog
+// is full waits for the peer, not for us — so a caller that has given up must
+// not be held by it.
+func TestUnixTransportFactoryHonoursContext(t *testing.T) {
+	skipWithoutUnixSockets(t)
+	// A live listener: the dial would otherwise fail on its own and prove
+	// nothing about the context.
+	path := unixTestServer(t, func(conn net.Conn) { <-make(chan struct{}) })
+	factory, err := NewUnixTransportFactory(UnixTransportOptions{Path: path})
+	if err != nil {
+		t.Fatalf("NewUnixTransportFactory: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	transport, err := factory(ctx, TransportHandlers{
+		OnData:  func([]byte) {},
+		OnClose: func() {},
+		OnError: func(error) {},
+	})
+	if err == nil {
+		_ = transport.Close()
+		t.Fatal("the factory dialled despite a cancelled context")
+	}
+	if !errors.Is(err, context.Canceled) {
+		t.Errorf("error = %#v, want it to carry context.Canceled", err)
 	}
 }
 

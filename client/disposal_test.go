@@ -2,7 +2,9 @@ package client
 
 import (
 	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/sky-valley/pi/protocol"
 )
@@ -140,6 +142,128 @@ func TestCloseNotifiesConnectionStateListeners(t *testing.T) {
 	var disposed *DisposedError
 	if !errors.As(changes[0].Err, &disposed) {
 		t.Errorf("disconnect cause = %#v, want *DisposedError", changes[0].Err)
+	}
+}
+
+// TestCloseFromAConnectionStateListener: "tear the client down when the
+// connection dies" is a listener a reader would think is allowed, and it calls
+// Close from inside the very notification Close produced. Every other
+// re-entrant path in the package survives this — Connection.fail retires the
+// attempt before it notifies — so disposal must too.
+func TestCloseFromAConnectionStateListener(t *testing.T) {
+	server := newMemoryServer(t)
+	// Deliberately not registered for cleanup: a regression here deadlocks, and
+	// a deadlocked cleanup would hang the whole package rather than fail one
+	// test.
+	client, err := New(Options{Token: "bearer-secret", TransportFactory: server.connect})
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	server.answerHandshake(t, baseSnapshot(1))
+	if _, err := client.Connect(testContext(t)); err != nil {
+		t.Fatalf("Connect: %v", err)
+	}
+	closes := 0
+	if _, err := client.OnConnectionStateChange(func(change ConnectionStateChange) {
+		if change.State == Disconnected {
+			closes++
+			_ = client.Close()
+		}
+	}); err != nil {
+		t.Fatalf("OnConnectionStateChange: %v", err)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_ = client.Close()
+	}()
+	select {
+	case <-done:
+	case <-time.After(testTimeout):
+		t.Fatal("Close deadlocked against a listener that closed the client")
+	}
+	if closes != 1 {
+		t.Errorf("the listener ran %d times, want 1", closes)
+	}
+	if !client.Disposed() {
+		t.Error("Disposed() is false after Close")
+	}
+}
+
+// TestConcurrentCloseWaitsForTeardown: a second caller is told the client is
+// closed only once it actually is, so a caller that closes and then inspects
+// does not see a half-disposed client.
+func TestConcurrentCloseWaitsForTeardown(t *testing.T) {
+	server := newMemoryServer(t)
+	client := connectTestClient(t, server)
+	handle := attachTestSession(t, client, server, sessionSnapshot("session-1", 1, true))
+
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for range 8 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			if err := client.Close(); err != nil {
+				t.Errorf("Close: %v", err)
+			}
+			if handle.Attached() {
+				t.Error("Close returned while a child handle was still attached")
+			}
+			if client.ConnectionState() != Disconnected {
+				t.Error("Close returned while the connection was still up")
+			}
+		}()
+	}
+	close(start)
+	wg.Wait()
+}
+
+// TestConnectionStateListenersAreIteratedLive: pi's
+// #notifyConnectionStateListeners walks a live Set, so a listener registered
+// during a notification is reached by it and one cancelled during it is not.
+// The pattern this protects is a supervisor whose disconnect handler swaps its
+// own subscriptions out.
+func TestConnectionStateListenersAreIteratedLive(t *testing.T) {
+	server := newMemoryServer(t)
+	client := connectTestClient(t, server)
+	var order []string
+	var stopSecond Unsubscribe
+	if _, err := client.OnConnectionStateChange(func(ConnectionStateChange) {
+		order = append(order, "a")
+		stopSecond()
+		if _, err := client.OnConnectionStateChange(func(ConnectionStateChange) {
+			order = append(order, "late")
+		}); err != nil {
+			t.Errorf("OnConnectionStateChange from inside a listener: %v", err)
+		}
+	}); err != nil {
+		t.Fatalf("OnConnectionStateChange: %v", err)
+	}
+	var err error
+	if stopSecond, err = client.OnConnectionStateChange(func(ConnectionStateChange) {
+		order = append(order, "b")
+	}); err != nil {
+		t.Fatalf("OnConnectionStateChange: %v", err)
+	}
+	if _, err := client.OnConnectionStateChange(func(ConnectionStateChange) {
+		order = append(order, "c")
+	}); err != nil {
+		t.Fatalf("OnConnectionStateChange: %v", err)
+	}
+
+	client.Disconnect("")
+
+	want := []string{"a", "c", "late"}
+	if len(order) != len(want) {
+		t.Fatalf("listeners fired %v, want %v", order, want)
+	}
+	for i := range want {
+		if order[i] != want[i] {
+			t.Fatalf("listeners fired %v, want %v", order, want)
+		}
 	}
 }
 

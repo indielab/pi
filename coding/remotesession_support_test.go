@@ -65,7 +65,7 @@ type remoteTransport struct {
 	closed bool
 }
 
-func (s *remoteServer) connect(handlers client.TransportHandlers) (client.Transport, error) {
+func (s *remoteServer) connect(_ context.Context, handlers client.TransportHandlers) (client.Transport, error) {
 	s.mu.Lock()
 	s.handlers = handlers
 	s.mu.Unlock()

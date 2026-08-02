@@ -46,14 +46,20 @@ type CreateSessionOptions struct {
 // goroutine if it wants to issue a request or reconnect.
 //
 // Lock ordering inside the package is sessionLease.mu, then Client.mu, then
-// Connection.mu or State.mu. No lock is ever held while a callback runs.
+// Connection.mu, then State.mu. No lock is held while a callback runs, with one
+// documented exception: ConnectionOptions.OnReset, which exists precisely to be
+// atomic with the Connection claiming an attempt.
 type Client struct {
 	conn       *Connection
 	state      *State
 	frameLimit int
 
-	mu                       sync.Mutex
-	disposed                 bool
+	mu       sync.Mutex
+	disposed bool
+	// notifying is set while teardown is inside a callback it made. A Close
+	// issued from such a callback must return instead of waiting for the
+	// teardown that is blocked on it.
+	notifying                bool
 	requestSequence          uint64
 	pendingRequests          map[string]*pendingRequest
 	leaseCounts              map[string]int
@@ -65,7 +71,9 @@ type Client struct {
 	cleanupRequired          map[string]bool
 	connectionStateListeners *listenerSet[ConnectionStateChange]
 
-	closeOnce sync.Once
+	// closed is closed when teardown has finished, so a caller that lost the
+	// race to dispose still learns when the client actually is disposed.
+	closed chan struct{}
 }
 
 // pendingRequest is one request waiting for its response. It settles once,
@@ -146,11 +154,13 @@ func New(opts Options) (*Client, error) {
 		reconciliations:          map[string]*sharedOp{},
 		cleanupRequired:          map[string]bool{},
 		connectionStateListeners: newListenerSet[ConnectionStateChange](),
+		closed:                   make(chan struct{}),
 	}
 	conn, err := NewConnection(ConnectionOptions{
 		Token:            opts.Token,
 		TransportFactory: opts.TransportFactory,
 		MaxFrameLength:   opts.MaxFrameLength,
+		OnReset:          c.state.Reset,
 		OnHandshake:      c.state.ApplyServerSnapshot,
 		OnMessage:        c.handleMessage,
 		OnStateChange:    c.handleConnectionStateChange,
@@ -191,17 +201,27 @@ func (c *Client) ConnectionState() ConnectionState { return c.conn.State() }
 func (c *Client) Connected() bool { return c.conn.State() == Connected }
 
 // Snapshot returns the latest server snapshot, or nil before the handshake.
+//
+// The snapshot is the cached one, not a copy, and the same pointer is handed to
+// every caller and every subscriber. Treat it as read-only: mutating it in place
+// changes what everyone else is looking at. New state always arrives as a fresh
+// snapshot replacing this one, so a caller that keeps the pointer keeps a
+// consistent view of one moment rather than a value that shifts underneath it.
 func (c *Client) Snapshot() *protocol.ServerSnapshot { return c.state.Snapshot() }
 
 // Connect performs the handshake and returns the server's snapshot. Reconnects
 // start from a clean cache: a new server, or a restarted one, must not be
 // described by the previous connection's leftovers.
+//
+// DIVERGENCE (deliberate): pi tests the connection's state here and resets the
+// cache before calling connect(). Two steps, and in Go two goroutines can both
+// pass the test — after which the one that loses the race for the attempt wipes
+// the cache the winner has already filled, leaving a connected client with no
+// snapshot. The reset is handed to the Connection instead, which performs it in
+// the same critical section that claims the attempt.
 func (c *Client) Connect(ctx context.Context) (*protocol.ServerSnapshot, error) {
 	if err := c.assertNotDisposed(); err != nil {
 		return nil, err
-	}
-	if c.conn.State() == Disconnected {
-		c.state.Reset()
 	}
 	return c.conn.Connect(ctx)
 }
@@ -328,7 +348,6 @@ func (c *Client) AcquireSession(
 func (c *Client) acquire(ctx context.Context, sessionID string, token *leaseToken) (*SessionHandle, error) {
 	c.mu.Lock()
 	detachment := c.detachments[sessionID]
-	needsCleanup := c.cleanupRequired[sessionID]
 	c.mu.Unlock()
 
 	if detachment != nil {
@@ -336,6 +355,16 @@ func (c *Client) acquire(ctx context.Context, sessionID string, token *leaseToke
 			return nil, err
 		}
 	}
+
+	// Read after the wait, exactly where pi reads it. The detach this
+	// acquisition just waited on may be the one that failed, and a failed
+	// detach is what records the cleanup owed. Reading it before the wait
+	// answers a question that had not been decided yet, and the lease minted
+	// on that answer holds a session the server still has attached to a
+	// connection nobody is using.
+	c.mu.Lock()
+	needsCleanup := c.cleanupRequired[sessionID]
+	c.mu.Unlock()
 
 	reconciled := false
 	if needsCleanup {
@@ -550,31 +579,65 @@ func (c *Client) rejectPendingRequests(err error) {
 
 // Close disposes of the client: it stops accepting work, rejects everything in
 // flight, drops the connection, and invalidates every lease. It is pi's
-// dispose(), named for Go's io.Closer convention, and is idempotent.
+// dispose(), named for Go's io.Closer convention, and is idempotent. A caller
+// that arrives second waits for the first caller's teardown, so Close returning
+// always means the client is fully disposed.
+//
+// It is also re-entrant, which is why it is not a sync.Once: disposal drops the
+// connection, and dropping the connection notifies connection-state listeners.
+// "Tear the client down when the connection dies" is a listener a reader would
+// think is allowed, and the Close it issues runs while teardown is blocked on
+// it — so that one returns immediately rather than waiting for a teardown it is
+// itself part of.
 //
 // It always reports nil: disposal is local teardown with nothing left to fail,
 // and the error result exists only so Client satisfies io.Closer.
 func (c *Client) Close() error {
-	c.closeOnce.Do(func() {
-		c.mu.Lock()
-		c.disposed = true
+	c.mu.Lock()
+	if c.disposed {
+		// A caller that arrives while teardown is inside one of its own
+		// callbacks cannot wait for it: the common case is that this caller IS
+		// that callback. An unrelated goroutine that happens to land in the same
+		// window returns early too, which costs it the wait but never
+		// correctness — disposal is already under way and irrevocable.
+		reentrant := c.notifying
 		c.mu.Unlock()
+		if reentrant {
+			return nil
+		}
+		<-c.closed
+		return nil
+	}
+	c.disposed = true
+	c.mu.Unlock()
+	// Deferred rather than written at the end so a panic escaping a callback
+	// below cannot leave another caller waiting on a teardown that will never
+	// report itself finished.
+	defer close(c.closed)
 
-		err := &DisposedError{}
-		// Rejecting first means the disconnect below finds nothing in flight,
-		// so callers learn the client was disposed rather than merely dropped.
-		c.rejectPendingRequests(err)
-		c.conn.Disconnect(err)
-		c.state.Dispose()
-		c.invalidateAllSessionLeases()
+	err := &DisposedError{}
+	// Rejecting first means the disconnect below finds nothing in flight,
+	// so callers learn the client was disposed rather than merely dropped.
+	c.rejectPendingRequests(err)
+	c.setNotifying(true)
+	c.conn.Disconnect(err)
+	c.setNotifying(false)
+	c.state.Dispose()
+	c.invalidateAllSessionLeases()
 
-		// Cleared last, so subscribers still see the disconnect that disposal
-		// caused.
-		c.mu.Lock()
-		c.connectionStateListeners = newListenerSet[ConnectionStateChange]()
-		c.mu.Unlock()
-	})
+	// Cleared last, so subscribers still see the disconnect that disposal
+	// caused. Cleared in place rather than replaced: the ids a live
+	// unsubscribe closure holds must not be handed out again.
+	c.mu.Lock()
+	c.connectionStateListeners.clear()
+	c.mu.Unlock()
 	return nil
+}
+
+func (c *Client) setNotifying(notifying bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.notifying = notifying
 }
 
 func (c *Client) assertNotDisposed() error {
@@ -587,14 +650,22 @@ func (c *Client) assertNotDisposed() error {
 }
 
 func (c *Client) notifyConnectionStateListeners(change ConnectionStateChange) {
-	c.mu.Lock()
-	listeners := c.connectionStateListeners.snapshotFns()
-	c.mu.Unlock()
-	for _, listener := range listeners {
+	// Walks the live set by id, as State's own notifications do and as pi's
+	// #notifyConnectionStateListeners does over its Set: a listener registered
+	// during this notification is reached by it, one cancelled during it is not,
+	// and no lock is held while a listener runs.
+	for last := uint64(0); ; {
+		c.mu.Lock()
+		entry, ok := c.connectionStateListeners.next(last)
+		c.mu.Unlock()
+		if !ok {
+			return
+		}
+		last = entry.id
 		// Reuses State's containment so a panicking connection-state listener
 		// is reported through the same handler as a panicking subscriber, and
 		// cannot stop the listeners behind it.
-		c.state.call(func() { listener(change) })
+		c.state.call(func() { entry.fn(change) })
 	}
 }
 
@@ -738,9 +809,12 @@ type sessionLease struct {
 }
 
 func (c *Client) newLease(sessionID string, token *leaseToken) *SessionHandle {
+	// leaseGenerations is written by invalidation and never deleted, not even
+	// when the last lease on a session goes away: deleting would take the
+	// session back to generation 0, and a lease minted before an invalidation
+	// would then match again and consider itself live.
 	c.mu.Lock()
 	generation := c.leaseGenerations[sessionID]
-	c.leaseGenerations[sessionID] = generation
 	c.mu.Unlock()
 	lease := &sessionLease{
 		client:     c,
@@ -866,7 +940,8 @@ func (l *sessionLease) release(ctx context.Context, relinquishOnFailure bool) er
 	l.releasing = op
 	l.mu.Unlock()
 
-	err := l.doRelease(ctx)
+	detachment, detachErr := l.doRelease(ctx)
+	err := detachErr
 
 	l.mu.Lock()
 	switch {
@@ -889,17 +964,33 @@ func (l *sessionLease) release(ctx context.Context, relinquishOnFailure bool) er
 		}
 	}
 	l.mu.Unlock()
+
+	// The detachment stays published and unsettled until the bookkeeping above
+	// is done, so an acquisition parked on it wakes to a decided world: either
+	// the lease was given up and the session owes a detach, or the lease is
+	// still held. pi gets this from microtask ordering — the rejection handler
+	// that records the cleanup runs before the acquirer's continuation — which
+	// is ordering Go has to arrange rather than inherit.
+	if detachment != nil {
+		l.client.clearDetachment(l.sessionID, detachment)
+		// The detachment carries the detach's own outcome, not the lease's:
+		// waiters only care that it is over, and Close reports success for a
+		// lease invalidated mid-detach.
+		detachment.settle(detachErr)
+	}
 	op.settle(err)
 	return err
 }
 
 // doRelease drops this lease's claim, detaching on the server only when it was
-// the last claim on the session.
-func (l *sessionLease) doRelease(ctx context.Context) error {
+// the last claim on the session. It returns the detachment other acquisitions
+// serialize behind, unsettled, for release to finish once its own bookkeeping
+// is done — nil when no detach was needed.
+func (l *sessionLease) doRelease(ctx context.Context) (*sharedOp, error) {
 	client := l.client
 	if client.leaseCount(l.sessionID) > 1 {
 		client.releaseSessionLease(l.sessionID, l.token)
-		return nil
+		return nil, nil
 	}
 	// Published before the request so a concurrent acquisition serializes
 	// behind this detach instead of racing it.
@@ -909,7 +1000,5 @@ func (l *sessionLease) doRelease(ctx context.Context) error {
 	if err == nil {
 		client.releaseSessionLease(l.sessionID, l.token)
 	}
-	client.clearDetachment(l.sessionID, op)
-	op.settle(err)
-	return err
+	return op, err
 }

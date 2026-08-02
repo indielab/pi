@@ -17,7 +17,12 @@ import (
 // a subscriber may call back into State without deadlocking; ordering still
 // holds because all mutation comes from the one reader goroutine.
 type State struct {
-	mu               sync.Mutex
+	mu sync.Mutex
+	// disposed latches: nothing is cached again once it is set. Dispose cannot
+	// be ordered against the connection feeding this State — the handshake
+	// callback runs with no lock held — so "stop caching" has to be a property
+	// of the State rather than of when Dispose was called.
+	disposed         bool
 	snapshot         *protocol.ServerSnapshot
 	sessionSnapshots map[string]*protocol.SessionSnapshot
 	attached         map[string]bool
@@ -53,8 +58,8 @@ func NewState(onListenerError func(error)) *State {
 // of tests that pass by luck. Subscriber counts are small, so the linear
 // removal scan is cheaper than keeping a parallel index.
 type listenerSet[T any] struct {
-	next    uint64
-	entries []listenerEntry[T]
+	sequence uint64
+	entries  []listenerEntry[T]
 }
 
 type listenerEntry[T any] struct {
@@ -67,9 +72,9 @@ func newListenerSet[T any]() *listenerSet[T] {
 }
 
 func (s *listenerSet[T]) add(fn func(T)) uint64 {
-	s.next++
-	s.entries = append(s.entries, listenerEntry[T]{id: s.next, fn: fn})
-	return s.next
+	s.sequence++
+	s.entries = append(s.entries, listenerEntry[T]{id: s.sequence, fn: fn})
+	return s.sequence
 }
 
 func (s *listenerSet[T]) remove(id uint64) {
@@ -83,20 +88,32 @@ func (s *listenerSet[T]) remove(id uint64) {
 
 func (s *listenerSet[T]) len() int { return len(s.entries) }
 
-// snapshotFns copies the callbacks, in registration order, so they can be
-// invoked outside the lock.
-func (s *listenerSet[T]) snapshotFns() []func(T) {
+// clear drops every listener but keeps the id counter, so an unsubscribe still
+// held from before the clear cannot name a listener registered after it.
+func (s *listenerSet[T]) clear() { s.entries = nil }
+
+// next is the first listener registered after id. Ids only increase, so walking
+// them visits every subscriber once, in registration order, without depending on
+// positions a concurrent add or remove would shift.
+func (s *listenerSet[T]) next(after uint64) (listenerEntry[T], bool) {
 	if s == nil {
-		return nil
+		return listenerEntry[T]{}, false
 	}
-	out := make([]func(T), 0, len(s.entries))
 	for _, entry := range s.entries {
-		out = append(out, entry.fn)
+		if entry.id > after {
+			return entry, true
+		}
 	}
-	return out
+	return listenerEntry[T]{}, false
 }
 
 // Snapshot returns the latest server snapshot, or nil before the handshake.
+//
+// The cached snapshot is returned as-is, not copied, and the same pointer goes
+// to every caller and every subscriber. It must be treated as read-only:
+// nothing in this package ever mutates a cached snapshot in place — new state
+// arrives as a fresh snapshot that replaces the old one — so a caller that
+// holds on to the pointer holds a stable view of one moment.
 func (s *State) Snapshot() *protocol.ServerSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -125,18 +142,29 @@ func (s *State) ClearAttachments() {
 	clear(s.attached)
 }
 
-// Dispose drops all state and all subscribers.
+// Dispose drops all state and all subscribers, permanently: a State that has
+// been disposed of ignores everything applied to it afterwards.
+//
+// DIVERGENCE (deliberate): pi's dispose() only clears, because a single thread
+// cannot have a snapshot in flight while it runs. Here the reader goroutine can
+// be midway through delivering one, so clearing alone would leave a disposed
+// client describing a server it has already let go of.
 func (s *State) Dispose() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.disposed = true
 	s.resetLocked()
-	s.snapshotListeners = newListenerSet[*protocol.ServerSnapshot]()
-	s.eventListeners = newListenerSet[protocol.ServerEvent]()
+	// Cleared in place, not replaced: a listener id must never be handed out
+	// twice, or an unsubscribe held from before disposal cancels a stranger.
+	s.snapshotListeners.clear()
+	s.eventListeners.clear()
 	clear(s.sessionSnapshotListeners)
 	clear(s.sessionEventListeners)
 }
 
-// SessionSnapshot returns the cached snapshot for a session, if any.
+// SessionSnapshot returns the cached snapshot for a session, if any. Like
+// Snapshot it hands back the cached pointer rather than a copy, and it must be
+// treated as read-only for the same reason.
 func (s *State) SessionSnapshot(sessionID string) *protocol.SessionSnapshot {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -215,7 +243,10 @@ func addScoped[T any](s *State, buckets map[string]*listenerSet[T], sessionID st
 	id := set.add(listener)
 	return s.once(func() {
 		set.remove(id)
-		if set.len() == 0 {
+		// Deleted by set identity, not by session id: Dispose drops the buckets
+		// wholesale, so an unsubscribe held from before it names a set the map
+		// no longer has — and must not take its replacement with it.
+		if set.len() == 0 && buckets[sessionID] == set {
 			delete(buckets, sessionID)
 		}
 	})
@@ -237,7 +268,7 @@ func (s *State) once(remove func()) Unsubscribe {
 // ApplyResult folds a command result into the cached state.
 func (s *State) ApplyResult(result protocol.CommandResult) {
 	s.mu.Lock()
-	var pending []func()
+	var pending notification
 	switch typed := result.(type) {
 	case *protocol.ListResult:
 		// A list result carries summaries, not snapshots; pi leaves cached
@@ -257,27 +288,41 @@ func (s *State) ApplyResult(result protocol.CommandResult) {
 		pending = s.applySessionSnapshotLocked(&session, false)
 	}
 	s.mu.Unlock()
-	s.deliver(pending)
+	if pending != nil {
+		pending()
+	}
 }
 
 // ApplyEvent folds a server event into the cached state and notifies listeners.
 func (s *State) ApplyEvent(event protocol.ServerEvent) {
 	s.mu.Lock()
-	var pending []func()
+	if s.disposed {
+		s.mu.Unlock()
+		return
+	}
+	var pending []notification
 	switch typed := event.(type) {
 	case *protocol.ServerSnapshotEvent:
 		snapshot := typed.Snapshot
-		pending = s.applyServerSnapshotLocked(&snapshot)
+		if applied := s.applyServerSnapshotLocked(&snapshot); applied != nil {
+			pending = append(pending, applied)
+		}
 	case *protocol.SessionSnapshotEvent:
 		snapshot := typed.Snapshot
-		pending = s.applySessionSnapshotLocked(&snapshot, false)
+		if applied := s.applySessionSnapshotLocked(&snapshot, false); applied != nil {
+			pending = append(pending, applied)
+		}
 	case *protocol.SessionRemovedEvent:
 		delete(s.sessionSnapshots, typed.SessionID)
 		delete(s.attached, typed.SessionID)
 	}
-	pending = append(pending, queue(s.eventListeners.snapshotFns(), event)...)
+	pending = append(pending, queue(s, func() *listenerSet[protocol.ServerEvent] {
+		return s.eventListeners
+	}, event))
 	if sessionID := eventSessionID(event); sessionID != "" {
-		pending = append(pending, queue(s.sessionEventListeners[sessionID].snapshotFns(), event)...)
+		pending = append(pending, queue(s, func() *listenerSet[protocol.ServerEvent] {
+			return s.sessionEventListeners[sessionID]
+		}, event))
 	}
 	s.mu.Unlock()
 	s.deliver(pending)
@@ -288,11 +333,13 @@ func (s *State) ApplyServerSnapshot(snapshot *protocol.ServerSnapshot) {
 	s.mu.Lock()
 	pending := s.applyServerSnapshotLocked(snapshot)
 	s.mu.Unlock()
-	s.deliver(pending)
+	if pending != nil {
+		pending()
+	}
 }
 
-func (s *State) applyServerSnapshotLocked(snapshot *protocol.ServerSnapshot) []func() {
-	if snapshot == nil {
+func (s *State) applyServerSnapshotLocked(snapshot *protocol.ServerSnapshot) notification {
+	if snapshot == nil || s.disposed {
 		return nil
 	}
 	// Snapshots can arrive out of order behind a reconnect; an older one must
@@ -309,11 +356,11 @@ func (s *State) applyServerSnapshotLocked(snapshot *protocol.ServerSnapshot) []f
 			s.attached[session.ID] = true
 		}
 	}
-	return queue(s.snapshotListeners.snapshotFns(), snapshot)
+	return queue(s, func() *listenerSet[*protocol.ServerSnapshot] { return s.snapshotListeners }, snapshot)
 }
 
-func (s *State) applySessionSnapshotLocked(snapshot *protocol.SessionSnapshot, force bool) []func() {
-	if snapshot == nil {
+func (s *State) applySessionSnapshotLocked(snapshot *protocol.SessionSnapshot, force bool) notification {
+	if snapshot == nil || s.disposed {
 		return nil
 	}
 	current := s.sessionSnapshots[snapshot.ID]
@@ -326,29 +373,54 @@ func (s *State) applySessionSnapshotLocked(snapshot *protocol.SessionSnapshot, f
 	} else {
 		delete(s.attached, snapshot.ID)
 	}
-	return queue(s.sessionSnapshotListeners[snapshot.ID].snapshotFns(), snapshot)
+	sessionID := snapshot.ID
+	return queue(s, func() *listenerSet[*protocol.SessionSnapshot] {
+		return s.sessionSnapshotListeners[sessionID]
+	}, snapshot)
 }
 
-// queue binds a value to each listener so the calls can be made after the lock
-// is released.
-func queue[T any](fns []func(T), value T) []func() {
-	out := make([]func(), 0, len(fns))
-	for _, fn := range fns {
-		out = append(out, func() { fn(value) })
+// notification is one listener set's delivery, deferred until the state lock is
+// released.
+type notification func()
+
+// queue defers a value's delivery to one listener set. resolve is re-run under
+// the lock at every step rather than captured once, because Dispose replaces
+// what the per-session maps hold.
+func queue[T any](s *State, resolve func() *listenerSet[T], value T) notification {
+	return func() {
+		// Walk the live set: a listener registered during this notification is
+		// reached by it, and one unsubscribed during it is not. pi iterates a
+		// Set directly and a JS Set iterator sees both edits, so snapshotting
+		// the list up front would diverge in two directions at once — and the
+		// second direction delivers to a subscriber that has already said stop.
+		//
+		// The walk is by id, not by position, so an unsubscribe that shifts the
+		// slice cannot make the walk skip or repeat a listener. Nothing is held
+		// while a listener runs: taking a delivery lock under s.mu would
+		// deadlock the moment a listener read the State.
+		for last := uint64(0); ; {
+			s.mu.Lock()
+			entry, ok := resolve().next(last)
+			s.mu.Unlock()
+			if !ok {
+				return
+			}
+			last = entry.id
+			s.call(func() { entry.fn(value) })
+		}
 	}
-	return out
 }
 
-// deliver runs queued notifications outside the lock, containing each one. pi
-// wraps every callback in try/catch so a subscriber cannot corrupt client
-// state or stop the subscribers after it; recover is the Go equivalent and is
-// justified for exactly that reason.
-func (s *State) deliver(pending []func()) {
+// deliver runs queued notifications outside the lock.
+func (s *State) deliver(pending []notification) {
 	for _, notify := range pending {
-		s.call(notify)
+		notify()
 	}
 }
 
+// call contains one listener's failure. pi wraps every callback in try/catch so
+// a subscriber cannot corrupt client state or stop the subscribers after it;
+// recover is the Go equivalent and is justified for exactly that reason.
 func (s *State) call(notify func()) {
 	defer func() {
 		if recovered := recover(); recovered != nil {

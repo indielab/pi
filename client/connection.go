@@ -15,15 +15,18 @@ const maxUint32 uint64 = 0xffff_ffff
 // defaultConnectionDisconnectReason is pi's Connection#disconnect default.
 const defaultConnectionDisconnectReason = "Client disconnected"
 
-// ConnectionOptions configures a Connection. Every callback is required.
+// ConnectionOptions configures a Connection. Every callback except OnReset is
+// required.
 //
-// The callbacks are invoked with no Connection lock held, on whichever
-// goroutine produced the event: OnHandshake and OnMessage run on the
+// OnHandshake, OnMessage and OnStateChange are invoked with no Connection lock
+// held, on whichever goroutine produced the event: the first two on the
 // transport's reading goroutine, OnStateChange on whichever goroutine caused
-// the transition. A callback may therefore call back into the Connection —
+// the transition. Such a callback may therefore call back into the Connection —
 // pi's listeners do exactly that, disconnecting and reconnecting from inside a
 // handshake notification — and the lifecycle is re-checked after every callback
 // so a re-entrant change is not undone.
+//
+// OnReset is the exception, and runs under the lock; see its own comment.
 type ConnectionOptions struct {
 	// Token is the bearer token sent in the client hello.
 	Token string
@@ -33,6 +36,18 @@ type ConnectionOptions struct {
 	// pointer takes protocol.DefaultMaxFrameLength; pi spells this `??`, so a
 	// zero must stay distinguishable from "unset" and is rejected.
 	MaxFrameLength *int
+	// OnReset is called when a Connect claims the connection for a fresh
+	// attempt, before anything else happens on it. It exists so an owner's
+	// cache can be dropped in the same step that claims the attempt: pi does
+	// the equivalent from its client, which is safe there only because nothing
+	// else can run in between. It may be nil.
+	//
+	// Unlike every other callback here it runs with the Connection's lock held,
+	// which is the whole point — atomicity with the claim is what it buys. It
+	// must therefore not call back into the Connection. The lock it may take is
+	// State's, extending the package's ordering to Connection.mu then State.mu;
+	// State never reaches back the other way.
+	OnReset func()
 	// OnHandshake receives the snapshot carried by the server hello, before
 	// the connection is reported as connected.
 	OnHandshake func(snapshot *protocol.ServerSnapshot)
@@ -144,6 +159,11 @@ func (c *Connection) MaxFrameLength() int { return c.maxFrameLength }
 // down rather than leaving it dangling. A callback that wants to reconnect
 // (pi's listeners do this) must therefore call Connect from a new goroutine
 // unless its transport delivers data synchronously.
+//
+// ctx covers the whole attempt, transport establishment included: it is handed
+// to the TransportFactory, which is expected to abandon a dial that is still in
+// progress when ctx is done. A factory that ignores it holds Connect for as
+// long as it takes to return.
 func (c *Connection) Connect(ctx context.Context) (*protocol.ServerSnapshot, error) {
 	decoder, err := protocol.NewServerMessageDecoder(&protocol.FrameOptions{MaxFrameLength: &c.maxFrameLength})
 	if err != nil {
@@ -156,6 +176,9 @@ func (c *Connection) Connect(ctx context.Context) (*protocol.ServerSnapshot, err
 		c.mu.Unlock()
 		return nil, &DisconnectedError{Message: "PiClient is already " + string(state)}
 	}
+	if c.opts.OnReset != nil {
+		c.opts.OnReset()
+	}
 	c.sequence++
 	id := c.sequence
 	hs := newHandshake()
@@ -164,7 +187,7 @@ func (c *Connection) Connect(ctx context.Context) (*protocol.ServerSnapshot, err
 
 	c.opts.OnStateChange(ConnectionStateChange{State: Connecting})
 
-	c.openTransport(id)
+	c.openTransport(ctx, id)
 
 	select {
 	case <-hs.done:
@@ -218,7 +241,7 @@ func (c *Connection) Send(frame []byte) error {
 }
 
 // openTransport builds the transport for attempt id and sends the client hello.
-func (c *Connection) openTransport(id uint64) {
+func (c *Connection) openTransport(ctx context.Context, id uint64) {
 	handlers := TransportHandlers{
 		OnData:  func(chunk []byte) { c.handleData(id, chunk) },
 		OnClose: func() { c.handleClose(id) },
@@ -227,7 +250,7 @@ func (c *Connection) openTransport(id uint64) {
 
 	// The factory may deliver data synchronously, before it has returned a
 	// transport — pi's tests cover exactly that — so no lock is held here.
-	transport, err := c.opts.TransportFactory(handlers)
+	transport, err := c.opts.TransportFactory(ctx, handlers)
 	if err != nil {
 		// pi calls #fail, not #failAndClose: there is no transport to close.
 		c.failIfCurrent(id, asDisconnectedError(err))
@@ -250,15 +273,18 @@ func (c *Connection) openTransport(id uint64) {
 	lifecycle.transport = transport
 	c.mu.Unlock()
 
+	// pi evaluates this encode inside the try that wraps transport.send, so a
+	// hello that cannot be encoded fails the connection the same way a hello
+	// that cannot be sent does. The distinction it declines to draw is the right
+	// one: either way the connection never said hello.
 	hello, err := protocol.EncodeClientMessage(
 		protocol.NewClientHello(c.opts.Token),
 		&protocol.FrameOptions{MaxFrameLength: &c.maxFrameLength},
 	)
-	if err != nil {
-		c.failAndCloseIfCurrent(id, err)
-		return
+	if err == nil {
+		err = transport.Send(hello)
 	}
-	if err := transport.Send(hello); err != nil {
+	if err != nil {
 		c.failAndCloseIfCurrent(id, asDisconnectedError(err))
 	}
 }
@@ -282,26 +308,40 @@ func (c *Connection) handleData(id uint64, chunk []byte) {
 	messages, err := lifecycle.decoder.Push(chunk)
 	c.mu.Unlock()
 	if err != nil {
-		c.failAndClose(err)
+		c.failAndCloseIfCurrent(id, err)
 		return
 	}
 
 	for _, message := range messages {
-		c.mu.Lock()
-		done := c.lifecycle == nil
-		c.mu.Unlock()
-		if done {
+		// DIVERGENCE (deliberate): pi's loop guard only asks whether the
+		// connection is disconnected, not whether it is still on this attempt.
+		// A listener that replaces the connection mid-chunk — the pattern
+		// ConnectionOptions documents — therefore leaves pi applying the rest of
+		// a dead transport's chunk to the new one. Go's blocking Connect makes
+		// that strictly worse: by the time the loop resumes the replacement has
+		// finished its handshake, so the leftovers are accepted as its own
+		// traffic rather than rejected as a missing hello. These bytes belong to
+		// the attempt that is over, so the attempt id decides, as it does on the
+		// way in.
+		if !c.isCurrent(id) {
 			return
 		}
-		c.handleMessage(message)
+		c.handleMessage(id, message)
 	}
 }
 
-// handleMessage applies one decoded server message to the lifecycle.
-func (c *Connection) handleMessage(message protocol.ServerMessage) {
+// handleMessage applies one decoded server message to attempt id.
+//
+// Every tear-down here is conditional on the attempt: the lock is dropped
+// before failing, so between the decision and the failure another goroutine —
+// or a re-entrant listener — may already have replaced the attempt, and a
+// stale message must not take the replacement down with it. pi re-reads its
+// single lifecycle field instead, which is the same guard in a language with
+// one thread.
+func (c *Connection) handleMessage(id uint64, message protocol.ServerMessage) {
 	c.mu.Lock()
 	lifecycle := c.lifecycle
-	if lifecycle == nil {
+	if lifecycle == nil || lifecycle.id != id {
 		c.mu.Unlock()
 		return
 	}
@@ -311,11 +351,11 @@ func (c *Connection) handleMessage(message protocol.ServerMessage) {
 		case *protocol.ServerHelloError:
 			c.mu.Unlock()
 			protocolError := typed.Error
-			c.failAndClose(newServerError(&protocolError))
+			c.failAndCloseIfCurrent(id, newServerError(&protocolError))
 		case *protocol.ServerHello:
 			if lifecycle.transport == nil {
 				c.mu.Unlock()
-				c.failAndClose(&protocol.ValidationError{
+				c.failAndCloseIfCurrent(id, &protocol.ValidationError{
 					Msg: "Received server hello before the client hello was sent",
 				})
 				return
@@ -324,7 +364,7 @@ func (c *Connection) handleMessage(message protocol.ServerMessage) {
 			c.completeHandshake(lifecycle, typed)
 		default:
 			c.mu.Unlock()
-			c.failAndClose(&protocol.ValidationError{Msg: "Expected server hello as first message"})
+			c.failAndCloseIfCurrent(id, &protocol.ValidationError{Msg: "Expected server hello as first message"})
 		}
 		return
 	}
@@ -332,7 +372,7 @@ func (c *Connection) handleMessage(message protocol.ServerMessage) {
 	c.mu.Unlock()
 	switch message.(type) {
 	case *protocol.ServerHello, *protocol.ServerHelloError:
-		c.failAndClose(&protocol.ValidationError{Msg: "Unexpected handshake message"})
+		c.failAndCloseIfCurrent(id, &protocol.ValidationError{Msg: "Unexpected handshake message"})
 		return
 	}
 	c.opts.OnMessage(message)
@@ -347,16 +387,29 @@ func (c *Connection) handleMessage(message protocol.ServerMessage) {
 // meantime must not be resurrected.
 func (c *Connection) completeHandshake(lifecycle *connectionLifecycle, hello *protocol.ServerHello) {
 	c.mu.Lock()
+	if c.lifecycle != lifecycle {
+		// The attempt was replaced while this message was on its way here.
+		// Reporting its handshake would revive a connection that is over and
+		// hand its snapshot to whoever replaced it.
+		c.mu.Unlock()
+		return
+	}
 	lifecycle.state = Connected
 	c.mu.Unlock()
 
 	// pi wraps onHandshake in try/catch and fails the connection if it throws.
-	// There is no recover here because the only failure that reaches this
-	// callback in practice is a subscriber panic, and State already contains
-	// those (see State.deliver) before they can reach the connection — which is
-	// the behaviour pi's try/catch exists to produce.
+	// The Client's own handler cannot: State contains subscriber panics (see
+	// State.call) before they reach here. ConnectionOptions is exported
+	// though, so a handler this package did not write can still panic, and pi's
+	// answer to that is to fail the connection rather than unwind through the
+	// transport's reading goroutine.
 	snapshot := hello.Snapshot
-	c.opts.OnHandshake(&snapshot)
+	if err := c.callHandshake(&snapshot); err != nil {
+		if c.isLifecycle(lifecycle) {
+			c.failAndClose(err)
+		}
+		return
+	}
 	if !c.isLifecycle(lifecycle) {
 		return
 	}
@@ -375,6 +428,22 @@ func (c *Connection) completeHandshake(lifecycle *connectionLifecycle, hello *pr
 	if hs != nil {
 		hs.settle(&snapshot, nil)
 	}
+}
+
+// callHandshake runs the handshake callback and turns a panic into the error
+// pi's catch clause would have produced.
+func (c *Connection) callHandshake(snapshot *protocol.ServerSnapshot) (err error) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			panicked, ok := recovered.(error)
+			if !ok {
+				panicked = fmt.Errorf("%v", recovered)
+			}
+			err = panicked
+		}
+	}()
+	c.opts.OnHandshake(snapshot)
+	return nil
 }
 
 // isLifecycle reports whether the given attempt is still the current one.
@@ -399,7 +468,10 @@ func (c *Connection) handleClose(id uint64) {
 		err = decoderErr
 	}
 	c.mu.Unlock()
-	c.fail(err)
+	// Conditional on the attempt for the same reason handleMessage's failures
+	// are: the lock is dropped first, so the attempt this close belongs to may
+	// already have been replaced.
+	c.failIfCurrent(id, err)
 }
 
 func (c *Connection) handleError(id uint64, err error) {
@@ -420,6 +492,10 @@ func (c *Connection) failAndClose(err error) {
 
 	c.fail(err)
 	if transport != nil {
+		// The close error is dropped on purpose: the connection has already
+		// failed for a reason the caller has been told, and pi's
+		// transport?.close() returns nothing at all. Reporting a second,
+		// later failure would only replace the one that explains what happened.
 		_ = transport.Close()
 	}
 }
