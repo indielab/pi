@@ -1,0 +1,118 @@
+package server
+
+import (
+	"strings"
+	"sync"
+	"testing"
+)
+
+// Jobs run one at a time and in the order they were submitted; that ordering is
+// what keeps a burst of session events reaching a peer in the order the runtime
+// emitted them.
+func TestSerialQueueRunsJobsInOrder(t *testing.T) {
+	t.Parallel()
+	var queue serialQueue
+	var mu sync.Mutex
+	var order []int
+	var concurrent, maxConcurrent int
+
+	for i := range 64 {
+		queue.Go(func() {
+			mu.Lock()
+			concurrent++
+			maxConcurrent = max(maxConcurrent, concurrent)
+			order = append(order, i)
+			concurrent--
+			mu.Unlock()
+		})
+	}
+	queue.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if maxConcurrent != 1 {
+		t.Fatalf("max concurrent jobs = %d, want 1", maxConcurrent)
+	}
+	if len(order) != 64 {
+		t.Fatalf("ran %d jobs, want 64", len(order))
+	}
+	for i, ran := range order {
+		if ran != i {
+			t.Fatalf("order = %v, want ascending", order)
+		}
+	}
+}
+
+// A queue that has already drained can be used again, which is what happens
+// every time a session goes quiet and then busy.
+func TestSerialQueueRestartsAfterDraining(t *testing.T) {
+	t.Parallel()
+	var queue serialQueue
+	done := make(chan struct{}, 2)
+	queue.Go(func() { done <- struct{}{} })
+	queue.Wait()
+	queue.Go(func() { done <- struct{}{} })
+	queue.Wait()
+	if len(done) != 2 {
+		t.Fatalf("ran %d jobs, want 2", len(done))
+	}
+}
+
+// Wait must not miss work submitted while it is already waiting.
+func TestSerialQueueWaitCoversLateSubmissions(t *testing.T) {
+	t.Parallel()
+	var queue serialQueue
+	var mu sync.Mutex
+	ran := 0
+	release := make(chan struct{})
+
+	queue.Go(func() {
+		<-release
+		mu.Lock()
+		ran++
+		mu.Unlock()
+	})
+	queue.Go(func() {
+		mu.Lock()
+		ran++
+		mu.Unlock()
+	})
+	close(release)
+	queue.Wait()
+
+	mu.Lock()
+	defer mu.Unlock()
+	if ran != 2 {
+		t.Fatalf("ran = %d, want 2", ran)
+	}
+}
+
+func TestNewUUIDShape(t *testing.T) {
+	t.Parallel()
+	seen := map[string]struct{}{}
+	for range 1000 {
+		id := newUUID()
+		if len(id) != 36 {
+			t.Fatalf("id %q is not 36 characters", id)
+		}
+		parts := strings.Split(id, "-")
+		if len(parts) != 5 ||
+			len(parts[0]) != 8 || len(parts[1]) != 4 || len(parts[2]) != 4 ||
+			len(parts[3]) != 4 || len(parts[4]) != 12 {
+			t.Fatalf("id %q is not in canonical form", id)
+		}
+		if parts[2][0] != '4' {
+			t.Fatalf("id %q is not version 4", id)
+		}
+		if !strings.ContainsRune("89ab", rune(parts[3][0])) {
+			t.Fatalf("id %q does not carry the RFC 4122 variant", id)
+		}
+		if strings.ToLower(id) != id {
+			t.Fatalf("id %q is not lowercase", id)
+		}
+		if _, duplicate := seen[id]; duplicate {
+			t.Fatalf("id %q was generated twice", id)
+		}
+		seen[id] = struct{}{}
+	}
+}
