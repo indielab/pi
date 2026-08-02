@@ -259,6 +259,112 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   subsystem to serve no ported consumer. Future `resource-loader.ts` commits are
   `n/a` UNLESS the port grows a resource-loader analog.
 
+## Drift at last sync check (2026-08-02) — pin HELD at ab366ebe9
+
+**Pin deliberately NOT advanced.** Delta `ab366ebe9 → 73414d08b`: **40**
+first-parent changes — **5 ports, 35 n/a, 0 decide**. The pin field means "TS
+source fully reviewed *and* ported"; all five ports are the remote-session stack
+and only two have partially landed, so advancing the pin would tell a future
+triage that `packages/{protocol,client,server}` and
+`coding-agent/src/client/` are done when `server/` does not exist in the Go tree
+yet. Triage for the range is complete and recorded here; the porting is not.
+Advance the pin to `73414d08b` only once the worklist below is empty.
+
+**No release crossed** — no tag in range, npm `pi-ai`/`pi-coding-agent` stay
+**0.83.0**, no catalog regen, no byte-golden moved.
+
+### Port worklist (all under the 2026-08-01 remote-session ruling — no new decides)
+
+- **`5a38a1c12`** (runtime-neutral client, `packages/client/src`) — **partial**.
+  Landed: `client/errors.go` + `types.go` (Go `86a91f3`), `client/state.go` (Go
+  `d9256a9`). Remaining: `client.ts` → `client/client.go`, `connection.ts` →
+  `client/connection.go`. `promise.ts` has no Go analog (channels). The commit's
+  `agent/src/harness/agent-harness.ts` hunk (`shutdown()` split into
+  `requestShutdown()` + `waitForShutdown()`) is harness-internal → **n/a**.
+- **`7d5fc9499`** (unix client transport) — **not started**. `client/src/unix.ts`
+  → `client/unix.go`. Golden: socket path resolution + frame layout.
+- **`73b24639f`** (server core + `legacy/` split) — **not started**.
+  `server/src/{server,protocol,sessions,snapshots,listener,connection,errors,types}.ts`
+  + `transports/unix/` → new `server/` package. `server/src/legacy/**` stays
+  **n/a** per the ruling; `server/src/testing/**` is upstream's own fake backend,
+  port only if the Go server tests want that shape.
+- **`03eba409c`** (server/protocol invariants) — **partial**. The
+  `protocol/src/schemas.ts` half landed in Go `3289329`; the
+  `server/src/protocol.ts` half (+244) remains. **Wire-golden**: `"tool_call"` →
+  `"toolCall"` (content type AND `assistant_delta.kind`), stop reason
+  `"tool_use"` → `"toolUse"`, assistant/tool transcript items split into
+  status-discriminated unions (`complete` requires a non-error `stopReason`;
+  `error`/`aborted` pin theirs; tool `isError` is now a literal per status), and
+  `item_finished` narrowed to the terminal variants only. Confirms the ruling's
+  warning that `schemas.ts` is not frozen — it moved again this cycle.
+- **`06a1ceb8d`** (coding-agent remote client controller) — **not started**.
+  `client/src/session-handle.ts` → `client/`;
+  `coding-agent/src/client/{remote-session,transcript}.ts` →
+  `coding/remotesession.go` + `coding/transcript.go`.
+
+The **wire is a new golden class** (per the ruling): CBOR encoding and frame
+layout are observable to a *peer*, so this needs its own encode/decode round-trip
++ cross-implementation frame-vector corpus, not the usual request-body diff.
+
+### Notable n/a (35)
+
+- **`d2be68dbe`** (**avoid auth read lock contention**, `core/auth-storage.ts`
+  +87 — process-shared read cache keyed on a `dev:ino:size:mtimeNs:ctimeNs`
+  revision, plus a coalesced in-flight reload). **No Go analog** — the port takes
+  an injected `CredentialStore` and never ports the host-side disk store
+  (`f8bec25f` precedent). Test-only rider **`e6fb3ec68`** likewise.
+- **`14551e769`** (**increase connection attempt timeout**,
+  `core/http-dispatcher.ts`) — undici `connect.autoSelectFamilyAttemptTimeout`
+  raised from Node's 250 ms default to 2 s for high-latency routes. Node-runtime
+  tuning with no `net/http` equivalent; same class as `2117b61c` and the omitted
+  bun `/proc/self/environ` fallback.
+- **`784653468`** (**codex account websocket**) — `openai-codex-responses.ts`
+  re-keys the session websocket cache `Map<sessionId, Map<accountId, conn>>` so
+  two accounts on one session no longer share a socket. Codex is an excluded
+  provider and has no Go counterpart in `ai/providers/`.
+- **`8f9e76974`** (**recover stalled availability refreshes**,
+  `core/model-runtime.ts`) — host runtime, `n/a` under the 2026-07-17 ruling.
+- **`aa0ec808b`** (**experimental CLI parser**, `src/cli/experimental/{command,
+  auth,transport-address}.ts`) — `cli` is outside `core|main|sdk`, and the new
+  files have **zero non-test consumers** upstream today. Forward signal only: a
+  `pi connect`-style CLI over the client transport is coming; it stays host/CLI
+  when it lands, but re-check whether `transport-address.ts` becomes a dependency
+  of the ported `client/unix.ts` surface.
+- **`f074efd92`** (**ui mode setting**) — the lone `src/main.ts` hunk is one line
+  (`alt: parsed.alt` → `uiMode: parsed.uiMode`) feeding interactive mode;
+  `settings-manager.ts` and the TUI are on the non-port list.
+- **Agent-harness session-store churn (11 changes)** — `12a4b2429` (store/repo
+  file rename), `977ec833b` (remove session search index), `b77786582`
+  (per-session keyed operation queues), `a0bb4a489` + `4488ad55c` + `a11652343` +
+  `b5c7e5549` (sqlite connection cleanup / linear-time reads / branch-tip cache +
+  migration `002_branch_tips.sql`), `0d43c5804` (session reader), `6e48c10f5`
+  (branch queries v2), `4279da1b7` (session storage API — another repo/store
+  rename round-trip). `packages/agent/src/harness/` has no Go tree; the
+  2026-08-01 ruling re-confirmed the exclusion holds after tracing the
+  server→`Backend` dependency edge.
+- **TUI (10 changes)** — `ea781d68f`, `8ac92f831`, `696a828a4`, `3c717842e`,
+  `bf4a90d81`, `6129a353b`, `b3ed27b3f`, `af187eee4`, `583f153d5` (source
+  filename normalization: `TuiAltScreen.ts` → `tui-alt-screen.ts`), `73414d08b`.
+- **Reverted, net zero** — `1fdf21621` (switchable terminal renderers) was
+  reverted same-day by `b70c0f5b4` (#7473). Nothing to port either way.
+- **Test-only** — `fbab971da` (`packages/ai/test`), `a1403af8e` + `374c5b6dd`
+  (agent timeout determinism), `a6f7317df` (models.json hot reload).
+- **`7724472ea`** — `utils/clipboard.ts`, consumed only by the TUI.
+
+### Two regen signals for the next release
+
+Neither is portable now; both predict catalog movement. Per the 2026-07-30
+ruling, decide the regen by executing `JSON.stringify(MODELS)` against both npm
+builds — never from git, and never by `cmp`-ing `models.generated.js`.
+
+1. **`a688e257c`** — `ai/scripts/generate-models.ts` routes **Fireworks Kimi K3**
+   through OpenAI compatibility. A generator-DATA-only hunk is exactly the
+   positive signal that ruling names.
+2. **`fbab971da`** — the `packages/ai/test` fixes swap `zai/glm-5.1` → `glm-5.2`
+   and delete the `glm-4.5-air` assertions outright, i.e. both models are gone
+   from the data those tests resolve against. Expect z.ai catalog churn at the
+   next publish.
+
 ## Drift at last sync check (2026-07-31) — pin advanced to ab366ebe9
 
 **Caught up to `ab366ebe9`.** Delta `c13ffe18 → ab366ebe9`: **26** first-parent
