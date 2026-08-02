@@ -9,7 +9,8 @@ import (
 )
 
 // maxUint32 is the largest frame length the wire's 32-bit prefix can express.
-const maxUint32 = 0xffff_ffff
+// It is uint64 because it does not fit in an int on a 32-bit build.
+const maxUint32 uint64 = 0xffff_ffff
 
 // defaultConnectionDisconnectReason is pi's Connection#disconnect default.
 const defaultConnectionDisconnectReason = "Client disconnected"
@@ -110,7 +111,7 @@ func NewConnection(opts ConnectionOptions) (*Connection, error) {
 	if opts.MaxFrameLength != nil {
 		maxFrameLength = *opts.MaxFrameLength
 	}
-	if maxFrameLength <= 0 || int64(maxFrameLength) > maxUint32 {
+	if maxFrameLength <= 0 || uint64(maxFrameLength) > maxUint32 {
 		return nil, fmt.Errorf("PiClient maxFrameLength must be an integer between 1 and %d", maxUint32)
 	}
 	return &Connection{opts: opts, maxFrameLength: maxFrameLength}, nil

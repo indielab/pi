@@ -124,15 +124,18 @@ func (s *ServerSnapshot) Validate() error {
 }
 
 // Command is a request a client can issue.
-type Command interface{ CommandName() string }
+type Command interface {
+	CommandName() string
+	command()
+}
 
 // ListCommand asks for every session.
 type ListCommand struct {
 	Command string `cbor:"command"`
 }
 
-func (ListCommand) CommandName() string { return "list" }
-func (c *ListCommand) Validate() error  { return requireLiteral("command", c.Command, "list") }
+func (*ListCommand) CommandName() string { return "list" }
+func (c *ListCommand) Validate() error   { return requireLiteral("command", c.Command, "list") }
 
 // NewListCommand builds a well-formed list command.
 func NewListCommand() *ListCommand { return &ListCommand{Command: "list"} }
@@ -146,7 +149,7 @@ type CreateCommand struct {
 	ThinkingLevel *ThinkingLevel `cbor:"thinkingLevel,omitempty"`
 }
 
-func (CreateCommand) CommandName() string { return "create" }
+func (*CreateCommand) CommandName() string { return "create" }
 
 func (c *CreateCommand) Validate() error {
 	if err := requireLiteral("command", c.Command, "create"); err != nil {
@@ -185,8 +188,8 @@ func (c *sessionScopedCommand) validate(want string) error {
 // AttachCommand subscribes to a session's events.
 type AttachCommand sessionScopedCommand
 
-func (AttachCommand) CommandName() string { return "attach" }
-func (c *AttachCommand) Validate() error  { return (*sessionScopedCommand)(c).validate("attach") }
+func (*AttachCommand) CommandName() string { return "attach" }
+func (c *AttachCommand) Validate() error   { return (*sessionScopedCommand)(c).validate("attach") }
 
 // NewAttachCommand builds a well-formed attach command.
 func NewAttachCommand(sessionID string) *AttachCommand {
@@ -196,8 +199,8 @@ func NewAttachCommand(sessionID string) *AttachCommand {
 // DetachCommand unsubscribes from a session.
 type DetachCommand sessionScopedCommand
 
-func (DetachCommand) CommandName() string { return "detach" }
-func (c *DetachCommand) Validate() error  { return (*sessionScopedCommand)(c).validate("detach") }
+func (*DetachCommand) CommandName() string { return "detach" }
+func (c *DetachCommand) Validate() error   { return (*sessionScopedCommand)(c).validate("detach") }
 
 // NewDetachCommand builds a well-formed detach command.
 func NewDetachCommand(sessionID string) *DetachCommand {
@@ -207,8 +210,8 @@ func NewDetachCommand(sessionID string) *DetachCommand {
 // AbortCommand stops the active turn.
 type AbortCommand sessionScopedCommand
 
-func (AbortCommand) CommandName() string { return "abort" }
-func (c *AbortCommand) Validate() error  { return (*sessionScopedCommand)(c).validate("abort") }
+func (*AbortCommand) CommandName() string { return "abort" }
+func (c *AbortCommand) Validate() error   { return (*sessionScopedCommand)(c).validate("abort") }
 
 // NewAbortCommand builds a well-formed abort command.
 func NewAbortCommand(sessionID string) *AbortCommand {
@@ -232,8 +235,8 @@ func (p *promptPayload) validate(want string) error {
 // PromptCommand submits a new user turn.
 type PromptCommand promptPayload
 
-func (PromptCommand) CommandName() string { return "prompt" }
-func (c *PromptCommand) Validate() error  { return (*promptPayload)(c).validate("prompt") }
+func (*PromptCommand) CommandName() string { return "prompt" }
+func (c *PromptCommand) Validate() error   { return (*promptPayload)(c).validate("prompt") }
 
 // NewPromptCommand builds a well-formed prompt command.
 func NewPromptCommand(sessionID, text string) *PromptCommand {
@@ -243,8 +246,8 @@ func NewPromptCommand(sessionID, text string) *PromptCommand {
 // SteerCommand injects text into the running turn.
 type SteerCommand promptPayload
 
-func (SteerCommand) CommandName() string { return "steer" }
-func (c *SteerCommand) Validate() error  { return (*promptPayload)(c).validate("steer") }
+func (*SteerCommand) CommandName() string { return "steer" }
+func (c *SteerCommand) Validate() error   { return (*promptPayload)(c).validate("steer") }
 
 // NewSteerCommand builds a well-formed steer command.
 func NewSteerCommand(sessionID, text string) *SteerCommand {
@@ -258,7 +261,7 @@ type SetModelCommand struct {
 	Model     ModelRef `cbor:"model"`
 }
 
-func (SetModelCommand) CommandName() string { return "set_model" }
+func (*SetModelCommand) CommandName() string { return "set_model" }
 
 func (c *SetModelCommand) Validate() error {
 	if err := requireLiteral("command", c.Command, "set_model"); err != nil {
@@ -282,7 +285,7 @@ type SetThinkingCommand struct {
 	ThinkingLevel ThinkingLevel `cbor:"thinkingLevel"`
 }
 
-func (SetThinkingCommand) CommandName() string { return "set_thinking" }
+func (*SetThinkingCommand) CommandName() string { return "set_thinking" }
 
 func (c *SetThinkingCommand) Validate() error {
 	if err := requireLiteral("command", c.Command, "set_thinking"); err != nil {
@@ -300,7 +303,10 @@ func NewSetThinkingCommand(sessionID string, level ThinkingLevel) *SetThinkingCo
 }
 
 // CommandResult is a successful reply to a Command.
-type CommandResult interface{ ResultCommandName() string }
+type CommandResult interface {
+	ResultCommandName() string
+	commandResult()
+}
 
 // ListResult answers list.
 type ListResult struct {
@@ -308,7 +314,7 @@ type ListResult struct {
 	Sessions []SessionSummary `cbor:"sessions"`
 }
 
-func (ListResult) ResultCommandName() string { return "list" }
+func (*ListResult) ResultCommandName() string { return "list" }
 
 func (r *ListResult) Validate() error {
 	if err := requireLiteral("command", r.Command, "list"); err != nil {
@@ -328,7 +334,7 @@ type DetachResult struct {
 	SessionID string `cbor:"sessionId"`
 }
 
-func (DetachResult) ResultCommandName() string { return "detach" }
+func (*DetachResult) ResultCommandName() string { return "detach" }
 
 func (r *DetachResult) Validate() error {
 	if err := requireLiteral("command", r.Command, "detach"); err != nil {
@@ -346,7 +352,7 @@ type SessionResult struct {
 	Session SessionSnapshot `cbor:"session"`
 }
 
-func (r SessionResult) ResultCommandName() string { return r.Command }
+func (r *SessionResult) ResultCommandName() string { return r.Command }
 
 var sessionResultCommands = []string{
 	"create", "attach", "prompt", "steer", "abort", "set_model", "set_thinking",
@@ -374,7 +380,7 @@ type ClientHello struct {
 	Token   string `cbor:"token"`
 }
 
-func (ClientHello) clientMessage() {}
+func (*ClientHello) clientMessage() {}
 
 func (m *ClientHello) Validate() error {
 	if err := requireLiteral("type", m.Type, "hello"); err != nil {
@@ -398,7 +404,7 @@ type RequestEnvelope struct {
 	Request Command `cbor:"request"`
 }
 
-func (RequestEnvelope) clientMessage() {}
+func (*RequestEnvelope) clientMessage() {}
 
 func (m *RequestEnvelope) Validate() error {
 	if err := requireLiteral("type", m.Type, "request"); err != nil {
@@ -425,7 +431,10 @@ func NewRequest(id string, command Command) *RequestEnvelope {
 type ClientMessage interface{ clientMessage() }
 
 // ServerEvent is an unsolicited push from the server.
-type ServerEvent interface{ EventType() string }
+type ServerEvent interface {
+	EventType() string
+	serverEvent()
+}
 
 // ServerSnapshotEvent republishes the whole-server view.
 type ServerSnapshotEvent struct {
@@ -433,7 +442,7 @@ type ServerSnapshotEvent struct {
 	Snapshot ServerSnapshot `cbor:"snapshot"`
 }
 
-func (ServerSnapshotEvent) EventType() string { return "server_snapshot" }
+func (*ServerSnapshotEvent) EventType() string { return "server_snapshot" }
 
 func (e *ServerSnapshotEvent) Validate() error {
 	if err := requireLiteral("type", e.Type, "server_snapshot"); err != nil {
@@ -448,7 +457,7 @@ type SessionSnapshotEvent struct {
 	Snapshot SessionSnapshot `cbor:"snapshot"`
 }
 
-func (SessionSnapshotEvent) EventType() string { return "session_snapshot" }
+func (*SessionSnapshotEvent) EventType() string { return "session_snapshot" }
 
 func (e *SessionSnapshotEvent) Validate() error {
 	if err := requireLiteral("type", e.Type, "session_snapshot"); err != nil {
@@ -464,7 +473,7 @@ type SessionProgressEvent struct {
 	Progress  TranscriptProgress `cbor:"progress"`
 }
 
-func (SessionProgressEvent) EventType() string { return "session_progress" }
+func (*SessionProgressEvent) EventType() string { return "session_progress" }
 
 func (e *SessionProgressEvent) Validate() error {
 	if err := requireLiteral("type", e.Type, "session_progress"); err != nil {
@@ -488,7 +497,7 @@ type SessionRemovedEvent struct {
 	SessionID string `cbor:"sessionId"`
 }
 
-func (SessionRemovedEvent) EventType() string { return "session_removed" }
+func (*SessionRemovedEvent) EventType() string { return "session_removed" }
 
 func (e *SessionRemovedEvent) Validate() error {
 	if err := requireLiteral("type", e.Type, "session_removed"); err != nil {
@@ -505,7 +514,7 @@ type ServerHello struct {
 	Snapshot     ServerSnapshot `cbor:"snapshot"`
 }
 
-func (ServerHello) serverMessage() {}
+func (*ServerHello) serverMessage() {}
 
 func (m *ServerHello) Validate() error {
 	if err := requireLiteral("type", m.Type, "hello"); err != nil {
@@ -526,7 +535,7 @@ type ServerHelloError struct {
 	Error ProtocolError `cbor:"error"`
 }
 
-func (ServerHelloError) serverMessage() {}
+func (*ServerHelloError) serverMessage() {}
 
 func (m *ServerHelloError) Validate() error {
 	if err := requireLiteral("type", m.Type, "hello_error"); err != nil {
@@ -548,7 +557,7 @@ type ResponseEnvelope struct {
 	Error  *ProtocolError `cbor:"error,omitempty"`
 }
 
-func (ResponseEnvelope) serverMessage() {}
+func (*ResponseEnvelope) serverMessage() {}
 
 func (m *ResponseEnvelope) Validate() error {
 	if err := requireLiteral("type", m.Type, "response"); err != nil {
@@ -584,7 +593,7 @@ type EventEnvelope struct {
 	Event ServerEvent `cbor:"event"`
 }
 
-func (EventEnvelope) serverMessage() {}
+func (*EventEnvelope) serverMessage() {}
 
 func (m *EventEnvelope) Validate() error {
 	if err := requireLiteral("type", m.Type, "event"); err != nil {
@@ -601,3 +610,25 @@ func (m *EventEnvelope) Validate() error {
 
 // ServerMessage is anything a server may send.
 type ServerMessage interface{ serverMessage() }
+
+// Sealing markers. The unexported method keeps these unions closed: only this
+// package can add a member, so every value that reaches the wire is one the
+// codec knows how to validate.
+func (*ListCommand) command()        {}
+func (*CreateCommand) command()      {}
+func (*AttachCommand) command()      {}
+func (*DetachCommand) command()      {}
+func (*AbortCommand) command()       {}
+func (*PromptCommand) command()      {}
+func (*SteerCommand) command()       {}
+func (*SetModelCommand) command()    {}
+func (*SetThinkingCommand) command() {}
+
+func (*ListResult) commandResult()    {}
+func (*DetachResult) commandResult()  {}
+func (*SessionResult) commandResult() {}
+
+func (*ServerSnapshotEvent) serverEvent()  {}
+func (*SessionSnapshotEvent) serverEvent() {}
+func (*SessionProgressEvent) serverEvent() {}
+func (*SessionRemovedEvent) serverEvent()  {}

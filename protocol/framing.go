@@ -11,7 +11,10 @@ const frameHeaderLength = 4
 // DefaultMaxFrameLength is the default upper bound for one framed CBOR payload.
 const DefaultMaxFrameLength = 16 * 1024 * 1024
 
-const maxUint32 = 0xffff_ffff
+// maxUint32 is the largest value the 4-byte length prefix can carry. It is
+// uint64 because it does not fit in an int on a 32-bit build, and the wire
+// length must be range-checked before it is narrowed to int.
+const maxUint32 uint64 = 0xffff_ffff
 
 // FrameError is a malformed or over-long frame.
 type FrameError struct{ Msg string }
@@ -28,7 +31,7 @@ func resolveMaxFrameLength(o *FrameOptions) (int, error) {
 	if o != nil && o.MaxFrameLength != nil {
 		v = *o.MaxFrameLength
 	}
-	if v < 0 || v > maxUint32 {
+	if v < 0 || uint64(v) > maxUint32 {
 		return 0, fmt.Errorf("maxFrameLength must be an integer between 0 and %d", maxUint32)
 	}
 	return v, nil
@@ -36,7 +39,7 @@ func resolveMaxFrameLength(o *FrameOptions) (int, error) {
 
 // EncodeFrame prefixes a payload with its unsigned 32-bit big-endian length.
 func EncodeFrame(payload []byte) ([]byte, error) {
-	if len(payload) > maxUint32 {
+	if uint64(len(payload)) > maxUint32 {
 		return nil, fmt.Errorf("frame payload exceeds the unsigned 32-bit length limit")
 	}
 	frame := make([]byte, frameHeaderLength+len(payload))
@@ -128,12 +131,16 @@ func (d *FrameDecoder) Push(chunk []byte) ([][]byte, error) {
 				continue
 			}
 
-			frameLength := int(binary.BigEndian.Uint32(d.header[:]))
+			// Range-check as uint64 before narrowing: on a 32-bit build a
+			// declared length >= 2^31 would go negative as an int, slip past
+			// the limit check, and panic on the negative slice bound below.
+			declared := uint64(binary.BigEndian.Uint32(d.header[:]))
 			d.headerLength = 0
-			if frameLength > d.maxFrameLength {
+			if declared > uint64(d.maxFrameLength) {
 				return nil, d.fail(fmt.Sprintf("Frame length %d exceeds configured limit of %d",
-					frameLength, d.maxFrameLength))
+					declared, d.maxFrameLength))
 			}
+			frameLength := int(declared)
 			if frameLength == 0 {
 				frames = append(frames, []byte{})
 				continue

@@ -395,14 +395,13 @@ func TestTranscriptProgressOrderSurvivesUpdates(t *testing.T) {
 
 func TestTranscriptIgnoresUnknownProgress(t *testing.T) {
 	state := NewTranscriptState(transcriptSnapshot(1, "saved"))
-	if next := state.ApplyProgress(unknownProgress{}); next != state {
+	// protocol.TranscriptProgress is a sealed union, so no out-of-package
+	// variant can be constructed to reach the default arm. A nil progress is
+	// what remains of that case, and it must be as inert as pi's miss.
+	if next := state.ApplyProgress(nil); next != state {
 		t.Fatal("an unrecognized progress variant must leave the state untouched")
 	}
 }
-
-type unknownProgress struct{}
-
-func (unknownProgress) ProgressType() string { return "unknown" }
 
 func TestParsePartialToolInput(t *testing.T) {
 	cases := []struct {
@@ -431,15 +430,18 @@ func TestParsePartialToolInput(t *testing.T) {
 	}
 }
 
-func TestTranscriptItemIDAcceptsValueForms(t *testing.T) {
+// TestTranscriptItemIDReadsEveryRole covers the roles rather than the pointer
+// and value forms it used to: protocol's union markers now take pointer
+// receivers, so the value form no longer satisfies TranscriptItem and the
+// normalization this once exercised is a compile-time guarantee.
+func TestTranscriptItemIDReadsEveryRole(t *testing.T) {
 	cases := []struct {
 		name string
 		item protocol.TranscriptItem
 	}{
-		{"user pointer", &protocol.UserTranscriptItem{ID: "x"}},
-		{"user value", protocol.UserTranscriptItem{ID: "x"}},
-		{"assistant value", protocol.AssistantTranscriptItem{ID: "x"}},
-		{"tool value", protocol.ToolTranscriptItem{ID: "x"}},
+		{"user", &protocol.UserTranscriptItem{ID: "x"}},
+		{"assistant", &protocol.AssistantTranscriptItem{ID: "x"}},
+		{"tool", &protocol.ToolTranscriptItem{ID: "x"}},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {

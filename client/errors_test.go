@@ -9,11 +9,11 @@ import (
 )
 
 func TestServerErrorCarriesProtocolError(t *testing.T) {
-	details := map[string]any{"supported": []any{int64(2)}}
+	var details any = map[string]any{"supported": []any{int64(2)}}
 	err := newServerError(&protocol.ProtocolError{
 		Code:    protocol.ErrorVersion,
 		Message: "unsupported version",
-		Details: details,
+		Details: &details,
 	})
 	if err == nil {
 		t.Fatal("newServerError returned nil")

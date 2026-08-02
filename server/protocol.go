@@ -108,9 +108,18 @@ func toProtocolJSONValue(v reflect.Value, seen map[uintptr]struct{}, depth int) 
 // protocol's JSON subset. Details never affect execution semantics, so a value
 // that cannot be represented is coerced or dropped rather than failing the
 // turn.
-func SanitizeProtocolDetails(value any) any {
-	result, _ := sanitizeProtocolDetails(reflect.ValueOf(value), map[uintptr]struct{}{}, 0)
-	return result
+func SanitizeProtocolDetails(value any) *any {
+	// A nil value is Go's "unset", which is pi's `undefined` — and pi omits the
+	// property for undefined while keeping it for null. Nested nils still come
+	// back present-and-null, matching sanitizeProtocolDetails's own contract.
+	if value == nil {
+		return nil
+	}
+	result, present := sanitizeProtocolDetails(reflect.ValueOf(value), map[uintptr]struct{}{}, 0)
+	if !present {
+		return nil
+	}
+	return &result
 }
 
 // sanitizeProtocolDetails reports the sanitized value and whether it is present

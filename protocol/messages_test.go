@@ -111,7 +111,7 @@ func fixtureToolItem() *ToolTranscriptItem {
 			"nested": map[string]any{"deep": true},
 		},
 		Content:   []Content{&TextContent{Type: "text", Text: "out"}},
-		Details:   map[string]any{"exitCode": int64(0)},
+		Details:   detailsPtr(map[string]any{"exitCode": int64(0)}),
 		Usage:     &usage,
 		Timestamp: 1005, Status: ToolComplete, IsError: false,
 	}
@@ -206,7 +206,7 @@ func goServerMessages() map[string]ServerMessage {
 			Type: "hello_error",
 			Error: ProtocolError{
 				Code: ErrorVersion, Message: "nope",
-				Details: map[string]any{"supported": []any{int64(2)}},
+				Details: detailsPtr(map[string]any{"supported": []any{int64(2)}}),
 			},
 		},
 		"resp_list": &ResponseEnvelope{
@@ -710,3 +710,7 @@ func TestJSONValueKeyOrderDivergence(t *testing.T) {
 		t.Errorf("round-trip lost data: %#v", input)
 	}
 }
+
+// detailsPtr wraps a details value for the *any field: a nil pointer is the
+// absent property, a pointer to a nil interface is JSON null.
+func detailsPtr(v any) *any { return &v }

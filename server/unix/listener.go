@@ -27,8 +27,9 @@ const (
 	defaultSocketMode          = 0o600
 	defaultGracefulCloseTimout = 5 * time.Second
 	socketProbeTimeout         = 1 * time.Second
-	maxUint32                  = 0xffff_ffff
-	readBufferSize             = 64 * 1024
+	// maxUint32 is uint64 because it does not fit in an int on a 32-bit build.
+	maxUint32      uint64 = 0xffff_ffff
+	readBufferSize        = 64 * 1024
 )
 
 // maxSocketPathBytes is what fits in sockaddr_un.sun_path, which differs by
@@ -87,7 +88,7 @@ func resolveOptions(options ListenerOptions) (resolvedOptions, error) {
 	if options.MaxFrameLength != nil {
 		maxFrameLength = *options.MaxFrameLength
 	}
-	if maxFrameLength <= 0 || maxFrameLength > maxUint32 {
+	if maxFrameLength <= 0 || uint64(maxFrameLength) > maxUint32 {
 		return resolvedOptions{}, fmt.Errorf("PiServer maxFrameLength must be an integer between 1 and %d", maxUint32)
 	}
 	maxPendingBytes := options.MaxPendingBytes

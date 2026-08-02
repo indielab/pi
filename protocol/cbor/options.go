@@ -15,8 +15,8 @@ import (
 )
 
 const (
-	uint32Base = 1 << 32
-	maxUint32  = 0xffff_ffff
+	uint32Base        = 1 << 32
+	maxUint32  uint64 = 0xffff_ffff
 
 	// maxSafeInteger is JavaScript's Number.MAX_SAFE_INTEGER. pi encodes every
 	// number as a float64, so it rejects integers it could not round-trip. Go
@@ -68,12 +68,12 @@ type RangeError struct{ Msg string }
 
 func (e *RangeError) Error() string { return e.Msg }
 
-func resolveLimit(name string, value *int, def, maximum int) (int, error) {
+func resolveLimit(name string, value *int, def int, maximum uint64) (int, error) {
 	v := def
 	if value != nil {
 		v = *value
 	}
-	if v < 0 || v > maximum {
+	if v < 0 || uint64(v) > maximum {
 		return 0, &RangeError{Msg: fmt.Sprintf("%s must be an integer between 0 and %d", name, maximum)}
 	}
 	return v, nil

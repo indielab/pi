@@ -111,7 +111,11 @@ func (r *reader) readItem(depth int) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if n > maxSafeInteger {
+		// pi computes -1 - n and then tests Number.isSafeInteger, which is
+		// false for -2^53 — so the largest legal argument is 2^53-2, not
+		// 2^53-1. Bounding the argument with > would admit a value Encode
+		// then refuses to write back.
+		if n >= maxSafeInteger {
 			return nil, &Error{Msg: "Decoded CBOR integer is outside the safe range"}
 		}
 		return -1 - int64(n), nil

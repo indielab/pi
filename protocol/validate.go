@@ -1,5 +1,7 @@
 package protocol
 
+import "reflect"
+
 // Constraint helpers mirroring the TypeBox modifiers pi's schemas use:
 // IdSchema is String({minLength: 1}), TimestampSchema is Integer({minimum: 0}),
 // and so on. Keeping them as named helpers means a schema change upstream maps
@@ -68,19 +70,52 @@ func checkJSONValue(name string, value any, depth int) error {
 		return invalidf("%s is nested too deeply", name)
 	}
 	switch v := value.(type) {
-	case nil, bool, string, int64, float64:
+	case nil, bool, string:
 		return nil
+	case []byte:
+		// pi's isProtocolValue refuses a Uint8Array, so a Go peer must not be
+		// able to send one either. Checked before the reflect walk, which
+		// would otherwise accept it as a slice.
+		return invalidf("%s must be a JSON value", name)
 	case []any:
-		for i, item := range v {
+		for _, item := range v {
 			if err := checkJSONValue(name, item, depth+1); err != nil {
 				return err
 			}
-			_ = i
 		}
 		return nil
 	case map[string]any:
 		for _, item := range v {
 			if err := checkJSONValue(name, item, depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	// pi tests `typeof value === "number"`, which every Go numeric kind spells.
+	// Matching only int64/float64 would reject the natural literal — Input: 5
+	// encodes fine but failed validation — so the check is by kind, mirroring
+	// what the encoder already accepts.
+	rv := reflect.ValueOf(value)
+	switch rv.Kind() {
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
+		reflect.Float32, reflect.Float64:
+		return nil
+	case reflect.Slice, reflect.Array:
+		for i := range rv.Len() {
+			if err := checkJSONValue(name, rv.Index(i).Interface(), depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	case reflect.Map:
+		if rv.Type().Key().Kind() != reflect.String {
+			return invalidf("%s must be a JSON value", name)
+		}
+		for _, key := range rv.MapKeys() {
+			if err := checkJSONValue(name, rv.MapIndex(key).Interface(), depth+1); err != nil {
 				return err
 			}
 		}

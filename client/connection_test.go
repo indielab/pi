@@ -525,7 +525,7 @@ func TestNewRejectsOutOfRangeFrameLimits(t *testing.T) {
 	}{
 		{"zero", 0},
 		{"negative", -1},
-		{"above the 32-bit prefix", maxUint32 + 1},
+		{"above the 32-bit prefix", int(maxUint32 + 1)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			server := newMemoryServer(t)

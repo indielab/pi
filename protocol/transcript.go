@@ -4,7 +4,10 @@ import "slices"
 
 // TranscriptItem is one entry in a session transcript: UserTranscriptItem,
 // AssistantTranscriptItem, or ToolTranscriptItem, discriminated by role.
-type TranscriptItem interface{ ItemRole() string }
+type TranscriptItem interface {
+	ItemRole() string
+	transcriptItem()
+}
 
 // UserTranscriptItem is a prompt or steer from the user.
 type UserTranscriptItem struct {
@@ -14,7 +17,7 @@ type UserTranscriptItem struct {
 	Timestamp int64     `cbor:"timestamp"`
 }
 
-func (UserTranscriptItem) ItemRole() string { return "user" }
+func (*UserTranscriptItem) ItemRole() string { return "user" }
 
 func (i *UserTranscriptItem) Validate() error {
 	if err := requireID("id", i.ID); err != nil {
@@ -70,7 +73,7 @@ type AssistantTranscriptItem struct {
 	ErrorMessage  *string         `cbor:"errorMessage,omitempty"`
 }
 
-func (AssistantTranscriptItem) ItemRole() string { return "assistant" }
+func (*AssistantTranscriptItem) ItemRole() string { return "assistant" }
 
 func (i *AssistantTranscriptItem) Validate() error {
 	if err := requireID("id", i.ID); err != nil {
@@ -152,14 +155,14 @@ type ToolTranscriptItem struct {
 	ToolName   string     `cbor:"toolName"`
 	Input      any        `cbor:"input"`
 	Content    []Content  `cbor:"content"`
-	Details    any        `cbor:"details,omitempty"`
+	Details    *any       `cbor:"details,omitempty"`
 	Usage      *Usage     `cbor:"usage,omitempty"`
 	Timestamp  int64      `cbor:"timestamp"`
 	Status     ToolStatus `cbor:"status"`
 	IsError    bool       `cbor:"isError"`
 }
 
-func (ToolTranscriptItem) ItemRole() string { return "tool" }
+func (*ToolTranscriptItem) ItemRole() string { return "tool" }
 
 func (i *ToolTranscriptItem) Validate() error {
 	if err := requireID("id", i.ID); err != nil {
@@ -180,8 +183,13 @@ func (i *ToolTranscriptItem) Validate() error {
 	if err := allowContent("content", i.Content, "text", "image"); err != nil {
 		return err
 	}
-	if err := requireJSONValue("details", i.Details); err != nil {
-		return err
+	// *any, not any: pi's details is Optional(JsonValue) and JsonValue
+	// includes Null, so absent and null are distinct on the wire. A nil
+	// interface behind a non-nil pointer is the null.
+	if i.Details != nil {
+		if err := requireJSONValue("details", *i.Details); err != nil {
+			return err
+		}
 	}
 	if i.Usage != nil {
 		if err := i.Usage.Validate(); err != nil {
@@ -230,7 +238,10 @@ func allowContent(name string, content []Content, allowed ...string) error {
 
 // TranscriptProgress is normalized incremental activity. Snapshots remain
 // authoritative; progress is an optimization, never the source of truth.
-type TranscriptProgress interface{ ProgressType() string }
+type TranscriptProgress interface {
+	ProgressType() string
+	transcriptProgress()
+}
 
 // ItemStartedProgress announces a new transcript item.
 type ItemStartedProgress struct {
@@ -238,7 +249,7 @@ type ItemStartedProgress struct {
 	Item TranscriptItem `cbor:"item"`
 }
 
-func (ItemStartedProgress) ProgressType() string { return "item_started" }
+func (*ItemStartedProgress) ProgressType() string { return "item_started" }
 
 func (p *ItemStartedProgress) Validate() error {
 	if err := requireLiteral("type", p.Type, "item_started"); err != nil {
@@ -268,7 +279,7 @@ type AssistantDeltaProgress struct {
 	Delta        string             `cbor:"delta"`
 }
 
-func (AssistantDeltaProgress) ProgressType() string { return "assistant_delta" }
+func (*AssistantDeltaProgress) ProgressType() string { return "assistant_delta" }
 
 func (p *AssistantDeltaProgress) Validate() error {
 	if err := requireLiteral("type", p.Type, "assistant_delta"); err != nil {
@@ -292,7 +303,7 @@ type ItemUpdatedProgress struct {
 	Item TranscriptItem `cbor:"item"`
 }
 
-func (ItemUpdatedProgress) ProgressType() string { return "item_updated" }
+func (*ItemUpdatedProgress) ProgressType() string { return "item_updated" }
 
 func (p *ItemUpdatedProgress) Validate() error {
 	if err := requireLiteral("type", p.Type, "item_updated"); err != nil {
@@ -314,7 +325,7 @@ type ItemFinishedProgress struct {
 	Item TranscriptItem `cbor:"item"`
 }
 
-func (ItemFinishedProgress) ProgressType() string { return "item_finished" }
+func (*ItemFinishedProgress) ProgressType() string { return "item_finished" }
 
 func (p *ItemFinishedProgress) Validate() error {
 	if err := requireLiteral("type", p.Type, "item_finished"); err != nil {
@@ -341,3 +352,13 @@ func validateItem(item TranscriptItem) error {
 	}
 	return nil
 }
+
+// Sealing markers. See the note in messages.go.
+func (*UserTranscriptItem) transcriptItem()      {}
+func (*AssistantTranscriptItem) transcriptItem() {}
+func (*ToolTranscriptItem) transcriptItem()      {}
+
+func (*ItemStartedProgress) transcriptProgress()    {}
+func (*AssistantDeltaProgress) transcriptProgress() {}
+func (*ItemUpdatedProgress) transcriptProgress()    {}
+func (*ItemFinishedProgress) transcriptProgress()   {}

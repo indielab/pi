@@ -234,7 +234,7 @@ func parsePartialToolInput(value string) any {
 // id is recovered by type switch here rather than by adding a method upstream —
 // the protocol package is not this port's to change.
 func transcriptItemID(item protocol.TranscriptItem) string {
-	switch typed := asPointerItem(item).(type) {
+	switch typed := item.(type) {
 	case *protocol.UserTranscriptItem:
 		return typed.ID
 	case *protocol.AssistantTranscriptItem:
@@ -243,24 +243,6 @@ func transcriptItemID(item protocol.TranscriptItem) string {
 		return typed.ID
 	default:
 		return ""
-	}
-}
-
-// asPointerItem normalizes a transcript item to its pointer form.
-//
-// protocol's decoders always produce pointers, but the value forms satisfy the
-// interface too, and an item built in-process must not take a different path
-// through the reducer than a decoded one.
-func asPointerItem(item protocol.TranscriptItem) protocol.TranscriptItem {
-	switch typed := item.(type) {
-	case protocol.UserTranscriptItem:
-		return &typed
-	case protocol.AssistantTranscriptItem:
-		return &typed
-	case protocol.ToolTranscriptItem:
-		return &typed
-	default:
-		return item
 	}
 }
 
@@ -288,7 +270,7 @@ func cloneSessionSnapshot(snapshot *protocol.SessionSnapshot) protocol.SessionSn
 }
 
 func cloneTranscriptItem(item protocol.TranscriptItem) protocol.TranscriptItem {
-	switch typed := asPointerItem(item).(type) {
+	switch typed := item.(type) {
 	case *protocol.UserTranscriptItem:
 		return cloneUserItem(typed)
 	case *protocol.AssistantTranscriptItem:
@@ -320,7 +302,10 @@ func cloneToolItem(item *protocol.ToolTranscriptItem) *protocol.ToolTranscriptIt
 	clone := *item
 	clone.Content = cloneContents(item.Content)
 	clone.Input = cloneJSONValue(item.Input)
-	clone.Details = cloneJSONValue(item.Details)
+	if item.Details != nil {
+		details := cloneJSONValue(*item.Details)
+		clone.Details = &details
+	}
 	clone.Usage = cloneUsage(item.Usage)
 	return &clone
 }
@@ -341,27 +326,17 @@ func cloneContent(part protocol.Content) protocol.Content {
 	case *protocol.TextContent:
 		clone := *typed
 		return &clone
-	case protocol.TextContent:
-		return &typed
 	case *protocol.ThinkingContent:
 		clone := *typed
 		clone.Redacted = clonePtr(typed.Redacted)
 		return &clone
-	case protocol.ThinkingContent:
-		typed.Redacted = clonePtr(typed.Redacted)
-		return &typed
 	case *protocol.ImageContent:
 		clone := *typed
 		return &clone
-	case protocol.ImageContent:
-		return &typed
 	case *protocol.ToolCallContent:
 		clone := *typed
 		clone.Input = cloneJSONValue(typed.Input)
 		return &clone
-	case protocol.ToolCallContent:
-		typed.Input = cloneJSONValue(typed.Input)
-		return &typed
 	default:
 		return part
 	}

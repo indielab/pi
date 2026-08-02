@@ -61,7 +61,11 @@ func (e *SessionDetachedError) Error() string {
 // branch here. Guarding it would mean inventing a code that a caller could
 // then branch on, which is worse than the nil dereference a real bug deserves.
 func newServerError(err *protocol.ProtocolError) *ServerError {
-	return &ServerError{Code: err.Code, Message: err.Message, Details: err.Details}
+	serverErr := &ServerError{Code: err.Code, Message: err.Message}
+	if err.Details != nil {
+		serverErr.Details = *err.Details
+	}
+	return serverErr
 }
 
 // asDisconnectedError coerces any error into a DisconnectedError.

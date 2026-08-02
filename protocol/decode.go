@@ -2,10 +2,16 @@ package protocol
 
 import (
 	"fmt"
+	"math"
 	"reflect"
 	"strings"
 	"sync"
 )
+
+// maxSafeInteger is JavaScript's Number.MAX_SAFE_INTEGER. pi has one number
+// type, so an integer field is satisfied by anything Number.isInteger accepts
+// within this range — including a float that happens to be integral.
+const maxSafeInteger = 1<<53 - 1
 
 // ValidationError is a protocol message that failed structural or constraint
 // checking (pi's ProtocolValidationError).
@@ -116,12 +122,22 @@ func decodeValue(value any, target reflect.Value, at string) error {
 		return nil
 
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-		n, ok := value.(int64)
-		if !ok {
+		switch n := value.(type) {
+		case int64:
+			target.SetInt(n)
+			return nil
+		case float64:
+			// TypeBox checks Number.isInteger, and pi has one number type, so
+			// an integral float satisfies an integer field. pi's own encoder
+			// folds these to CBOR ints, but a third-party peer may not.
+			if n != math.Trunc(n) || math.IsInf(n, 0) || math.Abs(n) > maxSafeInteger {
+				return invalidf("%s must be an integer", describe(at))
+			}
+			target.SetInt(int64(n))
+			return nil
+		default:
 			return invalidf("%s must be an integer", describe(at))
 		}
-		target.SetInt(n)
-		return nil
 
 	case reflect.Float32, reflect.Float64:
 		// pi has one number type, so an integer on the wire is a legal value

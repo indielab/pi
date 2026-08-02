@@ -282,7 +282,7 @@ func TestUserAndToolMessages(t *testing.T) {
 	if toolItem.Status != protocol.ToolComplete || toolItem.IsError {
 		t.Fatalf("item = %#v", toolItem)
 	}
-	details, ok := toolItem.Details.(map[string]any)
+	details, ok := (*toolItem.Details).(map[string]any)
 	if !ok || details["self"] != "[Circular]" {
 		t.Fatalf("details = %#v, want the cycle replaced", toolItem.Details)
 	}
@@ -413,7 +413,7 @@ func TestSanitizeProtocolDetails(t *testing.T) {
 	t.Parallel()
 	circular := map[string]any{}
 	circular["self"] = circular
-	if got := server.SanitizeProtocolDetails(circular); got.(map[string]any)["self"] != "[Circular]" {
+	if got := server.SanitizeProtocolDetails(circular); (*got).(map[string]any)["self"] != "[Circular]" {
 		t.Fatalf("details = %#v", got)
 	}
 
@@ -433,7 +433,16 @@ func TestSanitizeProtocolDetails(t *testing.T) {
 		{"nil", nil, nil},
 	}
 	for _, testCase := range cases {
-		if got := server.SanitizeProtocolDetails(testCase.value); got != testCase.want {
+		got := server.SanitizeProtocolDetails(testCase.value)
+		if testCase.want == nil {
+			// A nil value is pi's undefined, and pi omits the property for
+			// undefined while keeping it for null. Absent is a nil pointer.
+			if got != nil {
+				t.Fatalf("%s = %#v, want the property absent", testCase.name, *got)
+			}
+			continue
+		}
+		if got == nil || *got != testCase.want {
 			t.Fatalf("%s = %#v, want %#v", testCase.name, got, testCase.want)
 		}
 	}
@@ -441,11 +450,11 @@ func TestSanitizeProtocolDetails(t *testing.T) {
 	// A value with nothing to say is dropped from an object and becomes null
 	// inside an array, which is what pi does with undefined.
 	object := server.SanitizeProtocolDetails(map[string]any{"fn": func() {}, "keep": "yes"})
-	entries := object.(map[string]any)
+	entries := (*object).(map[string]any)
 	if _, present := entries["fn"]; present || entries["keep"] != "yes" {
 		t.Fatalf("object = %#v", entries)
 	}
-	array := server.SanitizeProtocolDetails([]any{func() {}, "value"}).([]any)
+	array := (*server.SanitizeProtocolDetails([]any{func() {}, "value"})).([]any)
 	if len(array) != 2 || array[0] != nil || array[1] != "value" {
 		t.Fatalf("array = %#v", array)
 	}
@@ -457,7 +466,7 @@ func TestSanitizeProtocolDetails(t *testing.T) {
 		Count  int
 		hidden string
 	}
-	fields := server.SanitizeProtocolDetails(detail{Kind: "read", Count: 2, hidden: "x"}).(map[string]any)
+	fields := (*server.SanitizeProtocolDetails(detail{Kind: "read", Count: 2, hidden: "x"})).(map[string]any)
 	if fields["Kind"] != "read" || fields["Count"] != float64(2) {
 		t.Fatalf("struct = %#v", fields)
 	}

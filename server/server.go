@@ -24,7 +24,8 @@ const DefaultHandshakeTimeout = 5 * time.Second
 // should get the same answer from both.
 const maxHandshakeTimeout = 2147483647 * time.Millisecond
 
-const maxUint32 = 0xffff_ffff
+// maxUint32 is uint64 because it does not fit in an int on a 32-bit build.
+const maxUint32 uint64 = 0xffff_ffff
 
 // Options configures a Server.
 type Options struct {
@@ -103,7 +104,7 @@ func New(backend Backend, options Options) (*Server, error) {
 	if options.MaxFrameLength != nil {
 		maxFrameLength = *options.MaxFrameLength
 	}
-	if maxFrameLength <= 0 || maxFrameLength > maxUint32 {
+	if maxFrameLength <= 0 || uint64(maxFrameLength) > maxUint32 {
 		return nil, fmt.Errorf("server maxFrameLength must be an integer between 1 and %d", maxUint32)
 	}
 	handshakeTimeout := options.HandshakeTimeout
@@ -572,11 +573,12 @@ func (s *Server) closeConnection(conn ByteConn, finalChunk []byte) {
 func (s *Server) toProtocolError(err error) *protocol.ProtocolError {
 	var serverError *Error
 	if errors.As(err, &serverError) && serverError.crossesProtocolBoundary() {
-		return &protocol.ProtocolError{
-			Code:    serverError.Code,
-			Message: serverError.Message,
-			Details: serverError.Details,
+		protoErr := &protocol.ProtocolError{Code: serverError.Code, Message: serverError.Message}
+		if serverError.Details != nil {
+			details := serverError.Details
+			protoErr.Details = &details
 		}
+		return protoErr
 	}
 	var validationError *protocol.ValidationError
 	if errors.As(err, &validationError) {
