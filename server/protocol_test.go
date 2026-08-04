@@ -205,6 +205,16 @@ func TestAssistantContentAndStopReasons(t *testing.T) {
 	if _, err := server.ToProtocolAssistantMessage(unknown, "message-1"); err == nil {
 		t.Fatal("an unknown stop reason must be rejected rather than guessed at")
 	}
+
+	// pi 382aa641c: protocol v1 has no deferred status, and upstream refuses
+	// the message rather than putting an unrepresentable reason on the wire.
+	deferred := message
+	deferred.StopReason = ai.StopDeferred
+	deferred.Deferred = &ai.DeferredHandle{Provider: "test", ModelID: "model-1", Api: "api", ID: "resp-1"}
+	_, err = server.ToProtocolAssistantMessage(deferred, "message-1")
+	if err == nil || !strings.Contains(err.Error(), "not supported by protocol v1") {
+		t.Fatalf("a deferred message must be refused by protocol v1, got %v", err)
+	}
 }
 
 func ptr[T any](value T) *T { return &value }

@@ -18,5 +18,9 @@ func (m *AssistantMessage) Clone() *AssistantMessage {
 	if m.Diagnostics != nil {
 		cp.Diagnostics = append([]Diagnostic(nil), m.Diagnostics...)
 	}
+	if m.Deferred != nil {
+		handle := *m.Deferred // Data stays shared: it is opaque provider JSON.
+		cp.Deferred = &handle
+	}
 	return &cp
 }

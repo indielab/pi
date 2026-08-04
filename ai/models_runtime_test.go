@@ -1273,3 +1273,145 @@ func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 		t.Fatalf("a cancelled refresh must leave the stored credential untouched: %+v", stored)
 	}
 }
+
+// deferredStreams builds ProviderStreams that redeem a handle with a fixed
+// text response and record every cancellation.
+func deferredStreams(cancelled *[]DeferredHandle) ProviderStreams {
+	return ProviderStreams{
+		Stream: func(_ context.Context, _ *Model, _ Context, _ *StreamOptions) *AssistantMessageEventStream {
+			s := NewAssistantMessageEventStream()
+			s.End()
+			return s
+		},
+		FetchDeferred: func(_ context.Context, model *Model, handle DeferredHandle, opts *DeferredFetchOptions) *AssistantMessageEventStream {
+			s := NewAssistantMessageEventStream()
+			msg := &AssistantMessage{
+				Content:    ContentList{TextContent{Text: handle.ID + ":" + opts.APIKey}},
+				Api:        model.Api,
+				Provider:   model.Provider,
+				Model:      model.ID,
+				StopReason: StopStop,
+			}
+			s.Push(AssistantMessageEvent{Type: EventDone, Reason: StopStop, Message: msg})
+			s.End()
+			return s
+		},
+		CancelDeferred: func(_ context.Context, _ *Model, handle DeferredHandle, _ *StreamOptions) error {
+			*cancelled = append(*cancelled, handle)
+			return nil
+		},
+	}
+}
+
+// TestCreateProviderAnnouncesDeferredCapabilities locks pi 382aa641c: a
+// provider exposes fetchDeferred/cancelDeferred only when some underlying api
+// implements them, which in Go is a type assertion for the capability
+// interfaces. The two capabilities are independent.
+func TestCreateProviderAnnouncesDeferredCapabilities(t *testing.T) {
+	plain := CreateProvider(CreateProviderOptions{ID: "plain", API: ptrStreams(capture(new(*Model), new(*StreamOptions)))})
+	if _, ok := plain.(DeferredFetcher); ok {
+		t.Fatal("a provider whose api cannot fetch deferred responses must not announce DeferredFetcher")
+	}
+	if _, ok := plain.(DeferredCanceller); ok {
+		t.Fatal("a provider whose api cannot cancel deferred responses must not announce DeferredCanceller")
+	}
+
+	fetchOnly := CreateProvider(CreateProviderOptions{ID: "fetch", API: ptrStreams(ProviderStreams{
+		FetchDeferred: func(_ context.Context, _ *Model, _ DeferredHandle, _ *DeferredFetchOptions) *AssistantMessageEventStream {
+			return nil
+		},
+	})})
+	if _, ok := fetchOnly.(DeferredFetcher); !ok {
+		t.Fatal("an api that fetches deferred responses must announce DeferredFetcher")
+	}
+	if _, ok := fetchOnly.(DeferredCanceller); ok {
+		t.Fatal("fetch support must not imply cancel support")
+	}
+
+	cancelOnly := CreateProvider(CreateProviderOptions{ID: "cancel", API: ptrStreams(ProviderStreams{
+		CancelDeferred: func(_ context.Context, _ *Model, _ DeferredHandle, _ *StreamOptions) error { return nil },
+	})})
+	if _, ok := cancelOnly.(DeferredCanceller); !ok {
+		t.Fatal("an api that cancels deferred responses must announce DeferredCanceller")
+	}
+	if _, ok := cancelOnly.(DeferredFetcher); ok {
+		t.Fatal("cancel support must not imply fetch support")
+	}
+
+	// A mixed-api provider announces the capability its other api has, but the
+	// model whose api lacks it still fails — with the per-api message.
+	var cancelled []DeferredHandle
+	mixed := CreateProvider(CreateProviderOptions{
+		ID: "mixed",
+		APIByApi: map[Api]ProviderStreams{
+			"api-a": deferredStreams(&cancelled),
+			"api-b": capture(new(*Model), new(*StreamOptions)),
+		},
+	})
+	fetcher, ok := mixed.(DeferredFetcher)
+	if !ok {
+		t.Fatal("one capable api must make the provider announce DeferredFetcher")
+	}
+	res := fetcher.FetchDeferred(context.Background(),
+		&Model{Provider: "mixed", ID: "b", Api: "api-b"}, DeferredHandle{ID: "x"}, &DeferredFetchOptions{}).Result()
+	if res.StopReason != StopError || !strings.Contains(res.ErrorMessage, `deferred responses for "api-b"`) {
+		t.Fatalf("an incapable api must fail per-api, got %q", res.ErrorMessage)
+	}
+}
+
+// TestModelsFetchAndCancelDeferred locks pi 382aa641c's Models entry points:
+// both apply auth before dispatch, FetchDeferred returns the redeemed message,
+// and a provider that never announced the capability is refused.
+func TestModelsFetchAndCancelDeferred(t *testing.T) {
+	var cancelled []DeferredHandle
+	m := modelsWithEnv(map[string]string{"K": "key"}, nil)
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:     "deferrer",
+		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("deferrer", "K")},
+		Models: []*Model{{Provider: "deferrer", ID: "m", Api: "api-a"}},
+		API:    ptrStreams(deferredStreams(&cancelled)),
+	}))
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:     "plain",
+		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("plain", "K")},
+		Models: []*Model{{Provider: "plain", ID: "m", Api: "api-a"}},
+		API:    ptrStreams(capture(new(*Model), new(*StreamOptions))),
+	}))
+
+	model := m.GetModel("deferrer", "m")
+	handle := DeferredHandle{Provider: "deferrer", ModelID: "m", Api: "api-a", ID: "resp-1"}
+
+	// The resolved api key must reach the provider, so auth is applied.
+	got := m.FetchDeferred(context.Background(), model, handle, nil)
+	if got.StopReason != StopStop {
+		t.Fatalf("fetch should redeem the handle, got %q (%s)", got.StopReason, got.ErrorMessage)
+	}
+	if text := got.Content[0].(TextContent).Text; text != "resp-1:key" {
+		t.Fatalf("fetch got %q, want the handle id and the resolved api key", text)
+	}
+
+	if err := m.CancelDeferred(context.Background(), model, handle, nil); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if !reflect.DeepEqual(cancelled, []DeferredHandle{handle}) {
+		t.Fatalf("cancel did not reach the provider: %+v", cancelled)
+	}
+
+	// A provider with no deferred support is refused at the Models layer.
+	plainModel := m.GetModel("plain", "m")
+	res := m.FetchDeferred(context.Background(), plainModel, handle, nil)
+	if res.StopReason != StopError || !strings.Contains(res.ErrorMessage, "does not support deferred responses") {
+		t.Fatalf("unsupported provider must fail in-band, got %q", res.ErrorMessage)
+	}
+	err := m.CancelDeferred(context.Background(), plainModel, handle, nil)
+	var me *ModelsError
+	if !errors.As(err, &me) || me.Code != ErrProvider {
+		t.Fatalf("unsupported cancel should be a provider ModelsError, got %v", err)
+	}
+
+	// An unknown provider is reported as such rather than as missing support.
+	res = m.FetchDeferred(context.Background(), &Model{Provider: "nope", ID: "m"}, handle, nil)
+	if !strings.Contains(res.ErrorMessage, "Unknown provider") {
+		t.Fatalf("unknown provider should say so, got %q", res.ErrorMessage)
+	}
+}

@@ -21,9 +21,13 @@ import (
 // applyAuth runs inline and errors flow through errorStream.
 
 // ProviderStreams binds an API's stream implementations (pi ProviderStreams).
+// FetchDeferred and CancelDeferred are nil unless the api supports deferred
+// responses; pi marks the corresponding methods optional (upstream 382aa641c).
 type ProviderStreams struct {
-	Stream       StreamFunction
-	StreamSimple StreamSimpleFunction
+	Stream         StreamFunction
+	StreamSimple   StreamSimpleFunction
+	FetchDeferred  FetchDeferredFunction
+	CancelDeferred CancelDeferredFunction
 }
 
 // ModelsPublication is one atomic catalog publication (pi ModelsPublication,
@@ -116,6 +120,22 @@ type Provider interface {
 	StreamSimple(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream
 }
 
+// DeferredFetcher is the optional Provider capability of redeeming a
+// DeferredHandle (pi's optional Provider.fetchDeferred). A Provider announces
+// it by implementing this interface, so callers detect support with a type
+// assertion where pi checks whether the method is present. CreateProvider
+// exposes it only when some underlying api implements it.
+type DeferredFetcher interface {
+	FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredFetchOptions) *AssistantMessageEventStream
+}
+
+// DeferredCanceller is the optional Provider capability of dropping a deferred
+// response (pi's optional Provider.cancelDeferred). It is independent of
+// DeferredFetcher: an api may implement either alone.
+type DeferredCanceller interface {
+	CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error
+}
+
 // CreateProviderOptions are the parts createProvider assembles into a Provider.
 // Exactly one of API / APIByApi is used: API streams all models; APIByApi
 // dispatches on model.Api (a model whose api has no entry produces a stream
@@ -160,7 +180,7 @@ func CreateProvider(input CreateProviderOptions) Provider {
 	if name == "" {
 		name = input.ID
 	}
-	return &providerImpl{
+	p := &providerImpl{
 		id:       input.ID,
 		name:     name,
 		baseURL:  input.BaseURL,
@@ -172,6 +192,49 @@ func CreateProvider(input CreateProviderOptions) Provider {
 		filterFn: input.FilterModels,
 		baseline: input.Models,
 	}
+
+	// The deferred capabilities are announced only when some underlying api
+	// implements them, so a type assertion answers the question pi answers by
+	// checking whether the optional method is present.
+	canFetch, canCancel := false, false
+	for _, s := range p.allStreams() {
+		canFetch = canFetch || s.FetchDeferred != nil
+		canCancel = canCancel || s.CancelDeferred != nil
+	}
+	switch {
+	case canFetch && canCancel:
+		return deferredProvider{p}
+	case canFetch:
+		return deferredFetchProvider{p}
+	case canCancel:
+		return deferredCancelProvider{p}
+	}
+	return p
+}
+
+// deferredFetchProvider, deferredCancelProvider and deferredProvider expose the
+// deferred capabilities a provider's apis actually implement. Each embeds the
+// same providerImpl, so only the announced interfaces differ.
+type deferredFetchProvider struct{ *providerImpl }
+
+func (p deferredFetchProvider) FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredFetchOptions) *AssistantMessageEventStream {
+	return p.fetchDeferred(ctx, model, handle, opts)
+}
+
+type deferredCancelProvider struct{ *providerImpl }
+
+func (p deferredCancelProvider) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error {
+	return p.cancelDeferred(ctx, model, handle, opts)
+}
+
+type deferredProvider struct{ *providerImpl }
+
+func (p deferredProvider) FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredFetchOptions) *AssistantMessageEventStream {
+	return p.fetchDeferred(ctx, model, handle, opts)
+}
+
+func (p deferredProvider) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error {
+	return p.cancelDeferred(ctx, model, handle, opts)
 }
 
 func (p *providerImpl) ID() string                 { return p.id }
@@ -268,6 +331,18 @@ func (p *providerImpl) RefreshModels(ctx context.Context, req RefreshModelsConte
 	return err
 }
 
+// allStreams returns every api implementation the provider was built with.
+func (p *providerImpl) allStreams() []ProviderStreams {
+	if p.single != nil {
+		return []ProviderStreams{*p.single}
+	}
+	streams := make([]ProviderStreams, 0, len(p.byAPI))
+	for _, s := range p.byAPI {
+		streams = append(streams, s)
+	}
+	return streams
+}
+
 // streamsFor selects the ProviderStreams for a model's api.
 func (p *providerImpl) streamsFor(model *Model) (ProviderStreams, bool) {
 	if p.single != nil {
@@ -291,6 +366,27 @@ func (p *providerImpl) StreamSimple(ctx context.Context, model *Model, req Conte
 		return errorStream(model, newModelsError(ErrStream, "Provider "+p.id+" has no API implementation for \""+model.Api+"\"", nil))
 	}
 	return s.StreamSimple(ctx, model, req, opts)
+}
+
+// fetchDeferred backs the announced DeferredFetcher. A provider announces the
+// capability when any of its apis has it, so the model's own api may still not.
+func (p *providerImpl) fetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredFetchOptions) *AssistantMessageEventStream {
+	s, ok := p.streamsFor(model)
+	if !ok || s.FetchDeferred == nil {
+		return errorStream(model, newModelsError(ErrProvider,
+			"Provider "+p.id+" does not support deferred responses for \""+model.Api+"\"", nil))
+	}
+	return s.FetchDeferred(ctx, model, handle, opts)
+}
+
+// cancelDeferred backs the announced DeferredCanceller.
+func (p *providerImpl) cancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error {
+	s, ok := p.streamsFor(model)
+	if !ok || s.CancelDeferred == nil {
+		return newModelsError(ErrProvider,
+			"Provider "+p.id+" cannot cancel deferred responses for \""+model.Api+"\"", nil)
+	}
+	return s.CancelDeferred(ctx, model, handle, opts)
 }
 
 // ModelsRefreshOptions configure Models.Refresh (pi ModelsRefreshOptions).
@@ -333,6 +429,13 @@ type ModelsStreamOptions struct {
 // (pi ModelsSimpleStreamOptions).
 type ModelsSimpleStreamOptions struct {
 	SimpleStreamOptions
+	ModelsStreamTransforms
+}
+
+// ModelsDeferredOptions are Models.FetchDeferred/CancelDeferred options
+// (pi ModelsDeferredOptions).
+type ModelsDeferredOptions struct {
+	DeferredFetchOptions
 	ModelsStreamTransforms
 }
 
@@ -391,6 +494,18 @@ type Models interface {
 	Complete(ctx context.Context, model *Model, req Context, opts *ModelsStreamOptions) *AssistantMessage
 	StreamSimple(ctx context.Context, model *Model, req Context, opts *ModelsSimpleStreamOptions) *AssistantMessageEventStream
 	CompleteSimple(ctx context.Context, model *Model, req Context, opts *ModelsSimpleStreamOptions) *AssistantMessage
+
+	// FetchDeferred redeems a DeferredHandle through the provider that owns the
+	// model (pi fetchDeferred). Like Complete it returns the final message, and
+	// resolution failures — an unknown provider, one that cannot fetch deferred
+	// responses — arrive as an error message rather than a Go error. A response
+	// the provider is still producing comes back with StopDeferred and the
+	// handle to retry with.
+	FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredOptions) *AssistantMessage
+
+	// CancelDeferred drops a deferred response (pi cancelDeferred). It has no
+	// message to carry a failure, so it returns one.
+	CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredOptions) error
 }
 
 // MutableModels adds provider mutation (pi MutableModels).
@@ -1105,6 +1220,62 @@ func (m *modelsImpl) StreamSimple(ctx context.Context, model *Model, req Context
 
 func (m *modelsImpl) CompleteSimple(ctx context.Context, model *Model, req Context, opts *ModelsSimpleStreamOptions) *AssistantMessage {
 	return m.StreamSimple(ctx, model, req, opts).Result()
+}
+
+func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredOptions) *AssistantMessage {
+	p := m.GetProvider(model.Provider)
+	fetcher, ok := p.(DeferredFetcher)
+	if !ok {
+		return errorStream(model, deferredUnsupported(p, model.Provider)).Result()
+	}
+	requestModel, requestOptions, err := m.applyDeferredAuth(ctx, model, opts)
+	if err != nil {
+		return errorStream(model, err).Result()
+	}
+	deferredOptions := DeferredFetchOptions{StreamOptions: *requestOptions}
+	if opts != nil {
+		deferredOptions.Wait = opts.Wait
+	}
+	return fetcher.FetchDeferred(ctx, requestModel, handle, &deferredOptions).Result()
+}
+
+func (m *modelsImpl) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredOptions) error {
+	p := m.GetProvider(model.Provider)
+	canceller, ok := p.(DeferredCanceller)
+	if !ok {
+		return deferredUnsupported(p, model.Provider)
+	}
+	requestModel, requestOptions, err := m.applyDeferredAuth(ctx, model, opts)
+	if err != nil {
+		return err
+	}
+	return canceller.CancelDeferred(ctx, requestModel, handle, requestOptions)
+}
+
+// deferredUnsupported explains a failed deferred capability assertion: either
+// no provider owns the model, or the one that does never announced deferred
+// responses (pi's `!provider.fetchDeferred` / `!provider.cancelDeferred`).
+func deferredUnsupported(p Provider, providerID string) error {
+	if p == nil {
+		return newModelsError(ErrProvider, "Unknown provider: "+providerID, nil)
+	}
+	return newModelsError(ErrProvider,
+		"Provider "+providerID+" does not support deferred responses", nil)
+}
+
+// applyDeferredAuth is applyAuth over ModelsDeferredOptions.
+func (m *modelsImpl) applyDeferredAuth(
+	ctx context.Context,
+	model *Model,
+	opts *ModelsDeferredOptions,
+) (*Model, *StreamOptions, error) {
+	var base *StreamOptions
+	var transforms ModelsStreamTransforms
+	if opts != nil {
+		base = &opts.StreamOptions
+		transforms = opts.ModelsStreamTransforms
+	}
+	return m.applyAuth(ctx, model, base, transforms)
 }
 
 // HasApi reports whether a model uses the given api (pi hasApi narrowing).

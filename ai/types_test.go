@@ -258,3 +258,65 @@ func TestConstrainedSamplingUnknownTypeRejected(t *testing.T) {
 		}
 	})
 }
+
+// TestAssistantDeferredHandleRoundTrip locks pi 382aa641c's message-format
+// half: a deferred assistant message persists its stop reason and handle, and
+// a message without one is byte-identical to what it was before the field
+// existed.
+func TestAssistantDeferredHandleRoundTrip(t *testing.T) {
+	plain := AssistantMessage{
+		Content: ContentList{TextContent{Text: "hi"}}, Api: "api", Provider: "p",
+		Model: "m", StopReason: StopStop, Timestamp: 5,
+	}
+	raw, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "deferred") {
+		t.Fatalf("a message without a handle must not gain a deferred field: %s", raw)
+	}
+
+	deferred := plain
+	deferred.Content = ContentList{}
+	deferred.StopReason = StopDeferred
+	deferred.Deferred = &DeferredHandle{
+		Provider: "p", ModelID: "m", Api: "api", ID: "resp-1", PollAfterMs: 25,
+		Data: map[string]any{"cursor": "abc"},
+	}
+	raw, err = json.Marshal(deferred)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"stopReason":"deferred"`) {
+		t.Fatalf("stop reason not persisted: %s", raw)
+	}
+	if strings.Contains(string(raw), "expiresAt") {
+		t.Fatalf("an unset expiresAt must be omitted: %s", raw)
+	}
+
+	back, err := UnmarshalMessage(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	msg, ok := back.(AssistantMessage)
+	if !ok {
+		t.Fatalf("round-trip type = %T, want AssistantMessage", back)
+	}
+	if msg.StopReason != StopDeferred || msg.Deferred == nil {
+		t.Fatalf("deferred message did not round-trip: %+v", msg)
+	}
+	if msg.Deferred.ID != "resp-1" || msg.Deferred.PollAfterMs != 25 || msg.Deferred.ModelID != "m" {
+		t.Fatalf("handle round-trip = %+v", *msg.Deferred)
+	}
+	data, ok := msg.Deferred.Data.(map[string]any)
+	if !ok || data["cursor"] != "abc" {
+		t.Fatalf("opaque handle data did not survive: %#v", msg.Deferred.Data)
+	}
+
+	// Cloning must not alias the handle back onto the original message.
+	clone := msg.Clone()
+	clone.Deferred.ID = "other"
+	if msg.Deferred.ID != "resp-1" {
+		t.Fatal("Clone must copy the deferred handle, not alias it")
+	}
+}

@@ -85,13 +85,31 @@ func FauxStatic(msg *ai.AssistantMessage) FauxResponseStep {
 // FauxState exposes mutable per-registration state.
 type FauxState struct {
 	CallCount int
+	// DeferredFetchCount counts FetchDeferred calls, including the ones that
+	// answered with the handle again.
+	DeferredFetchCount int
+	// CancelledDeferred records every handle passed to CancelDeferred, in order.
+	CancelledDeferred []ai.DeferredHandle
+}
+
+// FauxDeferredOptions script the deferred-response behavior of a faux provider
+// (pi RegisterFauxProviderOptions.deferred).
+type FauxDeferredOptions struct {
+	// PendingFetches is how many fetches answer with the handle again before the
+	// scripted response becomes ready. Negative values count as zero.
+	PendingFetches int
+	// PollAfterMs is echoed on every handle the provider issues.
+	PollAfterMs int64
 }
 
 // RegisterFauxProviderOptions configures a faux provider registration.
 type RegisterFauxProviderOptions struct {
-	Api             string
-	Provider        string
-	Models          []FauxModelDefinition
+	Api      string
+	Provider string
+	Models   []FauxModelDefinition
+	// Deferred enables deferred responses; nil still registers the deferred
+	// entry points, it just leaves them at their defaults.
+	Deferred        *FauxDeferredOptions
 	TokensPerSecond float64
 	MinTokenSize    int
 	MaxTokenSize    int
@@ -111,6 +129,25 @@ type FauxProviderRegistration struct {
 	tps          float64
 	promptCache  map[string]string
 	provider     string
+	deferredCfg  FauxDeferredOptions
+	deferred     map[string]*fauxDeferredEntry
+}
+
+// fauxDeferredEntry is one accepted-but-unfinished submission, held until a
+// fetch redeems it or a cancel drops it.
+type fauxDeferredEntry struct {
+	// mu guards the mutable fields below. It is per entry, not the
+	// registration's lock, because redeeming runs the scripted step, which
+	// takes the registration lock to estimate usage.
+	mu             sync.Mutex
+	handle         ai.DeferredHandle
+	step           FauxResponseStep
+	req            ai.Context
+	opts           *ai.SimpleStreamOptions
+	model          *ai.Model
+	pendingFetches int
+	cancelled      bool
+	final          *ai.AssistantMessage
 }
 
 // GetModel returns the model with the given id, or the first model if id is empty.
@@ -223,6 +260,11 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 		tps:          options.TokensPerSecond,
 		promptCache:  map[string]string{},
 		provider:     provider,
+		deferred:     map[string]*fauxDeferredEntry{},
+	}
+	if options.Deferred != nil {
+		reg.deferredCfg = *options.Deferred
+		reg.deferredCfg.PendingFetches = max(0, reg.deferredCfg.PendingFetches)
 	}
 
 	streamSimple := func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
@@ -247,12 +289,68 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 				outer.End()
 				return
 			}
-			resolved := step(req, opts, reg.State, model)
-			msg := fauxClone(resolved, api, provider, model.ID)
-			msg = reg.withUsageEstimate(msg, req, opts)
-			reg.streamWithDeltas(ctx, outer, msg)
+			if opts != nil && opts.Deferred != nil {
+				handle := ai.DeferredHandle{
+					Provider:    model.Provider,
+					ModelID:     model.ID,
+					Api:         model.Api,
+					ID:          randomID("deferred"),
+					PollAfterMs: reg.deferredCfg.PollAfterMs,
+				}
+				reg.mu.Lock()
+				reg.deferred[handle.ID] = &fauxDeferredEntry{
+					handle:         handle,
+					step:           step,
+					req:            req,
+					opts:           opts,
+					model:          model,
+					pendingFetches: reg.deferredCfg.PendingFetches,
+				}
+				reg.mu.Unlock()
+				reg.streamWithDeltas(ctx, outer, fauxDeferredMessage(model, handle))
+				return
+			}
+			reg.streamWithDeltas(ctx, outer, reg.resolveResponse(step, req, opts, model))
 		}()
 		return outer
+	}
+
+	fetchDeferred := func(ctx context.Context, model *ai.Model, handle ai.DeferredHandle, opts *ai.DeferredFetchOptions) *ai.AssistantMessageEventStream {
+		outer := ai.NewAssistantMessageEventStream()
+		reg.mu.Lock()
+		reg.State.DeferredFetchCount++
+		reg.mu.Unlock()
+
+		go func() {
+			if opts != nil && opts.OnResponse != nil {
+				_ = opts.OnResponse(ai.ProviderResponse{Status: 200, Headers: map[string]string{}}, model)
+			}
+			message, err := reg.redeem(ctx, model, handle, opts)
+			if err != nil {
+				msg := fauxErrorMessage(err, api, provider, model.ID)
+				outer.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: ai.StopError, Error: msg})
+				outer.End()
+				return
+			}
+			reg.streamWithDeltas(ctx, outer, message)
+		}()
+		return outer
+	}
+
+	cancelDeferred := func(_ context.Context, model *ai.Model, handle ai.DeferredHandle, opts *ai.StreamOptions) error {
+		reg.mu.Lock()
+		reg.State.CancelledDeferred = append(reg.State.CancelledDeferred, handle)
+		entry := reg.deferred[handle.ID]
+		reg.mu.Unlock()
+		if entry != nil {
+			entry.mu.Lock()
+			entry.cancelled = true
+			entry.mu.Unlock()
+		}
+		if opts != nil && opts.OnResponse != nil {
+			return opts.OnResponse(ai.ProviderResponse{Status: 200, Headers: map[string]string{}}, model)
+		}
+		return nil
 	}
 
 	ai.RegisterApiProvider(ai.ApiProvider{
@@ -264,10 +362,92 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 			}
 			return streamSimple(ctx, model, req, simple)
 		},
-		StreamSimple: streamSimple,
+		StreamSimple:   streamSimple,
+		FetchDeferred:  fetchDeferred,
+		CancelDeferred: cancelDeferred,
 	}, reg.sourceID)
 
 	return reg
+}
+
+// resolveResponse runs one scripted step and finishes the message the way a
+// real provider would (identity fields plus a usage estimate).
+func (r *FauxProviderRegistration) resolveResponse(
+	step FauxResponseStep,
+	req ai.Context,
+	opts *ai.SimpleStreamOptions,
+	model *ai.Model,
+) *ai.AssistantMessage {
+	resolved := step(req, opts, r.State, model)
+	msg := fauxClone(resolved, r.Api, r.provider, model.ID)
+	return r.withUsageEstimate(msg, req, opts)
+}
+
+// redeem answers one FetchDeferred: the handle again while fetches are still
+// scripted as pending, otherwise the scripted response, resolved once and
+// cached so repeat fetches are idempotent.
+func (r *FauxProviderRegistration) redeem(
+	_ context.Context,
+	model *ai.Model,
+	handle ai.DeferredHandle,
+	opts *ai.DeferredFetchOptions,
+) (*ai.AssistantMessage, error) {
+	r.mu.Lock()
+	entry := r.deferred[handle.ID]
+	r.mu.Unlock()
+	if entry == nil ||
+		entry.handle.Provider != handle.Provider ||
+		entry.handle.ModelID != handle.ModelID ||
+		entry.handle.Api != handle.Api {
+		return nil, fmt.Errorf("Unknown faux deferred response: %s", handle.ID)
+	}
+	entry.mu.Lock()
+	defer entry.mu.Unlock()
+	if entry.cancelled {
+		return nil, fmt.Errorf("Faux deferred response was cancelled: %s", handle.ID)
+	}
+	if entry.pendingFetches > 0 {
+		entry.pendingFetches--
+		return fauxDeferredMessage(model, entry.handle), nil
+	}
+	if entry.final == nil {
+		entry.final = r.resolveResponse(entry.step, entry.req, fauxRedeemOptions(entry.opts, opts), entry.model)
+	}
+	return entry.final, nil
+}
+
+// fauxRedeemOptions builds the options the scripted step sees when a fetch
+// redeems a submission: the submission's options minus the deferral request
+// and its own response hook, with the fetch's options layered over them. pi
+// spreads `{...submissionOptions, ...fetchOptions}`, where an absent key does
+// not override; Go has no key presence, so the port's zero-means-unset
+// convention decides instead — the fetch's stream options win when they are
+// set at all.
+func fauxRedeemOptions(submission *ai.SimpleStreamOptions, fetch *ai.DeferredFetchOptions) *ai.SimpleStreamOptions {
+	merged := ai.SimpleStreamOptions{}
+	if submission != nil {
+		merged = *submission
+	}
+	merged.Deferred = nil
+	merged.OnResponse = nil
+	if fetch != nil {
+		merged.StreamOptions = fetch.StreamOptions
+	}
+	return &merged
+}
+
+// fauxDeferredMessage is the empty assistant message that carries a handle.
+func fauxDeferredMessage(model *ai.Model, handle ai.DeferredHandle) *ai.AssistantMessage {
+	return &ai.AssistantMessage{
+		Content:    ai.ContentList{},
+		Api:        model.Api,
+		Provider:   model.Provider,
+		Model:      model.ID,
+		Usage:      fauxDefaultUsage,
+		StopReason: ai.StopDeferred,
+		Deferred:   &handle,
+		Timestamp:  nowMillis(),
+	}
 }
 
 func (r *FauxProviderRegistration) streamWithDeltas(ctx context.Context, stream *ai.AssistantMessageEventStream, message *ai.AssistantMessage) {

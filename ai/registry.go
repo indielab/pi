@@ -17,11 +17,24 @@ type StreamFunction func(ctx context.Context, model *Model, req Context, opts *S
 // StreamSimpleFunction is StreamFunction with unified reasoning options.
 type StreamSimpleFunction func(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream
 
-// ApiProvider binds an Api to its stream implementations.
+// FetchDeferredFunction redeems a DeferredHandle, streaming the response the
+// provider has been producing asynchronously. Like StreamFunction it reports
+// failures through the returned stream (pi ProviderStreams.fetchDeferred).
+type FetchDeferredFunction func(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredFetchOptions) *AssistantMessageEventStream
+
+// CancelDeferredFunction drops a deferred response. It has no stream to fail
+// through, so it returns an error (pi ProviderStreams.cancelDeferred).
+type CancelDeferredFunction func(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error
+
+// ApiProvider binds an Api to its stream implementations. FetchDeferred and
+// CancelDeferred are nil unless the api supports deferred responses — pi marks
+// the corresponding methods optional (upstream 382aa641c).
 type ApiProvider struct {
-	Api          Api
-	Stream       StreamFunction
-	StreamSimple StreamSimpleFunction
+	Api            Api
+	Stream         StreamFunction
+	StreamSimple   StreamSimpleFunction
+	FetchDeferred  FetchDeferredFunction
+	CancelDeferred CancelDeferredFunction
 }
 
 type registeredProvider struct {
@@ -65,8 +78,34 @@ func RegisterApiProvider(p ApiProvider, sourceID ...string) {
 			return orig(ctx, model, req, opts)
 		}
 	}
+	fetchDeferred := p.FetchDeferred
+	if fetchDeferred != nil {
+		orig := fetchDeferred
+		fetchDeferred = func(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredFetchOptions) *AssistantMessageEventStream {
+			if model.Api != api {
+				panic(fmt.Sprintf("Mismatched api: %s expected %s", model.Api, api))
+			}
+			return orig(ctx, model, handle, opts)
+		}
+	}
+	cancelDeferred := p.CancelDeferred
+	if cancelDeferred != nil {
+		orig := cancelDeferred
+		cancelDeferred = func(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error {
+			if model.Api != api {
+				panic(fmt.Sprintf("Mismatched api: %s expected %s", model.Api, api))
+			}
+			return orig(ctx, model, handle, opts)
+		}
+	}
 	registry[api] = registeredProvider{
-		provider: ApiProvider{Api: api, Stream: stream, StreamSimple: streamSimple},
+		provider: ApiProvider{
+			Api:            api,
+			Stream:         stream,
+			StreamSimple:   streamSimple,
+			FetchDeferred:  fetchDeferred,
+			CancelDeferred: cancelDeferred,
+		},
 		sourceID: sid,
 	}
 }

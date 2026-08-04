@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"time"
 )
 
 // Api identifies a wire protocol / API shape. Known values mirror pi's KnownApi
@@ -90,7 +91,65 @@ const (
 	StopToolUse StopReason = "toolUse"
 	StopError   StopReason = "error"
 	StopAborted StopReason = "aborted"
+	// StopDeferred marks a submission the provider accepted but has not
+	// finished: the message carries a DeferredHandle instead of content, and
+	// the response is redeemed later through Models.FetchDeferred (pi
+	// 382aa641c). Protocol v1 cannot represent it — the server bridge refuses
+	// such a message rather than putting an unknown reason on the wire.
+	StopDeferred StopReason = "deferred"
 )
+
+// DeferredHandle is a durable reference to a response a provider accepted and
+// is producing asynchronously (pi DeferredHandle, upstream 382aa641c). It is
+// what a "deferred" assistant message carries in place of content, and what
+// FetchDeferred/CancelDeferred take to redeem or drop that response.
+type DeferredHandle struct {
+	Provider ProviderId `json:"provider"`
+	ModelID  string     `json:"modelId"`
+	Api      Api        `json:"api"`
+	// ID is the provider's own token: a response id, or a batch id plus row id.
+	ID string `json:"id"`
+	// ExpiresAt is when the provider stops honoring the handle, in Unix
+	// milliseconds; zero when the provider did not say.
+	ExpiresAt int64 `json:"expiresAt,omitempty"`
+	// PollAfterMs is how long the provider asks callers to wait before fetching
+	// again; zero when the provider did not say.
+	PollAfterMs int64 `json:"pollAfterMs,omitempty"`
+	// Data is provider conversion data needed to reconstruct the final
+	// assistant message. pi types it as `JsonValue`, a compile-time constraint
+	// with no Go counterpart; encoding/json imposes the same requirement at
+	// marshal time, so this is `any` like ToolResultMessage.Details.
+	Data any `json:"data,omitempty"`
+}
+
+// DeferredWindow is how long a provider should keep working on a deferred
+// submission (pi SimpleStreamOptions.deferred.window).
+type DeferredWindow string
+
+const (
+	DeferredWindow15m DeferredWindow = "15m"
+	DeferredWindow1h  DeferredWindow = "1h"
+	DeferredWindow24h DeferredWindow = "24h"
+)
+
+// DeferredRequest asks a capable provider to return a DeferredHandle and carry
+// on with the request asynchronously. pi writes this as
+// `deferred?: boolean | { window?: ... }`; Go collapses the union onto a
+// pointer, so a non-nil DeferredRequest with an empty Window is pi's
+// `deferred: true`.
+type DeferredRequest struct {
+	Window DeferredWindow
+}
+
+// DeferredFetchOptions are the options for redeeming a DeferredHandle
+// (pi DeferredFetchOptions).
+type DeferredFetchOptions struct {
+	StreamOptions
+	// Wait bounds how long to wait for a terminal response. Zero checks once;
+	// nil leaves the wait to the provider (pi's `wait?: number` in
+	// milliseconds).
+	Wait *time.Duration
+}
 
 // Role identifies a message author.
 type Role string
@@ -371,7 +430,9 @@ type AssistantMessage struct {
 	Diagnostics   []Diagnostic `json:"diagnostics,omitempty"`
 	Usage         Usage        `json:"usage"`
 	StopReason    StopReason   `json:"stopReason"`
-	ErrorMessage  string       `json:"errorMessage,omitempty"`
+	// Deferred is the handle to redeem when StopReason is StopDeferred.
+	Deferred     *DeferredHandle `json:"deferred,omitempty"`
+	ErrorMessage string          `json:"errorMessage,omitempty"`
 	// RawStopReason preserves the provider's own stop/finish reason verbatim,
 	// before it was mapped onto StopReason (pi d7b02636 `rawStopReason?`).
 	RawStopReason string `json:"rawStopReason,omitempty"`
@@ -678,6 +739,10 @@ type StreamOptions struct {
 // SimpleStreamOptions extends StreamOptions with unified reasoning controls.
 type SimpleStreamOptions struct {
 	StreamOptions
-	Reasoning       ThinkingLevel
+	Reasoning ThinkingLevel
+	// Deferred asks a capable provider to return a DeferredHandle and continue
+	// the request asynchronously; nil is pi's absent `deferred`. Providers that
+	// do not support deferral ignore it.
+	Deferred        *DeferredRequest
 	ThinkingBudgets *ThinkingBudgets
 }

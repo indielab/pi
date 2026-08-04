@@ -31,7 +31,12 @@ func BuiltinModels() MutableModels {
 				continue
 			}
 			if ap, ok := GetApiProvider(mod.Api); ok {
-				apiMap[mod.Api] = ProviderStreams{Stream: ap.Stream, StreamSimple: ap.StreamSimple}
+				apiMap[mod.Api] = ProviderStreams{
+					Stream:         ap.Stream,
+					StreamSimple:   ap.StreamSimple,
+					FetchDeferred:  ap.FetchDeferred,
+					CancelDeferred: ap.CancelDeferred,
+				}
 			}
 		}
 		m.SetProvider(CreateProvider(CreateProviderOptions{

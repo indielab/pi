@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
@@ -148,5 +149,114 @@ func TestFauxProviderCachePrefix(t *testing.T) {
 	second := ai.StreamSimple(context.Background(), model, req, opts).Result()
 	if second.Usage.CacheRead == 0 {
 		t.Fatalf("second call should read cache, got %+v", second.Usage)
+	}
+}
+
+// TestFauxProviderDeferredResponses locks pi 382aa641c's faux half: a
+// submission that asks for deferral streams an empty "deferred" message
+// carrying a handle, fetches answer with that same handle while the script
+// says the response is still pending, and the next fetch redeems the scripted
+// response.
+func TestFauxProviderDeferredResponses(t *testing.T) {
+	reg := RegisterFauxProvider(RegisterFauxProviderOptions{
+		Deferred: &FauxDeferredOptions{PendingFetches: 1, PollAfterMs: 25},
+	})
+	defer reg.Unregister()
+	reg.SetResponses([]FauxResponseStep{
+		FauxStatic(FauxAssistantMessage(ai.ContentList{FauxText("ready")}, ai.StopStop)),
+	})
+
+	model := reg.GetModel()
+	api, ok := ai.GetApiProvider(model.Api)
+	if !ok || api.FetchDeferred == nil || api.CancelDeferred == nil {
+		t.Fatal("the faux api must register both deferred entry points")
+	}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+
+	submission := ai.StreamSimple(context.Background(), model, req,
+		&ai.SimpleStreamOptions{Deferred: &ai.DeferredRequest{Window: ai.DeferredWindow1h}})
+	var types []ai.EventType
+	for e := range submission.Events() {
+		types = append(types, e.Type)
+	}
+	accepted := submission.Result()
+	if len(types) != 2 || types[0] != ai.EventStart || types[1] != ai.EventDone {
+		t.Fatalf("a deferred submission streams no content, got %v", types)
+	}
+	if accepted.StopReason != ai.StopDeferred || len(accepted.Content) != 0 {
+		t.Fatalf("submission = %q with %d blocks, want an empty deferred message", accepted.StopReason, len(accepted.Content))
+	}
+	if accepted.Deferred == nil {
+		t.Fatal("a deferred submission must carry a handle")
+	}
+	handle := *accepted.Deferred
+	if handle.Provider != model.Provider || handle.ModelID != model.ID || handle.Api != model.Api || handle.ID == "" {
+		t.Fatalf("handle does not identify the request: %+v", handle)
+	}
+	if handle.PollAfterMs != 25 {
+		t.Fatalf("handle pollAfterMs = %d, want the scripted 25", handle.PollAfterMs)
+	}
+
+	// The scripted pending fetch answers with the same handle, not the response.
+	pending := api.FetchDeferred(context.Background(), model, handle, &ai.DeferredFetchOptions{}).Result()
+	if pending.StopReason != ai.StopDeferred || pending.Deferred == nil || pending.Deferred.ID != handle.ID {
+		t.Fatalf("a pending fetch must return the handle again, got %q", pending.StopReason)
+	}
+
+	ready := api.FetchDeferred(context.Background(), model, handle, &ai.DeferredFetchOptions{}).Result()
+	if ready.StopReason != ai.StopStop || len(ready.Content) != 1 {
+		t.Fatalf("the next fetch must redeem the response, got %q (%s)", ready.StopReason, ready.ErrorMessage)
+	}
+	if text := ready.Content[0].(ai.TextContent).Text; text != "ready" {
+		t.Fatalf("redeemed text = %q", text)
+	}
+	if ready.Usage.TotalTokens == 0 {
+		t.Fatal("a redeemed response must be usage-estimated like a streamed one")
+	}
+	// The submission consumed one scripted response; both fetches were counted.
+	if reg.State.CallCount != 1 || reg.State.DeferredFetchCount != 2 {
+		t.Fatalf("state = callCount %d, deferredFetchCount %d; want 1 and 2",
+			reg.State.CallCount, reg.State.DeferredFetchCount)
+	}
+}
+
+// TestFauxProviderDeferredCancelAndFailures locks the faux's failure surface:
+// cancellation is recorded and makes later fetches fail, and an unknown handle
+// fails in-band rather than panicking.
+func TestFauxProviderDeferredCancelAndFailures(t *testing.T) {
+	reg := RegisterFauxProvider(RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+	reg.SetResponses([]FauxResponseStep{
+		FauxStatic(FauxAssistantMessage(ai.ContentList{FauxText("cancelled")}, ai.StopStop)),
+	})
+
+	model := reg.GetModel()
+	api, _ := ai.GetApiProvider(model.Api)
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+
+	accepted := ai.StreamSimple(context.Background(), model, req,
+		&ai.SimpleStreamOptions{Deferred: &ai.DeferredRequest{}}).Result()
+	if accepted.Deferred == nil {
+		t.Fatalf("bare deferral must still produce a handle, got %q", accepted.StopReason)
+	}
+	handle := *accepted.Deferred
+
+	if err := api.CancelDeferred(context.Background(), model, handle, nil); err != nil {
+		t.Fatalf("cancel: %v", err)
+	}
+	if len(reg.State.CancelledDeferred) != 1 || reg.State.CancelledDeferred[0].ID != handle.ID {
+		t.Fatalf("cancellation not recorded: %+v", reg.State.CancelledDeferred)
+	}
+	cancelled := api.FetchDeferred(context.Background(), model, handle, &ai.DeferredFetchOptions{}).Result()
+	if cancelled.StopReason != ai.StopError || !strings.Contains(cancelled.ErrorMessage, "was cancelled") {
+		t.Fatalf("fetching a cancelled response must fail in-band, got %q (%s)",
+			cancelled.StopReason, cancelled.ErrorMessage)
+	}
+
+	unknown := api.FetchDeferred(context.Background(), model,
+		ai.DeferredHandle{Provider: model.Provider, ModelID: model.ID, Api: model.Api, ID: "nope"},
+		&ai.DeferredFetchOptions{}).Result()
+	if unknown.StopReason != ai.StopError || !strings.Contains(unknown.ErrorMessage, "Unknown faux deferred response") {
+		t.Fatalf("an unknown handle must fail in-band, got %q (%s)", unknown.StopReason, unknown.ErrorMessage)
 	}
 }
