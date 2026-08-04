@@ -181,3 +181,53 @@ func TestSummarizationIsolatesRouting(t *testing.T) {
 		t.Fatalf("both summarization requests shared session id %q, want distinct ids", sessionIDs[0])
 	}
 }
+
+// TestSummarizationUsesSessionStreamFunctionBaseURL locks the Go-side guarantee
+// behind pi 18d65de62 (#6768): a Copilot compaction request must go to the
+// credential-resolved endpoint, not the catalog's Individual one.
+//
+// pi had to fix this because AgentSession resolves auth itself and used to hand
+// compact() `this.model` (catalog baseUrl) with only the resolved apiKey and
+// headers. The Go port does no auth resolution in `coding`: summarization
+// streams through the session's own StreamFn with the session's model, exactly
+// like a normal turn, so a stream function that rebuilds the model from resolved
+// auth — as ai.Models does in applyAuth — rewrites the compaction request too.
+func TestSummarizationUsesSessionStreamFunctionBaseURL(t *testing.T) {
+	const individualBaseURL = "https://api.individual.githubcopilot.com"
+	const enterpriseBaseURL = "https://api.enterprise.githubcopilot.com"
+
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+	reg.SetResponses([]providers.FauxResponseStep{
+		providers.FauxStatic(providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "## Goal\nsummary"}}, ai.StopStop)),
+	})
+
+	model := reg.GetModel()
+	model.BaseURL = individualBaseURL
+
+	var requestBaseURL string
+	// Stands in for ai.Models applyAuth: the resolved auth carries the Business /
+	// Enterprise endpoint, so the request model is rebuilt with it.
+	streamFn := func(ctx context.Context, m *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		if m.BaseURL == individualBaseURL {
+			rebuilt := *m
+			rebuilt.BaseURL = enterpriseBaseURL
+			m = &rebuilt
+		}
+		requestBaseURL = m.BaseURL
+		return ai.StreamSimple(ctx, m, req, opts)
+	}
+
+	sess := NewSession(SessionOptions{Model: model, Cwd: t.TempDir(), NoTools: NoToolsAll, StreamFn: streamFn})
+	older := []agent.AgentMessage{
+		ai.NewUserText("summarize me", 1),
+		ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "ok"}}, StopReason: ai.StopStop, Timestamp: 2},
+	}
+	if summary := sess.summarize(context.Background(), older, 16384); summary == "" {
+		t.Fatal("summarization produced no summary")
+	}
+
+	if requestBaseURL != enterpriseBaseURL {
+		t.Fatalf("compaction request base URL = %q, want %q", requestBaseURL, enterpriseBaseURL)
+	}
+}
