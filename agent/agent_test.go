@@ -1329,3 +1329,55 @@ func TestAgentForwardsHTTPClientToStreamOptions(t *testing.T) {
 		t.Fatalf("HTTPClient not forwarded to stream options: got %#v", got)
 	}
 }
+
+// TestAgentForwardsShouldStopAfterTurn locks the Agent-level ShouldStopAfterTurn
+// option reaching the loop config: the run stops after the first turn completes
+// (tool included), before a second provider request is made.
+func TestAgentForwardsShouldStopAfterTurn(t *testing.T) {
+	tool := AgentTool{
+		Name:        "noop",
+		Description: "Noop tool",
+		Parameters:  ai.Object(),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			return AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "tool complete"}}}, nil
+		},
+	}
+
+	var requests int32
+	scripted := scriptedStream(
+		assistantWithToolCall("tool-1", "noop", map[string]any{}),
+		&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "should not run"}}, StopReason: ai.StopStop},
+	)
+
+	var roles []ai.Role
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			atomic.AddInt32(&requests, 1)
+			return scripted(ctx, model, req, opts)
+		},
+		ShouldStopAfterTurn: func(c ShouldStopAfterTurnContext) bool {
+			for _, m := range c.Context.Messages {
+				roles = append(roles, m.MessageRole())
+			}
+			return true
+		},
+	})
+
+	if err := a.Prompt(context.Background(), "start"); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := atomic.LoadInt32(&requests); got != 1 {
+		t.Fatalf("expected 1 provider request, got %d", got)
+	}
+	want := []ai.Role{ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult}
+	if len(roles) != len(want) {
+		t.Fatalf("callback saw roles %v, want %v", roles, want)
+	}
+	for i := range want {
+		if roles[i] != want[i] {
+			t.Fatalf("callback saw roles %v, want %v", roles, want)
+		}
+	}
+}

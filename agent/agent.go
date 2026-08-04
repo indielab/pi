@@ -54,24 +54,25 @@ func (q *pendingQueue) drain() []AgentMessage {
 
 // AgentOptions configures a new Agent.
 type AgentOptions struct {
-	InitialState     *AgentState
-	ConvertToLlm     func(messages []AgentMessage) []ai.Message
-	TransformContext func(ctx context.Context, messages []AgentMessage) []AgentMessage
-	StreamFn         StreamFn
-	GetApiKey        func(provider string) string
-	OnPayload        func(payload any, model *ai.Model) (any, error)
-	OnResponse       func(resp ai.ProviderResponse, model *ai.Model) error
-	BeforeToolCall   func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
-	AfterToolCall    func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
-	PrepareNextTurn  func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
-	SteeringMode     QueueMode
-	FollowUpMode     QueueMode
-	SessionID        string
-	ThinkingBudgets  *ai.ThinkingBudgets
-	Transport        ai.Transport
-	MaxRetryDelayMs  *int
-	MaxRetries       int
-	TimeoutMs        int
+	InitialState        *AgentState
+	ConvertToLlm        func(messages []AgentMessage) []ai.Message
+	TransformContext    func(ctx context.Context, messages []AgentMessage) []AgentMessage
+	StreamFn            StreamFn
+	GetApiKey           func(provider string) string
+	OnPayload           func(payload any, model *ai.Model) (any, error)
+	OnResponse          func(resp ai.ProviderResponse, model *ai.Model) error
+	BeforeToolCall      func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
+	AfterToolCall       func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+	ShouldStopAfterTurn func(c ShouldStopAfterTurnContext) bool
+	PrepareNextTurn     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
+	SteeringMode        QueueMode
+	FollowUpMode        QueueMode
+	SessionID           string
+	ThinkingBudgets     *ai.ThinkingBudgets
+	Transport           ai.Transport
+	MaxRetryDelayMs     *int
+	MaxRetries          int
+	TimeoutMs           int
 	// WebSocketConnectTimeoutMs and HTTPClient are forwarded to the stream
 	// options (pi AgentLoopConfig extends SimpleStreamOptions).
 	WebSocketConnectTimeoutMs int
@@ -102,15 +103,16 @@ type Agent struct {
 	steeringQueue pendingQueue
 	followUpQueue pendingQueue
 
-	ConvertToLlm     func(messages []AgentMessage) []ai.Message
-	TransformContext func(ctx context.Context, messages []AgentMessage) []AgentMessage
-	StreamFn         StreamFn
-	GetApiKey        func(provider string) string
-	OnPayload        func(payload any, model *ai.Model) (any, error)
-	OnResponse       func(resp ai.ProviderResponse, model *ai.Model) error
-	BeforeToolCall   func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
-	AfterToolCall    func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
-	PrepareNextTurn  func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
+	ConvertToLlm        func(messages []AgentMessage) []ai.Message
+	TransformContext    func(ctx context.Context, messages []AgentMessage) []AgentMessage
+	StreamFn            StreamFn
+	GetApiKey           func(provider string) string
+	OnPayload           func(payload any, model *ai.Model) (any, error)
+	OnResponse          func(resp ai.ProviderResponse, model *ai.Model) error
+	BeforeToolCall      func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
+	AfterToolCall       func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+	ShouldStopAfterTurn func(c ShouldStopAfterTurnContext) bool
+	PrepareNextTurn     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
 
 	SessionID                 string
 	ThinkingBudgets           *ai.ThinkingBudgets
@@ -161,6 +163,7 @@ func NewAgent(opts AgentOptions) *Agent {
 		OnResponse:                opts.OnResponse,
 		BeforeToolCall:            opts.BeforeToolCall,
 		AfterToolCall:             opts.AfterToolCall,
+		ShouldStopAfterTurn:       opts.ShouldStopAfterTurn,
 		PrepareNextTurn:           opts.PrepareNextTurn,
 		SessionID:                 opts.SessionID,
 		ThinkingBudgets:           opts.ThinkingBudgets,
@@ -478,6 +481,7 @@ func (a *Agent) loopConfig(skipInitialSteeringPoll bool) AgentLoopConfig {
 		GetApiKey:                 a.GetApiKey,
 		BeforeToolCall:            a.BeforeToolCall,
 		AfterToolCall:             a.AfterToolCall,
+		ShouldStopAfterTurn:       a.ShouldStopAfterTurn,
 		PrepareNextTurn:           a.PrepareNextTurn,
 		GetSteeringMessages: func() []AgentMessage {
 			a.mu.Lock()
