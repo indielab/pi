@@ -44,7 +44,9 @@ and say so loudly in your report.
    (scenarios, both capture sides, canon scripts and the Go harness all live in
    `~/.cache/pi-diff/`; its go.mod `replace` → this repo, and it captures via
    OnPayload returning an error to halt pre-network). It prints per-scenario
-   PASS/FAIL and exits non-zero on any mismatch. If the directory is missing,
+   PASS / KNOWN (accepted debt in its `known-divergences.json`) / FAIL / FIXED
+   (stale baseline entry), and exits 0 only when every scenario is PASS or
+   KNOWN — 1 on any FAIL, 3 on a stale entry. If the directory is missing,
    the runner rebuilds it from the npm build (and, for changes not yet
    released, from upstream TS at the synced sha); see its README to add a
    scenario or re-point it at a new version.
