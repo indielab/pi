@@ -2,6 +2,7 @@ package coding
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/binary"
 	"fmt"
 	"image"
@@ -15,6 +16,8 @@ import (
 
 	_ "golang.org/x/image/bmp"  // register BMP decoder for BMP→PNG conversion
 	_ "golang.org/x/image/webp" // decode-only, to match photon's webp support
+
+	"github.com/sky-valley/pi/ai"
 )
 
 // Image post-processing for the read tool (port of pi's resizeImageInProcess in
@@ -258,6 +261,72 @@ func processImage(data []byte, mimeType string, autoResizeImages bool) ProcessIm
 		hints = append(hints, h)
 	}
 	return ProcessImageResult{Ok: true, Data: normBytes, MimeType: normalizedMime, Hints: hints}
+}
+
+// normalizeToolResultImages normalizes the image blocks of a tool result,
+// porting pi's normalizeToolResultImages (utils/tool-result-images.ts).
+//
+// The `read` tool runs its images through processImage, but tools that produce
+// images themselves (custom SDK tools, MCP bridges, screenshot tools) hand back
+// arbitrary base64 payloads that go straight into session history and every
+// subsequent provider request. Oversized images make the provider reject the
+// whole conversation, not just the offending turn, so normalize them once as
+// they enter history.
+//
+// The second return value reports whether anything changed, so callers can skip
+// rewriting the result (pi returns the original array by identity).
+func normalizeToolResultImages(content ai.ContentList) (ai.ContentList, bool) {
+	hasImage := false
+	for _, block := range content {
+		if _, ok := block.(ai.ImageContent); ok {
+			hasImage = true
+			break
+		}
+	}
+	if !hasImage {
+		return content, false
+	}
+
+	normalized := make(ai.ContentList, 0, len(content))
+	changed := false
+	for _, block := range content {
+		img, ok := block.(ai.ImageContent)
+		if !ok {
+			normalized = append(normalized, block)
+			continue
+		}
+		// Unlike `read`, keep the original block whenever processing fails (here:
+		// undecodable base64 or an image processImage cannot handle). The tool
+		// already produced this image and the failure may just be an unsupported
+		// payload, so passing it through preserves the behavior tools have today
+		// instead of silently deleting their output.
+		raw, err := base64.StdEncoding.DecodeString(img.Data)
+		if err != nil {
+			normalized = append(normalized, block)
+			continue
+		}
+		// autoResize matches the `read` tool's call: the Go port has no settings
+		// manager, so images.autoResize is always on.
+		processed := processImage(raw, img.MimeType, true)
+		if !processed.Ok {
+			normalized = append(normalized, block)
+			continue
+		}
+		data := encodeBase64(processed.Data)
+		if data == img.Data && processed.MimeType == img.MimeType && len(processed.Hints) == 0 {
+			normalized = append(normalized, block)
+			continue
+		}
+		normalized = append(normalized, ai.ImageContent{Data: data, MimeType: processed.MimeType})
+		if len(processed.Hints) > 0 {
+			normalized = append(normalized, ai.TextContent{Text: strings.Join(processed.Hints, "\n")})
+		}
+		changed = true
+	}
+	if !changed {
+		return content, false
+	}
+	return normalized, true
 }
 
 // formatDimensionNote mirrors pi's formatDimensionNote: a coordinate-mapping

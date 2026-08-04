@@ -413,7 +413,7 @@ func NewSession(opts SessionOptions) *Session {
 		OnPayload:       opts.OnPayload,
 		OnResponse:      opts.OnResponse,
 		BeforeToolCall:  opts.BeforeToolCall,
-		AfterToolCall:   opts.AfterToolCall,
+		AfterToolCall:   withToolResultImageNormalization(opts.AfterToolCall),
 	})
 
 	sess.Agent = a
@@ -421,6 +421,44 @@ func NewSession(opts SessionOptions) *Session {
 		sess.EnableCompaction(*opts.Compaction)
 	}
 	return sess
+}
+
+// withToolResultImageNormalization wraps the caller's AfterToolCall hook so that
+// images returned by tools are normalized as they enter session history (pi
+// agent-session.ts afterToolCall). Normalization runs AFTER the hook — pi runs
+// it after the tool_result extension hook — so images the hook injects or
+// replaces are normalized too. When there is no hook result and normalization
+// changed nothing, the tool result is left untouched.
+func withToolResultImageNormalization(
+	hook func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult,
+) func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult {
+	return func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult {
+		var hookResult *agent.AfterToolCallResult
+		if hook != nil {
+			hookResult = hook(ctx, c)
+		}
+
+		content := c.Result.Content
+		if hookResult != nil && hookResult.HasContent {
+			content = hookResult.Content
+		}
+		normalized, changed := normalizeToolResultImages(content)
+		if hookResult == nil && !changed {
+			return nil
+		}
+
+		out := agent.AfterToolCallResult{Content: normalized, HasContent: true}
+		if hookResult != nil {
+			// Everything the hook decided other than content is passed through
+			// verbatim, including Terminate (pi's extension hook has no terminate,
+			// but the SDK's own AfterToolCall does).
+			out.Details = hookResult.Details
+			out.HasDetails = hookResult.HasDetails
+			out.IsError = hookResult.IsError
+			out.Terminate = hookResult.Terminate
+		}
+		return &out
+	}
 }
 
 // RunResult is the structured outcome of a single Run turn, suited to embedding
