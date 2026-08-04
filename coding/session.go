@@ -53,6 +53,13 @@ type SessionOptions struct {
 	APIKey        string
 	SessionID     string
 
+	// Models, when set, is the model runtime used to resolve request auth for
+	// summarization requests (pi AgentSession's _modelRuntime). It is needed
+	// only for providers that carry their endpoint in the credential rather
+	// than the catalog — see Session.summarizationRequestModel. Nil leaves
+	// summarization on the session's own model, as before.
+	Models ai.Models
+
 	// Per-request provider controls (all optional).
 	Temperature     *float64
 	MaxTokens       *int
@@ -239,6 +246,7 @@ type Session struct {
 	Cwd      string
 	Recorder *SessionRecorder
 	apiKey   string
+	models   ai.Models
 	// recMu guards Recorder against the tool-execution goroutine reading it for
 	// bash session metadata while Record attaches one.
 	recMu sync.RWMutex
@@ -354,7 +362,7 @@ func NewSession(opts SessionOptions) *Session {
 	// reads them off the live ExtensionContext per call). The Session is
 	// allocated up front so the closure captures a stable, non-nil pointer; its
 	// Agent is filled in below, before NewSession returns and any tool can run.
-	sess := &Session{Cwd: cwd, Model: opts.Model, apiKey: opts.APIKey}
+	sess := &Session{Cwd: cwd, Model: opts.Model, apiKey: opts.APIKey, models: opts.Models}
 	tools := resolveTools(cwd, opts, sess.bashSessionEnv)
 	// A custom SystemPrompt still goes through buildSystemPrompt with discovery:
 	// pi appends project context files, skills, date, and cwd to custom prompts

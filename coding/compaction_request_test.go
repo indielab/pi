@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
@@ -182,43 +183,89 @@ func TestSummarizationIsolatesRouting(t *testing.T) {
 	}
 }
 
-// TestSummarizationUsesSessionStreamFunctionBaseURL locks the Go-side guarantee
-// behind pi 18d65de62 (#6768): a Copilot compaction request must go to the
-// credential-resolved endpoint, not the catalog's Individual one.
+// TestSummarizationUsesAuthResolvedBaseURL ports pi's regression test
+// 6768-copilot-compaction-base-url.test.ts ("uses the auth-resolved base URL
+// through the SDK-style stream wrapper"): a Copilot compaction request must go
+// to the credential-resolved Enterprise endpoint, not the catalog's Individual
+// one.
 //
-// pi had to fix this because AgentSession resolves auth itself and used to hand
-// compact() `this.model` (catalog baseUrl) with only the resolved apiKey and
-// headers. The Go port does no auth resolution in `coding`: summarization
-// streams through the session's own StreamFn with the session's model, exactly
-// like a normal turn, so a stream function that rebuilds the model from resolved
-// auth — as ai.Models does in applyAuth — rewrites the compaction request too.
-func TestSummarizationUsesSessionStreamFunctionBaseURL(t *testing.T) {
+// The provider mirrors upstream's: the Enterprise base URL is reachable only
+// through the stored OAuth credential's toAuth. An explicit apiKey override
+// short-circuits resolution to the api-key path, so the Models runtime resolves
+// no base URL and never rebuilds the request model — summarization always passes
+// the session's key, which is exactly how the Individual endpoint leaked
+// through. This exercises the real ai.Models runtime, not a stream double.
+func TestSummarizationUsesAuthResolvedBaseURL(t *testing.T) {
 	const individualBaseURL = "https://api.individual.githubcopilot.com"
 	const enterpriseBaseURL = "https://api.enterprise.githubcopilot.com"
 
-	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
-	defer reg.Unregister()
-	reg.SetResponses([]providers.FauxResponseStep{
-		providers.FauxStatic(providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "## Goal\nsummary"}}, ai.StopStop)),
-	})
-
-	model := reg.GetModel()
-	model.BaseURL = individualBaseURL
-
 	var requestBaseURL string
-	// Stands in for ai.Models applyAuth: the resolved auth carries the Business /
-	// Enterprise endpoint, so the request model is rebuilt with it.
-	streamFn := func(ctx context.Context, m *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
-		if m.BaseURL == individualBaseURL {
-			rebuilt := *m
-			rebuilt.BaseURL = enterpriseBaseURL
-			m = &rebuilt
-		}
-		requestBaseURL = m.BaseURL
-		return ai.StreamSimple(ctx, m, req, opts)
+	respond := func(_ context.Context, model *ai.Model, _ ai.Context, _ *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		requestBaseURL = model.BaseURL
+		s := ai.NewAssistantMessageEventStream()
+		s.Push(ai.AssistantMessageEvent{Type: ai.EventDone, Reason: ai.StopStop, Message: &ai.AssistantMessage{
+			Api: model.Api, Provider: model.Provider, Model: model.ID,
+			Content: ai.ContentList{ai.TextContent{Text: "summary"}}, StopReason: ai.StopStop,
+		}})
+		s.End()
+		return s
 	}
 
-	sess := NewSession(SessionOptions{Model: model, Cwd: t.TempDir(), NoTools: NoToolsAll, StreamFn: streamFn})
+	catalogModel := &ai.Model{Provider: "github-copilot", ID: "gpt", Api: "copilot-api", BaseURL: individualBaseURL}
+	provider := ai.CreateProvider(ai.CreateProviderOptions{
+		ID: catalogModel.Provider,
+		Auth: ai.ProviderAuth{
+			APIKey: &ai.ApiKeyAuth{
+				Name: "Copilot token",
+				Resolve: func(_ context.Context, _ ai.AuthContext, credential *ai.Credential) (*ai.AuthResult, error) {
+					if credential == nil || credential.Key == "" {
+						return nil, nil
+					}
+					return &ai.AuthResult{Auth: ai.ModelAuth{APIKey: credential.Key}, Source: "explicit token"}, nil
+				},
+			},
+			OAuth: &ai.OAuthAuth{
+				Name:    "Copilot OAuth",
+				Refresh: func(_ context.Context, c ai.OAuthCredentials) (ai.OAuthCredentials, error) { return c, nil },
+				ToAuth: func(c ai.OAuthCredentials) (ai.ModelAuth, error) {
+					return ai.ModelAuth{APIKey: c.Access, BaseURL: enterpriseBaseURL}, nil
+				},
+			},
+		},
+		Models: []*ai.Model{catalogModel},
+		APIByApi: map[ai.Api]ai.ProviderStreams{catalogModel.Api: {
+			Stream: func(ctx context.Context, m *ai.Model, req ai.Context, _ *ai.StreamOptions) *ai.AssistantMessageEventStream {
+				return respond(ctx, m, req, nil)
+			},
+			StreamSimple: respond,
+		}},
+	})
+
+	credentials := ai.NewInMemoryCredentialStore()
+	if _, err := credentials.Modify(context.Background(), catalogModel.Provider, func(*ai.Credential) (*ai.Credential, error) {
+		return &ai.Credential{
+			Type: ai.CredentialOAuth, Access: "enterprise-token", Refresh: "refresh-token",
+			Expires: time.Now().Add(time.Hour).UnixMilli(),
+		}, nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	models := ai.CreateModels(&ai.CreateModelsOptions{Credentials: credentials})
+	models.SetProvider(provider)
+
+	// The SDK-style wrapper upstream installs as the session's stream function.
+	streamFn := func(ctx context.Context, m *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		var runtimeOpts ai.ModelsSimpleStreamOptions
+		if opts != nil {
+			runtimeOpts.SimpleStreamOptions = *opts
+		}
+		return models.StreamSimple(ctx, m, req, &runtimeOpts)
+	}
+
+	sess := NewSession(SessionOptions{
+		Model: catalogModel, APIKey: "session-key", Cwd: t.TempDir(),
+		NoTools: NoToolsAll, StreamFn: streamFn, Models: models,
+	})
 	older := []agent.AgentMessage{
 		ai.NewUserText("summarize me", 1),
 		ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "ok"}}, StopReason: ai.StopStop, Timestamp: 2},

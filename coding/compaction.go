@@ -505,6 +505,37 @@ func messagesAsLlm(messages []agent.AgentMessage) []ai.Message {
 	return llmMessages
 }
 
+// summarizationRequestModel returns the model a summarization request must
+// actually be sent to (pi AgentSession._getSummarizationRequestAuth, upstream
+// 18d65de62 / #6768).
+//
+// A provider can carry its endpoint in the credential rather than in the
+// catalog: GitHub Copilot's Business/Enterprise base URL comes from the stored
+// OAuth credential's toAuth(). The Models runtime normally rebuilds the request
+// model from resolved auth, but a request that carries an explicit apiKey
+// override short-circuits resolution to the api-key path (auth_resolve.go:
+// "overrides?.apiKey !== undefined"), which never reaches the stored OAuth
+// credential — so no base URL is resolved and no rebuild happens. Summarization
+// always passes the session's key, so without this a Copilot compaction request
+// goes to the Individual endpoint on a Business/Enterprise account.
+//
+// Resolution is best-effort, exactly like pi's: any failure falls back to the
+// session's own model. Unlike pi, the port does not take the resolved apiKey or
+// headers here — a coding Session is constructed with the caller's already
+// resolved key and headers, where pi's AgentSession resolves them at this point.
+func (s *Session) summarizationRequestModel(ctx context.Context) *ai.Model {
+	if s.models == nil || s.Model == nil {
+		return s.Model
+	}
+	result, err := s.models.GetAuth(ctx, s.Model, nil)
+	if err != nil || result == nil || result.Auth.BaseURL == "" {
+		return s.Model
+	}
+	requestModel := *s.Model
+	requestModel.BaseURL = result.Auth.BaseURL
+	return &requestModel
+}
+
 // completeSummarization sends one summarization request (pi completeSummarization
 // + createSummarizationOptions, compaction.ts:526-552): the session's API key,
 // headers, and — when the model supports reasoning and the session's thinking
@@ -533,7 +564,8 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	if streamFn == nil {
 		streamFn = ai.StreamSimple
 	}
-	stream := streamFn(ctx, s.Model, ai.Context{SystemPrompt: summarizationSystemPrompt, Messages: summarizationMessages}, opts)
+	requestModel := s.summarizationRequestModel(ctx)
+	stream := streamFn(ctx, requestModel, ai.Context{SystemPrompt: summarizationSystemPrompt, Messages: summarizationMessages}, opts)
 	msg := stream.Result()
 	if msg == nil || msg.StopReason == ai.StopError {
 		return "", false
