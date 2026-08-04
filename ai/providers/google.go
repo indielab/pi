@@ -51,9 +51,12 @@ func StreamSimpleGoogle(ctx context.Context, model *ai.Model, req ai.Context, op
 	if opts != nil {
 		g.StreamOptions = opts.StreamOptions
 	}
-	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens).
+	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens),
+	// samplingParams = model defaults with the request's merged over them. Google
+	// ignores samplingParams when building its body, exactly like pi.
 	mt := ai.ClampMaxTokensToContext(model, req, ai.SimpleMaxTokensDefault(model, opts))
 	g.MaxTokens = &mt
+	g.SamplingParams = ai.MergeSamplingParams(model, opts)
 	reasoning := ai.ThinkingLevel("")
 	if opts != nil {
 		reasoning = opts.Reasoning

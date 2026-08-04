@@ -596,18 +596,21 @@ type ModelCostTier struct {
 
 // Model describes a concrete model in the unified model system.
 type Model struct {
-	ID               string            `json:"id"`
-	Name             string            `json:"name"`
-	Api              Api               `json:"api"`
-	Provider         ProviderId        `json:"provider"`
-	BaseURL          string            `json:"baseUrl"`
-	Reasoning        bool              `json:"reasoning"`
-	ThinkingLevelMap ThinkingLevelMap  `json:"thinkingLevelMap,omitempty"`
-	Input            []string          `json:"input"` // "text" | "image"
-	Cost             ModelCost         `json:"cost"`
-	ContextWindow    int               `json:"contextWindow"`
-	MaxTokens        int               `json:"maxTokens"`
-	Headers          map[string]string `json:"headers,omitempty"`
+	ID               string           `json:"id"`
+	Name             string           `json:"name"`
+	Api              Api              `json:"api"`
+	Provider         ProviderId       `json:"provider"`
+	BaseURL          string           `json:"baseUrl"`
+	Reasoning        bool             `json:"reasoning"`
+	ThinkingLevelMap ThinkingLevelMap `json:"thinkingLevelMap,omitempty"`
+	Input            []string         `json:"input"` // "text" | "image"
+	Cost             ModelCost        `json:"cost"`
+	ContextWindow    int              `json:"contextWindow"`
+	MaxTokens        int              `json:"maxTokens"`
+	// SamplingParams are this model's default sampling parameters. See
+	// StreamOptions.SamplingParams; per-request keys override these.
+	SamplingParams map[string]any    `json:"samplingParams,omitempty"`
+	Headers        map[string]string `json:"headers,omitempty"`
 	// Compat carries API-specific compatibility overrides (decoded per-api).
 	Compat json.RawMessage `json:"compat,omitempty"`
 }
@@ -630,7 +633,15 @@ type HTTPDoer interface {
 
 // StreamOptions are the base options shared by all providers.
 type StreamOptions struct {
-	Temperature               *float64
+	Temperature *float64
+	// SamplingParams are arbitrary sampling parameters merged into the request
+	// body as-is, after the named request fields, so keys here override them.
+	// They let custom OpenAI-compatible servers (llama.cpp, vLLM, SGLang, …)
+	// receive parameters pi does not model, e.g. top_p, top_k, min_p,
+	// repetition_penalty. StreamSimple merges them over Model.SamplingParams per
+	// key. Only the OpenAI-compatible adapters (completions, responses) apply
+	// them; other APIs ignore them.
+	SamplingParams            map[string]any
 	MaxTokens                 *int
 	APIKey                    string
 	Transport                 Transport

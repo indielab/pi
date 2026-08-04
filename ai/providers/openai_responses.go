@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"strings"
 	"unicode/utf16"
@@ -241,9 +242,11 @@ func StreamSimpleOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Co
 			}
 		}
 	}
-	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens).
+	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens),
+	// samplingParams = model defaults with the request's merged over them.
 	mt := ai.ClampMaxTokensToContext(model, req, ai.SimpleMaxTokensDefault(model, opts))
 	o.MaxTokens = &mt
+	o.SamplingParams = ai.MergeSamplingParams(model, opts)
 	return StreamOpenAIResponses(ctx, model, req, o)
 }
 
@@ -950,6 +953,10 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 			params["include"] = []any{"reasoning.encrypted_content"}
 		}
 	}
+
+	// Last so custom keys override the named request fields (upstream 25a2c8dc).
+	maps.Copy(params, opts.SamplingParams)
+
 	return params, nil
 }
 

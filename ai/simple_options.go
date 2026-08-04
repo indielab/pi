@@ -1,5 +1,7 @@
 package ai
 
+import "maps"
+
 // Ported from pi packages/ai/src/api/simple-options.ts (upstream 09f10595).
 // pi's buildBaseOptions sets the base maxTokens to
 // clampMaxTokensToContext(model, context, options?.maxTokens ?? model.maxTokens).
@@ -33,4 +35,23 @@ func SimpleMaxTokensDefault(model *Model, opts *SimpleStreamOptions) int {
 		return *opts.MaxTokens
 	}
 	return model.MaxTokens
+}
+
+// MergeSamplingParams ports the samplingParams half of pi's buildBaseOptions
+// (upstream 25a2c8dc): the model's defaults with the caller's merged over them
+// per key. Returns nil when neither side supplies any, matching pi's undefined —
+// which is indistinguishable from an empty object downstream, since both leave
+// the request body untouched.
+func MergeSamplingParams(model *Model, opts *SimpleStreamOptions) map[string]any {
+	var requested map[string]any
+	if opts != nil {
+		requested = opts.SamplingParams
+	}
+	if model.SamplingParams == nil && requested == nil {
+		return nil
+	}
+	merged := make(map[string]any, len(model.SamplingParams)+len(requested))
+	maps.Copy(merged, model.SamplingParams)
+	maps.Copy(merged, requested)
+	return merged
 }

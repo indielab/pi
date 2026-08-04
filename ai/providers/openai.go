@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"regexp"
 	"strings"
@@ -35,9 +36,11 @@ func StreamSimpleOpenAICompletions(ctx context.Context, model *ai.Model, req ai.
 			}
 		}
 	}
-	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens).
+	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens),
+	// samplingParams = model defaults with the request's merged over them.
 	mt := ai.ClampMaxTokensToContext(model, req, ai.SimpleMaxTokensDefault(model, opts))
 	o.MaxTokens = &mt
+	o.SamplingParams = ai.MergeSamplingParams(model, opts)
 	return StreamOpenAICompletions(ctx, model, req, o)
 }
 
@@ -958,6 +961,9 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 			params["providerOptions"] = map[string]any{"gateway": gatewayOptions}
 		}
 	}
+
+	// Last so custom keys override the named request fields (upstream 25a2c8dc).
+	maps.Copy(params, opts.SamplingParams)
 
 	return params, nil
 }
