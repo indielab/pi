@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // fakeAuthContext is an injectable AuthContext over a fixed env map.
@@ -22,12 +23,12 @@ func (f fakeAuthContext) FileExists(p string) bool { return f.files[p] }
 func TestInMemoryCredentialStore(t *testing.T) {
 	s := NewInMemoryCredentialStore()
 
-	if c, err := s.Read("p"); err != nil || c != nil {
+	if c, err := s.Read(context.Background(), "p"); err != nil || c != nil {
 		t.Fatalf("empty read = (%v, %v), want (nil, nil)", c, err)
 	}
 
 	// Modify sets a credential and returns the post-write value.
-	got, err := s.Modify("p", func(cur *Credential) (*Credential, error) {
+	got, err := s.Modify(context.Background(), "p", func(cur *Credential) (*Credential, error) {
 		if cur != nil {
 			t.Errorf("fn should see nil current, got %v", cur)
 		}
@@ -38,31 +39,31 @@ func TestInMemoryCredentialStore(t *testing.T) {
 	}
 
 	// Read returns a copy (mutating it must not affect the store).
-	c, _ := s.Read("p")
+	c, _ := s.Read(context.Background(), "p")
 	c.Key = "mutated"
-	if again, _ := s.Read("p"); again.Key != "k1" {
+	if again, _ := s.Read(context.Background(), "p"); again.Key != "k1" {
 		t.Errorf("store credential was aliased: got %q", again.Key)
 	}
 
 	// fn returning nil leaves the entry unchanged and returns current.
-	got, _ = s.Modify("p", func(cur *Credential) (*Credential, error) { return nil, nil })
+	got, _ = s.Modify(context.Background(), "p", func(cur *Credential) (*Credential, error) { return nil, nil })
 	if got == nil || got.Key != "k1" {
 		t.Errorf("no-op modify should return current k1, got %v", got)
 	}
 
 	// fn error leaves the entry unchanged.
-	if _, err := s.Modify("p", func(cur *Credential) (*Credential, error) {
+	if _, err := s.Modify(context.Background(), "p", func(cur *Credential) (*Credential, error) {
 		return nil, errors.New("boom")
 	}); err == nil {
 		t.Error("modify should propagate fn error")
 	}
-	if after, _ := s.Read("p"); after == nil || after.Key != "k1" {
+	if after, _ := s.Read(context.Background(), "p"); after == nil || after.Key != "k1" {
 		t.Errorf("entry should survive a failed modify, got %v", after)
 	}
 
 	// Delete removes it.
-	_ = s.Delete("p")
-	if after, _ := s.Read("p"); after != nil {
+	_ = s.Delete(context.Background(), "p")
+	if after, _ := s.Read(context.Background(), "p"); after != nil {
 		t.Errorf("delete should remove the entry, got %v", after)
 	}
 }
@@ -119,7 +120,7 @@ func TestCredentialAPIKeyJSON(t *testing.T) {
 	if fromDisk.Type != CredentialAPIKey {
 		t.Fatalf("on-disk api_key must match CredentialAPIKey, got %q", fromDisk.Type)
 	}
-	res, err := resolveProviderAuth(
+	res, err := resolveProviderAuth(context.Background(),
 		"test",
 		ProviderAuth{APIKey: EnvAPIKeyAuth("Test")},
 		seededStore(t, "test", &fromDisk),
@@ -134,7 +135,7 @@ func TestCredentialAPIKeyJSON(t *testing.T) {
 func seededStore(t *testing.T, provider string, c *Credential) CredentialStore {
 	t.Helper()
 	s := NewInMemoryCredentialStore()
-	if _, err := s.Modify(provider, func(*Credential) (*Credential, error) { return c, nil }); err != nil {
+	if _, err := s.Modify(context.Background(), provider, func(*Credential) (*Credential, error) { return c, nil }); err != nil {
 		t.Fatalf("seed store: %v", err)
 	}
 	return s
@@ -146,27 +147,27 @@ func seededStore(t *testing.T, provider string, c *Credential) CredentialStore {
 func TestResolveProviderAuthRequestOverrides(t *testing.T) {
 	auth := ProviderAuth{APIKey: &ApiKeyAuth{
 		Name: "Test",
-		Resolve: func(ctx AuthContext, credential *Credential) (*AuthResult, error) {
-			key := ctx.Env("FALLBACK_KEY")
+		Resolve: func(_ context.Context, authCtx AuthContext, credential *Credential) (*AuthResult, error) {
+			key := authCtx.Env("FALLBACK_KEY")
 			if credential != nil && credential.Key != "" {
 				key = credential.Key
 			}
 			if key == "" {
 				return nil, nil
 			}
-			return &AuthResult{Auth: ModelAuth{APIKey: key}, Env: map[string]string{"ACCT": ctx.Env("ACCT")}}, nil
+			return &AuthResult{Auth: ModelAuth{APIKey: key}, Env: map[string]string{"ACCT": authCtx.Env("ACCT")}}, nil
 		},
 	}}
 	stored := &Credential{Type: CredentialAPIKey, Key: "stored-key"}
 
 	// Request apiKey override wins over the stored credential.
-	res, err := resolveProviderAuth("test", auth, seededStore(t, "test", stored), fakeAuthContext{}, &AuthResolutionOverrides{APIKey: "req-key"})
+	res, err := resolveProviderAuth(context.Background(), "test", auth, seededStore(t, "test", stored), fakeAuthContext{}, &AuthResolutionOverrides{APIKey: "req-key"})
 	if err != nil || res == nil || res.Auth.APIKey != "req-key" {
 		t.Fatalf("override apiKey must resolve directly: %+v err %v", res, err)
 	}
 
 	// Override env overlays ambient and is visible to Resolve.
-	res, err = resolveProviderAuth("test", auth, seededStore(t, "test", stored),
+	res, err = resolveProviderAuth(context.Background(), "test", auth, seededStore(t, "test", stored),
 		fakeAuthContext{env: map[string]string{"ACCT": "ambient"}},
 		&AuthResolutionOverrides{Env: map[string]string{"ACCT": "scoped"}})
 	if err != nil || res == nil || res.Env["ACCT"] != "scoped" {
@@ -180,7 +181,7 @@ func TestEnvAPIKeyAuthResolve(t *testing.T) {
 	// Stored credential key wins over env, and its env section passes through
 	// (upstream 1942b260 — a stored credential must not drop its `env` overrides).
 	ctx := fakeAuthContext{env: map[string]string{"PRIMARY_KEY": "from-env"}}
-	res, err := auth.Resolve(ctx, &Credential{Type: CredentialAPIKey, Key: "stored", Env: map[string]string{"PI_CACHE_RETENTION": "1h"}})
+	res, err := auth.Resolve(context.Background(), ctx, &Credential{Type: CredentialAPIKey, Key: "stored", Env: map[string]string{"PI_CACHE_RETENTION": "1h"}})
 	if err != nil || res == nil || res.Auth.APIKey != "stored" || res.Source != "stored credential" {
 		t.Fatalf("stored key should win: %+v (err %v)", res, err)
 	}
@@ -189,13 +190,13 @@ func TestEnvAPIKeyAuthResolve(t *testing.T) {
 	}
 
 	// No stored credential: first set env var in order resolves.
-	res, _ = auth.Resolve(fakeAuthContext{env: map[string]string{"SECONDARY_KEY": "second"}}, nil)
+	res, _ = auth.Resolve(context.Background(), fakeAuthContext{env: map[string]string{"SECONDARY_KEY": "second"}}, nil)
 	if res == nil || res.Auth.APIKey != "second" || res.Source != "SECONDARY_KEY" {
 		t.Fatalf("env fallback wrong: %+v", res)
 	}
 
 	// Unconfigured -> nil.
-	if res, _ := auth.Resolve(fakeAuthContext{}, nil); res != nil {
+	if res, _ := auth.Resolve(context.Background(), fakeAuthContext{}, nil); res != nil {
 		t.Fatalf("unconfigured should be nil, got %+v", res)
 	}
 }
@@ -210,14 +211,14 @@ func TestAnthropicAPIKeyAuthResolve(t *testing.T) {
 	ctx := fakeAuthContext{env: map[string]string{
 		AnthropicAuthTokenEnv: "tok", "ANTHROPIC_API_KEY": "sk-env",
 	}}
-	res, err := auth.Resolve(ctx, &Credential{Type: CredentialAPIKey, Key: "stored"})
+	res, err := auth.Resolve(context.Background(), ctx, &Credential{Type: CredentialAPIKey, Key: "stored"})
 	if err != nil || res == nil || res.Auth.APIKey != "stored" || res.Source != "stored credential" {
 		t.Fatalf("stored key should win: %+v (err %v)", res, err)
 	}
 
 	// Auth token authenticates via an Authorization header, never x-api-key, and
 	// beats a plain ANTHROPIC_API_KEY.
-	res, _ = auth.Resolve(fakeAuthContext{env: map[string]string{
+	res, _ = auth.Resolve(context.Background(), fakeAuthContext{env: map[string]string{
 		AnthropicAuthTokenEnv: "tok", "ANTHROPIC_API_KEY": "sk-env",
 	}}, nil)
 	if res == nil || res.Auth.APIKey != "" || res.Auth.Headers["Authorization"] != "Bearer tok" || res.Source != AnthropicAuthTokenEnv {
@@ -225,13 +226,13 @@ func TestAnthropicAPIKeyAuthResolve(t *testing.T) {
 	}
 
 	// Without the auth token, the api-key envs resolve as a key.
-	res, _ = auth.Resolve(fakeAuthContext{env: map[string]string{"ANTHROPIC_API_KEY": "sk-env"}}, nil)
+	res, _ = auth.Resolve(context.Background(), fakeAuthContext{env: map[string]string{"ANTHROPIC_API_KEY": "sk-env"}}, nil)
 	if res == nil || res.Auth.APIKey != "sk-env" || res.Source != "ANTHROPIC_API_KEY" {
 		t.Fatalf("api-key fallback wrong: %+v", res)
 	}
 
 	// Unconfigured -> nil.
-	if res, _ := auth.Resolve(fakeAuthContext{}, nil); res != nil {
+	if res, _ := auth.Resolve(context.Background(), fakeAuthContext{}, nil); res != nil {
 		t.Fatalf("unconfigured should be nil, got %+v", res)
 	}
 }
@@ -241,7 +242,7 @@ func TestResolveProviderAuthAPIKeyAmbient(t *testing.T) {
 	store := NewInMemoryCredentialStore()
 	ctx := fakeAuthContext{env: map[string]string{"TEST_KEY": "ambient"}}
 
-	res, err := resolveProviderAuth("test", auth, store, ctx, nil)
+	res, err := resolveProviderAuth(context.Background(), "test", auth, store, ctx, nil)
 	if err != nil || res == nil || res.Auth.APIKey != "ambient" {
 		t.Fatalf("ambient api-key resolution wrong: %+v (err %v)", res, err)
 	}
@@ -250,7 +251,7 @@ func TestResolveProviderAuthAPIKeyAmbient(t *testing.T) {
 func TestResolveProviderAuthOAuthRefreshUnderLock(t *testing.T) {
 	store := NewInMemoryCredentialStore()
 	// Seed an EXPIRED oauth credential.
-	_, _ = store.Modify("oauthp", func(*Credential) (*Credential, error) {
+	_, _ = store.Modify(context.Background(), "oauthp", func(*Credential) (*Credential, error) {
 		return &Credential{Type: CredentialOAuth, Refresh: "r0", Access: "old", Expires: 1}, nil
 	})
 
@@ -266,7 +267,7 @@ func TestResolveProviderAuthOAuthRefreshUnderLock(t *testing.T) {
 		},
 	}}
 
-	res, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
+	res, err := resolveProviderAuth(context.Background(), "oauthp", auth, store, authCtx(), nil)
 	if err != nil || res == nil || res.Auth.APIKey != "new" || res.Source != "OAuth" {
 		t.Fatalf("expired oauth should refresh then derive: %+v (err %v)", res, err)
 	}
@@ -274,12 +275,12 @@ func TestResolveProviderAuthOAuthRefreshUnderLock(t *testing.T) {
 		t.Fatalf("expected exactly one refresh, got %d", refreshCalls)
 	}
 	// The rotated credential must be persisted.
-	if stored, _ := store.Read("oauthp"); stored == nil || stored.Access != "new" {
+	if stored, _ := store.Read(context.Background(), "oauthp"); stored == nil || stored.Access != "new" {
 		t.Fatalf("rotated credential not persisted: %+v", stored)
 	}
 
 	// A still-valid credential is not refreshed.
-	res, _ = resolveProviderAuth("oauthp", auth, store, ctx(), nil)
+	res, _ = resolveProviderAuth(context.Background(), "oauthp", auth, store, authCtx(), nil)
 	if res == nil || res.Auth.APIKey != "new" || refreshCalls != 1 {
 		t.Fatalf("valid token should not refresh again: %+v calls=%d", res, refreshCalls)
 	}
@@ -287,7 +288,7 @@ func TestResolveProviderAuthOAuthRefreshUnderLock(t *testing.T) {
 
 func TestResolveProviderAuthOAuthRefreshFailure(t *testing.T) {
 	store := NewInMemoryCredentialStore()
-	_, _ = store.Modify("oauthp", func(*Credential) (*Credential, error) {
+	_, _ = store.Modify(context.Background(), "oauthp", func(*Credential) (*Credential, error) {
 		return &Credential{Type: CredentialOAuth, Refresh: "r0", Access: "old", Expires: 1}, nil
 	})
 
@@ -298,13 +299,13 @@ func TestResolveProviderAuthOAuthRefreshFailure(t *testing.T) {
 		ToAuth: func(c OAuthCredentials) (ModelAuth, error) { return ModelAuth{}, nil },
 	}}
 
-	_, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
+	_, err := resolveProviderAuth(context.Background(), "oauthp", auth, store, authCtx(), nil)
 	var me *ModelsError
 	if !errors.As(err, &me) || me.Code != ErrOAuth {
 		t.Fatalf("refresh failure should be ModelsError code oauth, got %v", err)
 	}
 	// The stored credential is preserved for retry.
-	if stored, _ := store.Read("oauthp"); stored == nil || stored.Access != "old" {
+	if stored, _ := store.Read(context.Background(), "oauthp"); stored == nil || stored.Access != "old" {
 		t.Fatalf("failed refresh must preserve the stored credential, got %+v", stored)
 	}
 }
@@ -313,14 +314,14 @@ func TestResolveProviderAuthOAuthRefreshFailure(t *testing.T) {
 // only, one entry per provider.
 func TestCredentialStoreList(t *testing.T) {
 	s := NewInMemoryCredentialStore()
-	_, _ = s.Modify("b-oauth", func(*Credential) (*Credential, error) {
+	_, _ = s.Modify(context.Background(), "b-oauth", func(*Credential) (*Credential, error) {
 		return &Credential{Type: CredentialOAuth, Refresh: "r", Access: "secret", Expires: 1}, nil
 	})
-	_, _ = s.Modify("a-key", func(*Credential) (*Credential, error) {
+	_, _ = s.Modify(context.Background(), "a-key", func(*Credential) (*Credential, error) {
 		return &Credential{Type: CredentialAPIKey, Key: "secret"}, nil
 	})
 
-	infos, err := s.List()
+	infos, err := s.List(context.Background())
 	if err != nil {
 		t.Fatalf("list: %v", err)
 	}
@@ -333,7 +334,7 @@ func TestCredentialStoreList(t *testing.T) {
 	}
 }
 
-func ctx() AuthContext { return fakeAuthContext{} }
+func authCtx() AuthContext { return fakeAuthContext{} }
 
 // oauthProviderAuth builds an OAuth provider whose refresh yields a token
 // expiring in expiresInMs and counts its calls. The counter is atomic because
@@ -367,7 +368,7 @@ func TestResolveStoredOAuthRefreshesWithinDefaultValidityWindow(t *testing.T) {
 	var calls atomic.Int64
 	auth := oauthProviderAuth(&calls, 3_600_000)
 
-	res, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
+	res, err := resolveProviderAuth(context.Background(), "oauthp", auth, store, authCtx(), nil)
 	if err != nil || res == nil || res.Auth.APIKey != "new" {
 		t.Fatalf("token inside the five-minute window must refresh: %+v (err %v)", res, err)
 	}
@@ -385,11 +386,11 @@ type divergentReadStore struct {
 	underLock *Credential
 }
 
-func (s divergentReadStore) Read(string) (*Credential, error) {
+func (s divergentReadStore) Read(context.Context, string) (*Credential, error) {
 	return &Credential{Type: CredentialOAuth, Refresh: "r0", Access: "old", Expires: 1}, nil
 }
 
-func (s divergentReadStore) Modify(_ string, fn func(*Credential) (*Credential, error)) (*Credential, error) {
+func (s divergentReadStore) Modify(_ context.Context, _ string, fn func(*Credential) (*Credential, error)) (*Credential, error) {
 	next, err := fn(s.underLock)
 	if err != nil {
 		return nil, err
@@ -414,7 +415,7 @@ func TestResolveStoredOAuthUnderLockUsesValidityWindow(t *testing.T) {
 	var calls atomic.Int64
 	auth := oauthProviderAuth(&calls, 3_600_000)
 
-	res, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
+	res, err := resolveProviderAuth(context.Background(), "oauthp", auth, store, authCtx(), nil)
 	if err != nil || res == nil || res.Auth.APIKey != "new" {
 		t.Fatalf("under-lock re-check must apply the validity window: %+v (err %v)", res, err)
 	}
@@ -433,7 +434,7 @@ func TestResolveStoredOAuthExplicitMinValidityUnsatisfied(t *testing.T) {
 	auth := oauthProviderAuth(&calls, 10*60*1000) // ten minutes, short of the hour asked for
 
 	min := int64(60 * 60 * 1000)
-	_, err := resolveProviderAuth("oauthp", auth, store, ctx(), &AuthResolutionOverrides{MinOAuthValidityMs: &min})
+	_, err := resolveProviderAuth(context.Background(), "oauthp", auth, store, authCtx(), &AuthResolutionOverrides{MinOAuthValidityMs: &min})
 	var me *ModelsError
 	if !errors.As(err, &me) || me.Code != ErrOAuth {
 		t.Fatalf("want an ErrOAuth ModelsError, got %v", err)
@@ -451,7 +452,7 @@ func TestResolveStoredOAuthDefaultWindowImposesNoContract(t *testing.T) {
 	var calls atomic.Int64
 	auth := oauthProviderAuth(&calls, 60*1000) // still inside the five-minute window
 
-	res, err := resolveProviderAuth("oauthp", auth, store, ctx(), nil)
+	res, err := resolveProviderAuth(context.Background(), "oauthp", auth, store, authCtx(), nil)
 	if err != nil || res == nil || res.Auth.APIKey != "new" {
 		t.Fatalf("default window must not reject a short-lived refreshed token: %+v (err %v)", res, err)
 	}
@@ -467,7 +468,7 @@ func TestResolveStoredOAuthZeroMinValidityArmsContract(t *testing.T) {
 	auth := oauthProviderAuth(&calls, 60*1000) // refreshes to 60s: inside the default window
 
 	min := int64(0)
-	_, err := resolveProviderAuth("oauthp", auth, store, ctx(), &AuthResolutionOverrides{MinOAuthValidityMs: &min})
+	_, err := resolveProviderAuth(context.Background(), "oauthp", auth, store, authCtx(), &AuthResolutionOverrides{MinOAuthValidityMs: &min})
 	var me *ModelsError
 	if !errors.As(err, &me) || me.Code != ErrOAuth {
 		t.Fatalf("an explicit zero minimum must still arm the contract, got %v", err)
@@ -483,11 +484,92 @@ func TestResolveStoredOAuthMinValidityCannotShrinkWindow(t *testing.T) {
 	auth := oauthProviderAuth(&calls, 3_600_000)
 
 	min := int64(1000)
-	res, err := resolveProviderAuth("oauthp", auth, store, ctx(), &AuthResolutionOverrides{MinOAuthValidityMs: &min})
+	res, err := resolveProviderAuth(context.Background(), "oauthp", auth, store, authCtx(), &AuthResolutionOverrides{MinOAuthValidityMs: &min})
 	if err != nil || res == nil || res.Auth.APIKey != "new" {
 		t.Fatalf("a smaller override must not shrink the window: %+v (err %v)", res, err)
 	}
 	if calls.Load() != 1 {
 		t.Fatalf("expected exactly one refresh, got %d", calls.Load())
+	}
+}
+
+// TestCredentialStoreCancelsQueuedModify mirrors pi "cancels queued credential
+// mutations without running them later" (upstream fed6009c): a mutation whose
+// context is cancelled while it is still queued behind another gives up without
+// ever running its callback, and the in-flight mutation still settles.
+func TestCredentialStoreCancelsQueuedModify(t *testing.T) {
+	s := NewInMemoryCredentialStore()
+	firstRunning := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan error, 1)
+	go func() {
+		_, err := s.Modify(context.Background(), "p1", func(*Credential) (*Credential, error) {
+			close(firstRunning)
+			<-releaseFirst
+			return &Credential{Type: CredentialAPIKey, Key: "first"}, nil
+		})
+		firstDone <- err
+	}()
+	<-firstRunning
+
+	var secondRan atomic.Bool
+	ctx, cancel := context.WithCancel(context.Background())
+	secondDone := make(chan error, 1)
+	queued := make(chan struct{})
+	go func() {
+		close(queued)
+		_, err := s.Modify(ctx, "p1", func(*Credential) (*Credential, error) {
+			secondRan.Store(true)
+			return &Credential{Type: CredentialAPIKey, Key: "second"}, nil
+		})
+		secondDone <- err
+	}()
+	<-queued
+	cancel()
+
+	select {
+	case err := <-secondDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("a cancelled queued mutation must report cancellation, got %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		close(releaseFirst)
+		t.Fatal("a cancelled queued mutation must stop waiting for the chain")
+	}
+	close(releaseFirst)
+	if err := <-firstDone; err != nil {
+		t.Fatalf("the in-flight mutation must still settle: %v", err)
+	}
+	if secondRan.Load() {
+		t.Fatal("a cancelled queued mutation must never run its callback")
+	}
+	stored, _ := s.Read(context.Background(), "p1")
+	if stored == nil || stored.Key != "first" {
+		t.Fatalf("stored credential = %+v, want the first mutation's value", stored)
+	}
+}
+
+// TestCredentialStoreCancelDuringCallbackDropsWrite locks the other half of pi's
+// reworked enqueue: a mutation cancelled while its callback was in flight does
+// not commit, so the stored credential is exactly what it was.
+func TestCredentialStoreCancelDuringCallbackDropsWrite(t *testing.T) {
+	s := NewInMemoryCredentialStore()
+	if _, err := s.Modify(context.Background(), "p1", func(*Credential) (*Credential, error) {
+		return &Credential{Type: CredentialAPIKey, Key: "existing"}, nil
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	_, err := s.Modify(ctx, "p1", func(*Credential) (*Credential, error) {
+		cancel() // the caller gives up while the callback is still working
+		return &Credential{Type: CredentialAPIKey, Key: "late"}, nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("want cancellation, got %v", err)
+	}
+	stored, _ := s.Read(context.Background(), "p1")
+	if stored == nil || stored.Key != "existing" {
+		t.Fatalf("a cancelled mutation must not commit: %+v", stored)
 	}
 }

@@ -39,6 +39,16 @@ func newModelsError(code ModelsErrorCode, message string, cause error) *ModelsEr
 	return &ModelsError{Code: code, Message: message, Cause: cause}
 }
 
+// isCancellation reports whether err is the caller's own cancellation rather
+// than a genuine failure. pi's raceWithAbortSignal rejects with the abort reason
+// before a wrapped downstream rejection can surface, so an aborted caller never
+// sees a ModelsError; Go has no promise race to run, so resolution unwraps
+// cancellation instead of dressing it up as an auth failure.
+func isCancellation(ctx context.Context, err error) bool {
+	cause := ctx.Err()
+	return cause != nil && errors.Is(err, cause)
+}
+
 // AuthResolutionOverrides carry request-scoped apiKey/env into resolution so a
 // provider's resolve() sees them (pi resolve.ts AuthResolutionOverrides,
 // upstream ef231c49). An explicit apiKey resolves directly against a synthetic
@@ -56,35 +66,45 @@ type AuthResolutionOverrides struct {
 	MinOAuthValidityMs *int64
 }
 
+// Cancellation note: pi fed6009c added a `signal` field to
+// AuthResolutionOverrides so the optional public signal could be normalized and
+// threaded down. Go carries cancellation on the context.Context that every
+// resolution entry point already takes, so no override field is needed — the
+// caller's context is the signal.
+
 // resolveProviderAuth is the auth resolution shared by the Models and
 // ImagesModels collections (pi resolve.ts resolveProviderAuth). A stored
 // credential owns the provider: ambient/env is consulted only when nothing is
 // stored. No silent env fallback after a failed refresh or for a credential
 // type without a matching handler. Returns (nil, nil) when unconfigured.
 func resolveProviderAuth(
+	ctx context.Context,
 	providerID string,
 	auth ProviderAuth,
 	credentials CredentialStore,
-	ctx AuthContext,
+	authCtx AuthContext,
 	overrides *AuthResolutionOverrides,
 ) (*AuthResult, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	// Request-scoped env is visible to the provider's resolve() (ef231c49).
-	requestCtx := ctx
+	requestCtx := authCtx
 	if overrides != nil && len(overrides.Env) > 0 {
-		requestCtx = overlayEnvAuthContext(ctx, overrides.Env)
+		requestCtx = overlayEnvAuthContext(authCtx, overrides.Env)
 	}
 
 	// An explicit request apiKey resolves directly, ahead of any stored
 	// credential (pi: overrides?.apiKey !== undefined).
 	if overrides != nil && overrides.APIKey != "" && auth.APIKey != nil {
-		return resolveApiKey(requestCtx, auth.APIKey, providerID, &Credential{
+		return resolveApiKey(ctx, requestCtx, auth.APIKey, providerID, &Credential{
 			Type: CredentialAPIKey,
 			Key:  overrides.APIKey,
 			Env:  overrides.Env,
 		})
 	}
 
-	stored, err := readCredential(credentials, providerID)
+	stored, err := readCredential(ctx, credentials, providerID)
 	if err != nil {
 		return nil, err
 	}
@@ -94,7 +114,7 @@ func resolveProviderAuth(
 			if overrides != nil {
 				minValidityMs = overrides.MinOAuthValidityMs
 			}
-			return resolveStoredOAuth(credentials, providerID, auth.OAuth, stored, minValidityMs)
+			return resolveStoredOAuth(ctx, credentials, providerID, auth.OAuth, stored, minValidityMs)
 		}
 		if stored.Type == CredentialAPIKey && auth.APIKey != nil {
 			credential := stored
@@ -103,14 +123,14 @@ func resolveProviderAuth(
 				clone.Env = mergeStringMap(stored.Env, overrides.Env) // overrides win
 				credential = &clone
 			}
-			return resolveApiKey(requestCtx, auth.APIKey, providerID, credential)
+			return resolveApiKey(ctx, requestCtx, auth.APIKey, providerID, credential)
 		}
 		return nil, nil
 	}
 
 	// Ambient (env vars, AWS profiles, ADC files).
 	if auth.APIKey != nil {
-		return resolveApiKey(requestCtx, auth.APIKey, providerID, nil)
+		return resolveApiKey(ctx, requestCtx, auth.APIKey, providerID, nil)
 	}
 	return nil, nil
 }
@@ -145,6 +165,7 @@ const defaultOAuthMinimumValidityMs int64 = 5 * 60 * 1000
 // minOAuthValidityMs widens that window (never shrinks it) and, when non-nil,
 // additionally requires the refreshed token to clear it.
 func resolveStoredOAuth(
+	ctx context.Context,
 	credentials CredentialStore,
 	providerID string,
 	oauth *OAuthAuth,
@@ -160,20 +181,23 @@ func resolveStoredOAuth(
 
 	if expiresSoon(credential.Expires) {
 		// Optimistic check said expired; the authoritative check runs under the lock.
-		post, err := credentials.Modify(providerID, func(current *Credential) (*Credential, error) {
+		post, err := credentials.Modify(ctx, providerID, func(current *Credential) (*Credential, error) {
 			if current == nil || current.Type != CredentialOAuth {
 				return nil, nil // logged out meanwhile
 			}
 			if !expiresSoon(current.Expires) {
 				return nil, nil // another request refreshed
 			}
-			refreshed, rerr := oauth.Refresh(context.Background(), current.OAuthCredentials())
+			refreshed, rerr := oauth.Refresh(ctx, current.OAuthCredentials())
 			if rerr != nil {
 				return nil, newModelsError(ErrOAuth, "OAuth refresh failed for "+providerID, rerr)
 			}
 			return oauthCredential(refreshed), nil
 		})
 		if err != nil {
+			if isCancellation(ctx, err) {
+				return nil, ctx.Err()
+			}
 			var me *ModelsError
 			if errors.As(err, &me) {
 				return nil, err
@@ -204,22 +228,29 @@ func resolveStoredOAuth(
 
 // resolveApiKey runs a provider's api-key resolver and wraps failures.
 func resolveApiKey(
-	ctx AuthContext,
+	ctx context.Context,
+	authCtx AuthContext,
 	apiKey *ApiKeyAuth,
 	providerID string,
 	credential *Credential,
 ) (*AuthResult, error) {
-	res, err := apiKey.Resolve(ctx, credential)
+	res, err := apiKey.Resolve(ctx, authCtx, credential)
 	if err != nil {
+		if isCancellation(ctx, err) {
+			return nil, err
+		}
 		return nil, newModelsError(ErrAuth, "API key auth failed for provider "+providerID, err)
 	}
 	return res, nil
 }
 
 // readCredential reads from the store and wraps failures.
-func readCredential(credentials CredentialStore, providerID string) (*Credential, error) {
-	c, err := credentials.Read(providerID)
+func readCredential(ctx context.Context, credentials CredentialStore, providerID string) (*Credential, error) {
+	c, err := credentials.Read(ctx, providerID)
 	if err != nil {
+		if isCancellation(ctx, err) {
+			return nil, err
+		}
 		return nil, newModelsError(ErrAuth, "Credential store read failed for "+providerID, err)
 	}
 	return c, nil

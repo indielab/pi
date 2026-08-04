@@ -3,9 +3,13 @@ package ai
 import (
 	"context"
 	"errors"
+	"fmt"
 	"reflect"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // capture builds ProviderStreams whose Stream records the model + options it
@@ -112,7 +116,7 @@ func TestModelsApplyAuthBaseURLHeadersEnv(t *testing.T) {
 	var gotOpts *StreamOptions
 	auth := &ApiKeyAuth{
 		Name: "custom",
-		Resolve: func(_ AuthContext, _ *Credential) (*AuthResult, error) {
+		Resolve: func(_ context.Context, _ AuthContext, _ *Credential) (*AuthResult, error) {
 			return &AuthResult{
 				Auth: ModelAuth{APIKey: "k", BaseURL: "https://auth.example", Headers: map[string]string{"H": "auth", "Keep": "auth"}},
 				Env:  map[string]string{"E": "auth", "KeepEnv": "auth"},
@@ -161,12 +165,12 @@ func TestModelsGetAuthUnconfigured(t *testing.T) {
 		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("p", "DEFINITELY_UNSET_KEY_XYZ")},
 		Models: []*Model{{Provider: "p", ID: "m", Api: "api"}},
 	}))
-	res, err := m.GetAuth(&Model{Provider: "p", ID: "m", Api: "api"}, nil)
+	res, err := m.GetAuth(context.Background(), &Model{Provider: "p", ID: "m", Api: "api"}, nil)
 	if err != nil || res != nil {
 		t.Fatalf("unconfigured provider should resolve (nil, nil), got (%+v, %v)", res, err)
 	}
 	// Unknown provider also resolves nil.
-	if res, err := m.GetAuth(&Model{Provider: "ghost"}, nil); err != nil || res != nil {
+	if res, err := m.GetAuth(context.Background(), &Model{Provider: "ghost"}, nil); err != nil || res != nil {
 		t.Fatalf("unknown provider GetAuth = (%+v, %v)", res, err)
 	}
 	// Streaming against an unconfigured provider is an error (ff28097a: the
@@ -247,7 +251,7 @@ func TestModelsRefreshPersistsAndRestores(t *testing.T) {
 	if res := m.Refresh(context.Background(), nil); len(res.Errors) != 0 || calls != 1 {
 		t.Fatalf("initial refresh: errors=%v calls=%d", res.Errors, calls)
 	}
-	stored, _ := store.Read("dyn")
+	stored, _ := store.Read(context.Background(), "dyn")
 	if stored == nil || len(stored.Models) != 1 || stored.Models[0].ID != "remote" {
 		t.Fatalf("refresh must persist through the store: %v", stored)
 	}
@@ -309,7 +313,7 @@ func TestModelsRefreshSkipsUnconfigured(t *testing.T) {
 // (and persisted) before the provider fetch sees it.
 func TestModelsRefreshOAuthBeforeModels(t *testing.T) {
 	creds := NewInMemoryCredentialStore()
-	_, _ = creds.Modify("dyn", func(*Credential) (*Credential, error) {
+	_, _ = creds.Modify(context.Background(), "dyn", func(*Credential) (*Credential, error) {
 		return &Credential{Type: CredentialOAuth, Refresh: "r0", Access: "old", Expires: 1}, nil
 	})
 	m := modelsWithEnv(nil, &CreateModelsOptions{Credentials: creds})
@@ -338,7 +342,7 @@ func TestModelsRefreshOAuthBeforeModels(t *testing.T) {
 	if gotAccess != "new" {
 		t.Fatalf("fetch must see the refreshed OAuth credential, got %q", gotAccess)
 	}
-	if stored, _ := creds.Read("dyn"); stored == nil || stored.Access != "new" {
+	if stored, _ := creds.Read(context.Background(), "dyn"); stored == nil || stored.Access != "new" {
 		t.Fatalf("rotated credential must be persisted: %+v", stored)
 	}
 }
@@ -349,7 +353,7 @@ func TestModelsRefreshOAuthBeforeModels(t *testing.T) {
 // that print err.Error(); this locks that a failed OAuth refresh keeps its cause.
 func TestModelsErrorKeepsCause(t *testing.T) {
 	creds := NewInMemoryCredentialStore()
-	_, _ = creds.Modify("p1", func(*Credential) (*Credential, error) {
+	_, _ = creds.Modify(context.Background(), "p1", func(*Credential) (*Credential, error) {
 		return &Credential{Type: CredentialOAuth, Refresh: "r", Access: "old", Expires: 0}, nil
 	})
 	m := modelsWithEnv(nil, &CreateModelsOptions{Credentials: creds})
@@ -364,7 +368,7 @@ func TestModelsErrorKeepsCause(t *testing.T) {
 		}},
 	}))
 
-	_, err := m.GetAuth(&Model{Provider: "p1", ID: "m", Api: "api"}, nil)
+	_, err := m.GetAuth(context.Background(), &Model{Provider: "p1", ID: "m", Api: "api"}, nil)
 	var me *ModelsError
 	if !errors.As(err, &me) || me.Code != ErrOAuth {
 		t.Fatalf("want an ErrOAuth ModelsError, got %v", err)
@@ -405,7 +409,7 @@ func TestModelsRefreshAborted(t *testing.T) {
 func TestModelsCheckAuthAndGetAvailable(t *testing.T) {
 	creds := NewInMemoryCredentialStore()
 	// Expired OAuth: checkAuth must NOT refresh it.
-	_, _ = creds.Modify("oauthp", func(*Credential) (*Credential, error) {
+	_, _ = creds.Modify(context.Background(), "oauthp", func(*Credential) (*Credential, error) {
 		return &Credential{
 			Type: CredentialOAuth, Refresh: "r0", Access: "old", Expires: 1,
 			AvailableModelIDs: []string{"kept"},
@@ -456,24 +460,24 @@ func TestModelsCheckAuthAndGetAvailable(t *testing.T) {
 		Models: []*Model{{Provider: "keyed", ID: "visible"}},
 	}))
 
-	check, err := m.CheckAuth("oauthp")
+	check, err := m.CheckAuth(context.Background(), "oauthp")
 	if err != nil || check == nil || check.Type != CredentialOAuth || check.Source != "OAuth" {
 		t.Fatalf("oauth checkAuth = (%+v, %v)", check, err)
 	}
 	if refreshed {
 		t.Fatal("checkAuth must not refresh OAuth")
 	}
-	if check, _ := m.CheckAuth("unconfigured"); check != nil {
+	if check, _ := m.CheckAuth(context.Background(), "unconfigured"); check != nil {
 		t.Fatalf("unconfigured checkAuth should be nil, got %+v", check)
 	}
-	if check, _ := m.CheckAuth("keyed"); check == nil || check.Type != CredentialAPIKey || check.Source != "K" {
+	if check, _ := m.CheckAuth(context.Background(), "keyed"); check == nil || check.Type != CredentialAPIKey || check.Source != "K" {
 		t.Fatalf("keyed checkAuth wrong: %+v", check)
 	}
-	if check, _ := m.CheckAuth("ghost"); check != nil {
+	if check, _ := m.CheckAuth(context.Background(), "ghost"); check != nil {
 		t.Fatal("unknown provider checkAuth should be nil")
 	}
 
-	available, err := m.GetAvailable("")
+	available, err := m.GetAvailable(context.Background(), "")
 	if err != nil {
 		t.Fatalf("getAvailable: %v", err)
 	}
@@ -496,17 +500,17 @@ func TestModelsCheckAuthUsesCheckHook(t *testing.T) {
 		ID: "cmd",
 		Auth: ProviderAuth{APIKey: &ApiKeyAuth{
 			Name: "cmd",
-			Check: func(_ AuthContext, _ *Credential) (*AuthCheck, error) {
+			Check: func(_ context.Context, _ AuthContext, _ *Credential) (*AuthCheck, error) {
 				return &AuthCheck{Source: "command", Type: CredentialAPIKey}, nil
 			},
-			Resolve: func(_ AuthContext, _ *Credential) (*AuthResult, error) {
+			Resolve: func(_ context.Context, _ AuthContext, _ *Credential) (*AuthResult, error) {
 				resolved = true
 				return &AuthResult{Auth: ModelAuth{APIKey: "side-effect"}}, nil
 			},
 		}},
 	}))
 
-	check, err := m.CheckAuth("cmd")
+	check, err := m.CheckAuth(context.Background(), "cmd")
 	if err != nil || check == nil || check.Source != "command" {
 		t.Fatalf("check hook result wrong: (%+v, %v)", check, err)
 	}
@@ -517,11 +521,13 @@ func TestModelsCheckAuthUsesCheckHook(t *testing.T) {
 	m.SetProvider(CreateProvider(CreateProviderOptions{
 		ID: "bad",
 		Auth: ProviderAuth{APIKey: &ApiKeyAuth{
-			Name:  "bad",
-			Check: func(_ AuthContext, _ *Credential) (*AuthCheck, error) { return nil, errors.New("exec failed") },
+			Name: "bad",
+			Check: func(_ context.Context, _ AuthContext, _ *Credential) (*AuthCheck, error) {
+				return nil, errors.New("exec failed")
+			},
 		}},
 	}))
-	_, err = m.CheckAuth("bad")
+	_, err = m.CheckAuth(context.Background(), "bad")
 	var me *ModelsError
 	if !errors.As(err, &me) || me.Code != ErrAuth || !strings.Contains(me.Message, "API key auth check failed for provider bad") {
 		t.Fatalf("check failure should wrap as ModelsError auth: %v", err)
@@ -544,29 +550,29 @@ func TestModelsLoginLogout(t *testing.T) {
 		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("p", "P_KEY")},
 	}))
 
-	credential, err := m.Login("p", CredentialAPIKey, fakeInteraction{answer: "typed-key"})
+	credential, err := m.Login(context.Background(), "p", CredentialAPIKey, fakeInteraction{answer: "typed-key"})
 	if err != nil || credential == nil || credential.Key != "typed-key" {
 		t.Fatalf("login = (%+v, %v)", credential, err)
 	}
-	if stored, _ := creds.Read("p"); stored == nil || stored.Key != "typed-key" {
+	if stored, _ := creds.Read(context.Background(), "p"); stored == nil || stored.Key != "typed-key" {
 		t.Fatalf("login must persist the credential: %+v", stored)
 	}
 
 	// Unsupported login type errors with pi's message.
-	_, err = m.Login("p", CredentialOAuth, fakeInteraction{})
+	_, err = m.Login(context.Background(), "p", CredentialOAuth, fakeInteraction{})
 	var me *ModelsError
 	if !errors.As(err, &me) || me.Code != ErrAuth || !strings.Contains(me.Message, "does not support oauth login") {
 		t.Fatalf("unsupported login should error: %v", err)
 	}
-	_, err = m.Login("ghost", CredentialAPIKey, fakeInteraction{})
+	_, err = m.Login(context.Background(), "ghost", CredentialAPIKey, fakeInteraction{})
 	if !errors.As(err, &me) || me.Code != ErrProvider {
 		t.Fatalf("unknown provider login should error: %v", err)
 	}
 
-	if err := m.Logout("p"); err != nil {
+	if err := m.Logout(context.Background(), "p"); err != nil {
 		t.Fatalf("logout: %v", err)
 	}
-	if stored, _ := creds.Read("p"); stored != nil {
+	if stored, _ := creds.Read(context.Background(), "p"); stored != nil {
 		t.Fatalf("logout must delete the credential: %+v", stored)
 	}
 }
@@ -584,7 +590,7 @@ func TestModelsModelHeadersAndTransform(t *testing.T) {
 		ID: "p",
 		Auth: ProviderAuth{APIKey: &ApiKeyAuth{
 			Name: "p",
-			Resolve: func(_ AuthContext, _ *Credential) (*AuthResult, error) {
+			Resolve: func(_ context.Context, _ AuthContext, _ *Credential) (*AuthResult, error) {
 				return &AuthResult{Auth: ModelAuth{APIKey: "k", Headers: map[string]string{"X-Auth": "auth", "Keep": "auth"}}}, nil
 			},
 		}},
@@ -597,7 +603,7 @@ func TestModelsModelHeadersAndTransform(t *testing.T) {
 	}
 
 	// Model auth merges model headers, replacing case-insensitive matches.
-	res, err := m.GetAuth(model, nil)
+	res, err := m.GetAuth(context.Background(), model, nil)
 	if err != nil || res == nil {
 		t.Fatalf("getAuth(model) = (%+v, %v)", res, err)
 	}
@@ -609,7 +615,7 @@ func TestModelsModelHeadersAndTransform(t *testing.T) {
 	}
 
 	// Provider auth carries no model headers.
-	pres, err := m.GetProviderAuth("p", nil)
+	pres, err := m.GetProviderAuth(context.Background(), "p", nil)
 	if err != nil || pres == nil {
 		t.Fatalf("getProviderAuth = (%+v, %v)", pres, err)
 	}
@@ -659,12 +665,10 @@ func TestCreateProviderDynamicOverlay(t *testing.T) {
 	}
 
 	store := NewInMemoryModelsStore()
-	err := p.RefreshModels(context.Background(), RefreshModelsContext{
-		Store:        providerModelsStore{store: store, id: "p"},
-		AllowNetwork: true,
-	})
-	if err != nil {
-		t.Fatalf("refresh: %v", err)
+	m := modelsWithEnv(map[string]string{"K": "key"}, &CreateModelsOptions{ModelsStore: store})
+	m.SetProvider(p)
+	if res := m.Refresh(context.Background(), nil); len(res.Errors) != 0 {
+		t.Fatalf("refresh: %v", res.Errors)
 	}
 	got := p.GetModels()
 	var ids []string
@@ -690,12 +694,11 @@ func TestCreateProviderDynamicOverlay(t *testing.T) {
 			return nil, errors.New("offline")
 		},
 	})
-	err = p2.RefreshModels(context.Background(), RefreshModelsContext{
-		Store:        providerModelsStore{store: store, id: "p"},
-		AllowNetwork: false,
-	})
-	if err != nil {
-		t.Fatalf("offline refresh must not fetch: %v", err)
+	m2 := modelsWithEnv(map[string]string{"K": "key"}, &CreateModelsOptions{ModelsStore: store})
+	m2.SetProvider(p2)
+	allowNetwork := false
+	if res := m2.Refresh(context.Background(), &ModelsRefreshOptions{AllowNetwork: &allowNetwork}); len(res.Errors) != 0 {
+		t.Fatalf("offline refresh must not fetch: %v", res.Errors)
 	}
 	ids = nil
 	for _, model := range p2.GetModels() {
@@ -755,5 +758,518 @@ func TestModelsRefreshForce(t *testing.T) {
 	}
 	if len(restoreForces) > 1 {
 		t.Fatalf("cache-restore must not fetch (AllowNetwork false): %v", restoreForces)
+	}
+}
+
+// recordingModelsStore records the context each operation was handed, so tests
+// can assert that storage work is bound to the refresh's own context.
+type recordingModelsStore struct {
+	inner ModelsStore
+
+	mu   sync.Mutex
+	ctxs []context.Context
+}
+
+func (s *recordingModelsStore) record(ctx context.Context) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ctxs = append(s.ctxs, ctx)
+}
+
+func (s *recordingModelsStore) seen() []context.Context {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]context.Context, len(s.ctxs))
+	copy(out, s.ctxs)
+	return out
+}
+
+func (s *recordingModelsStore) Read(ctx context.Context, providerID string) (*ModelsStoreEntry, error) {
+	s.record(ctx)
+	return s.inner.Read(ctx, providerID)
+}
+
+func (s *recordingModelsStore) Write(ctx context.Context, providerID string, entry ModelsStoreEntry) error {
+	s.record(ctx)
+	return s.inner.Write(ctx, providerID, entry)
+}
+
+func (s *recordingModelsStore) Delete(ctx context.Context, providerID string) error {
+	s.record(ctx)
+	return s.inner.Delete(ctx, providerID)
+}
+
+// TestModelsRefreshSelectedProviders mirrors pi "restricts refresh work to
+// selected providers" (upstream fed6009c): Providers narrows the sweep, unknown
+// ids are ignored, and each selected provider runs a cache phase before its
+// network phase.
+func TestModelsRefreshSelectedProviders(t *testing.T) {
+	var mu sync.Mutex
+	var calls []string
+	m := modelsWithEnv(map[string]string{"K": "key"}, nil)
+	// Record from the RefreshModels seam rather than FetchModels, so the
+	// cache-only phase is observable too.
+	for _, id := range []string{"one", "two"} {
+		m.SetProvider(recordingRefreshProvider(id, &mu, &calls))
+	}
+
+	result := m.Refresh(context.Background(), &ModelsRefreshOptions{Providers: []string{"two", "unknown"}})
+
+	if len(result.Errors) != 0 {
+		t.Fatalf("no errors expected: %v", result.Errors)
+	}
+	if !reflect.DeepEqual(calls, []string{"two:cache", "two:network"}) {
+		t.Fatalf("refresh calls = %v, want [two:cache two:network]", calls)
+	}
+}
+
+// refreshPhaseProvider is a dynamic provider that records each refresh phase and
+// the context it was handed.
+type refreshPhaseProvider struct {
+	Provider
+	id     string
+	mu     *sync.Mutex
+	calls  *[]string
+	seenMu sync.Mutex
+	seen   []context.Context
+}
+
+func recordingRefreshProvider(id string, mu *sync.Mutex, calls *[]string) *refreshPhaseProvider {
+	return &refreshPhaseProvider{
+		Provider: CreateProvider(CreateProviderOptions{
+			ID:          id,
+			Auth:        ProviderAuth{APIKey: EnvAPIKeyAuth(id, "K")},
+			FetchModels: func(context.Context, RefreshModelsContext) ([]*Model, error) { return nil, nil },
+		}),
+		id:    id,
+		mu:    mu,
+		calls: calls,
+	}
+}
+
+func (p *refreshPhaseProvider) RefreshModels(ctx context.Context, req RefreshModelsContext) error {
+	phase := "cache"
+	if req.AllowNetwork {
+		phase = "network"
+	}
+	p.mu.Lock()
+	*p.calls = append(*p.calls, p.id+":"+phase)
+	p.mu.Unlock()
+	p.seenMu.Lock()
+	p.seen = append(p.seen, ctx)
+	p.seenMu.Unlock()
+	return p.Provider.RefreshModels(ctx, req)
+}
+
+func (p *refreshPhaseProvider) contexts() []context.Context {
+	p.seenMu.Lock()
+	defer p.seenMu.Unlock()
+	out := make([]context.Context, len(p.seen))
+	copy(out, p.seen)
+	return out
+}
+
+// TestModelsRefreshRestoresCacheBeforeAuth mirrors pi "restores cached models
+// before waiting for network auth": the cache-only phase publishes the stored
+// catalog before auth resolution is even attempted, so a refresh blocked in
+// auth still leaves the last-known models visible — and cancelling it returns
+// without ever reaching the network fetch.
+func TestModelsRefreshRestoresCacheBeforeAuth(t *testing.T) {
+	store := NewInMemoryModelsStore()
+	if err := store.Write(context.Background(), "dynamic", ModelsStoreEntry{
+		Models: []*Model{{Provider: "dynamic", ID: "cached"}},
+	}); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+	authStarted := make(chan struct{})
+	releaseAuth := make(chan struct{})
+	authReturned := make(chan struct{})
+	fetched := false
+
+	m := modelsWithEnv(nil, &CreateModelsOptions{ModelsStore: store})
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID: "dynamic",
+		Auth: ProviderAuth{APIKey: &ApiKeyAuth{
+			Name: "Blocked auth",
+			Resolve: func(context.Context, AuthContext, *Credential) (*AuthResult, error) {
+				close(authStarted)
+				<-releaseAuth
+				close(authReturned)
+				return &AuthResult{Auth: ModelAuth{APIKey: "key"}}, nil
+			},
+		}},
+		FetchModels: func(context.Context, RefreshModelsContext) ([]*Model, error) {
+			fetched = true
+			return nil, errors.New("must not fetch")
+		},
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	results := make(chan ModelsRefreshResult, 1)
+	go func() { results <- m.Refresh(ctx, &ModelsRefreshOptions{Providers: []string{"dynamic"}}) }()
+	<-authStarted
+
+	if m.GetModel("dynamic", "cached") == nil {
+		t.Fatal("the cache phase must restore the stored catalog before auth resolution")
+	}
+	cancel()
+	if result := <-results; !result.Aborted {
+		t.Fatalf("cancelled refresh must report aborted: %+v", result)
+	}
+	close(releaseAuth)
+	<-authReturned
+	if fetched {
+		t.Fatal("a cancelled refresh must not reach the network fetch")
+	}
+}
+
+// TestModelsPublishPersistenceChoices mirrors pi "lets providers choose
+// persistent deletion and ephemeral publication atomically": a provider may
+// delete its stored entry, and a publication without a persistence choice
+// applies only the in-memory update — with the update always running after the
+// storage mutation it was published with.
+func TestModelsPublishPersistenceChoices(t *testing.T) {
+	store := NewInMemoryModelsStore()
+	if err := store.Write(context.Background(), "dynamic", ModelsStoreEntry{
+		Models: []*Model{{Provider: "dynamic", ID: "stored"}},
+	}); err != nil {
+		t.Fatalf("seed store: %v", err)
+	}
+	state := "initial"
+	var publishErr error
+
+	m := modelsWithEnv(nil, &CreateModelsOptions{ModelsStore: store})
+	m.SetProvider(&publishingProvider{
+		Provider: CreateProvider(CreateProviderOptions{
+			ID:          "dynamic",
+			Auth:        ProviderAuth{APIKey: EnvAPIKeyAuth("dynamic")},
+			FetchModels: func(context.Context, RefreshModelsContext) ([]*Model, error) { return nil, nil },
+		}),
+		refresh: func(_ context.Context, req RefreshModelsContext) error {
+			if req.Stored == nil || len(req.Stored.Models) != 1 || req.Stored.Models[0].ID != "stored" {
+				return errors.New("provider must see the stored snapshot")
+			}
+			if _, err := req.Publish(ModelsPublication{
+				DeletePersisted: true,
+				Update: func() {
+					if entry, _ := store.Read(context.Background(), "dynamic"); entry != nil {
+						publishErr = errors.New(
+							"the stored entry must already be deleted when the update runs (deletion missing or ordered after it)")
+					}
+					state = "deleted"
+				},
+			}); err != nil {
+				return err
+			}
+			_, err := req.Publish(ModelsPublication{Update: func() { state = "ephemeral" }})
+			return err
+		},
+	})
+
+	allowNetwork := false
+	result := m.Refresh(context.Background(), &ModelsRefreshOptions{AllowNetwork: &allowNetwork})
+	if len(result.Errors) != 0 {
+		t.Fatalf("no errors expected: %v", result.Errors)
+	}
+	if publishErr != nil {
+		t.Fatal(publishErr)
+	}
+	if entry, _ := store.Read(context.Background(), "dynamic"); entry != nil {
+		t.Fatalf("persist deletion must clear the stored entry: %+v", entry)
+	}
+	if state != "ephemeral" {
+		t.Fatalf("state = %q, want ephemeral", state)
+	}
+}
+
+// publishingProvider overrides RefreshModels with a test-supplied body.
+type publishingProvider struct {
+	Provider
+	refresh func(ctx context.Context, req RefreshModelsContext) error
+}
+
+func (p *publishingProvider) RefreshModels(ctx context.Context, req RefreshModelsContext) error {
+	return p.refresh(ctx, req)
+}
+
+// TestModelsRefreshBindsStorageToRefreshContext mirrors pi "binds model-store
+// waits to the provider refresh signal": every ModelsStore operation a refresh
+// performs — both phase reads and the publication write — carries the same
+// context the provider was handed, so cancelling the refresh cancels its
+// storage work too.
+func TestModelsRefreshBindsStorageToRefreshContext(t *testing.T) {
+	store := &recordingModelsStore{inner: NewInMemoryModelsStore()}
+	var mu sync.Mutex
+	var calls []string
+	provider := recordingRefreshProvider("dynamic", &mu, &calls)
+	m := modelsWithEnv(map[string]string{"K": "key"}, &CreateModelsOptions{ModelsStore: store})
+	m.SetProvider(provider)
+
+	result := m.Refresh(context.Background(), &ModelsRefreshOptions{Providers: []string{"dynamic"}})
+	if len(result.Errors) != 0 {
+		t.Fatalf("no errors expected: %v", result.Errors)
+	}
+
+	providerContexts := provider.contexts()
+	if len(providerContexts) != 2 {
+		t.Fatalf("want a cache and a network phase, got %d", len(providerContexts))
+	}
+	refreshCtx := providerContexts[0]
+	if providerContexts[1] != refreshCtx {
+		t.Fatal("both refresh phases must share one refresh context")
+	}
+	seen := store.seen()
+	if len(seen) != 3 {
+		t.Fatalf("want three storage operations (two reads, one write), got %d", len(seen))
+	}
+	for i, storeCtx := range seen {
+		if storeCtx != refreshCtx {
+			t.Fatalf("storage operation %d used a foreign context", i)
+		}
+	}
+}
+
+// TestModelsRefreshStopsWaitingOnCancel mirrors pi "stops waiting on abort when
+// a provider ignores its signal": the sweep returns as soon as its context is
+// done instead of waiting for a stalled provider, and the returned error map is
+// a snapshot the abandoned work can no longer touch.
+func TestModelsRefreshStopsWaitingOnCancel(t *testing.T) {
+	release := make(chan struct{})
+	failed := make(chan struct{})
+	m := modelsWithEnv(map[string]string{"K": "key"}, nil)
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:   "dynamic",
+		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("dynamic", "K")},
+		FetchModels: func(context.Context, RefreshModelsContext) ([]*Model, error) {
+			close(failed)
+			<-release
+			return nil, errors.New("late provider failure")
+		},
+	}))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	results := make(chan ModelsRefreshResult, 1)
+	go func() { results <- m.Refresh(ctx, nil) }()
+	<-failed
+	cancel()
+
+	var result ModelsRefreshResult
+	select {
+	case result = <-results:
+	case <-time.After(5 * time.Second):
+		t.Fatal("a cancelled sweep must return without waiting for a stalled provider")
+	}
+	if !result.Aborted {
+		t.Fatal("a cancelled sweep must report aborted")
+	}
+	if len(result.Errors) != 0 {
+		t.Fatalf("cancellation must not be reported as a provider error: %v", result.Errors)
+	}
+	close(release)
+	// The abandoned provider's late failure cannot appear in the snapshot the
+	// caller already holds.
+	if len(result.Errors) != 0 {
+		t.Fatalf("late failure leaked into the returned result: %v", result.Errors)
+	}
+}
+
+// TestModelsRefreshSupersedesInFlightRefresh mirrors pi "rejects late
+// publication from a superseded non-cooperative provider" and "lets a newer
+// dynamic refresh bypass and supersede older network work": a second refresh
+// does not join the first (pi's inflightRefresh dedup is gone), and the older
+// refresh's late result never clobbers the newer catalog.
+func TestModelsRefreshSupersedesInFlightRefresh(t *testing.T) {
+	store := NewInMemoryModelsStore()
+	firstStarted := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	firstDone := make(chan struct{})
+	var fetches atomic.Int64
+
+	m := modelsWithEnv(map[string]string{"K": "key"}, &CreateModelsOptions{ModelsStore: store})
+	provider := CreateProvider(CreateProviderOptions{
+		ID:   "dynamic",
+		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("dynamic", "K")},
+		FetchModels: func(context.Context, RefreshModelsContext) ([]*Model, error) {
+			current := fetches.Add(1)
+			if current == 1 {
+				close(firstStarted)
+				<-releaseFirst
+				defer close(firstDone)
+			}
+			return []*Model{{Provider: "dynamic", ID: fmt.Sprintf("generation-%d", current)}}, nil
+		},
+	})
+	m.SetProvider(provider)
+
+	firstResults := make(chan ModelsRefreshResult, 1)
+	go func() {
+		firstResults <- m.Refresh(context.Background(), &ModelsRefreshOptions{Providers: []string{"dynamic"}})
+	}()
+	<-firstStarted
+
+	second := m.Refresh(context.Background(), &ModelsRefreshOptions{Providers: []string{"dynamic"}})
+	if len(second.Errors) != 0 || second.Aborted {
+		t.Fatalf("the superseding refresh must succeed: %+v", second)
+	}
+	close(releaseFirst)
+	if first := <-firstResults; len(first.Errors) != 0 {
+		t.Fatalf("a superseded refresh must not report an error: %v", first.Errors)
+	}
+	<-firstDone
+
+	if got := fetches.Load(); got != 2 {
+		t.Fatalf("a newer refresh must fetch instead of joining the older one, fetches=%d", got)
+	}
+	ids := []string{}
+	for _, model := range provider.GetModels() {
+		ids = append(ids, model.ID)
+	}
+	if !reflect.DeepEqual(ids, []string{"generation-2"}) {
+		t.Fatalf("models = %v, want [generation-2]", ids)
+	}
+	stored, _ := store.Read(context.Background(), "dynamic")
+	if stored == nil || len(stored.Models) != 1 || stored.Models[0].ID != "generation-2" {
+		t.Fatalf("the superseded refresh must not publish over the newer catalog: %+v", stored)
+	}
+}
+
+// TestModelsSetProviderSupersedesRefresh locks pi's setProvider/deleteProvider/
+// clearProviders superseding: replacing a provider cancels the refresh in
+// flight for that id, and the abandoned refresh publishes nothing.
+func TestModelsSetProviderSupersedesRefresh(t *testing.T) {
+	store := NewInMemoryModelsStore()
+	started := make(chan struct{})
+	release := make(chan struct{})
+	cancelled := make(chan error, 1)
+
+	m := modelsWithEnv(map[string]string{"K": "key"}, &CreateModelsOptions{ModelsStore: store})
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:   "dynamic",
+		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("dynamic", "K")},
+		FetchModels: func(ctx context.Context, req RefreshModelsContext) ([]*Model, error) {
+			close(started)
+			<-release
+			_, err := req.Publish(ModelsPublication{
+				Persist: &ModelsStoreEntry{Models: []*Model{{Provider: "dynamic", ID: "stale"}}},
+			})
+			cancelled <- err
+			return nil, ctx.Err()
+		},
+	}))
+
+	go m.Refresh(context.Background(), nil)
+	<-started
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:   "dynamic",
+		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("dynamic", "K")},
+	}))
+	close(release)
+
+	if err := <-cancelled; err == nil {
+		t.Fatal("publication from a superseded refresh must fail")
+	}
+	if stored, _ := store.Read(context.Background(), "dynamic"); stored != nil {
+		t.Fatalf("a superseded refresh must not persist: %+v", stored)
+	}
+}
+
+type ctxMarkerKey struct{}
+
+// TestModelsAuthCallbacksSeeCallerContext mirrors pi "passes caller signals to
+// provider auth callbacks": CheckAuth, GetProviderAuth, and Login hand the
+// caller's own context to the provider's check/resolve/login.
+func TestModelsAuthCallbacksSeeCallerContext(t *testing.T) {
+	var received []string
+	record := func(ctx context.Context) {
+		marker, _ := ctx.Value(ctxMarkerKey{}).(string)
+		received = append(received, marker)
+	}
+	m := modelsWithEnv(nil, nil)
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID: "p1",
+		Auth: ProviderAuth{APIKey: &ApiKeyAuth{
+			Name: "Context auth",
+			Login: func(ctx context.Context, _ AuthInteraction) (*Credential, error) {
+				record(ctx)
+				return &Credential{Type: CredentialAPIKey, Key: "saved"}, nil
+			},
+			Check: func(ctx context.Context, _ AuthContext, _ *Credential) (*AuthCheck, error) {
+				record(ctx)
+				return &AuthCheck{Type: CredentialAPIKey}, nil
+			},
+			Resolve: func(ctx context.Context, _ AuthContext, _ *Credential) (*AuthResult, error) {
+				record(ctx)
+				return &AuthResult{Auth: ModelAuth{APIKey: "resolved"}}, nil
+			},
+		}},
+	}))
+
+	ctx := context.WithValue(context.Background(), ctxMarkerKey{}, "caller")
+	if _, err := m.CheckAuth(ctx, "p1"); err != nil {
+		t.Fatalf("checkAuth: %v", err)
+	}
+	if _, err := m.GetProviderAuth(ctx, "p1", nil); err != nil {
+		t.Fatalf("getAuth: %v", err)
+	}
+	if _, err := m.Login(ctx, "p1", CredentialAPIKey, fakeInteraction{answer: "unused"}); err != nil {
+		t.Fatalf("login: %v", err)
+	}
+
+	if !reflect.DeepEqual(received, []string{"caller", "caller", "caller"}) {
+		t.Fatalf("auth callbacks did not receive the caller's context: %v", received)
+	}
+}
+
+// TestModelsGetAuthCancelledOAuthRefreshPreservesCredential mirrors pi "passes
+// cancellation to OAuth refresh and preserves the previous credential": the
+// refresh sees the caller's context, and a refresh that ignores cancellation
+// and returns late must not have its result written to the store.
+func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
+	creds := NewInMemoryCredentialStore()
+	previous := &Credential{Type: CredentialOAuth, Refresh: "old-refresh", Access: "old", Expires: 0}
+	if _, err := creds.Modify(context.Background(), "p1", func(*Credential) (*Credential, error) {
+		return previous, nil
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	refreshStarted := make(chan struct{})
+	release := make(chan struct{})
+	var marker string
+	m := modelsWithEnv(nil, &CreateModelsOptions{Credentials: creds})
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID: "p1",
+		Auth: ProviderAuth{OAuth: &OAuthAuth{
+			Name: "p1",
+			Refresh: func(ctx context.Context, c OAuthCredentials) (OAuthCredentials, error) {
+				marker, _ = ctx.Value(ctxMarkerKey{}).(string)
+				close(refreshStarted)
+				<-release
+				// Deliberately ignores cancellation and succeeds late.
+				return OAuthCredentials{Refresh: "rotated", Access: "new", Expires: nowMillis() + 60_000}, nil
+			},
+			ToAuth: func(c OAuthCredentials) (ModelAuth, error) { return ModelAuth{APIKey: c.Access}, nil },
+		}},
+	}))
+
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), ctxMarkerKey{}, "caller"))
+	errs := make(chan error, 1)
+	go func() {
+		_, err := m.GetProviderAuth(ctx, "p1", nil)
+		errs <- err
+	}()
+	<-refreshStarted
+	cancel()
+	close(release)
+
+	if err := <-errs; !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled resolution must surface the cancellation, got %v", err)
+	}
+	if marker != "caller" {
+		t.Fatalf("OAuth refresh must receive the caller's context, marker=%q", marker)
+	}
+	stored, _ := creds.Read(context.Background(), "p1")
+	if stored == nil || stored.Access != "old" || stored.Refresh != "old-refresh" {
+		t.Fatalf("a cancelled refresh must leave the stored credential untouched: %+v", stored)
 	}
 }

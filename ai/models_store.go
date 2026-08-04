@@ -1,10 +1,17 @@
 package ai
 
-import "sync"
+import (
+	"context"
+	"sync"
+)
 
 // Model-catalog persistence ported from pi packages/ai/src/models-store.ts
 // (ff28097a; entry shape bd9e09db): dynamic providers restore their last-known
 // catalog from a ModelsStore and persist refreshed lists back to it.
+//
+// Cancellation is caller-owned (upstream fed6009c added
+// ModelsStoreOperationOptions.signal): every operation takes a context.Context,
+// the Go idiom for pi's optional AbortSignal.
 
 // ModelsStoreEntry is one provider's stored catalog (pi ModelsStoreEntry).
 type ModelsStoreEntry struct {
@@ -28,17 +35,9 @@ type ModelsStoreEntry struct {
 // inject persistent stores; the default is in-memory. Read returns (nil, nil)
 // when nothing is stored.
 type ModelsStore interface {
-	Read(providerID string) (*ModelsStoreEntry, error)
-	Write(providerID string, entry ModelsStoreEntry) error
-	Delete(providerID string) error
-}
-
-// ProviderModelsStore is a ModelsStore scoped to one provider. Providers
-// cannot access other providers' catalogs.
-type ProviderModelsStore interface {
-	Read() (*ModelsStoreEntry, error)
-	Write(entry ModelsStoreEntry) error
-	Delete() error
+	Read(ctx context.Context, providerID string) (*ModelsStoreEntry, error)
+	Write(ctx context.Context, providerID string, entry ModelsStoreEntry) error
+	Delete(ctx context.Context, providerID string) error
 }
 
 // InMemoryModelsStore is the default in-memory ModelsStore.
@@ -58,7 +57,10 @@ func NewInMemoryModelsStore() *InMemoryModelsStore {
 }
 
 // Read returns the stored entry for a provider, or (nil, nil) when none.
-func (s *InMemoryModelsStore) Read(providerID string) (*ModelsStoreEntry, error) {
+func (s *InMemoryModelsStore) Read(ctx context.Context, providerID string) (*ModelsStoreEntry, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	stored, ok := s.entries[providerID]
@@ -71,7 +73,10 @@ func (s *InMemoryModelsStore) Read(providerID string) (*ModelsStoreEntry, error)
 }
 
 // Write stores the entry for a provider, replacing any previous one.
-func (s *InMemoryModelsStore) Write(providerID string, entry ModelsStoreEntry) error {
+func (s *InMemoryModelsStore) Write(ctx context.Context, providerID string, entry ModelsStoreEntry) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	stored := ModelsStoreEntry{Models: make([]*Model, len(entry.Models)), LastModified: entry.LastModified, CheckedAt: entry.CheckedAt, Etag: entry.Etag}
@@ -81,20 +86,26 @@ func (s *InMemoryModelsStore) Write(providerID string, entry ModelsStoreEntry) e
 }
 
 // Delete removes a provider's stored entry.
-func (s *InMemoryModelsStore) Delete(providerID string) error {
+func (s *InMemoryModelsStore) Delete(ctx context.Context, providerID string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	delete(s.entries, providerID)
 	return nil
 }
 
-// providerModelsStore scopes a ModelsStore to one provider id (pi's inline
-// store object in ModelsImpl.refresh).
-type providerModelsStore struct {
-	store ModelsStore
-	id    string
+// clone returns a defensive copy of an entry (pi's structuredClone on the
+// snapshot handed to providers and on the entry a provider asks to persist).
+// The Go SDK treats *Model as immutable shared catalog pointers, so the copy
+// covers the entry and its slice and shares the Model pointers.
+func (e *ModelsStoreEntry) clone() *ModelsStoreEntry {
+	if e == nil {
+		return nil
+	}
+	out := *e
+	out.Models = make([]*Model, len(e.Models))
+	copy(out.Models, e.Models)
+	return &out
 }
-
-func (p providerModelsStore) Read() (*ModelsStoreEntry, error)   { return p.store.Read(p.id) }
-func (p providerModelsStore) Write(entry ModelsStoreEntry) error { return p.store.Write(p.id, entry) }
-func (p providerModelsStore) Delete() error                      { return p.store.Delete(p.id) }

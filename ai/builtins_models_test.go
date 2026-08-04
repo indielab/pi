@@ -1,6 +1,7 @@
 package ai
 
 import (
+	"context"
 	"sort"
 	"testing"
 )
@@ -23,7 +24,7 @@ func TestBuiltinModelsCatalogAndAuth(t *testing.T) {
 	}
 
 	// The auth substrate resolves the env key for a catalog provider.
-	res, err := m.GetAuth(&Model{Provider: "openai", Api: APIOpenAICompletions, ID: "x"}, nil)
+	res, err := m.GetAuth(context.Background(), &Model{Provider: "openai", Api: APIOpenAICompletions, ID: "x"}, nil)
 	if err != nil {
 		t.Fatalf("GetAuth error: %v", err)
 	}
@@ -94,7 +95,7 @@ func TestBuiltinAmbientProviderEnvPassthrough(t *testing.T) {
 	if pa.APIKey == nil {
 		t.Fatal("expected an API-key auth for amazon-bedrock")
 	}
-	res, err := pa.APIKey.Resolve(fakeAuthContext{}, &Credential{Type: CredentialAPIKey, Key: "stored", Env: map[string]string{"AWS_PROFILE": "prod"}})
+	res, err := pa.APIKey.Resolve(context.Background(), fakeAuthContext{}, &Credential{Type: CredentialAPIKey, Key: "stored", Env: map[string]string{"AWS_PROFILE": "prod"}})
 	if err != nil || res == nil || res.Auth.APIKey != "stored" {
 		t.Fatalf("resolve wrong: %+v (err %v)", res, err)
 	}

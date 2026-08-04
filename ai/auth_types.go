@@ -96,26 +96,31 @@ type AuthResult struct {
 // Error semantics: Read returns (nil, nil) for missing entries. Methods return
 // an error only on storage failure; the Models runtime wraps such errors in a
 // ModelsError with code "auth".
+// Cancellation is caller-owned (upstream fed6009c added AuthOperationOptions.
+// signal to every method): each operation takes a context.Context, the Go idiom
+// for pi's optional AbortSignal. A store that queues work must stop waiting when
+// the caller's context is done, and must not apply a mutation whose context was
+// cancelled while its callback was in flight.
 type CredentialStore interface {
 	// Read returns the stored credential, possibly expired, or (nil, nil) when
 	// none is stored. Display/status use; resolved request auth comes from the
 	// Models runtime's GetAuth.
-	Read(providerID string) (*Credential, error)
+	Read(ctx context.Context, providerID string) (*Credential, error)
 
 	// List returns stored credential metadata without resolving or exposing
 	// secrets. Implementations must not execute configured API-key commands
 	// while listing.
-	List() ([]CredentialInfo, error)
+	List(ctx context.Context) ([]CredentialInfo, error)
 
 	// Modify is the only write path. fn sees the current credential (nil when
 	// none) because correct writes (refresh, login-during-refresh) depend on
 	// it; it returns the new credential, or nil to leave the entry unchanged.
 	// Writes are serialized per provider id. Returns the post-write credential.
 	// An error from fn propagates.
-	Modify(providerID string, fn func(current *Credential) (*Credential, error)) (*Credential, error)
+	Modify(ctx context.Context, providerID string, fn func(current *Credential) (*Credential, error)) (*Credential, error)
 
 	// Delete removes a credential (logout), serialized against Modify.
-	Delete(providerID string) error
+	Delete(ctx context.Context, providerID string) error
 }
 
 // AuthContext is the environment access for auth resolution. Injectable for
@@ -187,6 +192,12 @@ type AuthEvent struct {
 // AuthInteraction; renamed upstream from AuthLoginCallbacks in ff28097a).
 // Prompt returns the entered/selected string (select returns the option id) or
 // an error on cancel; Notify emits a progress event.
+//
+// pi fed6009c introduced ProviderAuthInteraction = AuthInteraction & {signal},
+// the normalized interaction handed to provider login implementations. Go keeps
+// cancellation on the context.Context that accompanies the interaction, so the
+// interaction type itself is unchanged and every provider Login receives a
+// non-nil ctx — pi's "always a concrete signal" guarantee.
 type AuthInteraction interface {
 	Prompt(prompt AuthPrompt) (string, error)
 	Notify(event AuthEvent)
@@ -210,21 +221,23 @@ type ApiKeyAuth struct {
 
 	// Login is interactive setup (prompt for key/provider env). Nil =
 	// ambient-only. Out of scope for the port; present for structural parity.
-	Login func(interaction AuthInteraction) (*Credential, error)
+	// ctx cancels the flow (pi ProviderAuthInteraction.signal, fed6009c).
+	Login func(ctx context.Context, interaction AuthInteraction) (*Credential, error)
 
 	// Check is an optional side-effect-free availability check (pi
 	// ApiKeyAuth.check). Use it when Resolve may execute commands or perform
 	// other request-time work. Nil means the Models runtime checks availability
-	// by resolving auth.
-	Check func(ctx AuthContext, credential *Credential) (*AuthCheck, error)
+	// by resolving auth. ctx cancels the check (pi's required signal).
+	Check func(ctx context.Context, authCtx AuthContext, credential *Credential) (*AuthCheck, error)
 
 	// Resolve resolves auth from the stored credential and/or ambient sources,
 	// merging per field (credential.Key else env("..."), credential.Env?.NAME
 	// else env("...")). Returns (nil, nil) when not configured. credential is
 	// nil when nothing is stored. Resolution is provider-scoped (ff28097a
 	// removed pi's model parameter); model-specific endpoint preparation
-	// happens after auth has been resolved.
-	Resolve func(ctx AuthContext, credential *Credential) (*AuthResult, error)
+	// happens after auth has been resolved. ctx cancels the resolution (pi's
+	// required signal); implementations that block must honor it.
+	Resolve func(ctx context.Context, authCtx AuthContext, credential *Credential) (*AuthResult, error)
 }
 
 // OAuthAuth is OAuth auth. The Refresh/ToAuth split lets the Models runtime own
@@ -240,13 +253,15 @@ type OAuthAuth struct {
 	LoginLabel string
 
 	// Login runs the interactive OAuth flow. Out of scope for the port
-	// (OAuth-acquisition exclusion); present for structural parity.
-	Login func(interaction AuthInteraction) (*Credential, error)
+	// (OAuth-acquisition exclusion); present for structural parity. ctx cancels
+	// the flow (pi ProviderAuthInteraction.signal, fed6009c).
+	Login func(ctx context.Context, interaction AuthInteraction) (*Credential, error)
 
 	// Refresh exchanges the refresh token; returns an error on failure
 	// (invalid_grant etc.). The Models runtime runs this under the store lock.
-	// ctx cancels the exchange (pi's optional signal, threaded only from
-	// Models.Refresh; other callers pass context.Background()).
+	// ctx cancels the exchange; it is always the caller's live context
+	// (fed6009c made pi's signal required rather than optional, and every
+	// resolution path now threads one).
 	Refresh func(ctx context.Context, credential OAuthCredentials) (OAuthCredentials, error)
 
 	// ToAuth is the side-effect-free derivation of request auth from a valid

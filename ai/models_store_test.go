@@ -1,15 +1,18 @@
 package ai
 
-import "testing"
+import (
+	"context"
+	"testing"
+)
 
 // TestModelsStoreEntryLastModifiedRoundTrip locks that the InMemoryModelsStore
 // preserves the lastModified timestamp across Write/Read (upstream 54fad505).
 func TestModelsStoreEntryLastModifiedRoundTrip(t *testing.T) {
 	store := NewInMemoryModelsStore()
-	if err := store.Write("p", ModelsStoreEntry{LastModified: 1721577600000, CheckedAt: 1721577601000}); err != nil {
+	if err := store.Write(context.Background(), "p", ModelsStoreEntry{LastModified: 1721577600000, CheckedAt: 1721577601000}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got, err := store.Read("p")
+	got, err := store.Read(context.Background(), "p")
 	if err != nil || got == nil {
 		t.Fatalf("read: %+v (err %v)", got, err)
 	}
@@ -25,10 +28,10 @@ func TestModelsStoreEntryLastModifiedRoundTrip(t *testing.T) {
 // validator across Write/Read (upstream b1c444d9).
 func TestModelsStoreEntryEtagRoundTrip(t *testing.T) {
 	store := NewInMemoryModelsStore()
-	if err := store.Write("p", ModelsStoreEntry{Etag: `"abc123"`}); err != nil {
+	if err := store.Write(context.Background(), "p", ModelsStoreEntry{Etag: `"abc123"`}); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got, err := store.Read("p")
+	got, err := store.Read(context.Background(), "p")
 	if err != nil || got == nil {
 		t.Fatalf("read: %+v (err %v)", got, err)
 	}

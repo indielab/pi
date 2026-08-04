@@ -1,6 +1,9 @@
 package ai
 
-import "sort"
+import (
+	"context"
+	"sort"
+)
 
 // BuiltinModels constructs a Models collection from the embedded catalog,
 // wiring each provider's models, ProviderAuth, and registered ApiProvider
@@ -60,7 +63,10 @@ func builtinProviderAuth(providerID string) ProviderAuth {
 	}
 	return ProviderAuth{APIKey: &ApiKeyAuth{
 		Name: providerID,
-		Resolve: func(_ AuthContext, cred *Credential) (*AuthResult, error) {
+		Resolve: func(ctx context.Context, _ AuthContext, cred *Credential) (*AuthResult, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if cred != nil && cred.Key != "" {
 				// Pass the credential's env section through (upstream 1942b260 —
 				// this generic ambient resolver stands in for pi's bedrockAuth et al.,
@@ -85,22 +91,31 @@ func builtinProviderAuth(providerID string) ProviderAuth {
 func anthropicAPIKeyAuth() *ApiKeyAuth {
 	return &ApiKeyAuth{
 		Name: "Anthropic API key",
-		Login: func(interaction AuthInteraction) (*Credential, error) {
+		Login: func(ctx context.Context, interaction AuthInteraction) (*Credential, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			key, err := interaction.Prompt(AuthPrompt{Type: AuthPromptSecret, Message: "Enter Anthropic API key"})
 			if err != nil {
 				return nil, err
 			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			return &Credential{Type: CredentialAPIKey, Key: key}, nil
 		},
-		Resolve: func(ctx AuthContext, credential *Credential) (*AuthResult, error) {
+		Resolve: func(ctx context.Context, authCtx AuthContext, credential *Credential) (*AuthResult, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if credential != nil && credential.Key != "" {
 				return &AuthResult{Auth: ModelAuth{APIKey: credential.Key}, Env: credential.Env, Source: "stored credential"}, nil
 			}
-			if token := ctx.Env(AnthropicAuthTokenEnv); token != "" {
+			if token := authCtx.Env(AnthropicAuthTokenEnv); token != "" {
 				return &AuthResult{Auth: ModelAuth{Headers: map[string]string{"Authorization": "Bearer " + token}}, Source: AnthropicAuthTokenEnv}, nil
 			}
 			for _, envVar := range []string{"ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
-				if value := ctx.Env(envVar); value != "" {
+				if value := authCtx.Env(envVar); value != "" {
 					return &AuthResult{Auth: ModelAuth{APIKey: value}, Source: envVar}, nil
 				}
 			}

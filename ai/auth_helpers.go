@@ -14,19 +14,28 @@ import (
 func EnvAPIKeyAuth(name string, envVars ...string) *ApiKeyAuth {
 	return &ApiKeyAuth{
 		Name: name,
-		Login: func(interaction AuthInteraction) (*Credential, error) {
+		Login: func(ctx context.Context, interaction AuthInteraction) (*Credential, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			key, err := interaction.Prompt(AuthPrompt{Type: AuthPromptSecret, Message: "Enter " + name})
 			if err != nil {
 				return nil, err
 			}
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			return &Credential{Type: CredentialAPIKey, Key: key}, nil
 		},
-		Resolve: func(ctx AuthContext, credential *Credential) (*AuthResult, error) {
+		Resolve: func(ctx context.Context, authCtx AuthContext, credential *Credential) (*AuthResult, error) {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
 			if credential != nil && credential.Key != "" {
 				return &AuthResult{Auth: ModelAuth{APIKey: credential.Key}, Env: credential.Env, Source: "stored credential"}, nil
 			}
 			for _, envVar := range envVars {
-				if value := ctx.Env(envVar); value != "" {
+				if value := authCtx.Env(envVar); value != "" {
 					return &AuthResult{Auth: ModelAuth{APIKey: value}, Source: envVar}, nil
 				}
 			}
@@ -51,12 +60,12 @@ func LazyOAuth(name string, load func() (*OAuthAuth, error)) *OAuthAuth {
 	}
 	return &OAuthAuth{
 		Name: name,
-		Login: func(interaction AuthInteraction) (*Credential, error) {
+		Login: func(ctx context.Context, interaction AuthInteraction) (*Credential, error) {
 			o, err := get()
 			if err != nil {
 				return nil, err
 			}
-			return o.Login(interaction)
+			return o.Login(ctx, interaction)
 		},
 		Refresh: func(ctx context.Context, credential OAuthCredentials) (OAuthCredentials, error) {
 			o, err := get()
