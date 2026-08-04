@@ -70,8 +70,9 @@ type SessionOptions struct {
 	Transport       ai.Transport
 	ThinkingBudgets *ai.ThinkingBudgets
 	// Headers are extra HTTP headers merged into every provider request
-	// (e.g. OpenAI-Organization).
-	Headers map[string]string
+	// (e.g. OpenAI-Organization). A nil value suppresses a provider default
+	// header of that name (see ai.ProviderHeaders).
+	Headers ai.ProviderHeaders
 	// OnPayload can inspect/replace the provider request body before sending.
 	OnPayload func(payload any, model *ai.Model) (any, error)
 	// OnResponse is invoked after the HTTP response is received.

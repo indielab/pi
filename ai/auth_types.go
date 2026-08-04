@@ -15,8 +15,11 @@ import "context"
 // ModelAuth is the request auth for a single model request. A value that cannot
 // be expressed as APIKey, Headers, or BaseURL is provider config, not auth.
 type ModelAuth struct {
-	APIKey  string
-	Headers map[string]string
+	APIKey string
+	// Headers carry header-owned auth. A nil value is a deletion marker that
+	// suppresses a provider default header (see ProviderHeaders) — how
+	// cloudflare-ai-gateway turns off the upstream Authorization/x-api-key.
+	Headers ProviderHeaders
 	BaseURL string
 }
 

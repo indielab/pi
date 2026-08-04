@@ -520,8 +520,11 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.Context, opts
 		httpReq.Header.Set("accept", "text/event-stream")
 		httpReq.Header.Set("content-type", "application/json")
 		// pi merges only providerHeadersToRecord(options.headers) — no attribution
-		// bundle, no model.headers — after the three fixed headers.
-		for k, v := range opts.Headers {
+		// bundle, no model.headers — after the three fixed headers. The record
+		// conversion drops deletion markers instead of deleting: pi spreads it
+		// into an object literal that already holds the fixed headers, so a
+		// marker cannot unset the authorization this adapter just wrote.
+		for k, v := range providerHeadersToRecord(opts.Headers) {
 			httpReq.Header.Set(k, v)
 		}
 

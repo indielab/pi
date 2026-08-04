@@ -941,7 +941,7 @@ data: [DONE]
 // ---- C8: github-copilot dynamic headers (pi :459-466) ----
 
 func TestOpenAICopilotDynamicHeaders(t *testing.T) {
-	run := func(msgs []ai.Message, optHeaders map[string]string) http.Header {
+	run := func(msgs []ai.Message, optHeaders ai.ProviderHeaders) http.Header {
 		t.Helper()
 		var gotHeaders http.Header
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -985,7 +985,7 @@ func TestOpenAICopilotDynamicHeaders(t *testing.T) {
 		}
 	})
 	t.Run("options headers win over copilot headers", func(t *testing.T) {
-		h := run([]ai.Message{ai.NewUserText("hi", 1)}, map[string]string{"X-Initiator": "override"})
+		h := run([]ai.Message{ai.NewUserText("hi", 1)}, ai.ProviderHeaders{"X-Initiator": strPtr("override")})
 		if h.Get("X-Initiator") != "override" {
 			t.Fatalf("options headers must merge last, got %q", h.Get("X-Initiator"))
 		}
@@ -1115,13 +1115,13 @@ func TestOpenAIHeaderPrecedence(t *testing.T) {
 	defer server.Close()
 	model := openAIModel(func(m *ai.Model) {
 		m.BaseURL = server.URL
-		m.Headers = map[string]string{"session_id": "from-model", "X-Custom": "from-model"}
+		m.Headers = ai.ProviderHeaders{"session_id": strPtr("from-model"), "X-Custom": strPtr("from-model")}
 		m.Compat = json.RawMessage(`{"sendSessionAffinityHeaders":true}`)
 	})
 	StreamOpenAICompletions(context.Background(), model, baseReq(), &OpenAIOptions{
 		StreamOptions: ai.StreamOptions{
 			APIKey: "k", SessionID: "sess-1",
-			Headers: map[string]string{"x-session-affinity": "from-opts"},
+			Headers: ai.ProviderHeaders{"x-session-affinity": strPtr("from-opts")},
 		},
 	}).Result()
 	if gotHeaders.Get("Session_id") != "sess-1" {
@@ -1320,12 +1320,12 @@ func TestClientAPIKeySentinel(t *testing.T) {
 		t.Fatalf("explicit key must pass through: %q %v", k, err)
 	}
 	for _, name := range []string{"Authorization", "cf-aig-authorization"} {
-		k, err := clientAPIKey("custom", "", map[string]string{name: "Bearer x"})
+		k, err := clientAPIKey("custom", "", ai.ProviderHeaders{name: strPtr("Bearer x")})
 		if err != nil || k != "unused" {
 			t.Fatalf("%s header must yield unused sentinel: %q %v", name, k, err)
 		}
 	}
-	if _, err := clientAPIKey("custom", "", map[string]string{"x-foo": "y"}); err == nil ||
+	if _, err := clientAPIKey("custom", "", ai.ProviderHeaders{"x-foo": strPtr("y")}); err == nil ||
 		err.Error() != "No API key for provider: custom" {
 		t.Fatalf("missing key+auth must fail with pi's message, got %v", err)
 	}

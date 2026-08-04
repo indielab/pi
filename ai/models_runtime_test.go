@@ -118,7 +118,7 @@ func TestModelsApplyAuthBaseURLHeadersEnv(t *testing.T) {
 		Name: "custom",
 		Resolve: func(_ context.Context, _ AuthContext, _ *Credential) (*AuthResult, error) {
 			return &AuthResult{
-				Auth: ModelAuth{APIKey: "k", BaseURL: "https://auth.example", Headers: map[string]string{"H": "auth", "Keep": "auth"}},
+				Auth: ModelAuth{APIKey: "k", BaseURL: "https://auth.example", Headers: ProviderHeaders{"H": hdr("auth"), "Keep": hdr("auth")}},
 				Env:  map[string]string{"E": "auth", "KeepEnv": "auth"},
 			}, nil
 		},
@@ -133,7 +133,7 @@ func TestModelsApplyAuthBaseURLHeadersEnv(t *testing.T) {
 
 	model := &Model{Provider: "p", ID: "m", Api: "api", BaseURL: "https://model"}
 	m.Stream(context.Background(), model, Context{}, &ModelsStreamOptions{StreamOptions: StreamOptions{
-		Headers: map[string]string{"H": "explicit"},
+		Headers: ProviderHeaders{"H": hdr("explicit")},
 		Env:     map[string]string{"E": "explicit"},
 	}})
 	if gotModel.BaseURL != "https://auth.example" {
@@ -142,7 +142,7 @@ func TestModelsApplyAuthBaseURLHeadersEnv(t *testing.T) {
 	if model.BaseURL != "https://model" {
 		t.Errorf("original model must not be mutated: %q", model.BaseURL)
 	}
-	if gotOpts.Headers["H"] != "explicit" || gotOpts.Headers["Keep"] != "auth" {
+	if *gotOpts.Headers["H"] != "explicit" || *gotOpts.Headers["Keep"] != "auth" {
 		t.Errorf("header merge wrong (explicit wins per key): %v", gotOpts.Headers)
 	}
 	if gotOpts.Env["E"] != "explicit" || gotOpts.Env["KeepEnv"] != "auth" {
@@ -591,7 +591,7 @@ func TestModelsModelHeadersAndTransform(t *testing.T) {
 		Auth: ProviderAuth{APIKey: &ApiKeyAuth{
 			Name: "p",
 			Resolve: func(_ context.Context, _ AuthContext, _ *Credential) (*AuthResult, error) {
-				return &AuthResult{Auth: ModelAuth{APIKey: "k", Headers: map[string]string{"X-Auth": "auth", "Keep": "auth"}}}, nil
+				return &AuthResult{Auth: ModelAuth{APIKey: "k", Headers: ProviderHeaders{"X-Auth": hdr("auth"), "Keep": hdr("auth")}}}, nil
 			},
 		}},
 		Models: []*Model{{Provider: "p", ID: "m", Api: "api"}},
@@ -599,7 +599,7 @@ func TestModelsModelHeadersAndTransform(t *testing.T) {
 	}))
 	model := &Model{
 		Provider: "p", ID: "m", Api: "api",
-		Headers: map[string]string{"x-auth": "model"},
+		Headers: ProviderHeaders{"x-auth": hdr("model")},
 	}
 
 	// Model auth merges model headers, replacing case-insensitive matches.
@@ -607,7 +607,7 @@ func TestModelsModelHeadersAndTransform(t *testing.T) {
 	if err != nil || res == nil {
 		t.Fatalf("getAuth(model) = (%+v, %v)", res, err)
 	}
-	if res.Auth.Headers["x-auth"] != "model" || res.Auth.Headers["Keep"] != "auth" {
+	if *res.Auth.Headers["x-auth"] != "model" || *res.Auth.Headers["Keep"] != "auth" {
 		t.Fatalf("model header merge wrong: %v", res.Auth.Headers)
 	}
 	if _, stale := res.Auth.Headers["X-Auth"]; stale {
@@ -619,18 +619,18 @@ func TestModelsModelHeadersAndTransform(t *testing.T) {
 	if err != nil || pres == nil {
 		t.Fatalf("getProviderAuth = (%+v, %v)", pres, err)
 	}
-	if pres.Auth.Headers["X-Auth"] != "auth" {
+	if *pres.Auth.Headers["X-Auth"] != "auth" {
 		t.Fatalf("provider auth must not merge model headers: %v", pres.Auth.Headers)
 	}
 
 	// TransformHeaders sees the assembled headers exactly once.
 	transformCalls := 0
 	m.Stream(context.Background(), model, Context{}, &ModelsStreamOptions{
-		StreamOptions: StreamOptions{Headers: map[string]string{"Req": "1"}},
+		StreamOptions: StreamOptions{Headers: ProviderHeaders{"Req": hdr("1")}},
 		ModelsStreamTransforms: ModelsStreamTransforms{
-			TransformHeaders: func(headers map[string]string) (map[string]string, error) {
+			TransformHeaders: func(headers ProviderHeaders) (ProviderHeaders, error) {
 				transformCalls++
-				headers["Transformed"] = "yes"
+				headers["Transformed"] = hdr("yes")
 				return headers, nil
 			},
 		},
@@ -638,7 +638,7 @@ func TestModelsModelHeadersAndTransform(t *testing.T) {
 	if transformCalls != 1 {
 		t.Fatalf("transform must run exactly once, ran %d", transformCalls)
 	}
-	if gotOpts.Headers["Transformed"] != "yes" || gotOpts.Headers["Req"] != "1" || gotOpts.Headers["x-auth"] != "model" {
+	if *gotOpts.Headers["Transformed"] != "yes" || *gotOpts.Headers["Req"] != "1" || *gotOpts.Headers["x-auth"] != "model" {
 		t.Fatalf("transformed headers not dispatched: %v", gotOpts.Headers)
 	}
 }

@@ -87,7 +87,7 @@ type Provider interface {
 	ID() string
 	Name() string
 	BaseURL() string
-	Headers() map[string]string
+	Headers() ProviderHeaders
 
 	// Auth reports the provider's auth semantics. At least one of
 	// APIKey/OAuth is set, even for ambient/keyless providers.
@@ -149,7 +149,7 @@ type CreateProviderOptions struct {
 	ID      string
 	Name    string
 	BaseURL string
-	Headers map[string]string
+	Headers ProviderHeaders
 	Auth    ProviderAuth
 	// Models is the static baseline model list (empty for purely dynamic
 	// providers).
@@ -166,7 +166,7 @@ type CreateProviderOptions struct {
 
 type providerImpl struct {
 	id, name, baseURL string
-	headers           map[string]string
+	headers           ProviderHeaders
 	auth              ProviderAuth
 	single            *ProviderStreams
 	byAPI             map[Api]ProviderStreams
@@ -242,12 +242,12 @@ func (p deferredProvider) CancelDeferred(ctx context.Context, model *Model, hand
 	return p.cancelDeferred(ctx, model, handle, opts)
 }
 
-func (p *providerImpl) ID() string                 { return p.id }
-func (p *providerImpl) Name() string               { return p.name }
-func (p *providerImpl) BaseURL() string            { return p.baseURL }
-func (p *providerImpl) Headers() map[string]string { return p.headers }
-func (p *providerImpl) Auth() ProviderAuth         { return p.auth }
-func (p *providerImpl) DynamicModels() bool        { return p.fetchFn != nil }
+func (p *providerImpl) ID() string               { return p.id }
+func (p *providerImpl) Name() string             { return p.name }
+func (p *providerImpl) BaseURL() string          { return p.baseURL }
+func (p *providerImpl) Headers() ProviderHeaders { return p.headers }
+func (p *providerImpl) Auth() ProviderAuth       { return p.auth }
+func (p *providerImpl) DynamicModels() bool      { return p.fetchFn != nil }
 
 // GetModels merges the static baseline with the dynamic overlay: a dynamic
 // model replaces the baseline entry with its id, otherwise it is appended
@@ -420,8 +420,10 @@ type ModelsRefreshResult struct {
 // ModelsStreamTransforms); they are stripped before provider dispatch.
 type ModelsStreamTransforms struct {
 	// TransformHeaders transforms the fully assembled model/auth/request
-	// headers before provider dispatch.
-	TransformHeaders func(headers map[string]string) (map[string]string, error)
+	// headers before provider dispatch. Deletion markers (nil values) are part
+	// of the value it sees and returns: a transform that rebuilds the map must
+	// pass them through, or the suppression they encode is lost.
+	TransformHeaders func(headers ProviderHeaders) (ProviderHeaders, error)
 }
 
 // ModelsStreamOptions are Models.Stream/Complete options: provider stream
@@ -1236,7 +1238,7 @@ func (m *modelsImpl) applyAuth(
 	headers := mergeHeaders(auth.Headers, ro.Headers)
 	if transforms.TransformHeaders != nil {
 		if headers == nil {
-			headers = map[string]string{} // pi: transformHeaders(headers ?? {})
+			headers = ProviderHeaders{} // pi: transformHeaders(headers ?? {})
 		}
 		headers, err = transforms.TransformHeaders(headers)
 		if err != nil {
@@ -1369,15 +1371,18 @@ func HasApi(model *Model, api Api) bool {
 
 // mergeHeaders returns base overlaid with override, deleting base entries
 // whose names match an override key case-insensitively before setting it
-// (pi models.ts mergeHeaders). nil when both inputs are nil. Override keys
+// (pi models.ts mergeHeaders). A deletion marker survives the merge like any
+// other value: an override entry with a nil value replaces the base entry, so
+// the suppression it encodes reaches the provider. nil when both inputs are
+// nil. Override keys
 // are applied in sorted order so case-colliding overrides merge
 // deterministically (pi iterates insertion order; Go maps are unordered).
 // The nested scan is O(n*m) — fine for header-sized maps.
-func mergeHeaders(base, override map[string]string) map[string]string {
+func mergeHeaders(base, override ProviderHeaders) ProviderHeaders {
 	if base == nil && override == nil {
 		return nil
 	}
-	merged := make(map[string]string, len(base)+len(override))
+	merged := make(ProviderHeaders, len(base)+len(override))
 	for k, v := range base {
 		merged[k] = v
 	}

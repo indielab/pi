@@ -331,23 +331,25 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			}
 			r.Header.Set("content-type", "application/json")
 			r.Header.Set("accept", "text/event-stream")
-			// pi cloudflare-ai-gateway: Authorization defaults to null (the SDK
-			// auth header is suppressed) unless headers explicitly provide one;
-			// the API key rides in cf-aig-authorization instead.
-			if model.Provider != "cloudflare-ai-gateway" {
-				r.Header.Set("authorization", "Bearer "+apiKey)
-			}
+			// The SDK auth header sits below every merged source, so a deletion
+			// marker in them can suppress it (pi passes the merged headers as
+			// `defaultHeaders`, which the OpenAI SDK applies over its own auth).
+			r.Header.Set("authorization", "Bearer "+apiKey)
 			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
 			// bundle at the bottom of the precedence stack: emit session +
 			// default attribution first so model.headers and options.headers
 			// override them.
 			applyAttributionDefaults(r.Header.Set, model, opts.SessionID)
+			// Header-owned provider auth (pi resolves it in the auth layer and
+			// delivers it as options.headers, above attribution and below
+			// model/consumer headers).
+			if model.Provider == "cloudflare-ai-gateway" {
+				applyProviderHeaders(r.Header, cloudflareAIGatewayAuthHeaders(apiKey))
+			}
 			// pi createClient header precedence (openai-responses.ts:189-219):
 			// model.headers, copilot dynamic headers, session cache headers,
 			// then options.headers merged last so they can override defaults.
-			for k, v := range model.Headers {
-				r.Header.Set(k, v)
-			}
+			applyProviderHeaders(r.Header, model.Headers)
 			if model.Provider == "github-copilot" {
 				for k, v := range buildCopilotDynamicHeaders(req.Messages, hasCopilotVisionInput(req.Messages)) {
 					r.Header.Set(k, v)
@@ -369,13 +371,8 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			}
 			// pi options.headers (consumer) are spread last and win over
 			// everything above, including model.headers and the attribution
-			// defaults.
-			for k, v := range opts.Headers {
-				r.Header.Set(k, v)
-			}
-			if model.Provider == "cloudflare-ai-gateway" {
-				r.Header.Set("cf-aig-authorization", "Bearer "+apiKey)
-			}
+			// defaults — a deletion marker here suppresses any of them.
+			applyProviderHeaders(r.Header, opts.Headers)
 			return r, nil
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, openaiSDKErrorMessage))

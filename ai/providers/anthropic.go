@@ -353,11 +353,12 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 			fail(fmt.Errorf("No API key for provider: %s", model.Provider))
 			return
 		}
-		// pi createClient checks the cloudflare-ai-gateway and github-copilot
-		// provider branches BEFORE sniffing the key for an OAuth token
-		// (anthropic.ts:802,826,848) — those branches always report
-		// isOAuthToken=false even for sk-ant-oat keys. An auth-token request is a
-		// plain bearer credential, not OAuth, so it never triggers the OAuth body.
+		// pi never sniffs an OAuth token for these two: github-copilot has its own
+		// createClient branch ahead of the sniff, and cloudflare-ai-gateway
+		// resolves to header-owned auth with no apiKey at all, so
+		// isOAuthToken(undefined) is false however the gateway key looks. An
+		// auth-token request is a plain bearer credential, not OAuth, so it never
+		// triggers the OAuth body either.
 		oauth := authToken == "" &&
 			model.Provider != "cloudflare-ai-gateway" &&
 			model.Provider != "github-copilot" &&
@@ -1077,21 +1078,26 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 		betas = append(betas, interleavedThinkingBeta)
 	}
 
-	// Branch order mirrors pi createClient (anthropic.ts:802,826,848,870):
-	// cloudflare-ai-gateway, then github-copilot, then the OAuth sniff, then
-	// plain api-key auth. The ANTHROPIC_AUTH_TOKEN bearer path (upstream 24e5cc04)
-	// sits ahead of them: it is set only for the anthropic provider and, like pi's
-	// resolve(), sends Authorization: Bearer with the normal (non-OAuth) betas.
+	// Cloudflare AI Gateway auth is header-owned: pi's resolver returns
+	// cf-aig-authorization plus markers suppressing x-api-key/Authorization, and
+	// no api key at all, so pi's createClient takes its plain api-key branch and
+	// the SDK sends no x-api-key. The Go port resolves that auth inline here
+	// (2026-06-24 divergence), so the key is consumed by the marker bundle and
+	// the branch selection below sees no api key, exactly as pi does.
+	var providerAuthHeaders ai.ProviderHeaders
+	if model.Provider == "cloudflare-ai-gateway" {
+		providerAuthHeaders = cloudflareAIGatewayAuthHeaders(apiKey)
+		apiKey = ""
+	}
+
+	// Branch order mirrors pi createClient (anthropic-messages.ts): github-copilot,
+	// then the OAuth sniff, then plain api-key auth. The ANTHROPIC_AUTH_TOKEN
+	// bearer path (upstream 24e5cc04) sits ahead of them: it is set only for the
+	// anthropic provider and, like pi's resolve(), sends Authorization: Bearer
+	// with the normal (non-OAuth) betas.
 	switch {
 	case authToken != "":
 		r.Header.Set("authorization", "Bearer "+authToken)
-		if len(betas) > 0 {
-			r.Header.Set("anthropic-beta", strings.Join(betas, ","))
-		}
-	case model.Provider == "cloudflare-ai-gateway":
-		// pi: cf-aig-authorization carries the key; x-api-key and
-		// Authorization are explicitly nulled (anthropic.ts:812-814).
-		r.Header.Set("cf-aig-authorization", "Bearer "+apiKey)
 		if len(betas) > 0 {
 			r.Header.Set("anthropic-beta", strings.Join(betas, ","))
 		}
@@ -1119,21 +1125,21 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 		}
 	}
 
-	for k, v := range model.Headers {
-		r.Header.Set(k, v)
-	}
+	// Header-owned provider auth sits above attribution and below the
+	// model/consumer headers, where pi's auth.headers enter the merge.
+	applyProviderHeaders(r.Header, providerAuthHeaders)
+	applyProviderHeaders(r.Header, model.Headers)
 	// pi merges copilotDynamicHeaders after model.headers, before options
-	// headers (anthropic.ts:832-841).
+	// headers (anthropic-messages.ts createClient).
 	if model.Provider == "github-copilot" {
 		for k, v := range buildCopilotDynamicHeaders(messages, hasCopilotVisionInput(messages)) {
 			r.Header.Set(k, v)
 		}
 	}
 	// pi options.headers (consumer) are spread last and win over everything
-	// above, including model.Headers and the attribution defaults.
-	for k, v := range opts.Headers {
-		r.Header.Set(k, v)
-	}
+	// above, including model.Headers and the attribution defaults — a deletion
+	// marker here suppresses any of them.
+	applyProviderHeaders(r.Header, opts.Headers)
 }
 
 // mapAnthropicStopReason maps an Anthropic stop_reason to the unified

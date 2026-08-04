@@ -67,6 +67,22 @@ const (
 	CacheLong  CacheRetention = "long"
 )
 
+// ProviderHeaders are custom HTTP headers for provider requests (pi
+// types.ts ProviderHeaders = Record<string, string | null>). A header name has
+// three distinct states:
+//
+//	absent           — send whatever the provider/API would send by default
+//	present, non-nil — send that value (an empty string sends an empty header)
+//	present, nil     — deletion marker: suppress the default header entirely
+//
+// The nil marker is how a consumer turns a provider default OFF, which no
+// string value can express; Cloudflare AI Gateway uses it to stop the
+// upstream provider's Authorization/x-api-key from being sent while its own
+// key rides in cf-aig-authorization. Marshalling round-trips all three states:
+// an explicit `null` in catalog/model JSON decodes to a nil marker, not to an
+// absent key.
+type ProviderHeaders map[string]*string
+
 // Transport is the preferred transport for providers that support several.
 type Transport string
 
@@ -670,8 +686,8 @@ type Model struct {
 	MaxTokens        int              `json:"maxTokens"`
 	// SamplingParams are this model's default sampling parameters. See
 	// StreamOptions.SamplingParams; per-request keys override these.
-	SamplingParams map[string]any    `json:"samplingParams,omitempty"`
-	Headers        map[string]string `json:"headers,omitempty"`
+	SamplingParams map[string]any  `json:"samplingParams,omitempty"`
+	Headers        ProviderHeaders `json:"headers,omitempty"`
 	// Compat carries API-specific compatibility overrides (decoded per-api).
 	Compat json.RawMessage `json:"compat,omitempty"`
 }
@@ -702,15 +718,18 @@ type StreamOptions struct {
 	// repetition_penalty. StreamSimple merges them over Model.SamplingParams per
 	// key. Only the OpenAI-compatible adapters (completions, responses) apply
 	// them; other APIs ignore them.
-	SamplingParams            map[string]any
-	MaxTokens                 *int
-	APIKey                    string
-	Transport                 Transport
-	CacheRetention            CacheRetention
-	SessionID                 string
-	OnPayload                 func(payload any, model *Model) (any, error)
-	OnResponse                func(resp ProviderResponse, model *Model) error
-	Headers                   map[string]string
+	SamplingParams map[string]any
+	MaxTokens      *int
+	APIKey         string
+	Transport      Transport
+	CacheRetention CacheRetention
+	SessionID      string
+	OnPayload      func(payload any, model *Model) (any, error)
+	OnResponse     func(resp ProviderResponse, model *Model) error
+	// Headers are custom HTTP headers merged into the provider request, with
+	// caller values overriding provider defaults. A nil value suppresses a
+	// provider/API default header of the same name (see ProviderHeaders).
+	Headers                   ProviderHeaders
 	TimeoutMs                 int
 	WebSocketConnectTimeoutMs int
 	MaxRetries                int

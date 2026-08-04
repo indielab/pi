@@ -478,7 +478,7 @@ func TestSummarizationPassesReasoningAndHeaders(t *testing.T) {
 	defer reg.Unregister()
 
 	var gotReasoning ai.ThinkingLevel
-	var gotHeaders map[string]string
+	var gotHeaders ai.ProviderHeaders
 	capture := func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
 		gotReasoning = opts.Reasoning
 		gotHeaders = opts.Headers
@@ -488,14 +488,14 @@ func TestSummarizationPassesReasoningAndHeaders(t *testing.T) {
 
 	sess := NewSession(SessionOptions{
 		Model: reg.GetModel(), Cwd: t.TempDir(), NoTools: NoToolsAll,
-		Headers: map[string]string{"X-Parity": "1"},
+		Headers: ai.ProviderHeaders{"X-Parity": hdr("1")},
 	})
 
 	sess.summarize(context.Background(), []agent.AgentMessage{ai.NewUserText("hi", 1)}, 16384)
 	if gotReasoning != ai.ThinkingMedium { // session default thinking level
 		t.Fatalf("reasoning level not passed: %q", gotReasoning)
 	}
-	if gotHeaders["X-Parity"] != "1" {
+	if gotHeaders["X-Parity"] == nil || *gotHeaders["X-Parity"] != "1" {
 		t.Fatalf("session headers not passed: %v", gotHeaders)
 	}
 

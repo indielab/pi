@@ -221,7 +221,8 @@ func TestAnthropicAPIKeyAuthResolve(t *testing.T) {
 	res, _ = auth.Resolve(context.Background(), fakeAuthContext{env: map[string]string{
 		AnthropicAuthTokenEnv: "tok", "ANTHROPIC_API_KEY": "sk-env",
 	}}, nil)
-	if res == nil || res.Auth.APIKey != "" || res.Auth.Headers["Authorization"] != "Bearer tok" || res.Source != AnthropicAuthTokenEnv {
+	if res == nil || res.Auth.APIKey != "" || res.Source != AnthropicAuthTokenEnv ||
+		res.Auth.Headers["Authorization"] == nil || *res.Auth.Headers["Authorization"] != "Bearer tok" {
 		t.Fatalf("auth token should resolve to a bearer header: %+v", res)
 	}
 

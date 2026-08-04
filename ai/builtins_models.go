@@ -117,7 +117,8 @@ func anthropicAPIKeyAuth() *ApiKeyAuth {
 				return &AuthResult{Auth: ModelAuth{APIKey: credential.Key}, Env: credential.Env, Source: "stored credential"}, nil
 			}
 			if token := authCtx.Env(AnthropicAuthTokenEnv); token != "" {
-				return &AuthResult{Auth: ModelAuth{Headers: map[string]string{"Authorization": "Bearer " + token}}, Source: AnthropicAuthTokenEnv}, nil
+				bearer := "Bearer " + token
+				return &AuthResult{Auth: ModelAuth{Headers: ProviderHeaders{"Authorization": &bearer}}, Source: AnthropicAuthTokenEnv}, nil
 			}
 			for _, envVar := range []string{"ANTHROPIC_OAUTH_TOKEN", "ANTHROPIC_API_KEY"} {
 				if value := authCtx.Env(envVar); value != "" {

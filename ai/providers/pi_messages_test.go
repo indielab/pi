@@ -79,7 +79,7 @@ func TestPiMessagesStreamsTextAndToolCalls(t *testing.T) {
 	model := piMessagesTestModel(server.URL + "/v1")
 	ctxReq := piMessagesTestContext()
 	es := StreamPiMessages(context.Background(), model, ctxReq, &PiMessagesOptions{
-		StreamOptions: ai.StreamOptions{APIKey: "test-key", SessionID: "session-1", MaxTokens: intp(100), Headers: map[string]string{"x-custom": "1"}},
+		StreamOptions: ai.StreamOptions{APIKey: "test-key", SessionID: "session-1", MaxTokens: intp(100), Headers: ai.ProviderHeaders{"x-custom": strPtr("1")}},
 		ToolChoice:    "auto",
 	})
 

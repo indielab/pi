@@ -343,18 +343,22 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 			}
 			r.Header.Set("content-type", "application/json")
 			r.Header.Set("x-goog-api-key", opts.APIKey)
-			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
-			// bundle at the bottom of the precedence stack: emit session +
-			// default attribution first so model.Headers and opts.Headers
-			// override them.
-			applyAttributionDefaults(r.Header.Set, model, opts.SessionID)
-			for k, v := range model.Headers {
-				r.Header.Set(k, v)
-			}
-			// pi options.headers (consumer) are spread last and win over
-			// everything above, including model.headers and the attribution
-			// defaults.
-			for k, v := range opts.Headers {
+			// pi builds one merged object — mergeProviderAttributionHeaders puts
+			// the attribution bundle at the bottom, then model.headers, then the
+			// consumer's options.headers — and hands it to the SDK as
+			// providerHeadersToRecord({...model.headers, ...optionsHeaders}).
+			// Merging before converting is what lets a deletion marker cancel a
+			// value an earlier source supplied; the conversion then drops the
+			// markers rather than deleting, because this adapter builds the
+			// request itself and cannot unset a header the SDK owns
+			// (x-goog-api-key, content-type).
+			merged := mergeProviderHeaders(
+				stringHeaders(getSessionAttributionHeaders(model, opts.SessionID)),
+				stringHeaders(getDefaultAttributionHeaders(model)),
+				model.Headers,
+				opts.Headers,
+			)
+			for k, v := range providerHeadersToRecord(merged) {
 				r.Header.Set(k, v)
 			}
 			return r, nil

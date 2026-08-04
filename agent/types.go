@@ -184,7 +184,7 @@ type AgentLoopConfig struct {
 	Temperature               *float64
 	MaxTokens                 *int
 	CacheRetention            ai.CacheRetention
-	Headers                   map[string]string
+	Headers                   ai.ProviderHeaders
 	Metadata                  map[string]any
 	APIKey                    string
 	OnPayload                 func(payload any, model *ai.Model) (any, error)

@@ -23,7 +23,7 @@ const attrDoneSSE = "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\
 // stub server and returns the request headers. The model's Provider drives
 // attribution; BaseURL is overwritten with the test server so the request is
 // actually sent (host-based detection is unit-tested separately below).
-func captureOpenAICompletionsHeaders(t *testing.T, provider ai.ProviderId, sessionID string, optsHeaders map[string]string) http.Header {
+func captureOpenAICompletionsHeaders(t *testing.T, provider ai.ProviderId, sessionID string, optsHeaders ai.ProviderHeaders) http.Header {
 	t.Helper()
 	t.Setenv("PI_TELEMETRY", "1")
 	var got http.Header
@@ -143,9 +143,9 @@ func TestAttributionTelemetryDisabled(t *testing.T) {
 // the bundle and win. (pi test: "lets provider and request headers override the
 // defaults".)
 func TestAttributionOptsHeadersOverrideDefaults(t *testing.T) {
-	h := captureOpenAICompletionsHeaders(t, "openrouter", "", map[string]string{
-		"HTTP-Referer":       "https://consumer.example",
-		"X-OpenRouter-Title": "consumer",
+	h := captureOpenAICompletionsHeaders(t, "openrouter", "", ai.ProviderHeaders{
+		"HTTP-Referer":       strPtr("https://consumer.example"),
+		"X-OpenRouter-Title": strPtr("consumer"),
 	})
 	if got := h.Get("HTTP-Referer"); got != "https://consumer.example" {
 		t.Fatalf("opts.Headers must override attribution default: HTTP-Referer = %q", got)
@@ -176,7 +176,7 @@ func TestAttributionModelHeadersOverrideDefaults(t *testing.T) {
 	defer server.Close()
 	model := &ai.Model{
 		ID: "or", Api: ai.APIOpenAICompletions, Provider: "openrouter", BaseURL: server.URL, MaxTokens: 4096,
-		Headers: map[string]string{"HTTP-Referer": "https://custom.example"},
+		Headers: ai.ProviderHeaders{"HTTP-Referer": strPtr("https://custom.example")},
 	}
 	opts := &OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}
 	StreamOpenAICompletions(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, opts).Result()
@@ -195,7 +195,7 @@ func TestAttributionAnthropicModelHeadersOverrideDefaults(t *testing.T) {
 	t.Setenv("PI_TELEMETRY", "1")
 	model := &ai.Model{
 		ID: "claude", Api: ai.APIAnthropicMessages, Provider: "openrouter", MaxTokens: 4096,
-		Headers: map[string]string{"HTTP-Referer": "https://custom.example"},
+		Headers: ai.ProviderHeaders{"HTTP-Referer": strPtr("https://custom.example")},
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	h, _ := anthropicCapture(t, model, req, &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}, anthropicSSE)
@@ -210,9 +210,9 @@ func TestAttributionAnthropicModelHeadersOverrideDefaults(t *testing.T) {
 // pi test: "lets configured OpenCode headers override the defaults". Consumer
 // opts.Headers override the session headers too.
 func TestAttributionOptsHeadersOverrideSessionHeaders(t *testing.T) {
-	h := captureOpenAICompletionsHeaders(t, "opencode", "sess-123", map[string]string{
-		"x-opencode-session": "configured-session",
-		"x-opencode-client":  "configured-client",
+	h := captureOpenAICompletionsHeaders(t, "opencode", "sess-123", ai.ProviderHeaders{
+		"x-opencode-session": strPtr("configured-session"),
+		"x-opencode-client":  strPtr("configured-client"),
 	})
 	if got := h.Get("x-opencode-session"); got != "configured-session" {
 		t.Fatalf("x-opencode-session = %q, want configured-session", got)

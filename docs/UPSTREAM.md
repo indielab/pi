@@ -451,7 +451,7 @@ next request-building change.**
   was caught only by the independent parity gate. Faithful ports mirror code, not
   holes.
 
-### Open `decide` (1) — carried, NOT ported this cycle
+### Open `decide` (1) — RESOLVED and ported
 
 - **`a24fb9e96` "preserve auth header deletion markers" (#7539)** — the
   2026-06-24 ruling declined null-`ProviderHeaders` suppression on the stated
@@ -459,11 +459,32 @@ next request-building change.**
   This commit is that consumer appearing upstream: the host stops stripping
   nulls and passes `ProviderHeaders` through, with a new cloudflare-compat test.
   The hunk itself is in `coding-agent/src/core/model-registry.ts` (host, so not
-  automatically `port`), but it is the named trigger. **Question for the owner:
-  port null-suppression into `StreamOptions.Headers`/`Model.Headers` now (a
-  public Go API change for a capability Go currently handles by conditional
-  skip), or hold until an `ai/src` hunk forces it?** Not silently included —
-  scope neither expanded nor shrunk pending the ruling.
+  automatically `port`), but it is the named trigger. **Owner ruled 2026-08-04:
+  port it** (Rulings, top). **Ported**: `ai.ProviderHeaders` =
+  `map[string]*string` now types `Model.Headers`, `StreamOptions.Headers`,
+  `ModelAuth.Headers`, `Provider.Headers()`, `CreateProviderOptions.Headers`,
+  `ModelsStreamTransforms.TransformHeaders`, and the `agent`/`coding` host
+  header options — a sanctioned public API break (2026-07-17 clause). Upstream's
+  own hunk deletes two null-strippers in host code with no Go home; what landed
+  is the capability they preserve, end to end: `mergeHeaders` carries markers,
+  and each adapter applies them the way pi does — `applyProviderHeaders`
+  (delete, mirroring an SDK `defaultHeaders` null) for
+  openai-completions/openai-responses/anthropic-messages, and
+  `providerHeadersToRecord` (drop, pi `utils/headers.ts`) for
+  google-generative-ai and pi-messages, which build their own requests and so
+  cannot unset an adapter-owned header. **Item 1 of the 2026-06-24 divergence
+  list is retired**: the cloudflare-ai-gateway conditional skips collapsed into
+  `cloudflareAIGatewayAuthHeaders`, one marker bundle mirroring pi's
+  `cloudflare-auth.ts` resolver. Cloudflare auth stays adapter-inline (2026-06-24
+  items 2–3 still stand — the compat globals never reach the Models runtime), but
+  it is now produced as `{cf-aig-authorization, Authorization: null, x-api-key:
+  null}` instead of per-adapter `if provider != cloudflare` branches. That
+  collapse also **closed a latent divergence**: anthropic-messages now takes pi's
+  plain api-key branch for the gateway, so a cloudflare model whose compat asks
+  for `sendSessionAffinityHeaders` sends `x-session-affinity` as pi does. Not
+  ported: pi's `assertRequestAuth` header fallback in anthropic-messages (Go
+  still requires an api key or `ANTHROPIC_AUTH_TOKEN` there) — a pre-existing gap
+  unrelated to markers, left as-is rather than widened.
 
 ### Notable n/a (30)
 
@@ -3077,7 +3098,8 @@ ruling). Build/vet/`-race` green.
   `TestDiffVercelGatewayRouting` (re-pinned).
 
 **Deliberate divergences (2026-06-24 ruling):** `ProviderHeaders`
-null-suppression not ported (latent + public-API change), cloudflare base-URL/
+null-suppression not ported (latent + public-API change) — **retired
+2026-08-04, ported with `a24fb9e96`**, cloudflare base-URL/
 cf-aig auth kept inline (not relocated), compat `shouldUseBuiltinModels` routing
 not ported (globals-stay-compat). All observably byte-identical through the Go
 compat-globals consumer path.

@@ -127,20 +127,25 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			}
 			r.Header.Set("content-type", "application/json")
 			r.Header.Set("accept", "text/event-stream")
-			if model.Provider != "cloudflare-ai-gateway" {
-				r.Header.Set("authorization", "Bearer "+apiKey)
-			}
+			// The SDK auth header sits below every merged source, so a deletion
+			// marker in them can suppress it (pi passes the merged headers as
+			// `defaultHeaders`, which the OpenAI SDK applies over its own auth).
+			r.Header.Set("authorization", "Bearer "+apiKey)
 			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
 			// bundle at the bottom of the precedence stack: emit session +
 			// default attribution first so model.headers and options.headers
 			// override them.
 			applyAttributionDefaults(r.Header.Set, model, opts.SessionID)
+			// Header-owned provider auth (pi resolves it in the auth layer and
+			// delivers it as options.headers, above attribution and below
+			// model/consumer headers).
+			if model.Provider == "cloudflare-ai-gateway" {
+				applyProviderHeaders(r.Header, cloudflareAIGatewayAuthHeaders(apiKey))
+			}
 			// pi createClient header precedence (openai-completions.ts:458-477):
 			// model.headers first, then copilot dynamic headers, then session
 			// affinity (overrides model headers), with options.headers merged last.
-			for k, v := range model.Headers {
-				r.Header.Set(k, v)
-			}
+			applyProviderHeaders(r.Header, model.Headers)
 			if model.Provider == "github-copilot" {
 				for k, v := range buildCopilotDynamicHeaders(req.Messages, hasCopilotVisionInput(req.Messages)) {
 					r.Header.Set(k, v)
@@ -163,16 +168,8 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			}
 			// pi options.headers (consumer) are spread last and win over
 			// everything above, including model.headers and the attribution
-			// defaults.
-			for k, v := range opts.Headers {
-				r.Header.Set(k, v)
-			}
-			// Cloudflare AI Gateway carries the API key in cf-aig-authorization
-			// (set after all merges, like pi's defaultHeaders construction) and
-			// leaves the upstream Authorization to model.headers.
-			if model.Provider == "cloudflare-ai-gateway" {
-				r.Header.Set("cf-aig-authorization", "Bearer "+apiKey)
-			}
+			// defaults — a deletion marker here suppresses any of them.
+			applyProviderHeaders(r.Header, opts.Headers)
 			return r, nil
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, openaiSDKErrorMessage))
@@ -973,13 +970,15 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 // cf-aig-authorization value, the OpenAI client uses an "unused" placeholder
 // (later overwritten by the real header) instead of failing. Absent both, the
 // stream fails with pi's exact message.
-func clientAPIKey(provider ai.ProviderId, apiKey string, headers map[string]string) (string, error) {
+// A deletion marker is not a credential: pi's hasHeader requires `value !==
+// null` before it counts a header as supplying auth.
+func clientAPIKey(provider ai.ProviderId, apiKey string, headers ai.ProviderHeaders) (string, error) {
 	if apiKey != "" {
 		return apiKey, nil
 	}
 	for k, v := range headers {
 		lk := strings.ToLower(k)
-		if (lk == "authorization" || lk == "cf-aig-authorization") && strings.TrimSpace(v) != "" {
+		if (lk == "authorization" || lk == "cf-aig-authorization") && v != nil && strings.TrimSpace(*v) != "" {
 			return "unused", nil
 		}
 	}

@@ -80,7 +80,7 @@ type AgentOptions struct {
 	Temperature               *float64
 	MaxTokens                 *int
 	CacheRetention            ai.CacheRetention
-	Headers                   map[string]string
+	Headers                   ai.ProviderHeaders
 	// Metadata is optional request metadata forwarded to providers.
 	Metadata      map[string]any
 	ToolExecution ToolExecutionMode
@@ -125,7 +125,7 @@ type Agent struct {
 	Temperature               *float64
 	MaxTokens                 *int
 	CacheRetention            ai.CacheRetention
-	Headers                   map[string]string
+	Headers                   ai.ProviderHeaders
 	Metadata                  map[string]any
 	ToolExecution             ToolExecutionMode
 

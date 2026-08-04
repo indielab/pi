@@ -144,6 +144,11 @@ func getSessionAttributionHeaders(model *ai.Model, sessionID string) map[string]
 // are spread over the attribution base). The consumer opts.Headers (pi's
 // options.headers — highest precedence) are applied separately by each caller
 // after model.Headers and the provider-specific headers.
+//
+// Adapters that build one merged ProviderHeaders value instead of writing
+// straight to the request (google-generative-ai) call the two getters directly
+// and put them at the bottom of that merge, so a deletion marker from a later
+// source can suppress an attribution default the same way.
 func applyAttributionDefaults(set func(k, v string), model *ai.Model, sessionID string) {
 	for k, v := range getSessionAttributionHeaders(model, sessionID) {
 		set(k, v)

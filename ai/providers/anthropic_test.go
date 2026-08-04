@@ -615,8 +615,9 @@ func TestAnthropicCloudflareAIGateway(t *testing.T) {
 		Input:   []string{"text"}, MaxTokens: 4096,
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	// Use an sk-ant-oat key: pi checks the cloudflare branch BEFORE the OAuth
-	// sniff (anthropic.ts:802 vs :848), so no OAuth identity must leak through.
+	// Use an sk-ant-oat key: pi resolves cloudflare-ai-gateway to header-owned
+	// auth with no apiKey at all, so its OAuth sniff never fires however the
+	// gateway key looks — no OAuth identity may leak through.
 	final := StreamAnthropic(context.Background(), model, req,
 		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-ant-oat-cfkey"}}).Result()
 	if final.StopReason == ai.StopError {

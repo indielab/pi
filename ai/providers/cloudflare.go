@@ -28,6 +28,28 @@ func isCloudflareProvider(provider ai.ProviderId) bool {
 	return provider == "cloudflare-workers-ai" || provider == "cloudflare-ai-gateway"
 }
 
+// cloudflareAIGatewayAuthHeaders is the header-owned auth of Cloudflare AI
+// Gateway, ported from pi providers/cloudflare-auth.ts
+// (cloudflareAIGatewayAuth().resolve): the gateway key rides in
+// cf-aig-authorization, and the upstream provider's own auth headers are
+// suppressed with deletion markers so no placeholder credential reaches the
+// gateway (upstream a24fb9e96, #7030).
+//
+// pi produces these in the auth resolver and the adapters never mention
+// Cloudflare; the Go port resolves this auth inline in the adapters instead
+// (the 2026-06-24 divergence, because the compat globals do not route through
+// the Models runtime). The markers, however, are the real mechanism — the
+// adapters emit their normal auth header and this bundle deletes it, rather
+// than each adapter branching on the provider before setting one.
+func cloudflareAIGatewayAuthHeaders(apiKey string) ai.ProviderHeaders {
+	gatewayAuth := "Bearer " + apiKey
+	return ai.ProviderHeaders{
+		"cf-aig-authorization": &gatewayAuth,
+		"Authorization":        nil,
+		"x-api-key":            nil,
+	}
+}
+
 // cloudflarePlaceholderRe matches {VAR} placeholders, mirroring pi's
 // /\{([A-Z_][A-Z0-9_]*)\}/g.
 var cloudflarePlaceholderRe = regexp.MustCompile(`\{([A-Z_][A-Z0-9_]*)\}`)
