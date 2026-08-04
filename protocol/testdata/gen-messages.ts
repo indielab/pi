@@ -1,5 +1,8 @@
 // Emits protocol message vectors from upstream's real codec + TypeBox schemas.
 import { encodeClientMessage, encodeServerMessage, parseClientMessage, parseServerMessage } from "./codec.ts";
+// The tool-call ordering vectors additionally run pi's own execution->protocol
+// bridge, so their `input` is whatever toProtocolJsonValue really produces.
+import { toProtocolAssistantMessage, toProtocolToolResultMessage } from "../../server/src/protocol.ts";
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 
@@ -42,6 +45,41 @@ const toolError = {
 	input: null, content: [{ type: "image", data: "aGk=", mimeType: "image/png" }],
 	timestamp: 1006, status: "error", isError: true,
 };
+// Tool-call arguments in the order a model authored them. No key is in sorted
+// position at any depth — top level, a nested object, and an object inside an
+// array — so a frame built from these pins insertion order rather than the
+// alphabetical order a Go map would otherwise impose.
+const orderedArguments = {
+	path: "/tmp",
+	depth: 1,
+	filters: [{ name: "go", enabled: true }],
+	nested: { zeta: 1, alpha: 2 },
+};
+const orderedCall = { type: "toolCall", id: "tc3", name: "bash", arguments: orderedArguments } as const;
+const assistantOrderedToolCall = toProtocolAssistantMessage(
+	{
+		role: "assistant",
+		content: [orderedCall],
+		api: "anthropic-messages",
+		provider: "anthropic",
+		model: "claude-opus-5",
+		usage,
+		stopReason: "toolUse",
+		timestamp: 1007,
+	} as never,
+	{ id: "a5" } as never,
+);
+const toolOrderedInput = toProtocolToolResultMessage(
+	{
+		role: "toolResult",
+		content: [{ type: "text", text: "out" }],
+		toolCallId: "tc3",
+		toolName: "bash",
+		isError: false,
+		timestamp: 1008,
+	} as never,
+	{ id: "t3", call: orderedCall } as never,
+);
 const sessionSummary = {
 	id: "s1", name: "work", cwd: "/tmp", createdAt: 1, updatedAt: 2,
 	phase: "idle", model, thinkingLevel: "medium", attached: true, locked: false,
@@ -151,6 +189,29 @@ const serverMessages: Array<[string, unknown]> = [
 		event: {
 			type: "session_progress", sessionId: "s1",
 			progress: { type: "item_finished", item: toolError },
+		},
+	}],
+];
+
+// Frames whose tool-call `input` carries the model's own key order. They are
+// kept apart from serverMessages because the round-trip test re-encodes what it
+// decoded, and Go's decoder resolves a CBOR map to an unordered map — pi's
+// resolves it to an ordered JS object, so only the Node side is a fixed point
+// on these. What they pin is the emitting direction, which is the one a Node
+// peer observes.
+const orderedToolCalls: Array<[string, unknown]> = [
+	["evt_item_finished_assistant", {
+		type: "event",
+		event: {
+			type: "session_progress", sessionId: "s1",
+			progress: { type: "item_finished", item: assistantOrderedToolCall },
+		},
+	}],
+	["evt_item_finished_tool", {
+		type: "event",
+		event: {
+			type: "session_progress", sessionId: "s1",
+			progress: { type: "item_finished", item: toolOrderedInput },
 		},
 	}],
 ];
@@ -279,6 +340,7 @@ function parseAll(cases: Array<[string, unknown]>, parse: (v: unknown) => unknow
 console.log(JSON.stringify({
 	client: encodeAll(clientMessages, encodeClientMessage),
 	server: encodeAll(serverMessages, encodeServerMessage),
+	orderedToolCalls: encodeAll(orderedToolCalls, encodeServerMessage),
 	clientRejects: parseAll(clientRejects, parseClientMessage),
 	serverRejects: parseAll(serverRejects, parseServerMessage),
 }, null, "\t"));

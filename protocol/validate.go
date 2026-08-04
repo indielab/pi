@@ -1,6 +1,10 @@
 package protocol
 
-import "reflect"
+import (
+	"reflect"
+
+	"github.com/sky-valley/pi/protocol/cbor"
+)
 
 // Constraint helpers mirroring the TypeBox modifiers pi's schemas use:
 // IdSchema is String({minLength: 1}), TimestampSchema is Integer({minimum: 0}),
@@ -98,6 +102,16 @@ func checkJSONValue(name string, value any, depth int) error {
 	case map[string]any:
 		for _, item := range v {
 			if err := checkJSONValue(name, item, depth+1); err != nil {
+				return err
+			}
+		}
+		return nil
+	case cbor.OrderedObject:
+		// An object whose authored key order is being carried to the wire. It
+		// is a JS object in pi, so it is a JsonValue here — checked before the
+		// reflect walk, which would otherwise read it as a slice of structs.
+		for _, field := range v {
+			if err := checkJSONValue(name, field.Value, depth+1); err != nil {
 				return err
 			}
 		}

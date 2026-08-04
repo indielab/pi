@@ -9,6 +9,7 @@ import (
 
 	"github.com/sky-valley/pi/ai"
 	"github.com/sky-valley/pi/protocol"
+	"github.com/sky-valley/pi/protocol/cbor"
 )
 
 // This file is the bridge between pi's execution types (the ai package) and the
@@ -34,12 +35,20 @@ const maxDetailDepth = 256
 // exactly is an error rather than a lossy substitution — this feeds tool input,
 // where a silent change of meaning is worse than a failed turn.
 //
+// An ai.OrderedObject is copied to a cbor.OrderedObject, so a value that
+// arrived with its authored key order reaches the wire in that order. pi gets
+// this for free: it walks a JS object with Object.entries and assigns into a
+// plain object, both of which keep insertion order, and its CBOR encoder then
+// writes Object.keys. A Go map cannot carry the order at all.
+//
 // DIVERGENCE (deliberate): pi additionally rejects sparse arrays and
 // `undefined`, neither of which exists in Go. A Go nil inside a slice is a JSON
 // null and is accepted, which is what pi does with an explicit null too.
 func ToProtocolJSONValue(value any) (any, error) {
 	return toProtocolJSONValue(reflect.ValueOf(value), map[uintptr]struct{}{}, 0)
 }
+
+var orderedObjectType = reflect.TypeOf(ai.OrderedObject(nil))
 
 func toProtocolJSONValue(v reflect.Value, seen map[uintptr]struct{}, depth int) (any, error) {
 	if depth > maxDetailDepth {
@@ -51,6 +60,26 @@ func toProtocolJSONValue(v reflect.Value, seen map[uintptr]struct{}, depth int) 
 	}
 	if !ok {
 		return nil, nil
+	}
+
+	// An ordered object is a slice by construction but an object in pi, so it
+	// is recognised before the kind switch would copy it as an array.
+	if v.Type() == orderedObjectType {
+		release, err := enter(v, seen)
+		if err != nil {
+			return nil, err
+		}
+		defer release()
+		fields := v.Interface().(ai.OrderedObject)
+		out := make(cbor.OrderedObject, len(fields))
+		for i, field := range fields {
+			entry, err := toProtocolJSONValue(reflect.ValueOf(field.Value), seen, depth+1)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = cbor.OrderedField{Key: field.Key, Value: entry}
+		}
+		return out, nil
 	}
 
 	switch v.Kind() {
@@ -454,7 +483,7 @@ func toProtocolAssistantContent(content ai.ContentList) ([]protocol.Content, err
 			if err != nil {
 				return nil, err
 			}
-			input, err := ToProtocolJSONValue(block.Arguments)
+			input, err := ToProtocolJSONValue(block.OrderedArguments())
 			if err != nil {
 				return nil, err
 			}
@@ -594,7 +623,7 @@ func ToProtocolToolResultMessage(
 	if resultName != callName {
 		return nil, fmt.Errorf("Tool result %s does not match tool call %s", resultName, callName)
 	}
-	input, err := ToProtocolJSONValue(call.Arguments)
+	input, err := ToProtocolJSONValue(call.OrderedArguments())
 	if err != nil {
 		return nil, err
 	}

@@ -563,6 +563,36 @@ it, at every depth. Baseline entry `go-tool-call-argument-key-order` **retired**
 from `~/.cache/pi-diff/known-divergences.json`; the harness reports **11 PASS,
 0 KNOWN, 0 FAIL, exit 0**.
 
+**ALSO FIXED (2026-08-04, same cycle) — the same order on the protocol wire.**
+The request-body fix stopped at `server/protocol.go`, which pushed
+`call.Arguments` through `ToProtocolJSONValue` and so still handed the encoder a
+Go map. **The wire is a byte-golden class of its own** (2026-08-01 ruling) and
+CBOR map key order is observable to a peer: pi's `toProtocolJsonValue` rebuilds
+the object with `Object.entries` and its CBOR encoder walks `Object.keys`, both
+insertion-ordered, so a Node pi emits a tool call's `input` in the model's order
+and Go did not. `protocol/cbor` gains `OrderedObject`/`OrderedField` (the CBOR
+twin of `ai.OrderedObject`) which the encoder recognises **before** the kind
+switch — a naive pass would have emitted it as a CBOR *array*, since it is a
+slice — plus a duplicate-key guard, and `requireJSONValue` accepts it as the
+JsonValue it is. The bridge copies `ai.OrderedObject` → `cbor.OrderedObject` at
+every depth and both tool-call sites now read `OrderedArguments()`.
+`protocol/testdata/gen-messages.ts` gained an `orderedToolCalls` corpus derived
+by running **upstream's own** `toProtocolAssistantMessage` /
+`toProtocolToolResultMessage` (`git archive b784c8096 packages/server/src`,
+`@earendil-works/pi-ai@0.83.0`, integrity-checked) into upstream's `codec.ts`;
+**non-circularity proved** — the pre-change generator reproduces the committed
+pre-change fixture byte-for-byte, and all four existing corpora are unchanged by
+the regeneration.
+
+**Still open (receive side, no production consumer today).** Go's CBOR decoder
+resolves a map to `map[string]any`, so a decoded frame loses the wire order that
+pi's decoder keeps in a JS object. Emission is what a peer observes and is now
+correct; a Go peer that *re-emits* something it decoded would still reorder, so
+the new vectors are deliberately kept out of `serverMessages` (whose round-trip
+test asserts re-encode is a fixed point). Closing it means changing what a
+decoded `JsonValue` *is* in Go — a much wider public break than the emission fix
+needed, so it is recorded rather than taken.
+
 ### Notable n/a (30)
 
 `1d0c97471` + `cd20a8d2e` harness-v2 in-memory storage (~1,900 lines) — standing

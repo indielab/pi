@@ -142,6 +142,17 @@ func (e *encoder) encode(v reflect.Value, depth int) error {
 		return e.w.writeByte(0xf6) // null
 	}
 
+	// An OrderedObject is a slice by construction but an object on the wire,
+	// so it is recognised before the kind switch would encode it as an array.
+	if v.Type() == orderedObjectType {
+		key, ok := e.enter(v)
+		if !ok {
+			return &Error{Msg: "CBOR values must not contain cycles"}
+		}
+		defer e.leave(key)
+		return e.encodeOrderedObject(v.Interface().(OrderedObject), depth)
+	}
+
 	switch v.Kind() {
 	case reflect.Interface:
 		if v.IsNil() {
@@ -274,7 +285,8 @@ func (e *encoder) encodeMap(v reflect.Value, depth int) error {
 	// map iteration is randomized, so entries are sorted by key to make the
 	// encoding deterministic. CBOR maps are order-independent and pi's decoder
 	// accepts any order, so this is interop-safe. Struct encoding below keeps
-	// declaration order, which is what the protocol's own messages use.
+	// declaration order, which is what the protocol's own messages use, and a
+	// value whose authored order is known travels as an OrderedObject.
 	slices.Sort(keys)
 
 	if len(keys) > e.opts.maxContainerLength {
@@ -433,7 +445,7 @@ func structLike(t reflect.Type) bool {
 // Encode writes value as the protocol's strict, definite-length RFC 8949
 // subset. Struct fields are emitted in declaration order (matching the field
 // order of pi's message interfaces); map entries are emitted in sorted key
-// order.
+// order, and an OrderedObject's entries in its own.
 func Encode(value any, opts *Options) ([]byte, error) {
 	r, err := resolveOptions(opts)
 	if err != nil {
