@@ -1433,6 +1433,22 @@ func lsTool(cwd string) agent.AgentTool {
 // find (glob)
 // ---------------------------------------------------------------------------
 
+// relativizeFindResultPath relativizes a find result against the search root and
+// normalizes it to posix separators (pi's relativizeFindResultPath). pi had to
+// special-case results that are absolute but not prefixed by the search root,
+// and searching a filesystem root ("/" or a Windows drive root), where its
+// prefix slice ate the first character of the first segment (#6104);
+// filepath.Rel handles both. pi also carries a trailing separator across
+// relativization because fd can emit one for directories — WalkDir never does,
+// so there is nothing to carry here.
+func relativizeFindResultPath(resultPath, searchPath string) string {
+	rel, err := filepath.Rel(searchPath, resultPath)
+	if err != nil {
+		return filepath.ToSlash(resultPath)
+	}
+	return filepath.ToSlash(rel)
+}
+
 func findTool(cwd string) agent.AgentTool {
 	return agent.AgentTool{
 		Name:        "find",
@@ -1484,7 +1500,7 @@ func findTool(cwd string) agent.AgentTool {
 				}
 				// fd matches directories as well as files.
 				if matchFdGlob(pattern, rel, p) {
-					results = append(results, filepath.ToSlash(rel))
+					results = append(results, relativizeFindResultPath(p, root))
 				}
 				return nil
 			})

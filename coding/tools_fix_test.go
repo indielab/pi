@@ -652,3 +652,45 @@ func TestReadDetailsTruncation(t *testing.T) {
 		t.Fatalf("expected details.truncation, got %#v", r.Details)
 	}
 }
+
+// TestRelativizeFindResultPath locks pi #6104: find results are relativized
+// against the search root, including a filesystem root (where pi's prefix slice
+// used to eat the first character of the first segment) and absolute results
+// that are not prefixed by the root at all.
+func TestRelativizeFindResultPath(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("posix separators")
+	}
+	cases := []struct{ result, search, want string }{
+		{"/home/user/file.txt", "/", "home/user/file.txt"},
+		{"/home/user/project", "/", "home/user/project"},
+		{"/home/user/project/file.txt", "/home/user", "project/file.txt"},
+		{"/ai/Models2/file.txt", "/ai/Models", "../Models2/file.txt"},
+		{"/tmp/results/file.txt", "/workspace/project", "../../tmp/results/file.txt"},
+	}
+	for _, c := range cases {
+		if got := relativizeFindResultPath(c.result, c.search); got != c.want {
+			t.Errorf("relativizeFindResultPath(%q, %q) = %q, want %q", c.result, c.search, got, c.want)
+		}
+	}
+}
+
+// TestFindRelativizesAgainstSearchRoot exercises the same relativization through
+// the find tool itself.
+func TestFindRelativizesAgainstSearchRoot(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "src", "nested", "a.ts"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := findTool(dir).Execute(context.Background(), "id", map[string]any{"pattern": "**/*.ts"}, func(agent.AgentToolResult) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := res.Content[0].(ai.TextContent).Text
+	if got != "src/nested/a.ts" {
+		t.Fatalf("find output = %q, want %q", got, "src/nested/a.ts")
+	}
+}
