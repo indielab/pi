@@ -290,6 +290,86 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   subsystem to serve no ported consumer. Future `resource-loader.ts` commits are
   `n/a` UNLESS the port grows a resource-loader analog.
 
+## Drift at last sync check (2026-08-04) — IN PROGRESS, pin still at c6eb6281a
+
+Delta `c6eb6281a..b784c8096`, **45** first-parent changes. Triage: **14 port, 30
+n/a, 1 decide**. **No release crossed** — no tag in range, every
+`packages/*/package.json` still **0.83.0**; `models.generated.ts` moved only to
+register Baseten (import + two map entries), so no catalog regen, no npm bump,
+no tag, no tweet this cycle. Note `ai/scripts/generate-models.ts` moved (+105):
+under the 2026-07-30 ruling that is a positive signal the NEXT release will move
+the catalog data.
+
+**Triage lesson repeated (2026-07-17 merge-smuggling class).** `fed6009cc`'s
+subject says `fix(coding-agent):` and its diffstat tail is all host files, but it
+carries a 22-file / +708−330 `packages/ai/src` rewrite. A truncated diffstat hid
+it; only the mandated whole-range reconciliation sweep
+(`git diff <pin>..origin/main --stat -- packages/ai/src …`) surfaced it. **Never
+read a large diffstat through `tail`/`head`.**
+
+### Port worklist (14)
+
+| sha | subject | Go files | golden? | status |
+|---|---|---|---|---|
+| `b9d360a2c` | retry transient provider errors in Google adapters | `ai/providers/google.go`, `ai/providers/retry.go` | no | pending |
+| `cbaca6038` | preserve Gemini 3 tool call IDs | `ai/providers/google.go` `requiresToolCallID` | **yes — request body** | pending |
+| `2e95584da` | `validateToolArguments()` coerces nullable union | `ai/validation.go` / `ai/schema.go` `Coerce` | tool args | pending |
+| `0f5286d8a` | expose `shouldStopAfterTurn` on Agent | `agent/agent.go` | no — public API addition | pending |
+| `b0e05b442` | resize images returned by tools | `coding/imageresize.go`, `coding/session.go` tool hook | **yes — tool result content + hints** | pending |
+| `c1019d920` | add Baseten provider | `ai/providers/{openai,openai_chat_template,openai_compat,builtins}.go`, `ai/envkeys.go`, `ai/types.go` | **yes — request body** | pending |
+| `305c014dc` | make session authentication transport-specific | `protocol/`, `client/`, `server/` | **yes — the wire** | pending |
+| `32850ef7c` | resume after context-limited length stops | `ai/providers/openai_responses.go` | **yes — `rawStopReason` → `status.reason`** | pending |
+| `fed6009cc` | model refresh cancellation caller-owned | `ai/models_runtime.go`, `ai/models_store.go`, `ai/credential_store.go`, `ai/auth_{types,helpers,resolve}.go`, `ai/builtins_models.go`, `ai/providers/{anthropic,cloudflare}.go` | no — **breaking public Go API** | pending |
+| `25a2c8dcf` | generic sampling parameters | `ai/types.go`, `ai/simple_options.go`, `ai/providers/{openai,openai_responses}.go`, `server/protocol.go` | **yes — request body** | pending |
+| `523b5a491` | normalize find root results | `coding/tools.go` (both find call sites) | **yes — tool output paths** | pending |
+| `18d65de62` | preserve Copilot summary endpoint | `coding/session.go`, `coding/compaction.go` | **yes — compaction request baseURL** | pending |
+| `382aa641c` | DRAFT: openai background mode responses | `ai/types.go`, `ai/models_runtime.go`, `ai/providers/faux.go`, lazy-api layer | **yes — new `StopReason "deferred"` in session format** | pending |
+| `acbdc0d25` | bound OAuth refresh duration (15s) | `ai/auth_resolve.go` | no | pending |
+
+**Port-order constraints.** Chronological order is load-bearing this cycle:
+`fed6009cc` rewrites the `resolveStoredOAuth` block that `acbdc0d25` then edits;
+`c1019d920` and `25a2c8dcf` both edit openai `buildParams`; `382aa641c` edits
+`models.ts`/`types.ts` after `fed6009cc` rewrites them.
+
+**Partial port — `32850ef7c`.** The `openai-responses-shared` half maps cleanly.
+Its new `isRecoverableLength` in `ai/utils/overflow.ts` has **no Go home**: the
+port has no overflow-detection analog at all (`isContextOverflow` was never
+ported; its consumer is the unported agent-session runtime). Port the responses
+half; the overflow half is recorded absent, not missed.
+
+### Open `decide` (1) — carried, NOT ported this cycle
+
+- **`a24fb9e96` "preserve auth header deletion markers" (#7539)** — the
+  2026-06-24 ruling declined null-`ProviderHeaders` suppression on the stated
+  condition *"Revisit only if a consumer needs to suppress a default header."*
+  This commit is that consumer appearing upstream: the host stops stripping
+  nulls and passes `ProviderHeaders` through, with a new cloudflare-compat test.
+  The hunk itself is in `coding-agent/src/core/model-registry.ts` (host, so not
+  automatically `port`), but it is the named trigger. **Question for the owner:
+  port null-suppression into `StreamOptions.Headers`/`Model.Headers` now (a
+  public Go API change for a capability Go currently handles by conditional
+  skip), or hold until an `ai/src` hunk forces it?** Not silently included —
+  scope neither expanded nor shrunk pending the ruling.
+
+### Notable n/a (30)
+
+`1d0c97471` + `cd20a8d2e` harness-v2 in-memory storage (~1,900 lines) — standing
+no-`harness/`-tree exclusion. `da66636cc` symlinked session discovery — no Go
+home: `coding/session_store.go` `ListSessions` reads one per-cwd dir and has no
+cross-project directory walk. `ab5f8d88e` type-level only (reverts
+`18d65de62`'s generic signature, no behavior). `ebf33c0c2`'s one `core/` line is
+a `UiMode`→`TuiMode` type alias. `d93e7e88f` (prompt-during-compaction throw) and
+`e56893f4c` (compaction disconnect/reconnect removal) are host
+agent-session-runtime event plumbing. `fed6009cc`'s host halves
+(`model-runtime.ts`, `auth-storage.ts`, `utils/abort.ts`, interactive) stay `n/a`
+under the 2026-07-17 ruling. `b04faa2da` model-resolver (host). `b06dc76fd`
+package-manager (extensions). Remainder: tui (`a8ee03b81`, `0e633790c`,
+`b103937d3`, `fa07e7bd9`, `e8a17822d`), modes (`a4475344f`, `3d264e85b`),
+cli/args (`4f4762f06`, `c72728bc1`), docs (`786c76cb7`, `a0014c1a8`, `f7ea2ef38`,
+`f27aaf66c`), packaging/deps (`816237c10`, `221a842c1`), `.github`
+(`a96fb984d`, `bd3440e5b`), tests-only (`e563301dd`, `95249a727`, `0524d6897`,
+`b784c8096` — the last a rider removing the test `acbdc0d25` added).
+
 ## Drift at last sync check (2026-08-03, second run) — pin advanced to c6eb6281a
 
 Delta `01eeafd14..c6eb6281a`: **3** first-parent changes — **0 ports, 3 n/a, 0
