@@ -120,6 +120,11 @@ type Provider interface {
 	StreamSimple(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream
 }
 
+// deferredUnsupportedHint tells the caller how to proceed when a provider has
+// no deferred (background-mode) support, rather than only naming what is
+// missing.
+const deferredUnsupportedHint = "; use Stream/Complete for a synchronous response"
+
 // DeferredFetcher is the optional Provider capability of redeeming a
 // DeferredHandle (pi's optional Provider.fetchDeferred). A Provider announces
 // it by implementing this interface, so callers detect support with a type
@@ -374,7 +379,8 @@ func (p *providerImpl) fetchDeferred(ctx context.Context, model *Model, handle D
 	s, ok := p.streamsFor(model)
 	if !ok || s.FetchDeferred == nil {
 		return errorStream(model, newModelsError(ErrProvider,
-			"Provider "+p.id+" does not support deferred responses for \""+model.Api+"\"", nil))
+			"Provider "+p.id+" does not support deferred responses for \""+model.Api+"\""+
+				deferredUnsupportedHint, nil))
 	}
 	return s.FetchDeferred(ctx, model, handle, opts)
 }
@@ -596,6 +602,13 @@ func (m *modelsImpl) DeleteProvider(id string) {
 	}
 }
 
+// ClearProviders drops every provider and supersedes every refresh in flight.
+//
+// The sweep is deliberately two-phase, and the second phase is not redundant:
+// the first covers the providers still in the collection, the second covers
+// refreshes whose provider is already gone from it (pi's clearProviders unions
+// the provider ids with the live controller keys). Neither phase alone sees
+// both sets.
 func (m *modelsImpl) ClearProviders() {
 	m.mu.RLock()
 	ids := make([]string, 0, len(m.order))
@@ -652,6 +665,16 @@ func (m *modelsImpl) supersedeAllProviderRefreshes() {
 // registers a fresh generation plus its cancellable context (pi
 // beginProviderRefresh). The returned cancel must be passed to
 // endProviderRefresh.
+//
+// The three steps below are not atomic with respect to each other, and that
+// window is exactly why the generation counter is load-bearing rather than a
+// second line of defence behind cancellation: supersedeProviderRefresh bumps the
+// generation and clears the cancel entry, then the context is created, and only
+// then is the new entry registered. A ClearProviders landing in that gap finds
+// no entry to cancel — its supersede loop sees previous == nil — so this
+// refresh keeps a LIVE context and runs to completion. Nothing stops its
+// publication except the generation check in publishProviderModels, which sees
+// the generation ClearProviders bumped and drops it.
 func (m *modelsImpl) beginProviderRefresh(ctx context.Context, providerID string) (uint64, context.Context, *providerRefresh) {
 	generation := m.supersedeProviderRefresh(providerID)
 	refreshCtx, cancel := context.WithCancel(ctx)
@@ -1321,7 +1344,7 @@ func deferredUnsupported(p Provider, providerID string) error {
 		return newModelsError(ErrProvider, "Unknown provider: "+providerID, nil)
 	}
 	return newModelsError(ErrProvider,
-		"Provider "+providerID+" does not support deferred responses", nil)
+		"Provider "+providerID+" does not support deferred responses"+deferredUnsupportedHint, nil)
 }
 
 // applyDeferredAuth is applyAuth over ModelsDeferredOptions.

@@ -545,7 +545,8 @@ func ToProtocolAssistantMessage(
 		// Protocol v1 has no deferred transcript status, so the bridge refuses
 		// the message rather than putting an unrepresentable stop reason on the
 		// wire (pi 382aa641c, server/src/protocol.ts).
-		return nil, fmt.Errorf("Deferred assistant messages are not supported by protocol v1")
+		return nil, errors.New("Deferred assistant messages are not supported by protocol v1" +
+			"; redeem the handle with Models.FetchDeferred before bridging the turn")
 	case ai.StopAborted:
 		item.Status = protocol.AssistantAborted
 		item.StopReason = stopReason(protocol.StopAborted)

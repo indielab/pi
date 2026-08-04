@@ -261,10 +261,10 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	// pi: chatTemplateKwargs/chatTemplateArgs overrides always replace the
 	// detected defaults ({}).
 	if raw.ChatTemplateKwargs != nil {
-		c.ChatTemplateKwargs = parseChatTemplateKwargs(raw.ChatTemplateKwargs)
+		c.ChatTemplateKwargs = parseChatTemplateValues(raw.ChatTemplateKwargs)
 	}
 	if raw.ChatTemplateArgs != nil {
-		c.ChatTemplateArgs = parseChatTemplateKwargs(raw.ChatTemplateArgs)
+		c.ChatTemplateArgs = parseChatTemplateValues(raw.ChatTemplateArgs)
 	}
 	return c
 }

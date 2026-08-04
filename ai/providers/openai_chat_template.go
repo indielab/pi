@@ -58,10 +58,14 @@ func (o orderedJSONObject) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// parseChatTemplateKwargs decodes a `chatTemplateKwargs` / `chatTemplateArgs`
-// compat object, preserving key order. Returns nil for absent/invalid input (pi
+// parseChatTemplateValues decodes a `chatTemplateKwargs` / `chatTemplateArgs`
+// compat object, preserving key order. It is named for the values it decodes,
+// not for either field, matching the buildChatTemplateValues rename that made
+// the builder serve both (upstream c1019d920). The chatTemplateKwarg* types
+// keep pi's own vocabulary — upstream renamed only the builder and still calls
+// the element type ChatTemplateKwargValue. Returns nil for absent/invalid input (pi
 // falls back to the detected default of {}, which emits nothing).
-func parseChatTemplateKwargs(raw json.RawMessage) []chatTemplateKwarg {
+func parseChatTemplateValues(raw json.RawMessage) []chatTemplateKwarg {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil
 	}

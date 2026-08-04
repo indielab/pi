@@ -325,7 +325,7 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 			if opts != nil && opts.OnResponse != nil {
 				_ = opts.OnResponse(ai.ProviderResponse{Status: 200, Headers: map[string]string{}}, model)
 			}
-			message, err := reg.redeem(ctx, model, handle, opts)
+			message, err := reg.redeem(model, handle, opts)
 			if err != nil {
 				msg := fauxErrorMessage(err, api, provider, model.ID)
 				outer.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: ai.StopError, Error: msg})
@@ -387,7 +387,6 @@ func (r *FauxProviderRegistration) resolveResponse(
 // scripted as pending, otherwise the scripted response, resolved once and
 // cached so repeat fetches are idempotent.
 func (r *FauxProviderRegistration) redeem(
-	_ context.Context,
 	model *ai.Model,
 	handle ai.DeferredHandle,
 	opts *ai.DeferredFetchOptions,

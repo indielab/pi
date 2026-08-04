@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -858,7 +859,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			if message == "" {
 				message = "An unknown error occurred"
 			}
-			fail(fmt.Errorf("%s", message))
+			fail(errors.New(message))
 			return
 		}
 		materialize()
