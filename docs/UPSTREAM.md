@@ -32,6 +32,37 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
 
+- **2026-08-04 — upstream `DRAFT:` commits are ported like any other change
+  (INTERIM)** (re: `382aa641c` "DRAFT: add openai background mode responses",
+  the deferred-response capability class: `DeferredHandle`, new `StopReason`
+  value `"deferred"`, `fetchDeferred`/`cancelDeferred` on
+  `Provider`/`Models`/`ProviderStreams`, `SimpleStreamOptions.deferred`,
+  `lazyApi` capability flags, `providers/faux.ts`). Owner call (noam): **port
+  it for now**, pending an answer to the open question below. Rationale: on
+  *scope* the 2026-08-01 ruling already answers this — it is `packages/ai/src`
+  SDK surface, i.e. exactly the "full functionality of the pi SDK as
+  represented in Go" class. The only thing the DRAFT label raised was
+  *stability*, which is a different axis and is not on its own a reason to
+  hold. Triage must not re-escalate a change **solely** because its subject
+  says `DRAFT:` — judge it on scope like anything else.
+  **OPEN QUESTION (unresolved — when answered, replace this ruling): when is a
+  draft no longer a draft?** Upstream's `DRAFT:` is a free-text subject prefix
+  with no lifecycle behind it: the commit is already on `main` (not a branch or
+  a PR left open), carries no tag, and nothing marks the transition when it
+  stabilizes — a later commit may simply edit the surface without ever removing
+  the word. So there is no upstream signal to wait *for*, which is part of why
+  holding was the weaker option. Candidate signals if we want a rule later:
+  first release tag that ships the surface; the surface surviving N sync cycles
+  unmoved; or upstream's own `server/protocol.ts` dropping its
+  `"Deferred assistant messages are not supported by protocol v1"` throw.
+  **Standing caution while this is interim**: the new `StopReason` value
+  `"deferred"` enters the **session/message format** (a byte-golden surface),
+  and upstream itself refuses to serialize it over protocol v1. Port it, but
+  treat any golden movement it causes as requiring an explicit parity note
+  rather than a silent regen, and expect churn — this surface is not frozen
+  upstream (same class of caution as `protocol/src/schemas.ts` under the
+  2026-08-01 ruling).
+
 - **2026-08-01 — the remote-session stack (protocol + client + server core) is
   IN scope** (re: `06a1ceb8d` "coding-agent remote client controller", with
   riders `5a38a1c12` (`packages/client`), `7d5fc9499` (unix transport),
