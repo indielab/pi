@@ -536,22 +536,22 @@ func TestPresetRejectsInvalidOptions(t *testing.T) {
 	backend := servertest.NewBackend()
 
 	long := "/tmp/" + string(make([]byte, 512))
-	if _, err := unix.NewServer(backend, unix.ServerOptions{Token: servertest.Token, Path: long}); err == nil {
+	if _, err := unix.NewServer(backend, unix.ServerOptions{Path: long}); err == nil {
 		t.Fatal("an over-long socket path must be rejected")
 	}
 	limit := 128
 	if _, err := unix.NewServer(backend, unix.ServerOptions{
-		Token: servertest.Token, Path: "/tmp/pi.sock", MaxFrameLength: &limit, MaxPendingBytes: 131,
+		Path: "/tmp/pi.sock", MaxFrameLength: &limit, MaxPendingBytes: 131,
 	}); err == nil {
 		t.Fatal("a pending-byte limit below one maximum frame must be rejected")
 	}
 	if _, err := unix.NewServer(backend, unix.ServerOptions{
-		Token: servertest.Token, Path: "/tmp/pi.sock", HandshakeTimeout: 2_147_483_648 * time.Millisecond,
+		Path: "/tmp/pi.sock", HandshakeTimeout: 2_147_483_648 * time.Millisecond,
 	}); err == nil {
 		t.Fatal("a handshake timeout above Node's maximum timer delay must be rejected")
 	}
 	if _, err := unix.NewServer(backend, unix.ServerOptions{
-		Token: servertest.Token, Path: "/tmp/pi.sock", GracefulCloseTimeout: 2_147_483_648 * time.Millisecond,
+		Path: "/tmp/pi.sock", GracefulCloseTimeout: 2_147_483_648 * time.Millisecond,
 	}); err == nil {
 		t.Fatal("a graceful close timeout above Node's maximum timer delay must be rejected")
 	}
@@ -559,12 +559,12 @@ func TestPresetRejectsInvalidOptions(t *testing.T) {
 	// Both timeouts are Node timer delays in whole milliseconds; anything
 	// finer is a configuration a Node pi server refuses to start on.
 	if _, err := unix.NewServer(backend, unix.ServerOptions{
-		Token: servertest.Token, Path: "/tmp/pi.sock", HandshakeTimeout: 500 * time.Microsecond,
+		Path: "/tmp/pi.sock", HandshakeTimeout: 500 * time.Microsecond,
 	}); err == nil {
 		t.Fatal("a sub-millisecond handshake timeout must be rejected")
 	}
 	if _, err := unix.NewServer(backend, unix.ServerOptions{
-		Token: servertest.Token, Path: "/tmp/pi.sock", GracefulCloseTimeout: 500 * time.Microsecond,
+		Path: "/tmp/pi.sock", GracefulCloseTimeout: 500 * time.Microsecond,
 	}); err == nil {
 		t.Fatal("a sub-millisecond graceful close timeout must be rejected")
 	}

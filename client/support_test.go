@@ -237,7 +237,7 @@ func (s *memoryServer) answerHandshake(t *testing.T, snapshot *protocol.ServerSn
 
 func newTestClient(t *testing.T, server *memoryServer) *Client {
 	t.Helper()
-	client, err := New(Options{Token: "bearer-secret", TransportFactory: server.connect})
+	client, err := New(Options{TransportFactory: server.connect})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -9,10 +9,8 @@ import (
 	"github.com/sky-valley/pi/protocol"
 )
 
-// Options configures a Client. Token and TransportFactory are required.
+// Options configures a Client. TransportFactory is required.
 type Options struct {
-	// Token is the bearer token presented in the handshake.
-	Token string
 	// TransportFactory produces a fresh transport per connection attempt, so a
 	// Client can reconnect without its owner rebuilding anything.
 	TransportFactory TransportFactory
@@ -157,7 +155,6 @@ func New(opts Options) (*Client, error) {
 		closed:                   make(chan struct{}),
 	}
 	conn, err := NewConnection(ConnectionOptions{
-		Token:            opts.Token,
 		TransportFactory: opts.TransportFactory,
 		MaxFrameLength:   opts.MaxFrameLength,
 		OnReset:          c.state.Reset,

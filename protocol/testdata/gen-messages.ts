@@ -58,13 +58,13 @@ const modelMetadata = {
 	supportedThinkingLevels: ["off", "low", "high"], authenticated: true,
 };
 const serverSnapshot = {
-	serverId: "srv1", protocolVersion: 2, revision: 3,
+	serverId: "srv1", protocolVersion: 1, revision: 3,
 	sessions: [sessionSummary], models: [modelMetadata],
 };
 
 const clientMessages: Array<[string, unknown]> = [
-	["hello", { type: "hello", version: 2, token: "t0ken" }],
-	["hello_version_zero", { type: "hello", version: 0, token: "t" }],
+	["hello", { type: "hello", version: 1 }],
+	["hello_version_zero", { type: "hello", version: 0 }],
 	["req_list", { type: "request", id: "r1", request: { command: "list" } }],
 	["req_create_empty", { type: "request", id: "r2", request: { command: "create" } }],
 	["req_create_full", {
@@ -84,11 +84,11 @@ const clientMessages: Array<[string, unknown]> = [
 ];
 
 const serverMessages: Array<[string, unknown]> = [
-	["hello", { type: "hello", version: 2, connectionId: "c1", snapshot: serverSnapshot }],
-	["hello_error", { type: "hello_error", error: { code: "auth", message: "bad token" } }],
+	["hello", { type: "hello", version: 1, connectionId: "c1", snapshot: serverSnapshot }],
+	["hello_error", { type: "hello_error", error: { code: "busy", message: "server busy" } }],
 	["hello_error_details", {
 		type: "hello_error",
-		error: { code: "version", message: "nope", details: { supported: [2] } },
+		error: { code: "version", message: "nope", details: { supported: [1] } },
 	}],
 	["resp_list", { type: "response", id: "r1", ok: true, result: { command: "list", sessions: [sessionSummary] } }],
 	["resp_detach", { type: "response", id: "r5", ok: true, result: { command: "detach", sessionId: "s1" } }],
@@ -167,12 +167,11 @@ function encodeAll(cases: Array<[string, unknown]>, encode: (m: any) => Uint8Arr
 
 // Values the parser must REJECT. Each is a mutation of a valid message.
 const clientRejects: Array<[string, unknown]> = [
-	["unknown_property", { type: "hello", version: 2, token: "t", extra: 1 }],
-	["missing_token", { type: "hello", version: 2 }],
-	["token_empty", { type: "hello", version: 2, token: "" }],
-	["version_string", { type: "hello", version: "2", token: "t" }],
-	["version_float", { type: "hello", version: 2.5, token: "t" }],
-	["version_negative", { type: "hello", version: -1, token: "t" }],
+	["unknown_property", { type: "hello", version: 1, extra: 1 }],
+	["credential_field", { type: "hello", version: 1, token: "secret" }],
+	["version_string", { type: "hello", version: "1" }],
+	["version_float", { type: "hello", version: 1.5 }],
+	["version_negative", { type: "hello", version: -1 }],
 	["unknown_type", { type: "goodbye" }],
 	["unknown_command", { type: "request", id: "r", request: { command: "nope" } }],
 	["nested_unknown_property", {
@@ -189,17 +188,18 @@ const clientRejects: Array<[string, unknown]> = [
 
 const serverRejects: Array<[string, unknown]> = [
 	["bad_protocol_version", {
-		type: "hello", version: 3, connectionId: "c", snapshot: serverSnapshot,
+		type: "hello", version: 2, connectionId: "c", snapshot: serverSnapshot,
 	}],
 	["snapshot_bad_version", {
-		type: "hello", version: 2, connectionId: "c",
-		snapshot: { ...serverSnapshot, protocolVersion: 1 },
+		type: "hello", version: 1, connectionId: "c",
+		snapshot: { ...serverSnapshot, protocolVersion: 2 },
 	}],
 	["response_ok_with_error", {
-		type: "response", id: "r", ok: true, error: { code: "auth", message: "m" },
+		type: "response", id: "r", ok: true, error: { code: "not_found", message: "m" },
 	}],
 	["response_missing_result", { type: "response", id: "r", ok: true }],
 	["bad_error_code", { type: "hello_error", error: { code: "teapot", message: "m" } }],
+	["auth_error_code", { type: "hello_error", error: { code: "auth", message: "Authentication failed" } }],
 	["streaming_with_stop_reason", {
 		type: "event",
 		event: {
@@ -249,15 +249,15 @@ const serverRejects: Array<[string, unknown]> = [
 		},
 	}],
 	["context_window_zero", {
-		type: "hello", version: 2, connectionId: "c",
+		type: "hello", version: 1, connectionId: "c",
 		snapshot: { ...serverSnapshot, models: [{ ...modelMetadata, contextWindow: 0 }] },
 	}],
 	["empty_thinking_levels", {
-		type: "hello", version: 2, connectionId: "c",
+		type: "hello", version: 1, connectionId: "c",
 		snapshot: { ...serverSnapshot, models: [{ ...modelMetadata, supportedThinkingLevels: [] }] },
 	}],
 	["negative_cost", {
-		type: "hello", version: 2, connectionId: "c",
+		type: "hello", version: 1, connectionId: "c",
 		snapshot: {
 			...serverSnapshot,
 			models: [{ ...modelMetadata, cost: { input: -1, output: 0, cacheRead: 0, cacheWrite: 0 } }],

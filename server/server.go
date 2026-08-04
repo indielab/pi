@@ -2,8 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto/sha256"
-	"crypto/subtle"
 	"errors"
 	"fmt"
 	"runtime/debug"
@@ -30,9 +28,6 @@ const maxUint32 uint64 = 0xffff_ffff
 
 // Options configures a Server.
 type Options struct {
-	// Token is the shared secret a client must present in its hello. It must
-	// not be empty.
-	Token string
 	// Listeners are the transports to serve on. It must not be nil; an empty
 	// non-nil slice is a server with no transport, which is useful in tests.
 	Listeners []Listener
@@ -64,12 +59,11 @@ type Options struct {
 // obscured the lock order these three now share: a caller never holds the
 // Server's mutex while calling into the session manager.
 type Server struct {
-	id                  string
-	listeners           []Listener
-	expectedTokenDigest [32]byte
-	maxFrameLength      int
-	handshakeTimeout    time.Duration
-	onError             func(error)
+	id               string
+	listeners        []Listener
+	maxFrameLength   int
+	handshakeTimeout time.Duration
+	onError          func(error)
 
 	// ctx bounds backend and runtime calls. It is cancelled once Close has
 	// finished, so a backend can use it to retire whatever it started; it is
@@ -97,9 +91,6 @@ func New(backend Backend, options Options) (*Server, error) {
 	}
 	if options.Listeners == nil {
 		return nil, errors.New("server listeners must not be nil; pass an empty slice for a server with no transport")
-	}
-	if options.Token == "" {
-		return nil, errors.New("server token must not be empty")
 	}
 	maxFrameLength := protocol.DefaultMaxFrameLength
 	if options.MaxFrameLength != nil {
@@ -129,15 +120,14 @@ func New(backend Backend, options Options) (*Server, error) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	s := &Server{
-		id:                  id,
-		listeners:           options.Listeners,
-		expectedTokenDigest: sha256.Sum256([]byte(options.Token)),
-		maxFrameLength:      maxFrameLength,
-		handshakeTimeout:    handshakeTimeout,
-		onError:             options.OnError,
-		ctx:                 ctx,
-		cancel:              cancel,
-		connections:         map[*connState]struct{}{},
+		id:               id,
+		listeners:        options.Listeners,
+		maxFrameLength:   maxFrameLength,
+		handshakeTimeout: handshakeTimeout,
+		onError:          options.OnError,
+		ctx:              ctx,
+		cancel:           cancel,
+		connections:      map[*connState]struct{}{},
 	}
 	s.sessions = newSessionManager(s, backend)
 	s.snapshots = newSnapshotPublisher(s, backend)
@@ -415,10 +405,6 @@ func (s *Server) beginHandshake(state *connState, hello *protocol.ClientHello) b
 		return false
 	}
 
-	if !s.authenticate(hello) {
-		s.failProtocol(state, &protocol.ProtocolError{Code: protocol.ErrorAuth, Message: "Authentication failed"})
-		return false
-	}
 	if !protocol.IsSupportedVersion(hello.Version) {
 		s.failProtocol(state, &protocol.ProtocolError{
 			Code: protocol.ErrorVersion,
@@ -490,11 +476,6 @@ func (s *Server) finishHandshake(state *connState) bool {
 		Event: &protocol.ServerSnapshotEvent{Type: "server_snapshot", Snapshot: *current},
 	})
 	return true
-}
-
-func (s *Server) authenticate(hello *protocol.ClientHello) bool {
-	digest := sha256.Sum256([]byte(hello.Token))
-	return subtle.ConstantTimeCompare(digest[:], s.expectedTokenDigest[:]) == 1
 }
 
 func (s *Server) handleRequest(state *connState, envelope *protocol.RequestEnvelope) {

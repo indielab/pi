@@ -277,7 +277,7 @@ func TestClientOverRealUnixSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewUnixTransportFactory: %v", err)
 	}
-	client, err := New(Options{Token: "unix-secret", TransportFactory: factory})
+	client, err := New(Options{TransportFactory: factory})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestClientRejectsTruncatedFrameFromUnixSocket(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewUnixTransportFactory: %v", err)
 	}
-	client, err := New(Options{Token: "unix-secret", TransportFactory: factory})
+	client, err := New(Options{TransportFactory: factory})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

@@ -312,7 +312,7 @@ func withTranscript(items ...protocol.TranscriptItem) func(*protocol.SessionSnap
 // connectRemoteClient builds a connected client talking to server.
 func connectRemoteClient(t *testing.T, server *remoteServer) *client.Client {
 	t.Helper()
-	c, err := client.New(client.Options{Token: "secret", TransportFactory: server.connect})
+	c, err := client.New(client.Options{TransportFactory: server.connect})
 	if err != nil {
 		t.Fatalf("client.New: %v", err)
 	}

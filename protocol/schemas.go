@@ -3,7 +3,7 @@ package protocol
 import "slices"
 
 // ProtocolVersion is the wire version this package speaks.
-const ProtocolVersion = 2
+const ProtocolVersion = 1
 
 // Struct field order below is significant: it is the order the fields go on the
 // wire, and it mirrors the property order of pi's TypeBox schemas so a Go
@@ -290,7 +290,6 @@ func (u *Usage) Validate() error {
 type ProtocolErrorCode string
 
 const (
-	ErrorAuth           ProtocolErrorCode = "auth"
 	ErrorVersion        ProtocolErrorCode = "version"
 	ErrorBusy           ProtocolErrorCode = "busy"
 	ErrorSessionLocked  ProtocolErrorCode = "session_locked"
@@ -299,7 +298,7 @@ const (
 )
 
 var protocolErrorCodes = []ProtocolErrorCode{
-	ErrorAuth, ErrorVersion, ErrorBusy, ErrorSessionLocked, ErrorNotFound, ErrorInvalidRequest,
+	ErrorVersion, ErrorBusy, ErrorSessionLocked, ErrorNotFound, ErrorInvalidRequest,
 }
 
 // ProtocolError is a structured failure carried in a response or hello_error.

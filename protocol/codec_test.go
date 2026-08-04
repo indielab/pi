@@ -77,7 +77,7 @@ func TestMessageDecoderFailureIsTerminal(t *testing.T) {
 			t.Errorf("%s after failure: %q does not say the decoder is unrecoverable", what, err)
 		}
 	}
-	valid, err := EncodeClientMessage(NewClientHello("t"), nil)
+	valid, err := EncodeClientMessage(NewClientHello(), nil)
 	if err != nil {
 		t.Fatalf("EncodeClientMessage: %v", err)
 	}

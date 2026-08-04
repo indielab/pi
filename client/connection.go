@@ -28,8 +28,6 @@ const defaultConnectionDisconnectReason = "Client disconnected"
 //
 // OnReset is the exception, and runs under the lock; see its own comment.
 type ConnectionOptions struct {
-	// Token is the bearer token sent in the client hello.
-	Token string
 	// TransportFactory produces a fresh transport per connection attempt.
 	TransportFactory TransportFactory
 	// MaxFrameLength bounds one framed message in both directions. A nil
@@ -278,7 +276,7 @@ func (c *Connection) openTransport(ctx context.Context, id uint64) {
 	// that cannot be sent does. The distinction it declines to draw is the right
 	// one: either way the connection never said hello.
 	hello, err := protocol.EncodeClientMessage(
-		protocol.NewClientHello(c.opts.Token),
+		protocol.NewClientHello(),
 		&protocol.FrameOptions{MaxFrameLength: &c.maxFrameLength},
 	)
 	if err == nil {

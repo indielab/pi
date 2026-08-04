@@ -415,10 +415,12 @@ func (r *SessionResult) Validate() error {
 
 // ClientHello must be the first frame a client sends. Version is deliberately
 // an integer, not a coercible string.
+//
+// It carries no credential: authentication is a property of the transport, so
+// a connection reaching the protocol is already authorized.
 type ClientHello struct {
 	Type    string `cbor:"type"`
 	Version int64  `cbor:"version"`
-	Token   string `cbor:"token"`
 }
 
 func (*ClientHello) clientMessage() {}
@@ -430,15 +432,12 @@ func (m *ClientHello) Validate() error {
 	if err := requireLiteral("type", m.Type, "hello"); err != nil {
 		return err
 	}
-	if err := requireNonNegative("version", m.Version); err != nil {
-		return err
-	}
-	return requireNonEmpty("token", m.Token)
+	return requireNonNegative("version", m.Version)
 }
 
 // NewClientHello builds a hello for the version this package speaks.
-func NewClientHello(token string) *ClientHello {
-	return &ClientHello{Type: "hello", Version: ProtocolVersion, Token: token}
+func NewClientHello() *ClientHello {
+	return &ClientHello{Type: "hello", Version: ProtocolVersion}
 }
 
 // RequestEnvelope carries one command and the id its response will echo.

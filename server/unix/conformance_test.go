@@ -47,7 +47,7 @@ func start(t *testing.T, backend *servertest.Backend, mutate func(*unix.ServerOp
 		backend = servertest.NewBackend()
 	}
 	path := socketPath(t)
-	options := unix.ServerOptions{Token: servertest.Token, Path: path}
+	options := unix.ServerOptions{Path: path}
 	if mutate != nil {
 		mutate(&options)
 	}
@@ -80,7 +80,7 @@ func (h *harness) connect() *servertest.Client {
 func (h *harness) connected() *servertest.Client {
 	h.t.Helper()
 	client := h.connect()
-	message, err := client.Hello(servertest.Token, protocol.ProtocolVersion)
+	message, err := client.Hello(protocol.ProtocolVersion)
 	if err != nil {
 		h.t.Fatalf("hello: %v", err)
 	}
@@ -127,7 +127,7 @@ func TestFragmentedHello(t *testing.T) {
 	client := h.connect()
 
 	from := client.Count()
-	if err := client.SendFragmented(protocol.NewClientHello(servertest.Token), 2); err != nil {
+	if err := client.SendFragmented(protocol.NewClientHello(), 2); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	message, err := client.NextFrom(from, func(m protocol.ServerMessage) bool {
@@ -153,27 +153,9 @@ func TestHandshakeRejections(t *testing.T) {
 	t.Parallel()
 	h := start(t, nil, nil)
 
-	t.Run("bad token", func(t *testing.T) {
-		client := h.connect()
-		message, err := client.Hello("wrong-token", protocol.ProtocolVersion)
-		if err != nil {
-			t.Fatalf("hello: %v", err)
-		}
-		helloError, ok := message.(*protocol.ServerHelloError)
-		if !ok || helloError.Error.Code != protocol.ErrorAuth {
-			t.Fatalf("expected an auth hello_error, got %#v", message)
-		}
-		if helloError.Error.Message != "Authentication failed" {
-			t.Fatalf("message = %q", helloError.Error.Message)
-		}
-		if err := client.WaitForClose(); err != nil {
-			t.Fatal(err)
-		}
-	})
-
 	t.Run("bad version", func(t *testing.T) {
 		client := h.connect()
-		message, err := client.Hello(servertest.Token, protocol.ProtocolVersion+1)
+		message, err := client.Hello(protocol.ProtocolVersion + 1)
 		if err != nil {
 			t.Fatalf("hello: %v", err)
 		}
@@ -217,7 +199,7 @@ func TestHandshakeRejections(t *testing.T) {
 	// its own hello.
 	t.Run("duplicate hello in one write", func(t *testing.T) {
 		client := h.connect()
-		frame, err := protocol.EncodeClientMessage(protocol.NewClientHello(servertest.Token), nil)
+		frame, err := protocol.EncodeClientMessage(protocol.NewClientHello(), nil)
 		if err != nil {
 			t.Fatalf("encode: %v", err)
 		}
@@ -248,7 +230,7 @@ func TestHandshakeRejections(t *testing.T) {
 	t.Run("duplicate hello", func(t *testing.T) {
 		client := h.connected()
 		from := client.Count()
-		if err := client.SendMessage(protocol.NewClientHello(servertest.Token)); err != nil {
+		if err := client.SendMessage(protocol.NewClientHello()); err != nil {
 			t.Fatalf("send: %v", err)
 		}
 		message, err := client.NextFrom(from, func(m protocol.ServerMessage) bool {
@@ -289,7 +271,7 @@ func TestHandshakeTimeoutCoversTheHandshake(t *testing.T) {
 	h := start(t, backend, func(o *unix.ServerOptions) { o.HandshakeTimeout = 20 * time.Millisecond })
 	client := h.connect()
 
-	if err := client.SendMessage(protocol.NewClientHello(servertest.Token)); err != nil {
+	if err := client.SendMessage(protocol.NewClientHello()); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	<-gate.Entered
@@ -374,7 +356,7 @@ func TestOversizedOutboundFrameClosesTheConnection(t *testing.T) {
 	})
 	client := h.connect()
 
-	if err := client.SendMessage(protocol.NewClientHello(servertest.Token)); err != nil {
+	if err := client.SendMessage(protocol.NewClientHello()); err != nil {
 		t.Fatalf("send: %v", err)
 	}
 	if err := client.WaitForClose(); err != nil {
@@ -418,7 +400,7 @@ func TestHandshakeCatchUpAfterConcurrentChange(t *testing.T) {
 	joining := h.connect()
 	helloDone := make(chan protocol.ServerMessage, 1)
 	go func() {
-		message, err := joining.Hello(servertest.Token, protocol.ProtocolVersion)
+		message, err := joining.Hello(protocol.ProtocolVersion)
 		if err != nil {
 			t.Error(err)
 			close(helloDone)
@@ -464,7 +446,7 @@ func TestRequestEventAttachmentAndDisconnect(t *testing.T) {
 	h := start(t, backend, nil)
 
 	client := h.connect()
-	message, err := client.Hello(servertest.Token, protocol.ProtocolVersion)
+	message, err := client.Hello(protocol.ProtocolVersion)
 	if err != nil {
 		t.Fatalf("hello: %v", err)
 	}

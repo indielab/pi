@@ -190,7 +190,7 @@ func TestDecodeKeepsExplicitNullDetails(t *testing.T) {
 	t.Run("null_is_preserved", func(t *testing.T) {
 		frame := mustFrame(t, wireHelloError{
 			Type:  "hello_error",
-			Error: wireProtocolError{Code: "auth", Message: "bad token", Details: nil},
+			Error: wireProtocolError{Code: "busy", Message: "server busy", Details: nil},
 		})
 		message := decodeServerFrame(t, frame)
 		details := message.(*ServerHelloError).Error.Details
@@ -213,7 +213,7 @@ func TestDecodeKeepsExplicitNullDetails(t *testing.T) {
 	t.Run("absent_stays_absent", func(t *testing.T) {
 		frame := mustFrame(t, wireHelloError{
 			Type:  "hello_error",
-			Error: wireProtocolErrorNoDetails{Code: "auth", Message: "bad token"},
+			Error: wireProtocolErrorNoDetails{Code: "busy", Message: "server busy"},
 		})
 		message := decodeServerFrame(t, frame)
 		if details := message.(*ServerHelloError).Error.Details; details != nil {

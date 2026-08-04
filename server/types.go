@@ -7,6 +7,12 @@
 // connections through a Listener. The Unix-domain transport lives in
 // server/unix.
 //
+// Authentication is the transport's, not the protocol's: a Listener completes
+// whatever its transport requires before handing a connection over, so the
+// core treats every connection it accepts as already authorized. The Unix
+// transport leans on socket filesystem permissions; a network transport would
+// authenticate while establishing the connection.
+//
 // DIVERGENCE (deliberate): pi's legacy/ tree (process supervision, CLI, OAuth)
 // is not ported. It is Node process machinery rather than protocol behaviour,
 // and the owner ruled it out of scope (docs/UPSTREAM.md, 2026-08-01).

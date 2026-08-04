@@ -175,8 +175,8 @@ func progressEvent(progress TranscriptProgress) *EventEnvelope {
 
 func goClientMessages() map[string]ClientMessage {
 	return map[string]ClientMessage{
-		"hello":              NewClientHello("t0ken"),
-		"hello_version_zero": &ClientHello{Type: "hello", Version: 0, Token: "t"},
+		"hello":              NewClientHello(),
+		"hello_version_zero": &ClientHello{Type: "hello", Version: 0},
 		"req_list":           NewRequest("r1", NewListCommand()),
 		"req_create_empty":   NewRequest("r2", &CreateCommand{Command: "create"}),
 		"req_create_full": NewRequest("r3", &CreateCommand{
@@ -200,13 +200,13 @@ func goServerMessages() map[string]ServerMessage {
 			Type: "hello", Version: ProtocolVersion, ConnectionID: "c1", Snapshot: fixtureServerSnapshot(),
 		},
 		"hello_error": &ServerHelloError{
-			Type: "hello_error", Error: ProtocolError{Code: ErrorAuth, Message: "bad token"},
+			Type: "hello_error", Error: ProtocolError{Code: ErrorBusy, Message: "server busy"},
 		},
 		"hello_error_details": &ServerHelloError{
 			Type: "hello_error",
 			Error: ProtocolError{
 				Code: ErrorVersion, Message: "nope",
-				Details: detailsPtr(map[string]any{"supported": []any{int64(2)}}),
+				Details: detailsPtr(map[string]any{"supported": []any{int64(1)}}),
 			},
 		},
 		"resp_list": &ResponseEnvelope{
@@ -402,7 +402,7 @@ func goRejectValues() (client, server map[string]map[string]any) {
 			"attached": true, "locked": false,
 		}
 		snapshot := map[string]any{
-			"serverId": "srv1", "protocolVersion": int64(2), "revision": int64(3),
+			"serverId": "srv1", "protocolVersion": int64(1), "revision": int64(3),
 			"sessions": []any{summary}, "models": []any{metadata},
 		}
 		if mutate != nil {
@@ -443,12 +443,11 @@ func goRejectValues() (client, server map[string]map[string]any) {
 	}
 
 	client = map[string]map[string]any{
-		"unknown_property": {"type": "hello", "version": int64(2), "token": "t", "extra": int64(1)},
-		"missing_token":    {"type": "hello", "version": int64(2)},
-		"token_empty":      {"type": "hello", "version": int64(2), "token": ""},
-		"version_string":   {"type": "hello", "version": "2", "token": "t"},
-		"version_float":    {"type": "hello", "version": 2.5, "token": "t"},
-		"version_negative": {"type": "hello", "version": int64(-1), "token": "t"},
+		"unknown_property": {"type": "hello", "version": int64(1), "extra": int64(1)},
+		"credential_field": {"type": "hello", "version": int64(1), "token": "secret"},
+		"version_string":   {"type": "hello", "version": "1"},
+		"version_float":    {"type": "hello", "version": 1.5},
+		"version_negative": {"type": "hello", "version": int64(-1)},
 		"unknown_type":     {"type": "goodbye"},
 		"unknown_command": {
 			"type": "request", "id": "r", "request": map[string]any{"command": "nope"},
@@ -469,19 +468,23 @@ func goRejectValues() (client, server map[string]map[string]any) {
 
 	server = map[string]map[string]any{
 		"bad_protocol_version": {
-			"type": "hello", "version": int64(3), "connectionId": "c", "snapshot": serverSnapshot(nil),
+			"type": "hello", "version": int64(2), "connectionId": "c", "snapshot": serverSnapshot(nil),
 		},
 		"snapshot_bad_version": {
-			"type": "hello", "version": int64(2), "connectionId": "c",
-			"snapshot": serverSnapshot(func(s map[string]any) { s["protocolVersion"] = int64(1) }),
+			"type": "hello", "version": int64(1), "connectionId": "c",
+			"snapshot": serverSnapshot(func(s map[string]any) { s["protocolVersion"] = int64(2) }),
 		},
 		"response_ok_with_error": {
 			"type": "response", "id": "r", "ok": true,
-			"error": map[string]any{"code": "auth", "message": "m"},
+			"error": map[string]any{"code": "not_found", "message": "m"},
 		},
 		"response_missing_result": {"type": "response", "id": "r", "ok": true},
 		"bad_error_code": {
 			"type": "hello_error", "error": map[string]any{"code": "teapot", "message": "m"},
+		},
+		"auth_error_code": {
+			"type":  "hello_error",
+			"error": map[string]any{"code": "auth", "message": "Authentication failed"},
 		},
 		"streaming_with_stop_reason": progress(map[string]any{
 			"type": "item_started",
@@ -530,21 +533,21 @@ func goRejectValues() (client, server map[string]map[string]any) {
 			"item": userItem(func(i map[string]any) { i["timestamp"] = int64(-1) }),
 		}),
 		"context_window_zero": {
-			"type": "hello", "version": int64(2), "connectionId": "c",
+			"type": "hello", "version": int64(1), "connectionId": "c",
 			"snapshot": serverSnapshot(func(s map[string]any) {
 				models := s["models"].([]any)
 				models[0].(map[string]any)["contextWindow"] = int64(0)
 			}),
 		},
 		"empty_thinking_levels": {
-			"type": "hello", "version": int64(2), "connectionId": "c",
+			"type": "hello", "version": int64(1), "connectionId": "c",
 			"snapshot": serverSnapshot(func(s map[string]any) {
 				models := s["models"].([]any)
 				models[0].(map[string]any)["supportedThinkingLevels"] = []any{}
 			}),
 		},
 		"negative_cost": {
-			"type": "hello", "version": int64(2), "connectionId": "c",
+			"type": "hello", "version": int64(1), "connectionId": "c",
 			"snapshot": serverSnapshot(func(s map[string]any) {
 				models := s["models"].([]any)
 				models[0].(map[string]any)["cost"] = map[string]any{
@@ -641,7 +644,7 @@ func TestDecoderPoisonedAfterInvalidMessage(t *testing.T) {
 		t.Fatal("expected the invalid message to be rejected")
 	}
 
-	valid, err := EncodeClientMessage(NewClientHello("t"), nil)
+	valid, err := EncodeClientMessage(NewClientHello(), nil)
 	if err != nil {
 		t.Fatalf("EncodeClientMessage: %v", err)
 	}
@@ -654,7 +657,7 @@ func TestIsSupportedVersion(t *testing.T) {
 	if !IsSupportedVersion(ProtocolVersion) {
 		t.Errorf("IsSupportedVersion(%d) = false", ProtocolVersion)
 	}
-	for _, v := range []int64{0, 1, 3, -1} {
+	for _, v := range []int64{0, 2, 3, -1} {
 		if IsSupportedVersion(v) {
 			t.Errorf("IsSupportedVersion(%d) = true", v)
 		}

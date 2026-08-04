@@ -17,9 +17,6 @@ import (
 	"github.com/sky-valley/pi/server"
 )
 
-// Token is the shared secret every test server is configured with.
-const Token = "server-conformance-token"
-
 // Model is the single model the fake backend publishes.
 var Model = protocol.ModelMetadata{
 	Provider:                "test",

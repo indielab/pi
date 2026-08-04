@@ -14,7 +14,7 @@ func TestConnectHelperBuildsAConnectedClient(t *testing.T) {
 	server := newMemoryServer(t)
 	server.answerHandshake(t, baseSnapshot(1))
 
-	client, err := Connect(testContext(t), Options{Token: "secret", TransportFactory: server.connect})
+	client, err := Connect(testContext(t), Options{TransportFactory: server.connect})
 	if err != nil {
 		t.Fatalf("Connect: %v", err)
 	}
@@ -33,12 +33,14 @@ func TestConnectHelperDisposesOnHandshakeFailure(t *testing.T) {
 	server := newMemoryServer(t)
 	server.onMessage(func(protocol.ClientMessage) {
 		server.send(t, &protocol.ServerHelloError{
-			Type:  "hello_error",
-			Error: protocol.ProtocolError{Code: protocol.ErrorAuth, Message: "Invalid token"},
+			Type: "hello_error",
+			Error: protocol.ProtocolError{
+				Code: protocol.ErrorVersion, Message: "Unsupported protocol version",
+			},
 		})
 	})
 
-	client, err := Connect(testContext(t), Options{Token: "wrong", TransportFactory: server.connect})
+	client, err := Connect(testContext(t), Options{TransportFactory: server.connect})
 	if client != nil {
 		t.Error("Connect returned a client alongside its error")
 	}
@@ -155,7 +157,7 @@ func TestCloseFromAConnectionStateListener(t *testing.T) {
 	// Deliberately not registered for cleanup: a regression here deadlocks, and
 	// a deadlocked cleanup would hang the whole package rather than fail one
 	// test.
-	client, err := New(Options{Token: "bearer-secret", TransportFactory: server.connect})
+	client, err := New(Options{TransportFactory: server.connect})
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}

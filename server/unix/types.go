@@ -49,7 +49,6 @@ type ListenerOptions struct {
 // is the server's own options plus the listener's, minus the listener list the
 // preset supplies.
 type ServerOptions struct {
-	Token            string
 	MaxFrameLength   *int
 	HandshakeTimeout time.Duration
 	ServerID         string
@@ -64,7 +63,6 @@ type ServerOptions struct {
 // serverOptions projects the server half of ServerOptions.
 func (o ServerOptions) serverOptions(listener server.Listener) server.Options {
 	return server.Options{
-		Token:            o.Token,
 		Listeners:        []server.Listener{listener},
 		MaxFrameLength:   o.MaxFrameLength,
 		HandshakeTimeout: o.HandshakeTimeout,

@@ -218,9 +218,9 @@ func (c *Client) SendFragmented(message protocol.ClientMessage, parts int) error
 // The read position is captured before the request goes out, not after: a
 // server can answer before the caller gets back to waiting, and a wait anchored
 // afterwards would step straight over the answer it was waiting for.
-func (c *Client) Hello(token string, version int64) (protocol.ServerMessage, error) {
+func (c *Client) Hello(version int64) (protocol.ServerMessage, error) {
 	from := c.Count()
-	if err := c.SendMessage(&protocol.ClientHello{Type: "hello", Version: version, Token: token}); err != nil {
+	if err := c.SendMessage(&protocol.ClientHello{Type: "hello", Version: version}); err != nil {
 		return nil, err
 	}
 	return c.NextFrom(from, func(message protocol.ServerMessage) bool {

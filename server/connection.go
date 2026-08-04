@@ -7,8 +7,8 @@ import (
 	"github.com/sky-valley/pi/protocol"
 )
 
-// ByteConn is a connected, ordered byte sink handed to the Server by a
-// transport.
+// ByteConn is an established, authorized ordered byte connection handed to the
+// Server by a transport.
 //
 // Send must be safe to call from several goroutines and must preserve
 // invocation order: two chunks sent one after another arrive in that order. It

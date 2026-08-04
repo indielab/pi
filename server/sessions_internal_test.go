@@ -149,7 +149,7 @@ func (c *hookConn) Close([]byte) error {
 
 func newInternalServer(t *testing.T, backend Backend) *Server {
 	t.Helper()
-	srv, err := New(backend, Options{Token: "internal-token", Listeners: []Listener{}})
+	srv, err := New(backend, Options{Listeners: []Listener{}})
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}

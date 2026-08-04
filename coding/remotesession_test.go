@@ -1313,7 +1313,7 @@ func TestRemoteSessionNotificationSkipsAPeerUnsubscribedDuringIt(t *testing.T) {
 
 func TestRemoteSessionModelsAndSessionsAreEmptyBeforeAServerSnapshot(t *testing.T) {
 	server := newRemoteServer(t)
-	c, err := client.New(client.Options{Token: "secret", TransportFactory: server.connect})
+	c, err := client.New(client.Options{TransportFactory: server.connect})
 	if err != nil {
 		t.Fatalf("client.New: %v", err)
 	}

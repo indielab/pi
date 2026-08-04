@@ -13,7 +13,7 @@ import (
 )
 
 // TestConnectSendsHelloAndAcceptsFragmentedServerHello locks the handshake: the
-// client's first frame is a versioned hello carrying the bearer token, and the
+// client's first frame is a versioned hello carrying no credential, and the
 // server's answer is accepted even when it arrives split across chunks.
 func TestConnectSendsHelloAndAcceptsFragmentedServerHello(t *testing.T) {
 	server := newMemoryServer(t)
@@ -41,8 +41,8 @@ func TestConnectSendsHelloAndAcceptsFragmentedServerHello(t *testing.T) {
 	if !ok {
 		t.Fatalf("first client message was %T, want *protocol.ClientHello", received[0])
 	}
-	if hello.Version != protocol.ProtocolVersion || hello.Token != "bearer-secret" {
-		t.Errorf("hello = %#v, want version %d and the configured token", hello, protocol.ProtocolVersion)
+	if hello.Version != protocol.ProtocolVersion {
+		t.Errorf("hello = %#v, want version %d", hello, protocol.ProtocolVersion)
 	}
 	if client.ConnectionState() != Connected {
 		t.Errorf("ConnectionState() = %q, want %q", client.ConnectionState(), Connected)
@@ -56,7 +56,6 @@ func TestConnectRejectsServerDataBeforeClientHello(t *testing.T) {
 	var mu sync.Mutex
 	sendCount, closeCount := 0, 0
 	client, err := New(Options{
-		Token: "bearer-secret",
 		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			handlers.OnData(encodeServer(t, serverHello(baseSnapshot(1))))
 			return &countingTransport{mu: &mu, sends: &sendCount, closes: &closeCount}, nil
@@ -122,7 +121,7 @@ func TestSubscriberPanicDoesNotBreakHandshake(t *testing.T) {
 			server := newMemoryServer(t)
 			var mu sync.Mutex
 			var listenerErrors []error
-			opts := Options{Token: "bearer-secret", TransportFactory: server.connect}
+			opts := Options{TransportFactory: server.connect}
 			if tc.observe {
 				opts.OnListenerError = func(err error) {
 					mu.Lock()
@@ -196,7 +195,6 @@ func TestStaleHandshakeIsNotRestoredWhenListenerReconnects(t *testing.T) {
 	var mu sync.Mutex
 	attempts := 0
 	client, err := New(Options{
-		Token: "bearer-secret",
 		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			mu.Lock()
 			attempt := attempts
@@ -258,7 +256,6 @@ func TestReconnectFromEventListenerIgnoresTheRestOfTheChunk(t *testing.T) {
 	var mu sync.Mutex
 	attempts := 0
 	client, err := New(Options{
-		Token: "bearer-secret",
 		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			mu.Lock()
 			attempt := attempts
@@ -325,7 +322,6 @@ func TestConnectResetsOnlyForTheAttemptItClaims(t *testing.T) {
 	server.answerHandshake(t, baseSnapshot(1))
 	resets := 0
 	conn, err := NewConnection(ConnectionOptions{
-		Token:            "bearer-secret",
 		TransportFactory: server.connect,
 		OnReset:          func() { resets++ },
 		OnHandshake:      func(*protocol.ServerSnapshot) {},
@@ -369,7 +365,6 @@ func TestReconnectStartsFromACleanCache(t *testing.T) {
 	var mu sync.Mutex
 	attempts := 0
 	client, err := New(Options{
-		Token: "bearer-secret",
 		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			mu.Lock()
 			attempt := attempts
@@ -407,15 +402,14 @@ func TestReconnectStartsFromACleanCache(t *testing.T) {
 }
 
 // TestHelloEncodeFailureIsReportedAsADisconnect: pi evaluates the hello encode
-// inside the try that wraps transport.send, so a token too large for the frame
+// inside the try that wraps transport.send, so a hello too large for the frame
 // limit comes back as PiDisconnectedError like any other failure to get the
 // hello out. Reporting the raw encoder error instead would make a caller
 // branching on the connection's failure mode miss this one.
 func TestHelloEncodeFailureIsReportedAsADisconnect(t *testing.T) {
 	server := newMemoryServer(t)
-	limit := 32
+	limit := 1
 	client, err := New(Options{
-		Token:            strings.Repeat("t", 1000),
 		MaxFrameLength:   &limit,
 		TransportFactory: server.connect,
 	})
@@ -457,7 +451,6 @@ func TestHandshakeCallbackPanicFailsTheConnection(t *testing.T) {
 	server := newMemoryServer(t)
 	server.answerHandshake(t, baseSnapshot(1))
 	conn, err := NewConnection(ConnectionOptions{
-		Token:            "bearer-secret",
 		TransportFactory: server.connect,
 		OnHandshake:      func(*protocol.ServerSnapshot) { panic(errors.New("handler blew up")) },
 		OnMessage:        func(protocol.ServerMessage) {},
@@ -485,8 +478,10 @@ func TestConnectRejectsHandshakeError(t *testing.T) {
 	server := newMemoryServer(t)
 	server.onMessage(func(protocol.ClientMessage) {
 		server.send(t, &protocol.ServerHelloError{
-			Type:  "hello_error",
-			Error: protocol.ProtocolError{Code: protocol.ErrorAuth, Message: "Invalid token"},
+			Type: "hello_error",
+			Error: protocol.ProtocolError{
+				Code: protocol.ErrorVersion, Message: "Unsupported protocol version",
+			},
 		})
 	})
 	client := newTestClient(t, server)
@@ -496,8 +491,8 @@ func TestConnectRejectsHandshakeError(t *testing.T) {
 	if !errors.As(err, &serverErr) {
 		t.Fatalf("Connect error = %#v, want *ServerError", err)
 	}
-	if serverErr.Code != protocol.ErrorAuth || serverErr.Message != "Invalid token" {
-		t.Errorf("server error = %#v, want the auth error the server sent", serverErr)
+	if serverErr.Code != protocol.ErrorVersion || serverErr.Message != "Unsupported protocol version" {
+		t.Errorf("server error = %#v, want the version error the server sent", serverErr)
 	}
 	if client.ConnectionState() != Disconnected {
 		t.Errorf("ConnectionState() = %q, want %q", client.ConnectionState(), Disconnected)
@@ -517,7 +512,6 @@ func TestCloseRejectsPendingRequestsAndAllowsReconnect(t *testing.T) {
 	var mu sync.Mutex
 	attempts := 0
 	client, err := New(Options{
-		Token: "bearer-secret",
 		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			mu.Lock()
 			attempt := attempts
@@ -592,7 +586,6 @@ func TestReconnectFromDisconnectionListener(t *testing.T) {
 	var mu sync.Mutex
 	attempts := 0
 	client, err := New(Options{
-		Token: "bearer-secret",
 		TransportFactory: func(ctx context.Context, handlers TransportHandlers) (Transport, error) {
 			mu.Lock()
 			attempt := attempts
@@ -668,7 +661,6 @@ func TestFrameLimitAppliesBothDirections(t *testing.T) {
 	server := newMemoryServer(t)
 	limit := 512
 	client, err := New(Options{
-		Token:            "bearer-secret",
 		MaxFrameLength:   &limit,
 		TransportFactory: server.connect,
 	})
@@ -766,7 +758,6 @@ func TestNewRejectsOutOfRangeFrameLimits(t *testing.T) {
 			server := newMemoryServer(t)
 			limit := tc.limit
 			_, err := New(Options{
-				Token:            "secret",
 				MaxFrameLength:   &limit,
 				TransportFactory: server.connect,
 			})
@@ -822,7 +813,6 @@ func TestConnectCancelsTransportEstablishment(t *testing.T) {
 	dialing := make(chan struct{})
 	abandoned := make(chan error, 1)
 	client, err := New(Options{
-		Token: "bearer-secret",
 		TransportFactory: func(ctx context.Context, _ TransportHandlers) (Transport, error) {
 			close(dialing)
 			<-ctx.Done()

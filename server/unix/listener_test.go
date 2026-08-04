@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"testing"
 
+	"github.com/sky-valley/pi/protocol"
 	"github.com/sky-valley/pi/server"
 	"github.com/sky-valley/pi/server/internal/servertest"
 	"github.com/sky-valley/pi/server/unix"
@@ -18,7 +19,7 @@ import (
 
 func newServer(t *testing.T, path string) *server.Server {
 	t.Helper()
-	srv, err := unix.NewServer(servertest.NewBackend(), unix.ServerOptions{Token: servertest.Token, Path: path})
+	srv, err := unix.NewServer(servertest.NewBackend(), unix.ServerOptions{Path: path})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
@@ -64,7 +65,7 @@ func TestLiveSocketIsNeverUnlinked(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer client.Close()
-	if _, err := client.Hello(servertest.Token, 2); err != nil {
+	if _, err := client.Hello(protocol.ProtocolVersion); err != nil {
 		t.Fatalf("the original listener must still be serving: %v", err)
 	}
 }
@@ -172,7 +173,7 @@ func TestStaleSocketIsRemovedBeforeBinding(t *testing.T) {
 		t.Fatalf("dial: %v", err)
 	}
 	defer client.Close()
-	if _, err := client.Hello(servertest.Token, 2); err != nil {
+	if _, err := client.Hello(protocol.ProtocolVersion); err != nil {
 		t.Fatalf("hello: %v", err)
 	}
 }

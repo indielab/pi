@@ -45,8 +45,9 @@ type TransportHandlers struct {
 	OnError func(err error)
 }
 
-// TransportFactory creates a fresh connected transport for each connection
-// attempt.
+// TransportFactory creates a fresh connected, authenticated transport for each
+// connection attempt. Authentication belongs to the transport, so a factory
+// must complete whatever its transport requires before it returns.
 //
 // ctx bounds establishment only: a factory must abandon a connect that is still
 // in progress when ctx is done, and must ignore ctx once it has returned a
