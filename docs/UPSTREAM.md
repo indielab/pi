@@ -32,6 +32,23 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
 
+- **2026-08-04 — null-`ProviderHeaders` suppression is now IN scope; port it**
+  (re: `a24fb9e96` "preserve auth header deletion markers", #7539). Owner call
+  (noam): **port it.** This closes the 2026-06-24 deferral on its own terms —
+  that ruling declined `Record<string,string|null>` null-suppression explicitly
+  *"Revisit only if a consumer needs to suppress a default header"*, and this
+  commit is that consumer arriving: upstream's host stops stripping nulls and
+  passes `ProviderHeaders` through intact, with a cloudflare-compat test. The
+  hunk itself is in `coding-agent/src/core/model-registry.ts` (host), so it is
+  not `port` by path — it is `port` because it fires the named trigger. The
+  resulting public Go API change (`StreamOptions.Headers` / `Model.Headers` can
+  no longer be a plain `map[string]string`) is sanctioned under the 2026-07-17
+  clause that upstream-driven public Go API breaks are allowed. **Supersedes
+  item 1 of the 2026-06-24 divergence list** — Go's conditional-skip workaround
+  for cloudflare-ai-gateway's `Authorization` suppression should collapse into
+  the real null-marker mechanism rather than sitting beside it. Future commits
+  to null-header plumbing in `packages/ai/src` are `port`.
+
 - **2026-08-04 — upstream `DRAFT:` commits are ported like any other change
   (INTERIM)** (re: `382aa641c` "DRAFT: add openai background mode responses",
   the deferred-response capability class: `DeferredHandle`, new `StopReason`
