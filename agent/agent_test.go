@@ -1330,6 +1330,62 @@ func TestAgentForwardsHTTPClientToStreamOptions(t *testing.T) {
 	}
 }
 
+// TestAgentShouldStopAfterTurnObservesAbort locks the run's cancellation reaching
+// the Agent-level ShouldStopAfterTurn hook. pi's createLoopConfig bridges the
+// agent hook as `async (context) => await shouldStopAfterTurn(context, this.signal)`
+// (agent.ts), so the documented use case — async work between turns, e.g.
+// compaction or a token probe — can observe Abort() instead of blocking teardown.
+// The loop-level config stays context-only, matching pi's types.ts.
+func TestAgentShouldStopAfterTurnObservesAbort(t *testing.T) {
+	tool := AgentTool{
+		Name:        "noop",
+		Description: "Noop tool",
+		Parameters:  ai.Object(),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			return AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "tool complete"}}}, nil
+		},
+	}
+
+	scripted := scriptedStream(
+		assistantWithToolCall("tool-1", "noop", map[string]any{}),
+		&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "should not run"}}, StopReason: ai.StopStop},
+	)
+
+	var a *Agent
+	hookCtxErr := make(chan error, 1)
+	a = NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
+		StreamFn:     scripted,
+		ShouldStopAfterTurn: func(ctx context.Context, c ShouldStopAfterTurnContext) bool {
+			// Abort mid-hook, exactly like async between-turn work that is
+			// cancelled while it runs. Without the run ctx the hook has no way
+			// to see it and would block teardown.
+			a.Abort()
+			select {
+			case <-ctx.Done():
+				hookCtxErr <- ctx.Err()
+			case <-time.After(2 * time.Second):
+				hookCtxErr <- nil
+			}
+			return true
+		},
+	})
+
+	_ = a.Prompt(context.Background(), "start")
+
+	select {
+	case err := <-hookCtxErr:
+		if err == nil {
+			t.Fatal("ShouldStopAfterTurn never observed the run's cancellation")
+		}
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("hook ctx error = %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("ShouldStopAfterTurn was never called")
+	}
+}
+
 // TestAgentForwardsShouldStopAfterTurn locks the Agent-level ShouldStopAfterTurn
 // option reaching the loop config: the run stops after the first turn completes
 // (tool included), before a second provider request is made.
@@ -1356,7 +1412,7 @@ func TestAgentForwardsShouldStopAfterTurn(t *testing.T) {
 			atomic.AddInt32(&requests, 1)
 			return scripted(ctx, model, req, opts)
 		},
-		ShouldStopAfterTurn: func(c ShouldStopAfterTurnContext) bool {
+		ShouldStopAfterTurn: func(_ context.Context, c ShouldStopAfterTurnContext) bool {
 			for _, m := range c.Context.Messages {
 				roles = append(roles, m.MessageRole())
 			}

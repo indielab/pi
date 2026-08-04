@@ -63,7 +63,7 @@ type AgentOptions struct {
 	OnResponse          func(resp ai.ProviderResponse, model *ai.Model) error
 	BeforeToolCall      func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
 	AfterToolCall       func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
-	ShouldStopAfterTurn func(c ShouldStopAfterTurnContext) bool
+	ShouldStopAfterTurn func(ctx context.Context, c ShouldStopAfterTurnContext) bool
 	PrepareNextTurn     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
 	SteeringMode        QueueMode
 	FollowUpMode        QueueMode
@@ -111,7 +111,7 @@ type Agent struct {
 	OnResponse          func(resp ai.ProviderResponse, model *ai.Model) error
 	BeforeToolCall      func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
 	AfterToolCall       func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
-	ShouldStopAfterTurn func(c ShouldStopAfterTurnContext) bool
+	ShouldStopAfterTurn func(ctx context.Context, c ShouldStopAfterTurnContext) bool
 	PrepareNextTurn     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
 
 	SessionID                 string
@@ -375,7 +375,7 @@ func (a *Agent) Continue(ctx context.Context) error {
 			return errors.New("Cannot continue from message role: assistant")
 		}
 		return a.executeClaimedRun(run, func(runCtx context.Context) {
-			runAgentLoop(runCtx, drained, a.contextSnapshot(), a.loopConfig(skipInitialSteeringPoll), a.processEvent(runCtx), a.StreamFn)
+			runAgentLoop(runCtx, drained, a.contextSnapshot(), a.loopConfig(runCtx, skipInitialSteeringPoll), a.processEvent(runCtx), a.StreamFn)
 		})
 	}
 	return a.runContinuation(ctx)
@@ -383,13 +383,13 @@ func (a *Agent) Continue(ctx context.Context) error {
 
 func (a *Agent) runPromptMessages(parent context.Context, messages []AgentMessage, skipInitialSteeringPoll bool) error {
 	return a.runWithLifecycle(parent, func(ctx context.Context) {
-		runAgentLoop(ctx, messages, a.contextSnapshot(), a.loopConfig(skipInitialSteeringPoll), a.processEvent(ctx), a.StreamFn)
+		runAgentLoop(ctx, messages, a.contextSnapshot(), a.loopConfig(ctx, skipInitialSteeringPoll), a.processEvent(ctx), a.StreamFn)
 	})
 }
 
 func (a *Agent) runContinuation(parent context.Context) error {
 	return a.runWithLifecycle(parent, func(ctx context.Context) {
-		runAgentLoopContinue(ctx, a.contextSnapshot(), a.loopConfig(false), a.processEvent(ctx), a.StreamFn)
+		runAgentLoopContinue(ctx, a.contextSnapshot(), a.loopConfig(ctx, false), a.processEvent(ctx), a.StreamFn)
 	})
 }
 
@@ -450,13 +450,24 @@ func (a *Agent) contextSnapshot() AgentContext {
 	}
 }
 
-func (a *Agent) loopConfig(skipInitialSteeringPoll bool) AgentLoopConfig {
+func (a *Agent) loopConfig(ctx context.Context, skipInitialSteeringPoll bool) AgentLoopConfig {
 	a.mu.Lock()
 	model := a.state.Model
 	reasoning := a.state.ThinkingLevel
 	a.mu.Unlock()
 
 	skip := skipInitialSteeringPoll
+
+	// The Agent-level hook is ctx-first like every other Agent hook, and the
+	// loop-level one is context-only (types.go, pi types.ts:208). Bridge them by
+	// binding the run's ctx, exactly as pi's createLoopConfig binds this.signal:
+	// the documented use case is async work between turns (compaction, a token
+	// probe), which must be able to observe Abort().
+	var shouldStopAfterTurn func(ShouldStopAfterTurnContext) bool
+	if hook := a.ShouldStopAfterTurn; hook != nil {
+		shouldStopAfterTurn = func(c ShouldStopAfterTurnContext) bool { return hook(ctx, c) }
+	}
+
 	cfg := AgentLoopConfig{
 		Model:                     model,
 		Reasoning:                 reasoning,
@@ -481,7 +492,7 @@ func (a *Agent) loopConfig(skipInitialSteeringPoll bool) AgentLoopConfig {
 		GetApiKey:                 a.GetApiKey,
 		BeforeToolCall:            a.BeforeToolCall,
 		AfterToolCall:             a.AfterToolCall,
-		ShouldStopAfterTurn:       a.ShouldStopAfterTurn,
+		ShouldStopAfterTurn:       shouldStopAfterTurn,
 		PrepareNextTurn:           a.PrepareNextTurn,
 		GetSteeringMessages: func() []AgentMessage {
 			a.mu.Lock()
