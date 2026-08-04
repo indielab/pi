@@ -337,6 +337,35 @@ port has no overflow-detection analog at all (`isContextOverflow` was never
 ported; its consumer is the unported agent-session runtime). Port the responses
 half; the overflow half is recorded absent, not missed.
 
+### New deliberate divergences
+
+- **Google retry keeps real response headers and transport retries** (re:
+  `b9d360a2c`, Go `8b78853`). pi's Google adapter reaches `retryProviderRequest`
+  with `@google/genai`'s `ApiError`, which carries `status` but no `headers`
+  (verified against the shipped build, `@google/genai@1.52.0`
+  `dist/node/index.mjs:7412`, `:13465`); `retryGoogleRequest` sets
+  `headers: undefined` only to satisfy the provider-error guard. So in pi,
+  Google alone ignores `retry-after`/`retry-after-ms`/`x-should-retry` and does
+  not retry transport failures — while Anthropic/OpenAI do all four, because
+  their `APIConnectionError` happens to declare both fields as own properties.
+  **That is an SDK artifact, not a policy**: upstream's own docstring states the
+  intent is the shared policy "honoring retry-after", mirroring the Anthropic and
+  OpenAI adapters. Go's provider speaks raw `net/http` and genuinely has the
+  headers, so it **keeps** honoring them and keeps retrying transport failures.
+  Same class as the 2026-06-17 Bun `/proc/self/environ` ruling, inverted: there
+  we declined to *copy* a workaround for a foreign runtime defect; here we
+  decline to *manufacture* a foreign SDK's information loss. Bounded: retries are
+  opt-in via `MaxRetries`; no error-surface divergence (Google has no
+  `providerError` renderer, so an oversized server delay still falls back to
+  backoff rather than failing fast, exactly as in pi). Future upstream commits to
+  `retryGoogleRequest` are `port`, but re-check this clause each time. **A future
+  parity sweep comparing the Google adapters must not re-flag this.**
+  Process note: the first port of `b9d360a2c` reproduced pi's shortfall as a
+  deliberate `headerlessErrors` policy — inventing a three-branch mechanism whose
+  only referent in pi is an *absence*. It passed its own author's verification and
+  was caught only by the independent parity gate. Faithful ports mirror code, not
+  holes.
+
 ### Open `decide` (1) — carried, NOT ported this cycle
 
 - **`a24fb9e96` "preserve auth header deletion markers" (#7539)** — the
