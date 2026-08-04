@@ -43,8 +43,9 @@ func newModelsError(code ModelsErrorCode, message string, cause error) *ModelsEr
 // isCancellation reports whether err is the caller's own cancellation rather
 // than a genuine failure. pi's raceWithAbortSignal rejects with the abort reason
 // before a wrapped downstream rejection can surface, so an aborted caller never
-// sees a ModelsError; Go has no promise race to run, so resolution unwraps
-// cancellation instead of dressing it up as an auth failure.
+// sees a ModelsError. The public entry points run the same race (raceContext in
+// models_runtime.go); this keeps the unraced inner paths consistent with it by
+// unwrapping cancellation instead of dressing it up as an auth failure.
 func isCancellation(ctx context.Context, err error) bool {
 	cause := ctx.Err()
 	return cause != nil && errors.Is(err, cause)

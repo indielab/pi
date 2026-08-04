@@ -995,49 +995,105 @@ func (m *modelsImpl) checkProviderAuth(ctx context.Context, p Provider, credenti
 	return &AuthCheck{Source: resolution.Source, Type: CredentialAPIKey}, nil
 }
 
+// raceContext runs op and returns as soon as either op finishes or ctx is
+// cancelled — pi's raceWithAbortSignal (utils/abort.ts), which every public auth
+// entry point wraps around its operation (models.ts:502,524,558).
+//
+// It is load-bearing rather than belt-and-braces: a provider's Resolve/Check is
+// free to ignore the ctx it is handed (ApiKeyAuth.Resolve is documented as
+// possibly executing commands), so without the race an aborted caller is held
+// hostage by it. The abandoned goroutine runs to completion and its result is
+// discarded, mirroring pi's "continue to observe the abandoned promise"; the
+// buffered channel means it never blocks on the send, so nothing leaks. Refresh
+// races the same way over its WaitGroup.
+func raceContext[T any](ctx context.Context, op func() (T, error)) (T, error) {
+	type outcome struct {
+		value T
+		err   error
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		value, err := op()
+		done <- outcome{value: value, err: err}
+	}()
+	select {
+	case o := <-done:
+		return o.value, o.err
+	case <-ctx.Done():
+		var zero T
+		return zero, ctx.Err()
+	}
+}
+
 func (m *modelsImpl) CheckAuth(ctx context.Context, providerID string) (*AuthCheck, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	p := m.GetProvider(providerID)
-	if p == nil {
-		return nil, nil
-	}
-	credential, err := readCredential(ctx, m.credentials, providerID)
-	if err != nil {
-		return nil, err
-	}
-	return m.checkProviderAuth(ctx, p, credential)
+	return raceContext(ctx, func() (*AuthCheck, error) {
+		p := m.GetProvider(providerID)
+		if p == nil {
+			return nil, nil
+		}
+		credential, err := readCredential(ctx, m.credentials, providerID)
+		if err != nil {
+			return nil, err
+		}
+		return m.checkProviderAuth(ctx, p, credential)
+	})
 }
 
 func (m *modelsImpl) GetAvailable(ctx context.Context, providerID string) ([]*Model, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	var providers []Provider
-	if providerID != "" {
-		if p := m.GetProvider(providerID); p != nil {
-			providers = []Provider{p}
+	return raceContext(ctx, func() ([]*Model, error) {
+		var providers []Provider
+		if providerID != "" {
+			if p := m.GetProvider(providerID); p != nil {
+				providers = []Provider{p}
+			}
+		} else {
+			providers = m.GetProviders()
 		}
-	} else {
-		providers = m.GetProviders()
-	}
-	var out []*Model
-	for _, p := range providers {
-		credential, err := readCredential(ctx, m.credentials, p.ID())
-		if err != nil {
-			return nil, err
+
+		// pi runs the per-provider checks under Promise.all, so every provider is
+		// invoked even when one fails; a sequential loop stopped at the first
+		// error and never asked the rest. Results are collected by index, so the
+		// reported error is the first in provider order — Promise.all reports the
+		// first to reject in time, which is not reproducible.
+		type providerCheck struct {
+			credential *Credential
+			auth       *AuthCheck
+			err        error
 		}
-		auth, err := m.checkProviderAuth(ctx, p, credential)
-		if err != nil {
-			return nil, err
+		checks := make([]providerCheck, len(providers))
+		var wg sync.WaitGroup
+		for i, p := range providers {
+			wg.Add(1)
+			go func(i int, p Provider) {
+				defer wg.Done()
+				var c providerCheck
+				if c.credential, c.err = readCredential(ctx, m.credentials, p.ID()); c.err == nil {
+					c.auth, c.err = m.checkProviderAuth(ctx, p, c.credential)
+				}
+				checks[i] = c
+			}(i, p)
 		}
-		if auth == nil {
-			continue
+		wg.Wait()
+
+		var out []*Model
+		for i, c := range checks {
+			if c.err != nil {
+				return nil, c.err
+			}
+			if c.auth == nil {
+				continue
+			}
+			p := providers[i]
+			out = append(out, p.FilterModels(p.GetModels(), c.credential)...)
 		}
-		out = append(out, p.FilterModels(p.GetModels(), credential)...)
-	}
-	return out, nil
+		return out, nil
+	})
 }
 
 func (m *modelsImpl) GetProviderAuth(ctx context.Context, providerID string, overrides *AuthResolutionOverrides) (*AuthResult, error) {
@@ -1087,7 +1143,12 @@ func (m *modelsImpl) Login(
 	if login == nil {
 		return nil, newModelsError(ErrAuth, p.Name()+" does not support "+string(authType)+" login", nil)
 	}
-	credential, err := login(ctx, interaction)
+	// pi races the login operation itself (models.ts:558), not the store
+	// mutation that follows it: a provider login flow that ignores its signal
+	// must not hold an aborted caller.
+	credential, err := raceContext(ctx, func() (*Credential, error) {
+		return login(ctx, interaction)
+	})
 	if err != nil {
 		return nil, err
 	}
