@@ -40,11 +40,14 @@ and say so loudly in your report.
    `||`, `Math.round`, Number() coercion, insertion order, truthiness of `{}`);
    check the change's edge cases (empty, zero, absent-vs-null, astral chars).
 3. **If the change touches request building** (`ai/providers/openai*.go`
-   especially): re-run the differential request diff — scenarios + pi goldens
-   + canon scripts live in `/tmp/pi-diff/`, Go harness pattern in
-   `/tmp/diffreq2/` (go.mod `replace` → this repo; captures via OnPayload
-   returning an error to halt pre-network). If those scratch dirs are gone,
-   regenerate the pi side from the npm build first.
+   especially): re-run the differential request diff — `~/.cache/pi-diff/run.sh`
+   (scenarios, both capture sides, canon scripts and the Go harness all live in
+   `~/.cache/pi-diff/`; its go.mod `replace` → this repo, and it captures via
+   OnPayload returning an error to halt pre-network). It prints per-scenario
+   PASS/FAIL and exits non-zero on any mismatch. If the directory is missing,
+   the runner rebuilds it from the npm build (and, for changes not yet
+   released, from upstream TS at the synced sha); see its README to add a
+   scenario or re-point it at a new version.
 4. If the change touches session format / image decisions / system prompt:
    regenerate or extend the corresponding golden FROM THE NPM BUILD (node
    against the installed package), never by hand.
