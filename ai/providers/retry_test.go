@@ -412,7 +412,9 @@ func TestRetryMaxRetryDelayDoesNotCapBackoff(t *testing.T) {
 // openai-completions, openai-responses). Its Google provider streams via
 // @google/genai and was untouched by 7af8533c, so an oversized server delay
 // there must NOT abort the request — it falls back to the computed backoff,
-// exactly as every provider did before this change.
+// exactly as every provider did before this change. b9d360a2c later wrapped
+// Google as well, but its ApiError carries no headers, so no server delay ever
+// reaches the check and the nil renderer still describes it.
 func TestUnwrappedProviderDoesNotFailFast(t *testing.T) {
 	resp := &http.Response{StatusCode: 429, Header: http.Header{}}
 	resp.Header.Set("Retry-After", "3600") // 1h, far above the 60s limit
@@ -606,4 +608,40 @@ func TestRetryAfterInfinityFailsFast(t *testing.T) {
 	if err.Error() != want {
 		t.Fatalf("message mismatch\n got: %q\nwant: %q", err.Error(), want)
 	}
+}
+
+// --- Google adapter retry (pi b9d360a2c retryGoogleRequest) ---
+
+// TestGoogleRetriesTransientStatusThenSucceeds: the point of the upstream fix —
+// a transient 5xx before the first token is retried instead of becoming a
+// terminal errored assistant message. The Go port issues the request itself
+// rather than through @google/genai, so it already sat on the shared retry
+// path; this locks that substance against a regression.
+func TestGoogleRetriesTransientStatusThenSucceeds(t *testing.T) {
+	var calls int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if atomic.AddInt32(&calls, 1) == 1 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			io.WriteString(w, `{"error":{"code":503,"message":"unavailable"}}`)
+			return
+		}
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, googleSSE)
+	}))
+	defer server.Close()
+
+	final := googleRetryStream(t, server.URL, ai.StreamOptions{APIKey: "k", MaxRetries: 1}).Result()
+	if final.StopReason == ai.StopError {
+		t.Fatalf("expected success after retry, got error: %s", final.ErrorMessage)
+	}
+	if got := atomic.LoadInt32(&calls); got != 2 {
+		t.Fatalf("expected 2 attempts (1 retry), got %d", got)
+	}
+}
+
+func googleRetryStream(t *testing.T, baseURL string, opts ai.StreamOptions) *ai.AssistantMessageEventStream {
+	t.Helper()
+	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: baseURL}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: opts})
 }

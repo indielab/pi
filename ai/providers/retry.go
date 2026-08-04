@@ -40,6 +40,9 @@ type retryConfig struct {
 	// provider streams via @google/genai and was untouched by 7af8533c. A nil
 	// renderer therefore means "pi does not fail fast here", and an oversized
 	// server delay keeps the pre-7af8533c behavior of falling back to backoff.
+	// b9d360a2c later routed Google through retryProviderRequest too, but its
+	// ApiError carries no headers, so no server delay ever reaches the check
+	// and the nil renderer still describes it.
 	providerError func(status int, body []byte) string
 	// httpClient overrides the shared client (pi StreamOptions.fetch). Nil keeps
 	// sharedClient, whose transport carries the timeoutMs response-header cap.
