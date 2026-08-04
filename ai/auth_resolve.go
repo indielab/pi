@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // ModelsErrorCode classifies a ModelsError (pi packages/ai/src/auth/resolve.ts).
@@ -159,6 +160,11 @@ func overlayEnvAuthContext(base AuthContext, env map[string]string) AuthContext 
 // an OAuth token must have to be used without a refresh.
 const defaultOAuthMinimumValidityMs int64 = 5 * 60 * 1000
 
+// defaultOAuthRefreshTimeout bounds a single token refresh (pi acbdc0d25
+// DEFAULT_OAUTH_REFRESH_TIMEOUT_MS). It holds the credential-store lock, so a
+// provider that never answers would wedge every other resolution behind it.
+const defaultOAuthRefreshTimeout = 15 * time.Second
+
 // resolveStoredOAuth resolves OAuth with double-checked locking: tokens with
 // less than five minutes remaining lock, re-check expiry under the lock,
 // refresh once globally, and persist the rotated credential before release.
@@ -188,7 +194,12 @@ func resolveStoredOAuth(
 			if !expiresSoon(current.Expires) {
 				return nil, nil // another request refreshed
 			}
-			refreshed, rerr := oauth.Refresh(ctx, current.OAuthCredentials())
+			// pi composes AbortSignal.any([signal, AbortSignal.timeout(...)]);
+			// a derived context is the same composition — caller cancellation
+			// or the timeout, whichever fires first.
+			refreshCtx, cancel := context.WithTimeout(ctx, defaultOAuthRefreshTimeout)
+			defer cancel()
+			refreshed, rerr := oauth.Refresh(refreshCtx, current.OAuthCredentials())
 			if rerr != nil {
 				return nil, newModelsError(ErrOAuth, "OAuth refresh failed for "+providerID, rerr)
 			}

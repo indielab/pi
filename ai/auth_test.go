@@ -310,6 +310,46 @@ func TestResolveProviderAuthOAuthRefreshFailure(t *testing.T) {
 	}
 }
 
+// TestResolveStoredOAuthBoundsRefreshDuration locks pi acbdc0d25: the refresh
+// runs under a context bounded by BOTH the caller's cancellation and a fifteen
+// second timeout, so a provider that never answers cannot hold the credential
+// store lock forever. Upstream's own test for this was removed the next commit
+// (b784c8096) as flaky; this one observes the bound through the context the
+// provider actually receives instead of waiting on wall-clock time.
+func TestResolveStoredOAuthBoundsRefreshDuration(t *testing.T) {
+	store := seedOAuthStore(t, "oauthp", 0) // expired: forces a refresh
+
+	callerCtx, cancelCaller := context.WithCancel(context.Background())
+	defer cancelCaller()
+
+	var deadline time.Time
+	var hasDeadline, cancelPropagated bool
+	auth := ProviderAuth{OAuth: &OAuthAuth{
+		Refresh: func(ctx context.Context, c OAuthCredentials) (OAuthCredentials, error) {
+			deadline, hasDeadline = ctx.Deadline()
+			// The caller's cancellation must still reach the provider.
+			cancelCaller()
+			<-ctx.Done()
+			cancelPropagated = errors.Is(ctx.Err(), context.Canceled)
+			return OAuthCredentials{}, ctx.Err()
+		},
+		ToAuth: func(c OAuthCredentials) (ModelAuth, error) { return ModelAuth{APIKey: c.Access}, nil },
+	}}
+
+	before := time.Now()
+	_, _ = resolveProviderAuth(callerCtx, "oauthp", auth, store, authCtx(), nil)
+
+	if !hasDeadline {
+		t.Fatal("refresh context has no deadline: the refresh is unbounded")
+	}
+	if got := deadline.Sub(before); got > 16*time.Second || got < 14*time.Second {
+		t.Fatalf("refresh deadline is %v out, want ~15s", got)
+	}
+	if !cancelPropagated {
+		t.Fatal("caller cancellation did not reach the refresh context")
+	}
+}
+
 // TestCredentialStoreList locks pi ff28097a's list(): non-secret metadata
 // only, one entry per provider.
 func TestCredentialStoreList(t *testing.T) {
