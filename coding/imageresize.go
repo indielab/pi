@@ -275,6 +275,36 @@ func processImage(data []byte, mimeType string, autoResizeImages bool) ProcessIm
 //
 // The second return value reports whether anything changed, so callers can skip
 // rewriting the result (pi returns the original array by identity).
+// decodeNodeBase64 decodes base64 the way Node's Buffer.from(value, "base64")
+// does, which is the semantics pi's image path relies on. Node ignores
+// characters outside the base64 alphabet (whitespace, newlines, stray bytes),
+// accepts the base64url alphabet alongside the standard one, treats padding as
+// optional, and drops a trailing orphan character rather than failing.
+//
+// Go's base64.StdEncoding is strict about all three, so a whitespace-wrapped or
+// base64url payload failed to decode and the image was passed through
+// unresized — partially defeating the resize of tool-returned images.
+func decodeNodeBase64(value string) ([]byte, error) {
+	var b strings.Builder
+	b.Grow(len(value))
+	for _, r := range value {
+		switch {
+		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '+', r == '/':
+			b.WriteRune(r)
+		case r == '-': // base64url
+			b.WriteByte('+')
+		case r == '_': // base64url
+			b.WriteByte('/')
+		}
+	}
+	cleaned := b.String()
+	// A group of one leftover character carries no whole byte; Node discards it.
+	if len(cleaned)%4 == 1 {
+		cleaned = cleaned[:len(cleaned)-1]
+	}
+	return base64.RawStdEncoding.DecodeString(cleaned)
+}
+
 func normalizeToolResultImages(content ai.ContentList) (ai.ContentList, bool) {
 	hasImage := false
 	for _, block := range content {
@@ -287,6 +317,7 @@ func normalizeToolResultImages(content ai.ContentList) (ai.ContentList, bool) {
 		return content, false
 	}
 
+	_ = base64.StdEncoding
 	normalized := make(ai.ContentList, 0, len(content))
 	changed := false
 	for _, block := range content {
@@ -300,7 +331,7 @@ func normalizeToolResultImages(content ai.ContentList) (ai.ContentList, bool) {
 		// already produced this image and the failure may just be an unsupported
 		// payload, so passing it through preserves the behavior tools have today
 		// instead of silently deleting their output.
-		raw, err := base64.StdEncoding.DecodeString(img.Data)
+		raw, err := decodeNodeBase64(img.Data)
 		if err != nil {
 			normalized = append(normalized, block)
 			continue

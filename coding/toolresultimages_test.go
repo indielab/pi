@@ -246,3 +246,39 @@ func TestSessionResizesImagesInjectedByAfterToolCall(t *testing.T) {
 		t.Fatalf("hook-injected image not resized: %dx%d", w, h)
 	}
 }
+
+// TestNormalizeToolResultImagesLenientBase64 locks the decode of tool-returned
+// image payloads to Node's Buffer.from(x, "base64"). Go's StdEncoding happens to
+// skip \r and \n, but it rejects the base64url alphabet and spaces outright, so
+// such a payload failed to decode and the oversized image was passed through
+// UNRESIZED, partially defeating the resize of tool-returned images.
+func TestNormalizeToolResultImagesLenientBase64(t *testing.T) {
+	oversized := grayPNGBase64(t, 3000, 100)
+
+	// base64url: the alphabet a tool emitting URL-safe base64 would produce.
+	urlSafe := strings.NewReplacer("+", "-", "/", "_", "=", "").Replace(oversized)
+	// Space-separated groups: whitespace Node ignores and Go rejects.
+	var spaced strings.Builder
+	for i := 0; i < len(oversized); i += 76 {
+		end := min(i+76, len(oversized))
+		spaced.WriteString(oversized[i:end])
+		spaced.WriteByte(' ')
+	}
+
+	for name, payload := range map[string]string{"base64url": urlSafe, "spaces": spaced.String()} {
+		t.Run(name, func(t *testing.T) {
+			content := ai.ContentList{ai.ImageContent{Data: payload, MimeType: "image/png"}}
+			out, changed := normalizeToolResultImages(content)
+			if !changed {
+				t.Fatal("oversized image was not resized; the decode is stricter than Node's")
+			}
+			img, ok := out[0].(ai.ImageContent)
+			if !ok {
+				t.Fatalf("expected an image block, got %T", out[0])
+			}
+			if w, _ := pngDimensions(t, img.Data); w > imgMaxWidth {
+				t.Fatalf("resized width = %d, want <= %d", w, imgMaxWidth)
+			}
+		})
+	}
+}

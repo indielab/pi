@@ -3,6 +3,7 @@ package coding
 import (
 	"bytes"
 	"context"
+	"encoding/hex"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -184,4 +185,32 @@ func injectExifOrientation(jpegData []byte, orientation int) []byte {
 
 	out := append([]byte{0xFF, 0xD8}, app1...) // SOI + APP1
 	return append(out, jpegData[2:]...)        // rest of original (after its SOI)
+}
+
+// TestDecodeNodeBase64MatchesNode locks Go's decoding to Node's
+// Buffer.from(value, "base64"), which pi's image path relies on. Expectations
+// were produced by running each input through Node 24 (Buffer.from(c,"base64")
+// .toString("hex")). Go's StdEncoding rejects every lenient case below, which
+// let a whitespace-wrapped or base64url payload through unresized.
+func TestDecodeNodeBase64MatchesNode(t *testing.T) {
+	cases := []struct{ in, wantHex string }{
+		{"aGVsbG8=", "68656c6c6f"},     // canonical
+		{"aGVs bG8=", "68656c6c6f"},    // embedded space
+		{"\naGVsbG8=\n", "68656c6c6f"}, // wrapping newlines
+		{"aGVsbG8", "68656c6c6f"},      // no padding
+		{"aGVsbG8==", "68656c6c6f"},    // over-padded
+		{"a-_GVsbG8", "6befc656c6c6"},  // base64url alphabet
+		{"abc", "69b7"},                // len%4==3
+		{"YQ", "61"},                   // len%4==2
+	}
+	for _, c := range cases {
+		got, err := decodeNodeBase64(c.in)
+		if err != nil {
+			t.Errorf("decodeNodeBase64(%q) error = %v, want %s", c.in, err, c.wantHex)
+			continue
+		}
+		if hex.EncodeToString(got) != c.wantHex {
+			t.Errorf("decodeNodeBase64(%q) = %s, want %s", c.in, hex.EncodeToString(got), c.wantHex)
+		}
+	}
 }
