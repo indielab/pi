@@ -193,6 +193,20 @@ func TestResolveModelCustomIDFallbackInvalidSuffix(t *testing.T) {
 	}
 }
 
+// Upstream c1019d920 (Baseten) added one line to defaultModelPerProvider that the
+// port's first pass missed, because the commit's model-resolver.ts hunk sits in a
+// file that is otherwise host-only and triaged n/a — but this ONE table is ported.
+// Inert today: baseten has no catalog models until a release regen carries them,
+// so buildFallbackModel returns nil for it. It stops being inert on that regen,
+// at which point a missing entry would silently clone providerModels[0] instead
+// of GLM-5.2 — the same failure mode the qwen-token-plan entries below describe.
+// Locked now so the regen cannot introduce it quietly.
+func TestDefaultModelPerProviderBaseten(t *testing.T) {
+	if got := defaultModelPerProvider["baseten"]; got != "zai-org/GLM-5.2" {
+		t.Fatalf("default model for %q: got %q, want %q", "baseten", got, "zai-org/GLM-5.2")
+	}
+}
+
 // pi 77428858: the openai default model advanced gpt-5.4 → gpt-5.5. Only openai
 // moved — azure-openai-responses and github-copilot stay on gpt-5.4 (and
 // openai-codex was already gpt-5.5). Lock the buildFallbackModel template ids.
