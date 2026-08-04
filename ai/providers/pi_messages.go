@@ -290,7 +290,7 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEve
 		j := c.toolJSON[idx] + ev.Delta
 		c.toolJSON[idx] = j
 		if tc, ok := c.partial.Content[idx].(ai.ToolCall); ok {
-			tc.Arguments = parseStreamingJSON(j)
+			tc.Arguments, tc.ArgumentsOrder = parseStreamingJSON(j)
 			c.partial.Content[idx] = tc
 		}
 		return ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}

@@ -508,7 +508,7 @@ func (r *FauxProviderRegistration) streamWithDeltas(ctx context.Context, stream 
 		case ai.ToolCall:
 			partial.Content = append(partial.Content, ai.ToolCall{ID: b.ID, Name: b.Name, Arguments: map[string]any{}})
 			stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: index, Partial: partial.Clone()})
-			argsJSON, _ := json.Marshal(b.Arguments)
+			argsJSON, _ := json.Marshal(b.OrderedArguments())
 			for _, chunk := range splitByTokenSize(string(argsJSON), r.minTokenSize, r.maxTokenSize) {
 				r.scheduleChunk(chunk)
 				if abortNow() {
@@ -680,7 +680,7 @@ func assistantContentToText(content ai.ContentList) string {
 		case ai.ThinkingContent:
 			parts = append(parts, v.Thinking)
 		case ai.ToolCall:
-			args, _ := json.Marshal(v.Arguments)
+			args, _ := json.Marshal(v.OrderedArguments())
 			parts = append(parts, fmt.Sprintf("%s:%s", v.Name, string(args)))
 		}
 	}

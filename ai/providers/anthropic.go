@@ -513,7 +513,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 						return nil
 					}
 					b.partialJSON.WriteString(ev.Delta.PartialJSON)
-					b.args = parseStreamingJSON(b.partialJSON.String())
+					b.args, b.argsOrder = parseStreamingJSON(b.partialJSON.String())
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: ev.Delta.PartialJSON, Partial: output.Clone()})
 				case "signature_delta":
@@ -535,7 +535,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 				case "thinking":
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: idx, Content: b.thinking.String(), Partial: output.Clone()})
 				case "toolCall":
-					b.args = parseStreamingJSON(b.partialJSON.String())
+					b.args, b.argsOrder = parseStreamingJSON(b.partialJSON.String())
 					materialize()
 					tc := b.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: idx, ToolCall: &tc, Partial: output.Clone()})
@@ -605,6 +605,8 @@ type blockBuilder struct {
 	toolName    string
 	partialJSON strings.Builder
 	args        map[string]any
+	// argsOrder is args in the key order the model streamed them in.
+	argsOrder ai.OrderedObject
 	// grammar is set on custom (grammar-constrained) tool calls, whose raw input
 	// is re-synthesized into JSON deltas instead of being parsed from partialJSON.
 	grammar *grammarInputBuffer
@@ -621,7 +623,7 @@ func (b *blockBuilder) toContent() ai.Content {
 		if args == nil {
 			args = map[string]any{}
 		}
-		return ai.ToolCall{ID: b.toolID, Name: b.toolName, Arguments: args}
+		return ai.ToolCall{ID: b.toolID, Name: b.toolName, Arguments: args, ArgumentsOrder: b.argsOrder}
 	}
 	return ai.TextContent{}
 }
@@ -957,11 +959,7 @@ func convertAssistantBlocks(am *ai.AssistantMessage, oauth, allowEmptySig bool) 
 			if oauth {
 				name = toClaudeCodeName(name)
 			}
-			args := v.Arguments
-			if args == nil {
-				args = map[string]any{}
-			}
-			blocks = append(blocks, map[string]any{"type": "tool_use", "id": v.ID, "name": name, "input": args})
+			blocks = append(blocks, map[string]any{"type": "tool_use", "id": v.ID, "name": name, "input": orEmptyArguments(v)})
 		}
 	}
 	return blocks

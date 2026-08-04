@@ -781,7 +781,7 @@ func googleContents(model *ai.Model, req ai.Context) []any {
 						parts = append(parts, map[string]any{"text": sanitizeSurrogates(v.Thinking)})
 					}
 				case ai.ToolCall:
-					fc := map[string]any{"name": v.Name, "args": orEmptyMap(v.Arguments)}
+					fc := map[string]any{"name": v.Name, "args": orEmptyArguments(v)}
 					if requiresToolCallID(model.ID) {
 						fc["id"] = v.ID
 					}
@@ -872,13 +872,6 @@ func hasFunctionResponse(parts []any) bool {
 		}
 	}
 	return false
-}
-
-func orEmptyMap(m map[string]any) map[string]any {
-	if m == nil {
-		return map[string]any{}
-	}
-	return m
 }
 
 // jsonSchemaMetaDeclarations mirrors pi google-shared JSON_SCHEMA_META_DECLARATIONS.

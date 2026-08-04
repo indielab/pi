@@ -691,7 +691,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 					return nil
 				}
 				slot.block.partialJSON.WriteString(ev.Delta)
-				slot.block.args = parseStreamingJSON(slot.block.partialJSON.String())
+				slot.block.args, slot.block.argsOrder = parseStreamingJSON(slot.block.partialJSON.String())
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: slot.contentIndex, Delta: ev.Delta, Partial: output.Clone()})
 			case "response.function_call_arguments.done":
@@ -702,7 +702,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				previous := slot.block.partialJSON.String()
 				slot.block.partialJSON.Reset()
 				slot.block.partialJSON.WriteString(ev.Arguments)
-				slot.block.args = parseStreamingJSON(ev.Arguments)
+				slot.block.args, slot.block.argsOrder = parseStreamingJSON(ev.Arguments)
 				materialize()
 				// Emit the trailing delta so a provider that only sends
 				// .done (no incremental deltas) still yields full args.
@@ -778,7 +778,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 					if argsJSON == "" {
 						argsJSON = slot.block.partialJSON.String()
 					}
-					slot.block.args = parseStreamingJSON(orEmptyJSON(argsJSON))
+					slot.block.args, slot.block.argsOrder = parseStreamingJSON(orEmptyJSON(argsJSON))
 					materialize()
 					tc := slot.block.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: slot.contentIndex, ToolCall: &tc, Partial: output.Clone()})
@@ -1180,7 +1180,7 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 							"input": sanitizeSurrogates(input),
 						}
 					} else {
-						args, _ := json.Marshal(orEmptyMap(v.Arguments))
+						args, _ := json.Marshal(orEmptyArguments(v))
 						item = map[string]any{
 							"type": "function_call", "call_id": callID, "name": v.Name,
 							"arguments": string(args),

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"reflect"
 	"time"
 )
 
@@ -234,11 +235,67 @@ type ToolCall struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
+	// ArgumentsOrder is Arguments in the key order the model authored, recorded
+	// when the arguments were decoded (from a stream or from a stored session).
+	// pi holds arguments in a JS object, which keeps insertion order; a Go map
+	// does not, and the order is model-visible wherever the arguments are
+	// replayed into a request. Arguments stays authoritative: ArgumentsOrder is
+	// only used for serialization while the two still agree, so leaving it
+	// behind when Arguments is replaced costs the order, never the values.
+	// It is never persisted — a stored session records the order as the key
+	// order of the "arguments" object itself, exactly as pi writes it.
+	ArgumentsOrder OrderedObject `json:"-"`
 	// ThoughtSignature is a Google-specific opaque signature for reusing thought context.
 	ThoughtSignature string `json:"thoughtSignature,omitempty"`
 }
 
 func (ToolCall) contentType() string { return "toolCall" }
+
+// OrderedArguments returns the arguments to serialize: the recorded ordered
+// form when it still matches Arguments, and Arguments itself otherwise (a nil
+// Arguments stays nil, and so still marshals to null).
+func (t ToolCall) OrderedArguments() any {
+	if t.ArgumentsOrder != nil && reflect.DeepEqual(t.ArgumentsOrder.Plain(), t.Arguments) {
+		return t.ArgumentsOrder
+	}
+	return t.Arguments
+}
+
+// MarshalJSON writes arguments in the model's original key order.
+func (t ToolCall) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		ID               string `json:"id"`
+		Name             string `json:"name"`
+		Arguments        any    `json:"arguments"`
+		ThoughtSignature string `json:"thoughtSignature,omitempty"`
+	}{t.ID, t.Name, t.OrderedArguments(), t.ThoughtSignature})
+}
+
+// UnmarshalJSON recovers the argument key order from the source bytes, so a
+// tool call reloaded from a session replays in the order the model wrote it.
+func (t *ToolCall) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		ID               string          `json:"id"`
+		Name             string          `json:"name"`
+		Arguments        json.RawMessage `json:"arguments"`
+		ThoughtSignature string          `json:"thoughtSignature,omitempty"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	*t = ToolCall{ID: raw.ID, Name: raw.Name, ThoughtSignature: raw.ThoughtSignature}
+	if len(raw.Arguments) == 0 {
+		return nil
+	}
+	args, order, err := DecodeOrderedObject(raw.Arguments)
+	if err != nil {
+		// Not an object (a null, most likely): decode it the plain way and let
+		// json report anything genuinely malformed.
+		return json.Unmarshal(raw.Arguments, &t.Arguments)
+	}
+	t.Arguments, t.ArgumentsOrder = args, order
+	return nil
+}
 
 // marshalContent serializes a content block with its "type" discriminator.
 func marshalContent(c Content) ([]byte, error) {

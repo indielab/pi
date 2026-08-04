@@ -24,7 +24,7 @@ func TestParseStreamingJSONTrailingCommaInsideString(t *testing.T) {
 		{`{"key":`, map[string]any{}},
 	}
 	for _, c := range cases {
-		if got := parseStreamingJSON(c.in); !reflect.DeepEqual(got, c.want) {
+		if got, _ := parseStreamingJSON(c.in); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("parseStreamingJSON(%q) = %#v want %#v", c.in, got, c.want)
 		}
 	}

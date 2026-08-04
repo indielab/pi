@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/sky-valley/pi/ai"
 )
 
 var validJSONEscapes = map[byte]bool{
@@ -261,6 +263,16 @@ func jsNumber(src string) string {
 	return out
 }
 
+// orEmptyArguments returns a tool call's arguments for a request body, in the
+// model's original key order, standing in an empty object for absent arguments
+// (pi's `toolCall.arguments ?? {}`).
+func orEmptyArguments(tc ai.ToolCall) any {
+	if args := tc.OrderedArguments(); args != nil {
+		return args
+	}
+	return map[string]any{}
+}
+
 // parseJSONWithRepair parses JSON, retrying once with repairs on failure.
 func parseJSONWithRepair(s string, out any) error {
 	if err := json.Unmarshal([]byte(s), out); err == nil {
@@ -274,28 +286,33 @@ func parseJSONWithRepair(s string, out any) error {
 }
 
 // parseStreamingJSON parses potentially-incomplete JSON from streaming tool-call
-// deltas, always returning a map (empty on total failure). Port of parseStreamingJson.
-func parseStreamingJSON(partial string) map[string]any {
+// deltas, always returning a map (empty on total failure). Port of
+// parseStreamingJson. The second return is the same object with the model's key
+// order kept (nil when nothing parsed): pi's JS object preserves it for free,
+// and the order is replayed into later requests.
+func parseStreamingJSON(partial string) (map[string]any, ai.OrderedObject) {
 	if strings.TrimSpace(partial) == "" {
-		return map[string]any{}
+		return map[string]any{}, nil
 	}
-	var out map[string]any
-	if err := parseJSONWithRepair(partial, &out); err == nil && out != nil {
-		return out
+	if out, order, err := ai.DecodeOrderedObject([]byte(partial)); err == nil {
+		return out, order
+	}
+	if repaired := repairJSON(partial); repaired != partial {
+		if out, order, err := ai.DecodeOrderedObject([]byte(repaired)); err == nil {
+			return out, order
+		}
 	}
 	if completed, ok := completePartialJSON(partial); ok {
-		var o map[string]any
-		if err := json.Unmarshal([]byte(completed), &o); err == nil && o != nil {
-			return o
+		if out, order, err := ai.DecodeOrderedObject([]byte(completed)); err == nil {
+			return out, order
 		}
 	}
 	if completed, ok := completePartialJSON(repairJSON(partial)); ok {
-		var o map[string]any
-		if err := json.Unmarshal([]byte(completed), &o); err == nil && o != nil {
-			return o
+		if out, order, err := ai.DecodeOrderedObject([]byte(completed)); err == nil {
+			return out, order
 		}
 	}
-	return map[string]any{}
+	return map[string]any{}, nil
 }
 
 // completePartialJSON closes open strings, arrays, and objects in a truncated

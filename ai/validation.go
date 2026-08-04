@@ -29,7 +29,9 @@ func ValidateToolArguments(tool Tool, toolCall ToolCall) (map[string]any, error)
 		for _, e := range errs {
 			lines = append(lines, fmt.Sprintf("  - %s: %s", e.Path, e.Message))
 		}
-		received, _ := json.MarshalIndent(toolCall.Arguments, "", "  ")
+		// pi stringifies the arguments object, so the model sees the keys back
+		// in the order it wrote them.
+		received, _ := json.MarshalIndent(toolCall.OrderedArguments(), "", "  ")
 		return nil, fmt.Errorf("Validation failed for tool %q:\n%s\n\nReceived arguments:\n%s",
 			toolCall.Name, strings.Join(lines, "\n"), string(received))
 	}

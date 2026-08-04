@@ -606,6 +606,25 @@ func serializeConversation(messages []ai.Message) string {
 	return strings.Join(parts, "\n\n")
 }
 
+// orderedArguments returns a tool call's arguments as key/value pairs in the
+// order the model wrote them, falling back to sorted keys when no order was
+// recorded (a tool call built in Go rather than decoded from a model).
+func orderedArguments(tc ai.ToolCall) ai.OrderedObject {
+	if ordered, ok := tc.OrderedArguments().(ai.OrderedObject); ok {
+		return ordered
+	}
+	keys := make([]string, 0, len(tc.Arguments))
+	for k := range tc.Arguments {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	fields := make(ai.OrderedObject, 0, len(keys))
+	for _, k := range keys {
+		fields = append(fields, ai.OrderedField{Key: k, Value: tc.Arguments[k]})
+	}
+	return fields
+}
+
 func serializeAssistant(a *ai.AssistantMessage) []string {
 	var textParts, thinkingParts, toolCalls []string
 	for _, c := range a.Content {
@@ -616,16 +635,12 @@ func serializeAssistant(a *ai.AssistantMessage) []string {
 			thinkingParts = append(thinkingParts, b.Thinking)
 		case ai.ToolCall:
 			var entries []string
-			// JS Object.entries preserves insertion order; map iteration is
-			// non-deterministic in Go, so sort keys for a stable serialization.
-			keys := make([]string, 0, len(b.Arguments))
-			for k := range b.Arguments {
-				keys = append(keys, k)
-			}
-			sort.Strings(keys)
-			for _, k := range keys {
-				v, _ := json.Marshal(b.Arguments[k])
-				entries = append(entries, k+"="+string(v))
+			// pi's Object.entries walks the arguments in the order the model
+			// wrote them; Go map iteration is unordered, so follow the recorded
+			// order and fall back to sorted keys when there is none.
+			for _, f := range orderedArguments(b) {
+				v, _ := json.Marshal(f.Value)
+				entries = append(entries, f.Key+"="+string(v))
 			}
 			toolCalls = append(toolCalls, b.Name+"("+strings.Join(entries, ", ")+")")
 		}

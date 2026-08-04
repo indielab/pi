@@ -25,39 +25,6 @@ type chatTemplateKwarg struct {
 	value chatTemplateKwargValue
 }
 
-// orderedField is one key/value pair of an orderedJSONObject.
-type orderedField struct {
-	Key   string
-	Value any
-}
-
-// orderedJSONObject marshals key/value pairs in slice order, mirroring
-// JSON.stringify of a JS object (insertion order) for byte-exact request bodies.
-type orderedJSONObject []orderedField
-
-func (o orderedJSONObject) MarshalJSON() ([]byte, error) {
-	var buf bytes.Buffer
-	buf.WriteByte('{')
-	for i, f := range o {
-		if i > 0 {
-			buf.WriteByte(',')
-		}
-		key, err := json.Marshal(f.Key)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(key)
-		buf.WriteByte(':')
-		val, err := json.Marshal(f.Value)
-		if err != nil {
-			return nil, err
-		}
-		buf.Write(val)
-	}
-	buf.WriteByte('}')
-	return buf.Bytes(), nil
-}
-
 // parseChatTemplateValues decodes a `chatTemplateKwargs` / `chatTemplateArgs`
 // compat object, preserving key order. It is named for the values it decodes,
 // not for either field, matching the buildChatTemplateValues rename that made
@@ -127,11 +94,11 @@ func parseChatTemplateKwargValue(raw json.RawMessage) chatTemplateKwargValue {
 // and return nil when nothing remains (pi returns undefined → no param emitted).
 // It serves both `chat_template_kwargs` (thinkingFormat "chat-template") and
 // `chat_template_args` (thinkingFormat "baseten").
-func buildChatTemplateValues(model *ai.Model, values []chatTemplateKwarg, level string) orderedJSONObject {
-	var out orderedJSONObject
+func buildChatTemplateValues(model *ai.Model, values []chatTemplateKwarg, level string) ai.OrderedObject {
+	var out ai.OrderedObject
 	for _, kw := range values {
 		if resolved, include := resolveChatTemplateKwargValue(model, level, kw.value); include {
-			out = append(out, orderedField{Key: kw.key, Value: resolved})
+			out = append(out, ai.OrderedField{Key: kw.key, Value: resolved})
 		}
 	}
 	if len(out) == 0 {

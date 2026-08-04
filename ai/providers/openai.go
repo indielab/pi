@@ -430,7 +430,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				if tcDelta.Function != nil && tcDelta.Function.Arguments != "" {
 					delta = tcDelta.Function.Arguments
 					b.partialJSON.WriteString(delta)
-					b.args = parseStreamingJSON(b.partialJSON.String())
+					b.args, b.argsOrder = parseStreamingJSON(b.partialJSON.String())
 				} else if tcDelta.Custom != nil && tcDelta.Custom.Input != "" {
 					jsonDelta, gerr := appendGrammarInput(b, grammarInput(b)+tcDelta.Custom.Input, false)
 					if gerr != nil {
@@ -517,7 +517,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: indexOf(b), Delta: delta, Partial: output.Clone()})
 					}
 				} else {
-					b.args = parseStreamingJSON(b.partialJSON.String())
+					b.args, b.argsOrder = parseStreamingJSON(b.partialJSON.String())
 				}
 				materialize()
 				tc := b.toContent().(ai.ToolCall)
@@ -680,7 +680,7 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 						})
 						break
 					}
-					args, _ := json.Marshal(v.Arguments)
+					args, _ := json.Marshal(v.OrderedArguments())
 					toolCalls = append(toolCalls, map[string]any{
 						"id": v.ID, "type": "function",
 						"function": map[string]any{"name": v.Name, "arguments": string(args)},

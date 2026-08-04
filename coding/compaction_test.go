@@ -577,3 +577,21 @@ func TestUsageAwareTokenEstimate(t *testing.T) {
 		t.Fatalf("usage-aware (%d) should dominate the pure heuristic (%d)", got, pure)
 	}
 }
+
+// pi renders a tool call for the summarizer with Object.entries, i.e. in the
+// key order the model authored (compaction/utils.ts). The summary prompt is
+// model-visible, so a Go map's ordering would change what the summarizer reads.
+func TestSerializeAssistantKeepsArgumentOrder(t *testing.T) {
+	raw := `{"role":"assistant","content":[{"type":"toolCall","id":"call_1","name":"list_dir",` +
+		`"arguments":{"path":"/tmp","depth":1,"filter":{"z":true,"a":false}}}],` +
+		`"api":"openai-completions","provider":"openai","model":"m","stopReason":"toolUse","timestamp":1}`
+	msg, err := ai.UnmarshalMessage([]byte(raw))
+	if err != nil {
+		t.Fatalf("UnmarshalMessage: %v", err)
+	}
+	got := serializeConversation([]ai.Message{msg})
+	want := `[Assistant tool calls]: list_dir(path="/tmp", depth=1, filter={"z":true,"a":false})`
+	if !strings.Contains(got, want) {
+		t.Fatalf("serialized tool call lost argument order:\n got %s\nwant %s", got, want)
+	}
+}
