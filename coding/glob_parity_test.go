@@ -181,8 +181,9 @@ func TestFindMatchesDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	lines := strings.Split(strings.TrimSpace(resultText(r)), "\n")
-	if len(lines) != 1 || lines[0] != "src" {
-		t.Fatalf("fd matches directories; want [src], got %v", lines)
+	// fd marks directory results with a trailing separator.
+	if len(lines) != 1 || lines[0] != "src/" {
+		t.Fatalf("fd matches directories; want [src/], got %v", lines)
 	}
 }
 

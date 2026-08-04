@@ -667,6 +667,11 @@ func TestRelativizeFindResultPath(t *testing.T) {
 		{"/home/user/project/file.txt", "/home/user", "project/file.txt"},
 		{"/ai/Models2/file.txt", "/ai/Models", "../Models2/file.txt"},
 		{"/tmp/results/file.txt", "/workspace/project", "../../tmp/results/file.txt"},
+		// fd marks directory results with a trailing separator, and pi carries it
+		// across relativization (find.ts: hadTrailingSlash).
+		{"/home/user/project/", "/", "home/user/project/"},
+		{"/home/user/project/src/", "/home/user/project", "src/"},
+		{"/ai/Models2/", "/ai/Models", "../Models2/"},
 	}
 	for _, c := range cases {
 		if got := relativizeFindResultPath(c.result, c.search); got != c.want {
@@ -692,5 +697,27 @@ func TestFindRelativizesAgainstSearchRoot(t *testing.T) {
 	got := res.Content[0].(ai.TextContent).Text
 	if got != "src/nested/a.ts" {
 		t.Fatalf("find output = %q, want %q", got, "src/nested/a.ts")
+	}
+}
+
+// TestFindMarksDirectoryResults locks fd's directory marker: fd emits a trailing
+// separator for directory results and pi carries it into the tool output
+// (verified against fd 10.4.2 with pi's argv: "src/", "src/nested/").
+func TestFindMarksDirectoryResults(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "src", "nested"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "src", "nested", "a.ts"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := findTool(dir).Execute(context.Background(), "id", map[string]any{"pattern": "**"}, func(agent.AgentToolResult) {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := res.Content[0].(ai.TextContent).Text
+	want := "src/\nsrc/nested/\nsrc/nested/a.ts"
+	if got != want {
+		t.Fatalf("find output = %q, want %q", got, want)
 	}
 }

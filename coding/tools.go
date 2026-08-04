@@ -1438,15 +1438,22 @@ func lsTool(cwd string) agent.AgentTool {
 // special-case results that are absolute but not prefixed by the search root,
 // and searching a filesystem root ("/" or a Windows drive root), where its
 // prefix slice ate the first character of the first segment (#6104);
-// filepath.Rel handles both. pi also carries a trailing separator across
-// relativization because fd can emit one for directories — WalkDir never does,
-// so there is nothing to carry here.
+// filepath.Rel handles both.
+//
+// A trailing separator on the input is carried across relativization, because
+// fd marks directory results with one and pi's output keeps it. filepath.Rel
+// (like pi's path.relative) drops it, so it is reattached here.
 func relativizeFindResultPath(resultPath, searchPath string) string {
+	hadTrailingSeparator := strings.HasSuffix(resultPath, "/") || strings.HasSuffix(resultPath, `\`)
 	rel, err := filepath.Rel(searchPath, resultPath)
 	if err != nil {
-		return filepath.ToSlash(resultPath)
+		rel = resultPath
 	}
-	return filepath.ToSlash(rel)
+	rel = filepath.ToSlash(rel)
+	if hadTrailingSeparator && !strings.HasSuffix(rel, "/") {
+		rel += "/"
+	}
+	return rel
 }
 
 func findTool(cwd string) agent.AgentTool {
@@ -1498,9 +1505,14 @@ func findTool(cwd string) agent.AgentTool {
 				if !unlimited && len(results) >= limit {
 					return filepath.SkipAll
 				}
-				// fd matches directories as well as files.
+				// fd matches directories as well as files, and marks them with a
+				// trailing separator in its output.
 				if matchFdGlob(pattern, rel, p) {
-					results = append(results, relativizeFindResultPath(p, root))
+					result := p
+					if d.IsDir() {
+						result += string(filepath.Separator)
+					}
+					results = append(results, relativizeFindResultPath(result, root))
 				}
 				return nil
 			})
