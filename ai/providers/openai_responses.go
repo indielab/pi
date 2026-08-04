@@ -604,16 +604,27 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				serviceTier = r.ServiceTier
 			}
 			applyResponsesServiceTierPricing(&output.Usage, serviceTier, model)
-			status := ""
+			// Upstream 32850ef7: the provider's incomplete_details.reason is
+			// retained so max-output truncation and content filtering stay
+			// distinct — it qualifies rawStopReason as "<status>.<reason>" and
+			// decides whether "incomplete" is a length stop or an error.
+			status, incompleteReason := "", ""
 			if r != nil {
 				status = r.Status
+				if r.IncompleteDetails != nil {
+					incompleteReason = r.IncompleteDetails.Reason
+				}
 			}
 			output.RawStopReason = status
-			reason, statusErr := mapResponsesStatus(status)
+			if incompleteReason != "" {
+				output.RawStopReason = status + "." + incompleteReason
+			}
+			reason, errorMessage, statusErr := mapResponsesStatus(status, incompleteReason)
 			if statusErr != nil {
 				return statusErr
 			}
 			output.StopReason = reason
+			output.ErrorMessage = errorMessage
 			for _, b := range builders {
 				if b.kind == "toolCall" && output.StopReason == ai.StopStop {
 					output.StopReason = ai.StopToolUse
@@ -836,9 +847,15 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 		}
 		// pi openai-responses.ts:140-142: a stream that ended with an error or
 		// aborted stop reason (e.g. response.completed status "cancelled")
-		// must fail, never emit done.
+		// must fail, never emit done. Upstream 32850ef7 prefers the message the
+		// status mapping produced (`output.errorMessage || "An unknown error
+		// occurred"`), so a content-filtered incomplete says why.
 		if output.StopReason == ai.StopAborted || output.StopReason == ai.StopError {
-			fail(fmt.Errorf("An unknown error occurred"))
+			message := output.ErrorMessage
+			if message == "" {
+				message = "An unknown error occurred"
+			}
+			fail(fmt.Errorf("%s", message))
 			return
 		}
 		materialize()
@@ -1309,22 +1326,34 @@ func splitToolCallID(id string) (callID, itemID string) {
 	return id, ""
 }
 
-// mapResponsesStatus ports pi's mapStopReason: unknown statuses are an error
-// (pi throws), surfaced here as a returned error that fails the stream.
-func mapResponsesStatus(status string) (ai.StopReason, error) {
+// mapResponsesStatus ports pi's mapStopReason: it maps a response status (with
+// the provider's incomplete_details.reason, empty when absent) to a stop reason
+// and, for a non-retryable incomplete, the message the stream fails with.
+// Unknown statuses are an error (pi throws), surfaced here as a returned error
+// that fails the stream.
+func mapResponsesStatus(status, incompleteReason string) (ai.StopReason, string, error) {
 	switch status {
 	case "":
-		return ai.StopStop, nil
+		return ai.StopStop, "", nil
 	case "completed":
-		return ai.StopStop, nil
+		return ai.StopStop, "", nil
 	case "incomplete":
-		return ai.StopLength, nil
+		// Only max-output truncation is a resumable length stop (upstream
+		// 32850ef7); every other reason — content filtering, provider-specific
+		// limits, none at all — is a non-retryable error.
+		if incompleteReason == "max_output_tokens" {
+			return ai.StopLength, "", nil
+		}
+		if incompleteReason != "" {
+			return ai.StopError, "Response incomplete: " + incompleteReason, nil
+		}
+		return ai.StopError, "Response incomplete without a provider reason", nil
 	case "failed", "cancelled":
-		return ai.StopError, nil
+		return ai.StopError, "", nil
 	case "in_progress", "queued":
-		return ai.StopStop, nil
+		return ai.StopStop, "", nil
 	default:
-		return ai.StopStop, fmt.Errorf("Unhandled stop reason: %s", status)
+		return ai.StopStop, "", fmt.Errorf("Unhandled stop reason: %s", status)
 	}
 }
 

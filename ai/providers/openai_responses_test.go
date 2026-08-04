@@ -644,29 +644,43 @@ func TestResponsesReasoningOffExcludesCopilot(t *testing.T) {
 	}
 }
 
-// mapResponsesStatus ports pi's status mapping incl. unknown→error.
+// mapResponsesStatus ports pi's status mapping incl. unknown→error. Upstream
+// 32850ef7 qualifies "incomplete" by the provider's incomplete_details.reason:
+// only max_output_tokens is a length stop, everything else is an error carrying
+// the message the stream fails with.
 func TestResponsesMapStatus(t *testing.T) {
 	cases := []struct {
-		status string
-		want   ai.StopReason
-		err    bool
+		status  string
+		reason  string
+		want    ai.StopReason
+		wantMsg string
+		err     bool
 	}{
-		{"", ai.StopStop, false},
-		{"completed", ai.StopStop, false},
-		{"incomplete", ai.StopLength, false},
-		{"failed", ai.StopError, false},
-		{"cancelled", ai.StopError, false},
-		{"in_progress", ai.StopStop, false},
-		{"queued", ai.StopStop, false},
-		{"weird", ai.StopStop, true},
+		{status: "", want: ai.StopStop},
+		{status: "completed", want: ai.StopStop},
+		{status: "incomplete", reason: "max_output_tokens", want: ai.StopLength},
+		{status: "incomplete", reason: "content_filter", want: ai.StopError, wantMsg: "Response incomplete: content_filter"},
+		{status: "incomplete", reason: "max_time_limit", want: ai.StopError, wantMsg: "Response incomplete: max_time_limit"},
+		{status: "incomplete", want: ai.StopError, wantMsg: "Response incomplete without a provider reason"},
+		{status: "failed", want: ai.StopError},
+		{status: "cancelled", want: ai.StopError},
+		{status: "in_progress", want: ai.StopStop},
+		{status: "queued", want: ai.StopStop},
+		{status: "weird", want: ai.StopStop, err: true},
 	}
 	for _, c := range cases {
-		got, err := mapResponsesStatus(c.status)
+		got, msg, err := mapResponsesStatus(c.status, c.reason)
 		if (err != nil) != c.err {
-			t.Fatalf("status %q err=%v want err=%v", c.status, err, c.err)
+			t.Fatalf("status %q/%q err=%v want err=%v", c.status, c.reason, err, c.err)
 		}
-		if !c.err && got != c.want {
-			t.Fatalf("status %q got %s want %s", c.status, got, c.want)
+		if c.err {
+			continue
+		}
+		if got != c.want {
+			t.Fatalf("status %q/%q got %s want %s", c.status, c.reason, got, c.want)
+		}
+		if msg != c.wantMsg {
+			t.Fatalf("status %q/%q message = %q, want %q", c.status, c.reason, msg, c.wantMsg)
 		}
 	}
 }
@@ -696,6 +710,7 @@ func TestResponsesRawStopReason(t *testing.T) {
 		event    string
 		wantStop ai.StopReason
 		wantRaw  string
+		wantErr  string
 	}{
 		{
 			name:     "completed",
@@ -704,16 +719,45 @@ func TestResponsesRawStopReason(t *testing.T) {
 			wantRaw:  "completed",
 		},
 		{
-			name:     "incomplete",
-			event:    `data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete"}}`,
+			// Upstream 32850ef7 qualified this fixture with incomplete_details:
+			// a truncated response is a length stop and rawStopReason carries
+			// the provider's reason.
+			name:     "incomplete truncated at max output tokens",
+			event:    `data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}`,
 			wantStop: ai.StopLength,
+			wantRaw:  "incomplete.max_output_tokens",
+		},
+		{
+			// Content filtering is not resumable: an error carrying the reason.
+			name:     "incomplete from content filtering",
+			event:    `data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","incomplete_details":{"reason":"content_filter"}}}`,
+			wantStop: ai.StopError,
+			wantRaw:  "incomplete.content_filter",
+			wantErr:  "Response incomplete: content_filter",
+		},
+		{
+			// Unknown provider reasons are preserved verbatim, still as errors.
+			name:     "incomplete for an unknown provider reason",
+			event:    `data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","incomplete_details":{"reason":"max_time_limit"}}}`,
+			wantStop: ai.StopError,
+			wantRaw:  "incomplete.max_time_limit",
+			wantErr:  "Response incomplete: max_time_limit",
+		},
+		{
+			// No incomplete_details at all: nothing to qualify rawStopReason
+			// with, and no reason to believe the stop is resumable.
+			name:     "incomplete without a provider reason",
+			event:    `data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete"}}`,
+			wantStop: ai.StopError,
 			wantRaw:  "incomplete",
+			wantErr:  "Response incomplete without a provider reason",
 		},
 		{
 			name:     "failed",
 			event:    `data: {"type":"response.failed","response":{"id":"r","status":"failed","error":{"code":"server_error","message":"boom"}}}`,
 			wantStop: ai.StopError,
 			wantRaw:  "failed",
+			wantErr:  "server_error: boom",
 		},
 		{
 			// pi reads `response?.status`, so a terminal event without a response
@@ -733,6 +777,7 @@ func TestResponsesRawStopReason(t *testing.T) {
 				`data: {"type":"response.failed"}`,
 			wantStop: ai.StopError,
 			wantRaw:  "",
+			wantErr:  "Unknown error (no error details in response)",
 		},
 	}
 	for _, tt := range tests {
@@ -744,6 +789,9 @@ func TestResponsesRawStopReason(t *testing.T) {
 			}
 			if final.RawStopReason != tt.wantRaw {
 				t.Fatalf("rawStopReason = %q, want %q", final.RawStopReason, tt.wantRaw)
+			}
+			if final.ErrorMessage != tt.wantErr {
+				t.Fatalf("errorMessage = %q, want %q", final.ErrorMessage, tt.wantErr)
 			}
 		})
 	}
@@ -1415,7 +1463,7 @@ data: {"type":"response.output_text.delta","delta":"partial"}
 
 data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1","content":[{"type":"output_text","text":"partial"}]}}
 
-data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","usage":{"input_tokens":20,"output_tokens":8,"total_tokens":28,"input_tokens_details":{"cached_tokens":5}}}}
+data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":20,"output_tokens":8,"total_tokens":28,"input_tokens_details":{"cached_tokens":5}}}}
 
 `
 	model := &ai.Model{ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "openai", Reasoning: true,
@@ -1554,7 +1602,7 @@ data: {"type":"response.output_text.delta","delta":"partial answer"}
 
 data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1","phase":"final_answer","content":[{"type":"output_text","text":"partial answer"}]}}
 
-data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","usage":{"input_tokens":20,"output_tokens":8,"total_tokens":28}}}
+data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},"usage":{"input_tokens":20,"output_tokens":8,"total_tokens":28}}}
 
 `
 	final := runResponsesSSE(t, reasoningModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, sse)
