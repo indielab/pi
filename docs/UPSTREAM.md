@@ -593,6 +593,28 @@ test asserts re-encode is a fixed point). Closing it means changing what a
 decoded `JsonValue` *is* in Go — a much wider public break than the emission fix
 needed, so it is recorded rather than taken.
 
+**Receive side — ruled NOT to fix, and now guarded.** Three sites drop the order
+on the way in: `protocol/cbor/decoder.go` (a decoded CBOR map becomes
+`map[string]any`), `coding/transcript.go` `parsePartialToolInput`, and
+`coding/transcript.go` `cloneJSONValue`. Upstream pi has **no mechanism for this
+at all** — its decoder (`packages/protocol/src/cbor/decoder.ts` case 5) builds a
+plain JS object key by key and JS objects preserve insertion order for free — so
+there is nothing to port, and preserving it in Go would be invented machinery
+with no upstream counterpart, the exact failure mode this cycle's reviews caught
+repeatedly. It is safe **today** because a decoded transcript never reaches a
+model: it stays in `protocol` types end to end (`coding/remotesession.go` →
+`TranscriptState.Snapshot()` / `.Transcript()`) as a display surface for a Go
+client observing a remote session, and is never converted back into
+`ai.ToolCall`/`ai.Message`. That "today" is now enforced:
+`TestDecodedTranscriptIsNeverConvertedToAIMessages`
+(`coding/decodedtranscript_guard_test.go`) scans every non-test file in the
+module and fails if any function consumes a `protocol` transcript/content type
+and produces an `ai` message/tool-call type — the emit direction
+(`server/protocol.go`, ai → protocol) is unaffected. Wire a decoded transcript
+back into a local session and the suite goes red with the reasoning and the two
+legitimate exits (preserve order at all three sites first, or don't route
+decoded transcripts to a model).
+
 ### Notable n/a (30)
 
 `1d0c97471` + `cd20a8d2e` harness-v2 in-memory storage (~1,900 lines) — standing
