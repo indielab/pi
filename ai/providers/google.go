@@ -206,7 +206,13 @@ func pick(effort string, minimal, low, medium, high int) *int {
 	return nil
 }
 
+// requiresToolCallID reports whether a model reached via the Google APIs needs
+// explicit tool call IDs in its function calls/responses (pi google-shared).
+// Gemini 3 joined Claude and gpt-oss in cbaca6038.
 func requiresToolCallID(modelID string) bool {
+	if v, ok := getGeminiMajorVersion(modelID); ok && v >= 3 {
+		return true
+	}
 	return strings.HasPrefix(modelID, "claude-") || strings.HasPrefix(modelID, "gpt-oss-")
 }
 

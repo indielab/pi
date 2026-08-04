@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -1002,4 +1003,90 @@ func TestGoogleStrictSamplingRequireFails(t *testing.T) {
 	}
 	_, err := buildGoogleParams(model, req, &GoogleOptions{})
 	assertErrString(t, err, `Tool "js_require" requires JSON-schema constrained sampling, but strict tools are unsupported.`)
+}
+
+// --- Gemini 3 tool call IDs (pi cbaca6038) ---
+
+// TestGoogleRequiresToolCallID locks the model families that get explicit tool
+// call IDs. Gemini 3 joined Claude and gpt-oss upstream; the version comes from
+// getGeminiMajorVersion, so gemini-3.6 and gemini-live-3 count too and a bare
+// "gemini-3x" (no version separator) does not.
+func TestGoogleRequiresToolCallID(t *testing.T) {
+	cases := []struct {
+		modelID string
+		want    bool
+	}{
+		{"gemini-2.5-flash", false},
+		{"gemini-3-pro-preview", true},
+		{"gemini-3.6-flash", true},
+		{"gemini-live-3-flash", true},
+		{"gemini-30-pro", true},
+		{"GEMINI-3-PRO", true}, // getGeminiMajorVersion lowercases first
+		{"gemini3-pro", false},
+		{"claude-sonnet-4-5", true},
+		{"gpt-oss-120b", true},
+		{"other-model", false},
+	}
+	for _, c := range cases {
+		if got := requiresToolCallID(c.modelID); got != c.want {
+			t.Errorf("requiresToolCallID(%q) = %v, want %v", c.modelID, got, c.want)
+		}
+	}
+}
+
+// TestGoogleGemini3PreservesToolCallIDs: the request-body consequence — Gemini 3
+// echoes the tool call IDs back in functionCall.id / functionResponse.id, while
+// Gemini 2.5 still omits them.
+func TestGoogleGemini3PreservesToolCallIDs(t *testing.T) {
+	for _, modelID := range []string{"gemini-3-pro-preview", "gemini-2.5-flash"} {
+		wantIDs := modelID == "gemini-3-pro-preview"
+		model := &ai.Model{ID: modelID, Api: ai.APIGoogleGenerativeAI, Provider: "google"}
+		req := ai.Context{Messages: []ai.Message{
+			ai.NewUserText("hi", 1),
+			ai.AssistantMessage{
+				Provider: "google", Model: modelID, Api: ai.APIGoogleGenerativeAI,
+				Content: ai.ContentList{
+					ai.ToolCall{ID: "call_1", Name: "bash", Arguments: map[string]any{"command": "ls"}},
+					ai.ToolCall{ID: "call_2", Name: "bash", Arguments: map[string]any{"command": "pwd"}},
+				},
+				StopReason: ai.StopToolUse,
+			},
+			ai.ToolResultMessage{ToolCallID: "call_1", ToolName: "bash", Content: ai.ContentList{ai.TextContent{Text: "hi"}}},
+			ai.ToolResultMessage{ToolCallID: "call_2", ToolName: "bash", Content: ai.ContentList{ai.TextContent{Text: "files"}}},
+		}}
+		body := roundtripBody(t, mustBuildGoogleParams(t, model, req, &GoogleOptions{}))
+		contents := body["contents"].([]any)
+
+		var wantCall, wantResp []string
+		if wantIDs {
+			wantCall, wantResp = []string{"call_1", "call_2"}, []string{"call_1", "call_2"}
+		}
+		if got := googlePartIDs(contents, "functionCall"); !slices.Equal(got, wantCall) {
+			t.Errorf("%s functionCall ids = %v, want %v", modelID, got, wantCall)
+		}
+		if got := googlePartIDs(contents, "functionResponse"); !slices.Equal(got, wantResp) {
+			t.Errorf("%s functionResponse ids = %v, want %v", modelID, got, wantResp)
+		}
+	}
+}
+
+// googlePartIDs collects the "id" of every part carrying the given key, in
+// request order.
+func googlePartIDs(contents []any, key string) []string {
+	var ids []string
+	for _, c := range contents {
+		m, _ := c.(map[string]any)
+		parts, _ := m["parts"].([]any)
+		for _, p := range parts {
+			pm, _ := p.(map[string]any)
+			inner, ok := pm[key].(map[string]any)
+			if !ok {
+				continue
+			}
+			if id, ok := inner["id"].(string); ok {
+				ids = append(ids, id)
+			}
+		}
+	}
+	return ids
 }
