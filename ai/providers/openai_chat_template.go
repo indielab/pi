@@ -58,9 +58,9 @@ func (o orderedJSONObject) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// parseChatTemplateKwargs decodes the `chatTemplateKwargs` compat object,
-// preserving key order. Returns nil for absent/invalid input (pi falls back to
-// the detected default of {}, which emits nothing).
+// parseChatTemplateKwargs decodes a `chatTemplateKwargs` / `chatTemplateArgs`
+// compat object, preserving key order. Returns nil for absent/invalid input (pi
+// falls back to the detected default of {}, which emits nothing).
 func parseChatTemplateKwargs(raw json.RawMessage) []chatTemplateKwarg {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		return nil
@@ -118,12 +118,14 @@ func parseChatTemplateKwargValue(raw json.RawMessage) chatTemplateKwargValue {
 	return chatTemplateKwargValue{scalar: scalar}
 }
 
-// buildChatTemplateKwargs ports pi's buildChatTemplateKwargs (openai-completions.ts):
-// resolve each configured kwarg against the model/level, dropping omitted ones,
+// buildChatTemplateValues ports pi's buildChatTemplateValues (openai-completions.ts):
+// resolve each configured entry against the model/level, dropping omitted ones,
 // and return nil when nothing remains (pi returns undefined → no param emitted).
-func buildChatTemplateKwargs(model *ai.Model, compat openAICompletionsCompat, level string) orderedJSONObject {
+// It serves both `chat_template_kwargs` (thinkingFormat "chat-template") and
+// `chat_template_args` (thinkingFormat "baseten").
+func buildChatTemplateValues(model *ai.Model, values []chatTemplateKwarg, level string) orderedJSONObject {
 	var out orderedJSONObject
-	for _, kw := range compat.ChatTemplateKwargs {
+	for _, kw := range values {
 		if resolved, include := resolveChatTemplateKwargValue(model, level, kw.value); include {
 			out = append(out, orderedField{Key: kw.key, Value: resolved})
 		}

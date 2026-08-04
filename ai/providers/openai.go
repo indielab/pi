@@ -1188,8 +1188,31 @@ func applyReasoningFormat(params map[string]any, model *ai.Model, compat openAIC
 		// pi (8b97e75c): configurable chat_template_kwargs resolved from the
 		// model's compat.chatTemplateKwargs ($var/omitWhenOff/scalar). Emitted
 		// only when at least one kwarg survives resolution.
-		if kw := buildChatTemplateKwargs(model, compat, level); kw != nil {
+		if kw := buildChatTemplateValues(model, compat.ChatTemplateKwargs, level); kw != nil {
 			params["chat_template_kwargs"] = kw
+		}
+	case compat.ThinkingFormat == "baseten" && model.Reasoning:
+		// pi (c1019d92): Baseten takes configurable chat_template_args plus, when
+		// the model opts in, a native reasoning_effort.
+		if args := buildChatTemplateValues(model, compat.ChatTemplateArgs, level); args != nil {
+			params["chat_template_args"] = args
+		}
+		if compat.SupportsReasoningEffort {
+			// pi looks up thinkingLevelMap[requestedEffort] when an effort was
+			// requested and thinkingLevelMap.off otherwise, falls back to the raw
+			// requested effort when the lookup is undefined, and sends only string
+			// results. Enabled, that is mappedEffortOrRaw (absent → raw level,
+			// present-null → omit). Disabled, the fallback is the *absent* request
+			// effort, so only a present-string off mapping is ever sent — pi's
+			// `typeof effort === "string"` guard, which Go's *string map values
+			// express directly.
+			if enabled {
+				if effort, ok := mappedEffortOrRaw(model, level); ok {
+					params["reasoning_effort"] = effort
+				}
+			} else if off, ok := offEffortValue(model); ok {
+				params["reasoning_effort"] = off
+			}
 		}
 	case compat.ThinkingFormat == "deepseek" && model.Reasoning:
 		// pi (0369bdb8 / #5760): when no effort, only send thinking:{disabled}

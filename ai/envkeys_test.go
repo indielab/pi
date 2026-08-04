@@ -164,6 +164,17 @@ func TestQwenTokenPlanEnvKeys(t *testing.T) {
 	}
 }
 
+// pi c1019d92 adds the Baseten provider: its API key comes from BASETEN_API_KEY.
+// The provider itself stays latent here until the catalog carries Baseten models.
+func TestBasetenEnvKey(t *testing.T) {
+	if vars := apiKeyEnvVars("baseten"); len(vars) != 1 || vars[0] != "BASETEN_API_KEY" {
+		t.Fatalf("apiKeyEnvVars(\"baseten\") = %v, want [BASETEN_API_KEY]", vars)
+	}
+	if got := GetEnvApiKey("baseten", map[string]string{"BASETEN_API_KEY": "scoped"}); got != "scoped" {
+		t.Errorf("GetEnvApiKey(baseten) = %q, want %q", got, "scoped")
+	}
+}
+
 // pi 24e5cc04: ANTHROPIC_AUTH_TOKEN participates in discovery/status but is a
 // bearer token, not an API key, so GetEnvApiKey skips it and the key slot falls
 // to ANTHROPIC_OAUTH_TOKEN/ANTHROPIC_API_KEY.

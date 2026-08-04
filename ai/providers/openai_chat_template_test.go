@@ -2,6 +2,7 @@ package providers
 
 import (
 	"encoding/json"
+	"strconv"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
@@ -88,6 +89,115 @@ func TestOpenAIChatTemplateEffortFallbacks(t *testing.T) {
 		baseReq(), &OpenAIOptions{})
 	if has(bOffNone, "chat_template_kwargs") {
 		t.Fatalf("off with no off-entry must omit chat_template_kwargs, got %s", ctkParam(t, bOffNone))
+	}
+}
+
+// basetenModel builds a thinkingFormat:"baseten" model with the given ordered
+// chatTemplateArgs JSON, thinkingLevelMap, and supportsReasoningEffort override.
+func basetenModel(argsJSON string, tlm ai.ThinkingLevelMap, supportsEffort bool) *ai.Model {
+	return openAIModel(func(m *ai.Model) {
+		m.ID = "custom-baseten"
+		m.Reasoning = true
+		m.ThinkingLevelMap = tlm
+		m.Compat = json.RawMessage(`{"thinkingFormat":"baseten","supportsReasoningEffort":` +
+			strconv.FormatBool(supportsEffort) + `,"chatTemplateArgs":` + argsJSON + `}`)
+	})
+}
+
+func basetenArgs(t *testing.T, body map[string]any) string {
+	t.Helper()
+	v, ok := body["chat_template_args"]
+	if !ok {
+		return ""
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		t.Fatalf("marshal chat_template_args: %v", err)
+	}
+	return string(b)
+}
+
+// TestOpenAIBasetenChatTemplateArgs pins pi's baseten thinking compat (upstream
+// c1019d92): configurable chat_template_args resolved exactly like
+// chat_template_kwargs, emitted under the distinct `chat_template_args` key.
+func TestOpenAIBasetenChatTemplateArgs(t *testing.T) {
+	args := `{"thinking":{"$var":"thinking.enabled"},"effort":{"$var":"thinking.effort","omitWhenOff":true},"literal":"x"}`
+	tlm := ai.ThinkingLevelMap{"off": strPtr("none"), "high": strPtr("high")}
+
+	bHigh := mustBuildOpenAIParams(t, basetenModel(args, tlm, true), baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	if got, want := basetenArgs(t, bHigh), `{"thinking":true,"effort":"high","literal":"x"}`; got != want {
+		t.Fatalf("high: chat_template_args = %s, want %s", got, want)
+	}
+	// The kwargs key belongs to the "chat-template" format only.
+	if has(bHigh, "chat_template_kwargs") {
+		t.Fatalf("baseten must not emit chat_template_kwargs, got %v", bHigh["chat_template_kwargs"])
+	}
+
+	bOff := mustBuildOpenAIParams(t, basetenModel(args, tlm, true), baseReq(), &OpenAIOptions{})
+	if got, want := basetenArgs(t, bOff), `{"thinking":false,"literal":"x"}`; got != want {
+		t.Fatalf("off: chat_template_args = %s, want %s", got, want)
+	}
+
+	// Nothing survives resolution -> no chat_template_args param at all.
+	bNone := mustBuildOpenAIParams(t, basetenModel(`{"effort":{"$var":"thinking.effort","omitWhenOff":true}}`, tlm, true),
+		baseReq(), &OpenAIOptions{})
+	if has(bNone, "chat_template_args") {
+		t.Fatalf("all-omitted must drop chat_template_args, got %s", basetenArgs(t, bNone))
+	}
+}
+
+// TestOpenAIBasetenReasoningEffort pins the baseten reasoning_effort lookup:
+// requested effort resolves through thinkingLevelMap (absent -> raw level,
+// present-null -> omitted); with no requested effort only a mapped-string `off`
+// is sent; supportsReasoningEffort:false drops the field entirely.
+func TestOpenAIBasetenReasoningEffort(t *testing.T) {
+	const noArgs = `{}`
+	tlm := ai.ThinkingLevelMap{"off": strPtr("none"), "minimal": nil, "high": strPtr("baseten-high")}
+
+	effort := func(body map[string]any) any { return body["reasoning_effort"] }
+
+	// Mapped level -> mapped string.
+	bHigh := mustBuildOpenAIParams(t, basetenModel(noArgs, tlm, true), baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	if got := effort(bHigh); got != "baseten-high" {
+		t.Fatalf("high: reasoning_effort = %v, want baseten-high", got)
+	}
+
+	// Level absent from the map -> raw requested level.
+	bMed := mustBuildOpenAIParams(t, basetenModel(noArgs, tlm, true), baseReq(), &OpenAIOptions{ReasoningEffort: "medium"})
+	if got := effort(bMed); got != "medium" {
+		t.Fatalf("medium: reasoning_effort = %v, want medium", got)
+	}
+
+	// Level mapped to null -> field omitted (pi's typeof-string guard).
+	bMin := mustBuildOpenAIParams(t, basetenModel(noArgs, tlm, true), baseReq(), &OpenAIOptions{ReasoningEffort: "minimal"})
+	if has(bMin, "reasoning_effort") {
+		t.Fatalf("minimal maps to null, reasoning_effort must be omitted, got %v", effort(bMin))
+	}
+
+	// No requested effort -> thinkingLevelMap.off string is sent.
+	bOff := mustBuildOpenAIParams(t, basetenModel(noArgs, tlm, true), baseReq(), &OpenAIOptions{})
+	if got := effort(bOff); got != "none" {
+		t.Fatalf("off: reasoning_effort = %v, want none", got)
+	}
+
+	// No requested effort and no off entry -> nothing to fall back to.
+	bNoOff := mustBuildOpenAIParams(t, basetenModel(noArgs, ai.ThinkingLevelMap{"high": strPtr("high")}, true),
+		baseReq(), &OpenAIOptions{})
+	if has(bNoOff, "reasoning_effort") {
+		t.Fatalf("absent off entry must omit reasoning_effort, got %v", effort(bNoOff))
+	}
+
+	// off mapped to null -> omitted as well.
+	bOffNull := mustBuildOpenAIParams(t, basetenModel(noArgs, ai.ThinkingLevelMap{"off": nil}, true),
+		baseReq(), &OpenAIOptions{})
+	if has(bOffNull, "reasoning_effort") {
+		t.Fatalf("null off mapping must omit reasoning_effort, got %v", effort(bOffNull))
+	}
+
+	// supportsReasoningEffort:false -> never sent, even with a mapped level.
+	bUnsupported := mustBuildOpenAIParams(t, basetenModel(noArgs, tlm, false), baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
+	if has(bUnsupported, "reasoning_effort") {
+		t.Fatalf("supportsReasoningEffort:false must omit reasoning_effort, got %v", effort(bUnsupported))
 	}
 }
 

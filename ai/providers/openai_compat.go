@@ -77,6 +77,9 @@ type openAICompletionsCompat struct {
 	// ChatTemplateKwargs carries the ordered kwargs sent as `chat_template_kwargs`
 	// when ThinkingFormat is "chat-template" (pi: compat.chatTemplateKwargs).
 	ChatTemplateKwargs []chatTemplateKwarg
+	// ChatTemplateArgs carries the ordered args sent as `chat_template_args`
+	// when ThinkingFormat is "baseten" (pi: compat.chatTemplateArgs).
+	ChatTemplateArgs []chatTemplateKwarg
 }
 
 // detectOpenAICompat infers compatibility settings from provider + baseUrl,
@@ -184,6 +187,7 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		OpenRouterRouting                           map[string]any        `json:"openRouterRouting"`
 		VercelGatewayRouting                        *vercelGatewayRouting `json:"vercelGatewayRouting"`
 		ChatTemplateKwargs                          json.RawMessage       `json:"chatTemplateKwargs"`
+		ChatTemplateArgs                            json.RawMessage       `json:"chatTemplateArgs"`
 	}
 	if json.Unmarshal(model.Compat, &raw) != nil {
 		return c
@@ -254,9 +258,13 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	if raw.VercelGatewayRouting != nil {
 		c.VercelGatewayRouting = *raw.VercelGatewayRouting
 	}
-	// pi: chatTemplateKwargs override always replaces the detected default ({}).
+	// pi: chatTemplateKwargs/chatTemplateArgs overrides always replace the
+	// detected defaults ({}).
 	if raw.ChatTemplateKwargs != nil {
 		c.ChatTemplateKwargs = parseChatTemplateKwargs(raw.ChatTemplateKwargs)
+	}
+	if raw.ChatTemplateArgs != nil {
+		c.ChatTemplateArgs = parseChatTemplateKwargs(raw.ChatTemplateArgs)
 	}
 	return c
 }
