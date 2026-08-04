@@ -135,6 +135,39 @@ func TestUnionCoercionCases(t *testing.T) {
 	}
 }
 
+// TestNullableUnionPreservesMatchingValue mirrors pi validation.test.ts: a value
+// that already matches an anyOf/oneOf arm survives coercion untouched, while a
+// value matching no arm is still coerced.
+func TestNullableUnionPreservesMatchingValue(t *testing.T) {
+	cases := []struct {
+		name   string
+		schema string
+		in     any
+		want   any
+	}{
+		{"anyOf null", `{"anyOf":[{"type":"number"},{"type":"null"}]}`, nil, nil},
+		{"oneOf null", `{"oneOf":[{"type":"number"},{"type":"null"}]}`, nil, nil},
+		{"anyOf coerces non-matching", `{"anyOf":[{"type":"number"},{"type":"null"}]}`, "42", float64(42)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			var vs Schema
+			if err := json.Unmarshal([]byte(c.schema), &vs); err != nil {
+				t.Fatal(err)
+			}
+			tool := Tool{Name: "echo", Parameters: Object(Prop("value", &vs))}
+			tc := ToolCall{Name: "echo", Arguments: map[string]any{"value": c.in}}
+			args, err := ValidateToolArguments(tool, tc)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got := args["value"]; got != c.want {
+				t.Errorf("value %#v → %#v, want %#v", c.in, got, c.want)
+			}
+		})
+	}
+}
+
 // TestAdditionalPropertiesFalseRejectsExtraKey mirrors TypeBox .Check rejecting
 // extra keys when additionalProperties:false.
 func TestAdditionalPropertiesFalseRejectsExtraKey(t *testing.T) {

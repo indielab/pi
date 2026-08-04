@@ -912,6 +912,15 @@ func (s *Schema) coerceArray(value []any) {
 }
 
 func coerceWithUnion(value any, schemas []*Schema) any {
+	// A value that already satisfies one of the branches is returned untouched,
+	// so coercion against a different branch cannot mangle it (e.g. null in a
+	// nullable union being turned into a number).
+	for _, sub := range schemas {
+		if len(sub.validate(value, "")) == 0 {
+			return value
+		}
+	}
+
 	for _, sub := range schemas {
 		candidate := deepCopy(value)
 		coerced := sub.Coerce(candidate)
