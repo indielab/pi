@@ -6,10 +6,6 @@ import (
 	"testing"
 )
 
-// hdr builds a present ProviderHeaders value. A nil entry is the deletion
-// marker, and an absent key is a third, distinct state.
-func hdr(value string) *string { return &value }
-
 // A model's headers must round-trip all three states through JSON: catalog data
 // carrying an explicit `null` has to decode as a deletion marker, not as an
 // absent key, or the suppression it encodes is silently lost (upstream
@@ -55,7 +51,7 @@ func TestProviderHeadersJSONRoundTrip(t *testing.T) {
 // the default the marker exists to suppress).
 func TestMergeHeadersPreservesDeletionMarkers(t *testing.T) {
 	merged := mergeHeaders(
-		ProviderHeaders{"Authorization": hdr("Bearer base"), "X-Keep": hdr("base")},
+		ProviderHeaders{"Authorization": HeaderValue("Bearer base"), "X-Keep": HeaderValue("base")},
 		ProviderHeaders{"authorization": nil},
 	)
 	if _, ok := merged["Authorization"]; ok {
@@ -84,14 +80,14 @@ func TestApplyAuthPreservesDeletionMarkers(t *testing.T) {
 			Name: "cf",
 			Resolve: func(context.Context, AuthContext, *Credential) (*AuthResult, error) {
 				return &AuthResult{Auth: ModelAuth{Headers: ProviderHeaders{
-					"cf-aig-authorization": hdr("Bearer gateway"),
+					"cf-aig-authorization": HeaderValue("Bearer gateway"),
 					"Authorization":        nil,
 				}}}, nil
 			},
 		}},
 	}))
 	model := &Model{ID: "m", Provider: "cf", Api: APIOpenAICompletions,
-		Headers: ProviderHeaders{"x-api-key": nil, "X-Model": hdr("")}}
+		Headers: ProviderHeaders{"x-api-key": nil, "X-Model": HeaderValue("")}}
 
 	_, opts, err := models.(*modelsImpl).applyAuth(context.Background(), model,
 		&StreamOptions{Headers: ProviderHeaders{"X-Consumer": nil}}, ModelsStreamTransforms{})

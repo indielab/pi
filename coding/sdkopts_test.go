@@ -42,7 +42,7 @@ func TestSDKOptionsReachProvider(t *testing.T) {
 		APIKey:      "k",
 		Temperature: &temp,
 		MaxTokens:   &maxTok,
-		Headers:     ai.ProviderHeaders{"OpenAI-Organization": hdr("org-123")},
+		Headers:     ai.ProviderHeaders{"OpenAI-Organization": ai.HeaderValue("org-123")},
 		OnPayload: func(payload any, m *ai.Model) (any, error) {
 			onPayloadCalled = true
 			return payload, nil
@@ -90,6 +90,3 @@ func TestProviderErrorFormatting(t *testing.T) {
 		t.Fatalf("expected parsed provider error, got: %v", err)
 	}
 }
-
-// hdr builds a ProviderHeaders value (a present, non-suppressing header).
-func hdr(value string) *string { return &value }

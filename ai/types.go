@@ -81,7 +81,22 @@ const (
 // key rides in cf-aig-authorization. Marshalling round-trips all three states:
 // an explicit `null` in catalog/model JSON decodes to a nil marker, not to an
 // absent key.
+//
+// Values are SHARED, not copied: merging headers (mergeHeaders here,
+// mergeProviderHeaders in ai/providers) copies the *string pointers, so a
+// merged map — including the one handed to a TransformHeaders hook — aliases
+// the *string values inside a Model.Headers catalog entry that other requests
+// read concurrently. Treat a *string value as immutable: to change a header,
+// replace the pointer (h["X"] = HeaderValue("v")), never write through it
+// (*h["X"] = "v"), which would mutate the model for every other request.
 type ProviderHeaders map[string]*string
+
+// HeaderValue returns a present header value for a ProviderHeaders entry. Use
+// a nil map entry for a deletion marker; an absent key is the third state. The
+// returned pointer is fresh, so it is safe to store in a shared map — see
+// ProviderHeaders on why the pointed-to string must not be written through
+// once it is in one.
+func HeaderValue(v string) *string { return &v }
 
 // Transport is the preferred transport for providers that support several.
 type Transport string

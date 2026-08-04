@@ -2,6 +2,7 @@ package providers
 
 import (
 	"net/http"
+	"sort"
 
 	"github.com/sky-valley/pi/ai"
 )
@@ -43,10 +44,13 @@ func providerHeadersToRecord(headers ai.ProviderHeaders) map[string]string {
 func mergeProviderHeaders(sources ...ai.ProviderHeaders) ai.ProviderHeaders {
 	var merged ai.ProviderHeaders
 	for _, source := range sources {
+		if len(source) == 0 {
+			continue
+		}
+		if merged == nil {
+			merged = make(ai.ProviderHeaders, len(source))
+		}
 		for name, value := range source {
-			if merged == nil {
-				merged = ai.ProviderHeaders{}
-			}
 			merged[name] = value
 		}
 	}
@@ -59,8 +63,27 @@ func mergeProviderHeaders(sources ...ai.ProviderHeaders) ai.ProviderHeaders {
 // the SDK would otherwise send — including its own auth header. Header names
 // are canonicalized by net/http, so the delete matches case-insensitively, as
 // it does on the wire.
+//
+// Names are applied in sorted order. Two names that differ only by case are
+// distinct keys in a JS object and in a ProviderHeaders map, but canonicalize
+// to one http.Header key, so whichever lands last wins — and pi resolves that
+// by object insertion order, which a Go map does not have. Sorting is the same
+// tie-break mergeHeaders (ai/models_runtime.go) already applies to the same
+// unavoidable divergence, so the two paths agree with each other; ordering
+// markers first would instead invent a delete-beats-set precedence that pi has
+// nowhere. Only raw Model.Headers can reach this with a case collision: the
+// merged path is case-deduped before it gets here.
 func applyProviderHeaders(h http.Header, headers ai.ProviderHeaders) {
-	for name, value := range headers {
+	if len(headers) == 0 {
+		return
+	}
+	names := make([]string, 0, len(headers))
+	for name := range headers {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		value := headers[name]
 		if value == nil {
 			h.Del(name)
 			continue
@@ -69,16 +92,14 @@ func applyProviderHeaders(h http.Header, headers ai.ProviderHeaders) {
 	}
 }
 
-// stringHeaders lifts adapter-owned string headers (copilot dynamic headers,
-// attribution defaults) into ProviderHeaders so they can take part in a merge
-// that carries markers.
+// stringHeaders lifts adapter-owned string headers (attribution defaults) into
+// ProviderHeaders so they can take part in a merge that carries markers.
 func stringHeaders(headers map[string]string) ai.ProviderHeaders {
 	if len(headers) == 0 {
 		return nil
 	}
 	lifted := make(ai.ProviderHeaders, len(headers))
-	for name := range headers {
-		value := headers[name]
+	for name, value := range headers {
 		lifted[name] = &value
 	}
 	return lifted

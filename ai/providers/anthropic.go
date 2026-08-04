@@ -1083,11 +1083,14 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// no api key at all, so pi's createClient takes its plain api-key branch and
 	// the SDK sends no x-api-key. The Go port resolves that auth inline here
 	// (2026-06-24 divergence), so the key is consumed by the marker bundle and
-	// the branch selection below sees no api key, exactly as pi does.
+	// branchKey — the credential the branches below may emit — is empty, which
+	// is what pi's createClient sees. The OAuth sniff is unaffected: the caller
+	// computed `oauth` from the real apiKey and already excludes this provider.
+	branchKey := apiKey
 	var providerAuthHeaders ai.ProviderHeaders
 	if model.Provider == "cloudflare-ai-gateway" {
 		providerAuthHeaders = cloudflareAIGatewayAuthHeaders(apiKey)
-		apiKey = ""
+		branchKey = ""
 	}
 
 	// Branch order mirrors pi createClient (anthropic-messages.ts): github-copilot,
@@ -1102,18 +1105,18 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 			r.Header.Set("anthropic-beta", strings.Join(betas, ","))
 		}
 	case model.Provider == "github-copilot":
-		r.Header.Set("authorization", "Bearer "+apiKey)
+		r.Header.Set("authorization", "Bearer "+branchKey)
 		if len(betas) > 0 {
 			r.Header.Set("anthropic-beta", strings.Join(betas, ","))
 		}
 	case oauth:
-		r.Header.Set("authorization", "Bearer "+apiKey)
+		r.Header.Set("authorization", "Bearer "+branchKey)
 		r.Header.Set("user-agent", "claude-cli/"+claudeCodeVersion)
 		r.Header.Set("x-app", "cli")
 		oauthBetas := append([]string{"claude-code-20250219", "oauth-2025-04-20"}, betas...)
 		r.Header.Set("anthropic-beta", strings.Join(oauthBetas, ","))
 	default:
-		r.Header.Set("x-api-key", apiKey)
+		r.Header.Set("x-api-key", branchKey)
 		if len(betas) > 0 {
 			r.Header.Set("anthropic-beta", strings.Join(betas, ","))
 		}

@@ -422,7 +422,10 @@ type ModelsStreamTransforms struct {
 	// TransformHeaders transforms the fully assembled model/auth/request
 	// headers before provider dispatch. Deletion markers (nil values) are part
 	// of the value it sees and returns: a transform that rebuilds the map must
-	// pass them through, or the suppression they encode is lost.
+	// pass them through, or the suppression they encode is lost. The map it
+	// receives aliases the *string values of the model's own Headers, so a
+	// transform must replace a pointer rather than write through one (see
+	// ProviderHeaders).
 	TransformHeaders func(headers ProviderHeaders) (ProviderHeaders, error)
 }
 
@@ -1374,10 +1377,10 @@ func HasApi(model *Model, api Api) bool {
 // (pi models.ts mergeHeaders). A deletion marker survives the merge like any
 // other value: an override entry with a nil value replaces the base entry, so
 // the suppression it encodes reaches the provider. nil when both inputs are
-// nil. Override keys
-// are applied in sorted order so case-colliding overrides merge
-// deterministically (pi iterates insertion order; Go maps are unordered).
-// The nested scan is O(n*m) — fine for header-sized maps.
+// nil. Override keys are applied in sorted order so case-colliding overrides
+// merge deterministically (pi iterates insertion order; Go maps are
+// unordered). The nested scan is O(n*m) — fine for header-sized maps.
+// Values are copied as pointers, not cloned — see ProviderHeaders.
 func mergeHeaders(base, override ProviderHeaders) ProviderHeaders {
 	if base == nil && override == nil {
 		return nil

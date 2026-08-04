@@ -263,3 +263,41 @@ func TestPiMessagesHeaderStates(t *testing.T) {
 		t.Fatal("an empty string must still be sent")
 	}
 }
+
+// applyProviderHeaders must not depend on Go map iteration order. Two names
+// that differ only by case are distinct ProviderHeaders keys but canonicalize
+// to one http.Header key, so a marker and a value can collide on it; sorted
+// name order is the tie-break (see applyProviderHeaders), matching mergeHeaders.
+// Only raw Model.Headers can carry such a pair — the merged path is
+// case-deduped before it reaches here.
+func TestApplyProviderHeadersCaseCollisionIsDeterministic(t *testing.T) {
+	headers := ai.ProviderHeaders{
+		// "Authorization" sorts before "authorization" (ASCII), so the Del runs
+		// first and the value wins.
+		"Authorization": nil,
+		"authorization": strPtr("Bearer x"),
+		// The mirror case: the value sorts first, so the marker runs last and
+		// wins. This is also what separates sorted order from "apply markers
+		// first", which would have kept the value here.
+		"X-Trace": strPtr("on"),
+		"x-trace": nil,
+		"X-Keep":  strPtr("keep"),
+	}
+	// One run cannot tell a sorted implementation from a lucky one: Go
+	// randomizes map iteration per range statement, so repeat enough that an
+	// order-dependent implementation is overwhelmingly likely to disagree with
+	// itself at least once.
+	for i := range 200 {
+		h := http.Header{}
+		applyProviderHeaders(h, headers)
+		if got := h.Get("authorization"); got != "Bearer x" {
+			t.Fatalf("run %d: authorization = %q, want %q — the name sorting last must win", i, got, "Bearer x")
+		}
+		if _, present := h["X-Trace"]; present {
+			t.Fatalf("run %d: X-Trace = %q, want it deleted — the marker sorts last", i, h.Get("X-Trace"))
+		}
+		if got := h.Get("X-Keep"); got != "keep" {
+			t.Fatalf("run %d: X-Keep = %q, want keep", i, got)
+		}
+	}
+}

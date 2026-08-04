@@ -488,7 +488,7 @@ func TestSummarizationPassesReasoningAndHeaders(t *testing.T) {
 
 	sess := NewSession(SessionOptions{
 		Model: reg.GetModel(), Cwd: t.TempDir(), NoTools: NoToolsAll,
-		Headers: ai.ProviderHeaders{"X-Parity": hdr("1")},
+		Headers: ai.ProviderHeaders{"X-Parity": ai.HeaderValue("1")},
 	})
 
 	sess.summarize(context.Background(), []agent.AgentMessage{ai.NewUserText("hi", 1)}, 16384)
