@@ -225,6 +225,49 @@ func TestModelsRefreshDynamic(t *testing.T) {
 	}
 }
 
+// TestModelsRefreshProviderContextIsComposite applies upstream 42a06f947 /
+// d3da2e968's tightened composite assertion to the other cancellation
+// composite in the runtime: the per-provider refresh context. beginProviderRefresh
+// derives it from the caller's context so a supersede can cancel one provider's
+// refresh alone, and that derivation must not cost the caller's own
+// cancellation — the provider's context is distinct from the caller's, is
+// cancelled with it, and reports the caller's cause.
+func TestModelsRefreshProviderContextIsComposite(t *testing.T) {
+	m := modelsWithEnv(map[string]string{"K": "key"}, nil)
+	reason := errors.New("caller went away")
+	callerCtx, cancelCaller := context.WithCancelCause(context.Background())
+	defer cancelCaller(nil)
+
+	recorded := make(chan struct{})
+	var distinct bool
+	var fetchErr, fetchCause error
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:   "dyn",
+		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("dyn", "K")},
+		FetchModels: func(ctx context.Context, _ RefreshModelsContext) ([]*Model, error) {
+			defer close(recorded)
+			distinct = ctx != callerCtx
+			cancelCaller(reason)
+			<-ctx.Done()
+			fetchErr, fetchCause = ctx.Err(), context.Cause(ctx)
+			return nil, ctx.Err()
+		},
+	}))
+
+	m.Refresh(callerCtx, nil)
+	<-recorded
+
+	if !distinct {
+		t.Fatal("provider refresh ran on the caller's own context, not a per-provider composite")
+	}
+	if !errors.Is(fetchErr, context.Canceled) {
+		t.Fatalf("caller cancellation did not cancel the provider refresh context: %v", fetchErr)
+	}
+	if !errors.Is(fetchCause, reason) {
+		t.Fatalf("caller's cancellation cause did not reach the provider refresh context: %v", fetchCause)
+	}
+}
+
 // TestModelsRefreshPersistsAndRestores mirrors pi "persists dynamic catalogs
 // and restores them without network access": a refresh writes through the
 // ModelsStore, and a network-disabled refresh on a fresh collection restores
@@ -1224,6 +1267,13 @@ func TestModelsAuthCallbacksSeeCallerContext(t *testing.T) {
 // cancellation to OAuth refresh and preserves the previous credential": the
 // refresh sees the caller's context, and a refresh that ignores cancellation
 // and returns late must not have its result written to the store.
+//
+// Upstream d3da2e968 tightened what "sees the caller's context" means: the
+// refresh gets a distinct composite signal, not the caller's own object, and
+// that composite both aborts with the caller and reports the caller's abort
+// reason. Go's equivalent of the reason is the cancellation cause, which
+// propagates to every derived context — so the refresh context must report the
+// caller's cause, not a bare context.Canceled.
 func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 	creds := NewInMemoryCredentialStore()
 	previous := &Credential{Type: CredentialOAuth, Refresh: "old-refresh", Access: "old", Expires: 0}
@@ -1236,6 +1286,7 @@ func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 	refreshStarted := make(chan struct{})
 	release := make(chan struct{})
 	var marker string
+	var refreshCtx context.Context
 	m := modelsWithEnv(nil, &CreateModelsOptions{Credentials: creds})
 	m.SetProvider(CreateProvider(CreateProviderOptions{
 		ID: "p1",
@@ -1243,6 +1294,7 @@ func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 			Name: "p1",
 			Refresh: func(ctx context.Context, c OAuthCredentials) (OAuthCredentials, error) {
 				marker, _ = ctx.Value(ctxMarkerKey{}).(string)
+				refreshCtx = ctx
 				close(refreshStarted)
 				<-release
 				// Deliberately ignores cancellation and succeeds late.
@@ -1252,14 +1304,15 @@ func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 		}},
 	}))
 
-	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), ctxMarkerKey{}, "caller"))
+	ctx, cancel := context.WithCancelCause(context.WithValue(context.Background(), ctxMarkerKey{}, "caller"))
+	reason := errors.New("caller went away")
 	errs := make(chan error, 1)
 	go func() {
 		_, err := m.GetProviderAuth(ctx, "p1", nil)
 		errs <- err
 	}()
 	<-refreshStarted
-	cancel()
+	cancel(reason)
 	close(release)
 
 	if err := <-errs; !errors.Is(err, context.Canceled) {
@@ -1267,6 +1320,15 @@ func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 	}
 	if marker != "caller" {
 		t.Fatalf("OAuth refresh must receive the caller's context, marker=%q", marker)
+	}
+	if refreshCtx == ctx {
+		t.Fatal("refresh must receive a composite derived from the caller's context, not the caller's own")
+	}
+	if refreshCtx.Err() == nil {
+		t.Fatal("cancelling the caller must cancel the refresh context")
+	}
+	if !errors.Is(context.Cause(refreshCtx), reason) {
+		t.Fatalf("caller's cancellation cause must reach the refresh context, got %v", context.Cause(refreshCtx))
 	}
 	stored, _ := creds.Read(context.Background(), "p1")
 	if stored == nil || stored.Access != "old" || stored.Refresh != "old-refresh" {

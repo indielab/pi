@@ -351,6 +351,47 @@ func TestResolveStoredOAuthBoundsRefreshDuration(t *testing.T) {
 	}
 }
 
+// TestResolveStoredOAuthRefreshContextIsComposite locks upstream 42a06f947 and
+// d3da2e968, which tightened pi's assertion from "the refresh signal IS the
+// caller's signal" to "the refresh signal is a DISTINCT composite that aborts
+// with the caller and carries the caller's abort reason". The Go composite is
+// context.WithTimeout(callerCtx, ...): a context of its own, done as soon as
+// the caller is done, and — because Go propagates a cancellation cause to every
+// derived context — reporting the caller's cause from context.Cause. Deriving
+// the refresh context from anything but the caller's (a detached background
+// context, say) would keep the deadline but lose both of the latter.
+func TestResolveStoredOAuthRefreshContextIsComposite(t *testing.T) {
+	store := seedOAuthStore(t, "oauthp", 0) // expired: forces a refresh
+	reason := errors.New("caller went away")
+	callerCtx, cancelCaller := context.WithCancelCause(context.Background())
+	defer cancelCaller(nil)
+
+	var distinct bool
+	var refreshErr, refreshCause error
+	auth := ProviderAuth{OAuth: &OAuthAuth{
+		Refresh: func(ctx context.Context, c OAuthCredentials) (OAuthCredentials, error) {
+			distinct = ctx != callerCtx
+			cancelCaller(reason)
+			<-ctx.Done()
+			refreshErr, refreshCause = ctx.Err(), context.Cause(ctx)
+			return OAuthCredentials{}, ctx.Err()
+		},
+		ToAuth: func(c OAuthCredentials) (ModelAuth, error) { return ModelAuth{APIKey: c.Access}, nil },
+	}}
+
+	_, _ = resolveProviderAuth(callerCtx, "oauthp", auth, store, authCtx(), nil)
+
+	if !distinct {
+		t.Fatal("refresh received the caller's own context, not a composite derived from it")
+	}
+	if !errors.Is(refreshErr, context.Canceled) {
+		t.Fatalf("caller cancellation did not cancel the refresh context: %v", refreshErr)
+	}
+	if !errors.Is(refreshCause, reason) {
+		t.Fatalf("caller's cancellation cause did not reach the refresh context: %v", refreshCause)
+	}
+}
+
 // TestCredentialStoreList locks pi ff28097a's list(): non-secret metadata
 // only, one entry per provider.
 func TestCredentialStoreList(t *testing.T) {
