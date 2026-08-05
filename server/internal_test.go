@@ -3,10 +3,13 @@ package server
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/sky-valley/pi/protocol"
 )
 
 // Jobs run one at a time and in the order they were submitted; that ordering is
@@ -172,5 +175,47 @@ func TestNewUUIDShape(t *testing.T) {
 			t.Fatalf("id %q was generated twice", id)
 		}
 		seen[id] = struct{}{}
+	}
+}
+
+// An InternalError's own message names its cause. Not every reporter unwraps:
+// a snapshot broadcast (snapshots.go) and a queued session job (sessions.go)
+// hand the observer the wrapper itself, and an Error() that returned only the
+// sanitized constant would lose the failure entirely. The sanitization belongs
+// to the wire formatter, which never asks the error for its text — this pins
+// both halves at once.
+func TestInternalErrorNamesItsCauseButTheWireStaysSanitized(t *testing.T) {
+	t.Parallel()
+	cause := fmt.Errorf("private storage detail: %w", errors.New("private root cause"))
+	wrapper := NewInternalError(cause)
+
+	if !strings.Contains(wrapper.Error(), "private storage detail") ||
+		!strings.Contains(wrapper.Error(), "private root cause") {
+		t.Fatalf("the observer must be able to read the cause off the wrapper, got %q", wrapper.Error())
+	}
+
+	var reported []error
+	s := &Server{onError: func(err error) { reported = append(reported, err) }}
+	protoErr := s.toProtocolError(wrapper)
+	if protoErr.Code != protocol.ErrorInternal {
+		t.Fatalf("code = %q, want internal_error", protoErr.Code)
+	}
+	if protoErr.Message != InternalErrorMessage {
+		t.Fatalf("message = %q, want the sanitized constant", protoErr.Message)
+	}
+	if strings.Contains(protoErr.Message, "private") {
+		t.Fatalf("private detail reached the peer: %q", protoErr.Message)
+	}
+	if len(reported) != 1 || !errors.Is(reported[0], cause) {
+		t.Fatalf("the cause must reach the observer, got %v", reported)
+	}
+}
+
+// A nil cause has nothing to name, so the wrapper falls back to the sanitized
+// constant rather than reading "internal server error: %!w(<nil>)".
+func TestInternalErrorWithNoCauseReadsAsTheConstant(t *testing.T) {
+	t.Parallel()
+	if got := NewInternalError(nil).Error(); got != InternalErrorMessage {
+		t.Fatalf("Error() = %q, want %q", got, InternalErrorMessage)
 	}
 }

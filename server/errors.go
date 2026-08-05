@@ -97,10 +97,17 @@ type InternalError struct {
 	Cause error
 }
 
-// Error is the message a local reader sees. It is deliberately the same
-// sanitized text that reaches the peer: the detail lives in Cause, which
-// errors.Unwrap and the error observer reach and the wire never does.
-func (e *InternalError) Error() string { return InternalErrorMessage }
+// Error names the cause, because that is what an error's message is for and
+// not every reporter unwraps — a snapshot broadcast or a queued session job
+// hands the observer this wrapper itself. Sanitization is the wire formatter's
+// job: toProtocolError writes InternalErrorMessage directly and never asks the
+// error for its text.
+func (e *InternalError) Error() string {
+	if e.Cause == nil {
+		return InternalErrorMessage
+	}
+	return "internal server error: " + e.Cause.Error()
+}
 
 func (e *InternalError) Unwrap() error { return e.Cause }
 

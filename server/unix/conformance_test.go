@@ -597,7 +597,7 @@ func TestServiceFailuresAreNotExposedToClients(t *testing.T) {
 	if response.OK {
 		t.Fatalf("expected a failure, got %#v", response)
 	}
-	if response.Error.Code != protocol.ErrorInternal || response.Error.Message != server.InternalErrorMessage {
+	if response.Error.Code != protocol.ErrorInternal || response.Error.Message != "Internal server error" {
 		t.Fatalf("leaked service detail: %#v", response.Error)
 	}
 	found := false
@@ -687,7 +687,7 @@ func TestInternalErrorCauseIsReportedButNeverSerialized(t *testing.T) {
 	if response.OK {
 		t.Fatalf("expected a failure, got %#v", response)
 	}
-	if response.Error.Code != protocol.ErrorInternal || response.Error.Message != server.InternalErrorMessage {
+	if response.Error.Code != protocol.ErrorInternal || response.Error.Message != "Internal server error" {
 		t.Fatalf("wrong sanitized failure: %#v", response.Error)
 	}
 	assertWireIsClean(t, response)
@@ -706,6 +706,37 @@ func TestInternalErrorCauseIsReportedButNeverSerialized(t *testing.T) {
 	if !found {
 		t.Fatalf("the retained cause must reach the observer, got %v", reported)
 	}
+}
+
+// An InternalError may wrap an *Error, and the wrapping is what decides the
+// answer: toProtocolError has to match InternalError first or the wrapped
+// error's own code and message go out instead of the sanitized pair. This is
+// the case that makes the branch order load-bearing rather than incidental.
+func TestInternalErrorWrappingAServerErrorStaysSanitized(t *testing.T) {
+	t.Parallel()
+	service := servertest.NewService()
+	service.SetListSessionsHook(func(call int) error {
+		if call > 1 {
+			return server.NewInternalError(
+				fmt.Errorf("private: %w", server.NewNotFoundError("private session name", nil)))
+		}
+		return nil
+	})
+	h := start(t, service, nil)
+
+	client := h.connected()
+	response := request(t, client, "list", protocol.NewListCommand())
+	if response.OK {
+		t.Fatalf("expected a failure, got %#v", response)
+	}
+	if response.Error.Code != protocol.ErrorInternal {
+		t.Fatalf("code = %q, want internal_error: the wrapped error's code escaped", response.Error.Code)
+	}
+	if response.Error.Message != "Internal server error" {
+		t.Fatalf("message = %q, want the sanitized message: the wrapped error's message escaped",
+			response.Error.Message)
+	}
+	assertWireIsClean(t, response)
 }
 
 // assertWireIsClean re-encodes a response exactly as the transport does and
@@ -745,7 +776,7 @@ func TestPanickingServiceFailsTheRequestNotTheProcess(t *testing.T) {
 	if response.OK {
 		t.Fatalf("expected a failure, got %#v", response)
 	}
-	if response.Error.Code != protocol.ErrorInternal || response.Error.Message != server.InternalErrorMessage {
+	if response.Error.Code != protocol.ErrorInternal || response.Error.Message != "Internal server error" {
 		t.Fatalf("leaked the panic to the peer: %#v", response.Error)
 	}
 	found := false
