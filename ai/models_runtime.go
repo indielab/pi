@@ -1337,10 +1337,11 @@ func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle Def
 	if err != nil {
 		return errorStream(model, err).Result()
 	}
-	deferredOptions := DeferredFetchOptions{ProviderRequestOptions: *requestOptions}
+	deferredOptions := DeferredFetchOptions{}
 	if opts != nil {
-		deferredOptions.Wait = opts.Wait
+		deferredOptions = opts.DeferredFetchOptions
 	}
+	deferredOptions.ProviderRequestOptions = *requestOptions
 	return fetcher.FetchDeferred(ctx, requestModel, handle, &deferredOptions).Result()
 }
 

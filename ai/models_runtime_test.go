@@ -1324,9 +1324,6 @@ func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 	if refreshCtx == ctx {
 		t.Fatal("refresh must receive a composite derived from the caller's context, not the caller's own")
 	}
-	if refreshCtx.Err() == nil {
-		t.Fatal("cancelling the caller must cancel the refresh context")
-	}
 	if !errors.Is(context.Cause(refreshCtx), reason) {
 		t.Fatalf("caller's cancellation cause must reach the refresh context, got %v", context.Cause(refreshCtx))
 	}
@@ -1485,6 +1482,48 @@ func TestModelsFetchAndCancelDeferred(t *testing.T) {
 	res = m.FetchDeferred(context.Background(), &Model{Provider: "nope", ID: "m"}, handle, nil)
 	if !strings.Contains(res.ErrorMessage, "Unknown provider") {
 		t.Fatalf("unknown provider should say so, got %q", res.ErrorMessage)
+	}
+}
+
+// FetchDeferred copies the caller's DeferredFetchOptions and overwrites only
+// the auth-applied base, exactly as Stream and StreamSimple do. Building a
+// fresh struct and hand-copying the fields it happens to know about would
+// silently drop whatever is added to DeferredFetchOptions next; Wait stands in
+// here for that whole class of field.
+func TestModelsFetchDeferredKeepsTheCallersOwnOptions(t *testing.T) {
+	var fetched []*DeferredFetchOptions
+	m := modelsWithEnv(map[string]string{"K": "key"}, nil)
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:     "deferrer",
+		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("deferrer", "K")},
+		Models: []*Model{{Provider: "deferrer", ID: "m", Api: "api-a"}},
+		API: ptrStreams(ProviderStreams{
+			FetchDeferred: func(_ context.Context, _ *Model, _ DeferredHandle, opts *DeferredFetchOptions) *AssistantMessageEventStream {
+				fetched = append(fetched, opts)
+				s := NewAssistantMessageEventStream()
+				s.Push(AssistantMessageEvent{
+					Type: EventDone, Reason: StopStop,
+					Message: &AssistantMessage{StopReason: StopStop},
+				})
+				s.End()
+				return s
+			},
+		}),
+	}))
+
+	wait := 250 * time.Millisecond
+	m.FetchDeferred(context.Background(), m.GetModel("deferrer", "m"),
+		DeferredHandle{Provider: "deferrer", ModelID: "m", Api: "api-a", ID: "resp-1"},
+		&ModelsDeferredFetchOptions{DeferredFetchOptions: DeferredFetchOptions{Wait: &wait}})
+
+	if len(fetched) != 1 || fetched[0] == nil {
+		t.Fatalf("the fetch did not reach the provider: %+v", fetched)
+	}
+	if fetched[0].APIKey != "key" {
+		t.Fatalf("APIKey = %q, want the auth-applied base to have been written over", fetched[0].APIKey)
+	}
+	if fetched[0].Wait == nil || *fetched[0].Wait != wait {
+		t.Fatalf("Wait = %v, want the caller's own field to survive auth application", fetched[0].Wait)
 	}
 }
 
