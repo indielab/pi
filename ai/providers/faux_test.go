@@ -260,3 +260,89 @@ func TestFauxProviderDeferredCancelAndFailures(t *testing.T) {
 		t.Fatalf("an unknown handle must fail in-band, got %q (%s)", unknown.StopReason, unknown.ErrorMessage)
 	}
 }
+
+// TestFauxProviderRedeemsWithSubmissionOptions locks upstream 686f193e5: the
+// scripted step that produces a redeemed response sees the options the
+// submission was made with, and the fetch's own options no longer override
+// them. Before that change the faux spread `{...submissionOptions,
+// ...fetchOptions}`, so a fetch could restate the request the provider had
+// already accepted; a deferred fetch now carries request options only, and the
+// ones it does carry (auth, headers, HTTP) belong to the fetch's own HTTP call.
+// The submission's deferral request and response hook stay stripped, as they
+// did before: the step must not re-request deferral, and the submission's hook
+// was already fired.
+func TestFauxProviderRedeemsWithSubmissionOptions(t *testing.T) {
+	reg := RegisterFauxProvider(RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+
+	var seen *ai.SimpleStreamOptions
+	reg.SetResponses([]FauxResponseStep{
+		func(_ ai.Context, opts *ai.SimpleStreamOptions, _ *FauxState, _ *ai.Model) *ai.AssistantMessage {
+			seen = opts
+			return FauxAssistantMessage(ai.ContentList{FauxText("ready")}, ai.StopStop)
+		},
+	})
+
+	model := reg.GetModel()
+	api, _ := ai.GetApiProvider(model.Api)
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+
+	submissionTokens := 512
+	submissionResponses := 0
+	accepted := ai.StreamSimple(context.Background(), model, req, &ai.SimpleStreamOptions{
+		StreamOptions: ai.StreamOptions{
+			ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey:  "submission-key",
+				Headers: ai.ProviderHeaders{"X-Origin": ai.HeaderValue("submission")},
+				OnResponse: func(ai.ProviderResponse, *ai.Model) error {
+					submissionResponses++
+					return nil
+				},
+			},
+			MaxTokens: &submissionTokens,
+			SessionID: "submission-session",
+		},
+		Reasoning: ai.ThinkingHigh,
+		Deferred:  &ai.DeferredRequest{Window: ai.DeferredWindow1h},
+	}).Result()
+	if accepted.Deferred == nil {
+		t.Fatalf("submission must produce a handle, got %q", accepted.StopReason)
+	}
+	seen = nil
+	afterSubmission := submissionResponses
+
+	ready := api.FetchDeferred(context.Background(), model, *accepted.Deferred, &ai.DeferredFetchOptions{
+		ProviderRequestOptions: ai.ProviderRequestOptions{
+			APIKey:  "fetch-key",
+			Headers: ai.ProviderHeaders{"X-Origin": ai.HeaderValue("fetch")},
+		},
+	}).Result()
+	if ready.StopReason != ai.StopStop {
+		t.Fatalf("fetch must redeem the response, got %q (%s)", ready.StopReason, ready.ErrorMessage)
+	}
+	if seen == nil {
+		t.Fatal("redemption must run the scripted step")
+	}
+	if seen.APIKey != "submission-key" {
+		t.Errorf("step saw apiKey %q, want the submission's; the fetch's options must not override it", seen.APIKey)
+	}
+	if origin := seen.Headers["X-Origin"]; origin == nil || *origin != "submission" {
+		t.Errorf("step saw X-Origin %v, want the submission's header", origin)
+	}
+	if seen.MaxTokens == nil || *seen.MaxTokens != submissionTokens {
+		t.Errorf("step saw maxTokens %v, want the submission's %d", seen.MaxTokens, submissionTokens)
+	}
+	if seen.SessionID != "submission-session" || seen.Reasoning != ai.ThinkingHigh {
+		t.Errorf("step saw sessionId %q / reasoning %q, want the submission's", seen.SessionID, seen.Reasoning)
+	}
+	if seen.Deferred != nil {
+		t.Error("the deferral request must be stripped before redemption")
+	}
+	if seen.OnResponse != nil {
+		t.Error("the submission's OnResponse must be stripped before redemption")
+	}
+	if submissionResponses != afterSubmission {
+		t.Errorf("the submission's OnResponse fired %d extra times during redemption",
+			submissionResponses-afterSubmission)
+	}
+}

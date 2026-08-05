@@ -174,14 +174,23 @@ type DeferredRequest struct {
 }
 
 // DeferredFetchOptions are the options for redeeming a DeferredHandle
-// (pi DeferredFetchOptions).
+// (pi DeferredFetchOptions). Redeeming re-reads a response the provider is
+// already producing, so it carries only ProviderRequestOptions: the sampling,
+// transport and metadata fields that shaped the submission have nothing left
+// to act on and are no longer accepted here (upstream 686f193e5).
 type DeferredFetchOptions struct {
-	StreamOptions
-	// Wait bounds how long to wait for a terminal response. Zero checks once;
-	// nil leaves the wait to the provider (pi's `wait?: number` in
+	ProviderRequestOptions
+	// Wait bounds the provider's long poll for a terminal response. Zero checks
+	// once; nil leaves the wait to the provider (pi's `wait?: number` in
 	// milliseconds).
 	Wait *time.Duration
 }
+
+// DeferredCancelOptions are the options for best-effort cancellation of a
+// deferred response (pi DeferredCancelOptions). Cancelling shapes no request
+// body at all, so it is ProviderRequestOptions exactly — an alias, as upstream
+// writes it, so an auth-applied ProviderRequestOptions is one already.
+type DeferredCancelOptions = ProviderRequestOptions
 
 // Role identifies a message author.
 type Role string
@@ -780,33 +789,36 @@ type HTTPDoer interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// StreamOptions are the base options shared by all providers.
-type StreamOptions struct {
-	Temperature *float64
-	// SamplingParams are arbitrary sampling parameters merged into the request
-	// body as-is, after the named request fields, so keys here override them.
-	// They let custom OpenAI-compatible servers (llama.cpp, vLLM, SGLang, …)
-	// receive parameters pi does not model, e.g. top_p, top_k, min_p,
-	// repetition_penalty. StreamSimple merges them over Model.SamplingParams per
-	// key. Only the OpenAI-compatible adapters (completions, responses) apply
-	// them; other APIs ignore them.
-	SamplingParams map[string]any
-	MaxTokens      *int
-	APIKey         string
-	Transport      Transport
-	CacheRetention CacheRetention
-	SessionID      string
-	OnPayload      func(payload any, model *Model) (any, error)
-	OnResponse     func(resp ProviderResponse, model *Model) error
+// ProviderRequestOptions are the authentication, HTTP transport and lifecycle
+// options every provider request carries, whatever kind of request it is (pi
+// ProviderRequestOptions). Streaming adds sampling and transport preferences on
+// top of these in StreamOptions; a deferred fetch or cancel carries these
+// alone, because there is no request body left to shape.
+//
+// pi's `signal` has no counterpart here: cancellation travels on the
+// context.Context each entry point takes.
+//
+// pi parameterises the model type its callbacks see (ProviderRequestOptions
+// <TModel>) so image requests can hand back an ImagesModel. The port has no
+// images half, so the callbacks name *Model directly.
+type ProviderRequestOptions struct {
+	APIKey string
+	// OnPayload inspects or replaces a provider payload before it is sent.
+	// Returning a nil payload keeps it unchanged.
+	OnPayload func(payload any, model *Model) (any, error)
+	// OnResponse is invoked after an HTTP response is received.
+	OnResponse func(resp ProviderResponse, model *Model) error
 	// Headers are custom HTTP headers merged into the provider request, with
 	// caller values overriding provider defaults. A nil value suppresses a
 	// provider/API default header of the same name (see ProviderHeaders).
-	Headers                   ProviderHeaders
-	TimeoutMs                 int
-	WebSocketConnectTimeoutMs int
-	MaxRetries                int
-	MaxRetryDelayMs           *int
-	Metadata                  map[string]any
+	Headers   ProviderHeaders
+	TimeoutMs int
+	// MaxRetries caps client-side retry attempts for providers that support them.
+	MaxRetries int
+	// MaxRetryDelayMs caps the delay honored when a server asks for a long
+	// wait; a longer requested delay fails the request instead. Nil takes the
+	// 60s default, and a zero value disables the cap.
+	MaxRetryDelayMs *int
 	// HTTPClient overrides the client used for provider HTTP requests (pi
 	// StreamOptions.fetch). Nil keeps each provider's default client, and so
 	// does http.DefaultClient: it is the Go stand-in for the globalThis.fetch
@@ -825,6 +837,28 @@ type StreamOptions struct {
 	// as PI_CACHE_RETENTION and Cloudflare base-URL placeholders (pi 7f29e7a3).
 	// Defaults to nil, in which case lookups fall through to the OS environment.
 	Env map[string]string
+}
+
+// StreamOptions are the options shared by all streaming provider requests: the
+// request options every provider request carries, plus the fields that shape
+// the request body and its transport.
+type StreamOptions struct {
+	ProviderRequestOptions
+	Temperature *float64
+	// SamplingParams are arbitrary sampling parameters merged into the request
+	// body as-is, after the named request fields, so keys here override them.
+	// They let custom OpenAI-compatible servers (llama.cpp, vLLM, SGLang, …)
+	// receive parameters pi does not model, e.g. top_p, top_k, min_p,
+	// repetition_penalty. StreamSimple merges them over Model.SamplingParams per
+	// key. Only the OpenAI-compatible adapters (completions, responses) apply
+	// them; other APIs ignore them.
+	SamplingParams            map[string]any
+	MaxTokens                 *int
+	Transport                 Transport
+	CacheRetention            CacheRetention
+	SessionID                 string
+	WebSocketConnectTimeoutMs int
+	Metadata                  map[string]any
 }
 
 // SimpleStreamOptions extends StreamOptions with unified reasoning controls.

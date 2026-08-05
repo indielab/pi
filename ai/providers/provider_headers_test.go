@@ -44,14 +44,15 @@ func openAITestModel() *ai.Model {
 // The three states on a header the adapter itself would send.
 func TestOpenAICompletionsHeaderStates(t *testing.T) {
 	t.Run("absent keeps the default", func(t *testing.T) {
-		h := captureOpenAIHeaders(t, openAITestModel(), ai.StreamOptions{APIKey: "k"})
+		h := captureOpenAIHeaders(t, openAITestModel(), ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}})
 		if got := h.Get("authorization"); got != "Bearer k" {
 			t.Fatalf("authorization = %q, want the default Bearer k", got)
 		}
 	})
 	t.Run("empty string sends an empty header", func(t *testing.T) {
 		h := captureOpenAIHeaders(t, openAITestModel(), ai.StreamOptions{
-			APIKey: "k", Headers: ai.ProviderHeaders{"authorization": strPtr("")}})
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", Headers: ai.ProviderHeaders{"authorization": strPtr("")}},
+		})
 		values, ok := h["Authorization"]
 		if !ok {
 			t.Fatal("an empty string must still send the header, not suppress it")
@@ -62,7 +63,8 @@ func TestOpenAICompletionsHeaderStates(t *testing.T) {
 	})
 	t.Run("null suppresses the default", func(t *testing.T) {
 		h := captureOpenAIHeaders(t, openAITestModel(), ai.StreamOptions{
-			APIKey: "k", Headers: ai.ProviderHeaders{"authorization": nil}})
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", Headers: ai.ProviderHeaders{"authorization": nil}},
+		})
 		if _, ok := h["Authorization"]; ok {
 			t.Fatalf("a deletion marker must remove the header, got %q", h.Get("authorization"))
 		}
@@ -77,7 +79,8 @@ func TestOpenAICompletionsMarkerSuppressesAttribution(t *testing.T) {
 	model := openAITestModel()
 	model.Provider = "openrouter"
 	h := captureOpenAIHeaders(t, model, ai.StreamOptions{
-		APIKey: "k", Headers: ai.ProviderHeaders{"HTTP-Referer": nil}})
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", Headers: ai.ProviderHeaders{"HTTP-Referer": nil}},
+	})
 	if _, ok := h["Http-Referer"]; ok {
 		t.Fatalf("attribution default must be suppressible, got %q", h.Get("HTTP-Referer"))
 	}
@@ -92,7 +95,8 @@ func TestOpenAICompletionsMarkerPrecedence(t *testing.T) {
 	model := openAITestModel()
 	model.Headers = ai.ProviderHeaders{"X-Both": nil}
 	h := captureOpenAIHeaders(t, model, ai.StreamOptions{
-		APIKey: "k", Headers: ai.ProviderHeaders{"X-Both": strPtr("consumer")}})
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", Headers: ai.ProviderHeaders{"X-Both": strPtr("consumer")}},
+	})
 	if got := h.Get("X-Both"); got != "consumer" {
 		t.Fatalf("consumer headers merge last: X-Both = %q, want consumer", got)
 	}
@@ -100,7 +104,8 @@ func TestOpenAICompletionsMarkerPrecedence(t *testing.T) {
 	model = openAITestModel()
 	model.Headers = ai.ProviderHeaders{"X-Both": strPtr("model")}
 	h = captureOpenAIHeaders(t, model, ai.StreamOptions{
-		APIKey: "k", Headers: ai.ProviderHeaders{"X-Both": nil}})
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", Headers: ai.ProviderHeaders{"X-Both": nil}},
+	})
 	if _, ok := h["X-Both"]; ok {
 		t.Fatalf("a consumer marker must cancel the model header, got %q", h.Get("X-Both"))
 	}
@@ -121,7 +126,7 @@ func TestClientAPIKeyIgnoresDeletionMarkers(t *testing.T) {
 func TestOpenAICompletionsCloudflareAIGatewayAuth(t *testing.T) {
 	model := openAITestModel()
 	model.Provider = "cloudflare-ai-gateway"
-	h := captureOpenAIHeaders(t, model, ai.StreamOptions{APIKey: "cf-key"})
+	h := captureOpenAIHeaders(t, model, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cf-key"}})
 	if got := h.Get("cf-aig-authorization"); got != "Bearer cf-key" {
 		t.Fatalf("cf-aig-authorization = %q, want Bearer cf-key", got)
 	}
@@ -135,7 +140,7 @@ func TestOpenAICompletionsCloudflareAIGatewayAuth(t *testing.T) {
 	model = openAITestModel()
 	model.Provider = "cloudflare-ai-gateway"
 	model.Headers = ai.ProviderHeaders{"Authorization": strPtr("Bearer upstream")}
-	h = captureOpenAIHeaders(t, model, ai.StreamOptions{APIKey: "cf-key"})
+	h = captureOpenAIHeaders(t, model, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cf-key"}})
 	if got := h.Get("authorization"); got != "Bearer upstream" {
 		t.Fatalf("model headers outrank the auth marker: authorization = %q", got)
 	}
@@ -166,7 +171,7 @@ func TestAnthropicCloudflareAIGatewayTakesApiKeyBranch(t *testing.T) {
 	}
 	final := StreamAnthropic(context.Background(), model,
 		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "cf-key", SessionID: "sess-1"}}).Result()
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cf-key"}, SessionID: "sess-1"}}).Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}
@@ -198,11 +203,13 @@ func TestGoogleHeaderStates(t *testing.T) {
 		Headers: ai.ProviderHeaders{"X-Model": strPtr("from-model"), "X-Empty": strPtr("")}}
 	final := StreamGoogle(context.Background(), model,
 		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&GoogleOptions{StreamOptions: ai.StreamOptions{APIKey: "g-key", Headers: ai.ProviderHeaders{
-			"X-Model":        nil,
-			"User-Agent":     nil,
-			"x-goog-api-key": nil,
-		}}}).Result()
+		&GoogleOptions{StreamOptions: ai.StreamOptions{
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key", Headers: ai.ProviderHeaders{
+				"X-Model":        nil,
+				"User-Agent":     nil,
+				"x-goog-api-key": nil,
+			}},
+		}}).Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}
@@ -243,12 +250,11 @@ func TestPiMessagesHeaderStates(t *testing.T) {
 	defer server.Close()
 	final := StreamPiMessages(context.Background(), piMessagesTestModel(server.URL+"/v1"),
 		piMessagesTestContext(), &PiMessagesOptions{StreamOptions: ai.StreamOptions{
-			APIKey: "test-key",
-			Headers: ai.ProviderHeaders{
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key", Headers: ai.ProviderHeaders{
 				"authorization": nil,
 				"x-custom":      nil,
 				"x-empty":       strPtr(""),
-			},
+			}},
 		}}).Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)

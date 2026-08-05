@@ -105,7 +105,7 @@ func TestModelsApplyAuthEnvKey(t *testing.T) {
 		t.Fatalf("auth key not applied: %+v", gotOpts)
 	}
 	// Explicit apiKey wins.
-	m.Stream(context.Background(), model, Context{}, &ModelsStreamOptions{StreamOptions: StreamOptions{APIKey: "explicit"}})
+	m.Stream(context.Background(), model, Context{}, &ModelsStreamOptions{StreamOptions: StreamOptions{ProviderRequestOptions: ProviderRequestOptions{APIKey: "explicit"}}})
 	if gotOpts.APIKey != "explicit" {
 		t.Fatalf("explicit key should win: %q", gotOpts.APIKey)
 	}
@@ -133,8 +133,7 @@ func TestModelsApplyAuthBaseURLHeadersEnv(t *testing.T) {
 
 	model := &Model{Provider: "p", ID: "m", Api: "api", BaseURL: "https://model"}
 	m.Stream(context.Background(), model, Context{}, &ModelsStreamOptions{StreamOptions: StreamOptions{
-		Headers: ProviderHeaders{"H": HeaderValue("explicit")},
-		Env:     map[string]string{"E": "explicit"},
+		ProviderRequestOptions: ProviderRequestOptions{Headers: ProviderHeaders{"H": HeaderValue("explicit")}, Env: map[string]string{"E": "explicit"}},
 	}})
 	if gotModel.BaseURL != "https://auth.example" {
 		t.Errorf("auth baseURL should override: %q", gotModel.BaseURL)
@@ -626,8 +625,8 @@ func TestModelsModelHeadersAndTransform(t *testing.T) {
 	// TransformHeaders sees the assembled headers exactly once.
 	transformCalls := 0
 	m.Stream(context.Background(), model, Context{}, &ModelsStreamOptions{
-		StreamOptions: StreamOptions{Headers: ProviderHeaders{"Req": HeaderValue("1")}},
-		ModelsStreamTransforms: ModelsStreamTransforms{
+		StreamOptions: StreamOptions{ProviderRequestOptions: ProviderRequestOptions{Headers: ProviderHeaders{"Req": HeaderValue("1")}}},
+		ModelsRequestTransforms: ModelsRequestTransforms{
 			TransformHeaders: func(headers ProviderHeaders) (ProviderHeaders, error) {
 				transformCalls++
 				headers["Transformed"] = HeaderValue("yes")
@@ -1276,8 +1275,9 @@ func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 }
 
 // deferredStreams builds ProviderStreams that redeem a handle with a fixed
-// text response and record every cancellation.
-func deferredStreams(cancelled *[]DeferredHandle) ProviderStreams {
+// text response and record every cancellation, with the request options the
+// cancel was dispatched with.
+func deferredStreams(cancelled *[]DeferredHandle, cancelOpts *[]*DeferredCancelOptions) ProviderStreams {
 	return ProviderStreams{
 		Stream: func(_ context.Context, _ *Model, _ Context, _ *StreamOptions) *AssistantMessageEventStream {
 			s := NewAssistantMessageEventStream()
@@ -1297,8 +1297,11 @@ func deferredStreams(cancelled *[]DeferredHandle) ProviderStreams {
 			s.End()
 			return s
 		},
-		CancelDeferred: func(_ context.Context, _ *Model, handle DeferredHandle, _ *StreamOptions) error {
+		CancelDeferred: func(_ context.Context, _ *Model, handle DeferredHandle, opts *DeferredCancelOptions) error {
 			*cancelled = append(*cancelled, handle)
+			if cancelOpts != nil {
+				*cancelOpts = append(*cancelOpts, opts)
+			}
 			return nil
 		},
 	}
@@ -1330,7 +1333,7 @@ func TestCreateProviderAnnouncesDeferredCapabilities(t *testing.T) {
 	}
 
 	cancelOnly := CreateProvider(CreateProviderOptions{ID: "cancel", API: ptrStreams(ProviderStreams{
-		CancelDeferred: func(_ context.Context, _ *Model, _ DeferredHandle, _ *StreamOptions) error { return nil },
+		CancelDeferred: func(_ context.Context, _ *Model, _ DeferredHandle, _ *DeferredCancelOptions) error { return nil },
 	})})
 	if _, ok := cancelOnly.(DeferredCanceller); !ok {
 		t.Fatal("an api that cancels deferred responses must announce DeferredCanceller")
@@ -1345,7 +1348,7 @@ func TestCreateProviderAnnouncesDeferredCapabilities(t *testing.T) {
 	mixed := CreateProvider(CreateProviderOptions{
 		ID: "mixed",
 		APIByApi: map[Api]ProviderStreams{
-			"api-a": deferredStreams(&cancelled),
+			"api-a": deferredStreams(&cancelled, nil),
 			"api-b": capture(new(*Model), new(*StreamOptions)),
 		},
 	})
@@ -1365,12 +1368,13 @@ func TestCreateProviderAnnouncesDeferredCapabilities(t *testing.T) {
 // and a provider that never announced the capability is refused.
 func TestModelsFetchAndCancelDeferred(t *testing.T) {
 	var cancelled []DeferredHandle
+	var cancelOpts []*DeferredCancelOptions
 	m := modelsWithEnv(map[string]string{"K": "key"}, nil)
 	m.SetProvider(CreateProvider(CreateProviderOptions{
 		ID:     "deferrer",
 		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("deferrer", "K")},
 		Models: []*Model{{Provider: "deferrer", ID: "m", Api: "api-a"}},
-		API:    ptrStreams(deferredStreams(&cancelled)),
+		API:    ptrStreams(deferredStreams(&cancelled, &cancelOpts)),
 	}))
 	m.SetProvider(CreateProvider(CreateProviderOptions{
 		ID:     "plain",
@@ -1396,6 +1400,11 @@ func TestModelsFetchAndCancelDeferred(t *testing.T) {
 	}
 	if !reflect.DeepEqual(cancelled, []DeferredHandle{handle}) {
 		t.Fatalf("cancel did not reach the provider: %+v", cancelled)
+	}
+	// Cancelling carries request options only (upstream 686f193e5), and auth is
+	// applied to them just as it is on the fetch path.
+	if len(cancelOpts) != 1 || cancelOpts[0] == nil || cancelOpts[0].APIKey != "key" {
+		t.Fatalf("cancel options = %+v, want the resolved api key", cancelOpts)
 	}
 
 	// A provider with no deferred support is refused at the Models layer.

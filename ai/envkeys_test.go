@@ -43,20 +43,20 @@ func TestWithEnvAPIKeyUsesScopedEnv(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
 	model := &Model{Provider: "openai"}
 
-	got := withEnvAPIKey(model, &StreamOptions{Env: map[string]string{"OPENAI_API_KEY": "scoped"}})
+	got := withEnvAPIKey(model, &StreamOptions{ProviderRequestOptions: ProviderRequestOptions{Env: map[string]string{"OPENAI_API_KEY": "scoped"}}})
 	if got.APIKey != "scoped" {
 		t.Errorf("withEnvAPIKey should pull key from scoped env: got %q", got.APIKey)
 	}
 
 	gotSimple := withEnvAPIKeySimple(model, &SimpleStreamOptions{
-		StreamOptions: StreamOptions{Env: map[string]string{"OPENAI_API_KEY": "scoped"}},
+		StreamOptions: StreamOptions{ProviderRequestOptions: ProviderRequestOptions{Env: map[string]string{"OPENAI_API_KEY": "scoped"}}},
 	})
 	if gotSimple.APIKey != "scoped" {
 		t.Errorf("withEnvAPIKeySimple should pull key from scoped env: got %q", gotSimple.APIKey)
 	}
 
 	// An explicit API key still wins over the scoped env.
-	explicit := withEnvAPIKey(model, &StreamOptions{APIKey: "explicit", Env: map[string]string{"OPENAI_API_KEY": "scoped"}})
+	explicit := withEnvAPIKey(model, &StreamOptions{ProviderRequestOptions: ProviderRequestOptions{APIKey: "explicit", Env: map[string]string{"OPENAI_API_KEY": "scoped"}}})
 	if explicit.APIKey != "explicit" {
 		t.Errorf("explicit API key should win: got %q", explicit.APIKey)
 	}
@@ -73,21 +73,23 @@ func TestWithEnvAPIKeyLeavesAnthropicAuthTokenForProvider(t *testing.T) {
 
 	// Auth token present (even alongside an api key): APIKey stays empty so the
 	// provider emits the bearer, matching pi's AUTH_TOKEN-beats-env-api-key order.
-	got := withEnvAPIKey(model, &StreamOptions{Env: map[string]string{
-		"ANTHROPIC_AUTH_TOKEN": "tok", "ANTHROPIC_API_KEY": "sk-env",
-	}})
+	got := withEnvAPIKey(model, &StreamOptions{
+		ProviderRequestOptions: ProviderRequestOptions{Env: map[string]string{
+			"ANTHROPIC_AUTH_TOKEN": "tok", "ANTHROPIC_API_KEY": "sk-env",
+		}},
+	})
 	if got.APIKey != "" {
 		t.Errorf("auth token must not resolve into APIKey: got %q", got.APIKey)
 	}
 
 	// No auth token: the env api key resolves normally.
-	got = withEnvAPIKey(model, &StreamOptions{Env: map[string]string{"ANTHROPIC_API_KEY": "sk-env"}})
+	got = withEnvAPIKey(model, &StreamOptions{ProviderRequestOptions: ProviderRequestOptions{Env: map[string]string{"ANTHROPIC_API_KEY": "sk-env"}}})
 	if got.APIKey != "sk-env" {
 		t.Errorf("env api key should resolve when no auth token: got %q", got.APIKey)
 	}
 
 	// An explicit request key wins over the auth token.
-	got = withEnvAPIKey(model, &StreamOptions{APIKey: "explicit", Env: map[string]string{"ANTHROPIC_AUTH_TOKEN": "tok"}})
+	got = withEnvAPIKey(model, &StreamOptions{ProviderRequestOptions: ProviderRequestOptions{APIKey: "explicit", Env: map[string]string{"ANTHROPIC_AUTH_TOKEN": "tok"}}})
 	if got.APIKey != "explicit" {
 		t.Errorf("explicit key should win over the auth token: got %q", got.APIKey)
 	}
@@ -106,7 +108,7 @@ func TestWithEnvAPIKeyFiltersAmbientMarker(t *testing.T) {
 		t.Fatalf("precondition: expected ambient marker, got %q", key)
 	}
 
-	got := withEnvAPIKey(model, &StreamOptions{Env: env})
+	got := withEnvAPIKey(model, &StreamOptions{ProviderRequestOptions: ProviderRequestOptions{Env: env}})
 	if got.APIKey != "" {
 		t.Errorf("withEnvAPIKey must not inject the ambient marker as a key: got %q", got.APIKey)
 	}
@@ -114,7 +116,7 @@ func TestWithEnvAPIKeyFiltersAmbientMarker(t *testing.T) {
 		t.Errorf("env must survive the ambient-marker skip: got %v", got.Env)
 	}
 
-	gotSimple := withEnvAPIKeySimple(model, &SimpleStreamOptions{StreamOptions: StreamOptions{Env: env}})
+	gotSimple := withEnvAPIKeySimple(model, &SimpleStreamOptions{StreamOptions: StreamOptions{ProviderRequestOptions: ProviderRequestOptions{Env: env}}})
 	if gotSimple.APIKey != "" {
 		t.Errorf("withEnvAPIKeySimple must not inject the ambient marker as a key: got %q", gotSimple.APIKey)
 	}
@@ -132,13 +134,13 @@ func TestStreamEnvReachesProvider(t *testing.T) {
 	env := map[string]string{"PI_CACHE_RETENTION": "long", "OPENAI_API_KEY": "scoped"}
 
 	// Key injected from env: the returned options still carry the full Env.
-	got := withEnvAPIKey(model, &StreamOptions{Env: env})
+	got := withEnvAPIKey(model, &StreamOptions{ProviderRequestOptions: ProviderRequestOptions{Env: env}})
 	if got.Env["PI_CACHE_RETENTION"] != "long" {
 		t.Errorf("env must survive key injection: got %v", got.Env)
 	}
 
 	// Explicit-key passthrough must also preserve Env unchanged.
-	passthrough := withEnvAPIKey(model, &StreamOptions{APIKey: "explicit", Env: env})
+	passthrough := withEnvAPIKey(model, &StreamOptions{ProviderRequestOptions: ProviderRequestOptions{APIKey: "explicit", Env: env}})
 	if passthrough.Env["PI_CACHE_RETENTION"] != "long" {
 		t.Errorf("env must survive explicit-key passthrough: got %v", passthrough.Env)
 	}

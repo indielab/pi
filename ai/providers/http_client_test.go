@@ -93,7 +93,7 @@ func TestProvidersUseInjectedHTTPClient(t *testing.T) {
 			server := sseServer(t, p.sse)
 			client := &countingClient{inner: server.Client()}
 
-			final := p.run(server.URL, ai.StreamOptions{APIKey: "test-key", HTTPClient: client})
+			final := p.run(server.URL, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key", HTTPClient: client}})
 
 			if final.StopReason == ai.StopError {
 				t.Fatalf("stream failed: %s", final.ErrorMessage)
@@ -112,7 +112,7 @@ func TestDefaultHTTPClientCountsAsUnset(t *testing.T) {
 		t.Run(p.name, func(t *testing.T) {
 			server := sseServer(t, p.sse)
 
-			final := p.run(server.URL, ai.StreamOptions{APIKey: "test-key", HTTPClient: http.DefaultClient})
+			final := p.run(server.URL, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key", HTTPClient: http.DefaultClient}})
 
 			if final.StopReason == ai.StopError {
 				t.Fatalf("stream failed: %s", final.ErrorMessage)
@@ -125,7 +125,7 @@ func TestDefaultHTTPClientCountsAsUnset(t *testing.T) {
 	// The normalization has to happen in retryFromOptions, not just in the
 	// google guard: otherwise the default client displaces sharedClient and the
 	// TimeoutMs response-header cap goes with it.
-	if cfg := retryFromOptions(ai.StreamOptions{TimeoutMs: 1234, HTTPClient: http.DefaultClient}, nil); cfg.httpClient != nil {
+	if cfg := retryFromOptions(ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{TimeoutMs: 1234, HTTPClient: http.DefaultClient}}, nil); cfg.httpClient != nil {
 		t.Fatalf("http.DefaultClient must leave the retry loop on sharedClient, got %#v", cfg.httpClient)
 	}
 	if _, custom := customHTTPClient(nil); custom {
@@ -146,7 +146,7 @@ func TestSendWithRetryFallsBackToSharedClient(t *testing.T) {
 	}))
 	defer server.Close()
 
-	cfg := retryFromOptions(ai.StreamOptions{TimeoutMs: 1234}, nil)
+	cfg := retryFromOptions(ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{TimeoutMs: 1234}}, nil)
 	if cfg.httpClient != nil {
 		t.Fatalf("expected no override, got %#v", cfg.httpClient)
 	}
@@ -182,7 +182,7 @@ func TestGoogleRejectsCustomHTTPClient(t *testing.T) {
 	}
 
 	final := StreamGoogle(context.Background(), model, injectionContext(), &GoogleOptions{
-		StreamOptions: ai.StreamOptions{APIKey: "g-key", HTTPClient: &countingClient{inner: server.Client()}},
+		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key", HTTPClient: &countingClient{inner: server.Client()}}},
 	}).Result()
 
 	if final.StopReason != ai.StopError {
@@ -202,7 +202,7 @@ func TestGoogleRejectsCustomHTTPClientBeforeAPIKeyCheck(t *testing.T) {
 	final := StreamGoogle(context.Background(),
 		&ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", MaxTokens: 8192},
 		injectionContext(),
-		&GoogleOptions{StreamOptions: ai.StreamOptions{HTTPClient: &countingClient{inner: http.DefaultClient}}},
+		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{HTTPClient: &countingClient{inner: http.DefaultClient}}}},
 	).Result()
 
 	if final.ErrorMessage != "Custom fetch is not supported by the Google Generative AI adapter" {
@@ -220,7 +220,7 @@ func TestGoogleAcceptsDefaultHTTPClient(t *testing.T) {
 	}
 
 	final := StreamGoogle(context.Background(), model, injectionContext(), &GoogleOptions{
-		StreamOptions: ai.StreamOptions{APIKey: "g-key", HTTPClient: http.DefaultClient},
+		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key", HTTPClient: http.DefaultClient}},
 	}).Result()
 
 	if final.StopReason == ai.StopError {

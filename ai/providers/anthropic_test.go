@@ -78,7 +78,7 @@ func TestAnthropicProviderParsesStream(t *testing.T) {
 			Parameters: ai.Object(ai.Prop("city", ai.String())),
 		}},
 	}
-	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{APIKey: "test-key"}}
+	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key"}}}
 
 	final := StreamAnthropic(context.Background(), model, req, &AnthropicOptions{StreamOptions: opts.StreamOptions}).Result()
 
@@ -146,7 +146,7 @@ func TestAnthropicPendingStopReasonFailsStream(t *testing.T) {
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	final := StreamAnthropic(context.Background(), model, req,
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "test-key"}}).Result()
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key"}}}).Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("pending stop reason should fail, got %s", final.StopReason)
@@ -184,7 +184,7 @@ func TestAnthropicReasoningTokens(t *testing.T) {
 			BaseURL: server.URL, MaxTokens: 4096, Cost: ai.ModelCost{Input: 3, Output: 15}}
 		req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 		return StreamAnthropic(context.Background(), model, req,
-			&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+			&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	}
 
 	withThinking := run(t, `{"output_tokens":50,"output_tokens_details":{"thinking_tokens":37}}`)
@@ -209,7 +209,7 @@ func TestAnthropicProviderErrorOnHTTPError(t *testing.T) {
 	defer server.Close()
 	model := &ai.Model{ID: "m", Api: ai.APIAnthropicMessages, Provider: "anthropic", BaseURL: server.URL, MaxTokens: 100}
 	final := StreamAnthropic(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	if final.StopReason != ai.StopError || !strings.Contains(final.ErrorMessage, "429") {
 		t.Fatalf("expected 429 error, got %s / %q", final.StopReason, final.ErrorMessage)
 	}
@@ -263,7 +263,7 @@ func TestAnthropicOAuthHeadersAndStealth(t *testing.T) {
 		},
 		Tools: []ai.Tool{{Name: "read", Description: "read a file", Parameters: ai.Object(ai.Prop("p", ai.String()))}},
 	}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-ant-oat-secret"}}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-ant-oat-secret"}}}
 	headers, body := anthropicCapture(t, model, req, opts, anthropicSSE)
 
 	if got := headers.Get("authorization"); got != "Bearer sk-ant-oat-secret" {
@@ -341,7 +341,7 @@ func TestAnthropicLongCacheRetentionTTL(t *testing.T) {
 		Messages:     []ai.Message{ai.NewUserText("hi", 1)},
 		Tools:        []ai.Tool{{Name: "t", Description: "d", Parameters: ai.Object(ai.Prop("q", ai.String()))}},
 	}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "test-key", CacheRetention: ai.CacheLong}}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key"}, CacheRetention: ai.CacheLong}}
 	headers, body := anthropicCapture(t, model, req, opts, anthropicSSE)
 
 	wantCC := map[string]any{"type": "ephemeral", "ttl": "1h"}
@@ -382,7 +382,7 @@ func TestAnthropicShortCacheRetentionNoTTL(t *testing.T) {
 		Input: []string{"text"}, MaxTokens: 4096,
 	}
 	req := ai.Context{SystemPrompt: "sys", Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k", CacheRetention: ai.CacheShort}}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}, CacheRetention: ai.CacheShort}}
 	_, body := anthropicCapture(t, model, req, opts, anthropicSSE)
 	cc := body["system"].([]any)[0].(map[string]any)["cache_control"].(map[string]any)
 	if cc["type"] != "ephemeral" {
@@ -419,7 +419,7 @@ func anthropicThinkingReplay(t *testing.T, allowEmptySig bool) map[string]any {
 			ai.NewUserText("again", 2),
 		},
 	}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}
 	_, body := anthropicCapture(t, model, req, opts, anthropicSSE)
 	msgs := body["messages"].([]any)
 	for _, m := range msgs {
@@ -482,7 +482,7 @@ func TestAnthropicPreservesEmptyThinkingWithSignature(t *testing.T) {
 			ai.NewUserText("again", 2),
 		},
 	}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}
 	_, body := anthropicCapture(t, model, req, opts, anthropicSSE)
 	var assistant map[string]any
 	for _, m := range body["messages"].([]any) {
@@ -520,7 +520,7 @@ func TestAnthropicForceAdaptiveThinkingRequestShape(t *testing.T) {
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	// streamSimpleAnthropic maps reasoning -> effort for adaptive models.
 	opts := &ai.SimpleStreamOptions{
-		StreamOptions: ai.StreamOptions{APIKey: "k"},
+		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}},
 		Reasoning:     ai.ThinkingHigh,
 	}
 	var gotBody map[string]any
@@ -580,7 +580,7 @@ func TestAnthropicStreamSimpleClampsMaxTokensAndBudget(t *testing.T) {
 	// budget max(0,8000-1024)=6976. Re-clamp maxTokens -> 3904.
 	// thinking_budget = min(6976, max(0,3904-1024)) = min(6976,2880) = 2880.
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText(strings.Repeat("x", 8000), 1)}}
-	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}, Reasoning: ai.ThinkingHigh}
+	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}, Reasoning: ai.ThinkingHigh}
 	StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
 
 	if v, _ := gotBody["max_tokens"].(float64); v != 3904 {
@@ -619,7 +619,7 @@ func TestAnthropicCloudflareAIGateway(t *testing.T) {
 	// auth with no apiKey at all, so its OAuth sniff never fires however the
 	// gateway key looks — no OAuth identity may leak through.
 	final := StreamAnthropic(context.Background(), model, req,
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-ant-oat-cfkey"}}).Result()
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-ant-oat-cfkey"}}}).Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}
@@ -655,7 +655,7 @@ func TestAnthropicCloudflareMissingEnvFailsStream(t *testing.T) {
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	final := StreamAnthropic(context.Background(), model, req,
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error stop, got %s", final.StopReason)
 	}
@@ -682,7 +682,7 @@ func TestAnthropicCopilotDynamicHeaders(t *testing.T) {
 		&ai.AssistantMessage{Api: ai.APIAnthropicMessages, Provider: "github-copilot", Model: "claude-test",
 			Content: ai.ContentList{ai.TextContent{Text: "ok"}}},
 	}}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-ant-oat-copilot"}}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-ant-oat-copilot"}}}
 	headers, _ := anthropicCapture(t, model, req, opts, anthropicSSE)
 
 	if got := headers.Get("X-Initiator"); got != "agent" {
@@ -715,7 +715,7 @@ func TestAnthropicAuthTokenBearerHeader(t *testing.T) {
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	// No API key: the auth token alone must authenticate the request.
 	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{
-		Env: map[string]string{ai.AnthropicAuthTokenEnv: "my-auth-token"},
+		ProviderRequestOptions: ai.ProviderRequestOptions{Env: map[string]string{ai.AnthropicAuthTokenEnv: "my-auth-token"}},
 	}}
 	headers, _ := anthropicCapture(t, model, req, opts, anthropicSSE)
 
@@ -743,8 +743,7 @@ func TestAnthropicExplicitKeyBeatsAuthToken(t *testing.T) {
 	// token, so a resolved apiKey wins over ANTHROPIC_AUTH_TOKEN. The provider
 	// only reads the token when no key was resolved (apiKey == "").
 	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{
-		APIKey: "sk-ant-plain-key",
-		Env:    map[string]string{ai.AnthropicAuthTokenEnv: "tok"},
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-ant-plain-key", Env: map[string]string{ai.AnthropicAuthTokenEnv: "tok"}},
 	}}
 	headers, _ := anthropicCapture(t, model, req, opts, anthropicSSE)
 
@@ -765,7 +764,7 @@ func TestAnthropicThinkingOmittedWhenNotProvided(t *testing.T) {
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	// Generic registry path: plain StreamOptions -> ThinkingProvided stays false.
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}
 	_, body := anthropicCapture(t, model, req, opts, anthropicSSE)
 	if _, ok := body["thinking"]; ok {
 		t.Fatalf("thinking key must be OMITTED when not provided (pi undefined), got %v", body["thinking"])
@@ -778,7 +777,7 @@ func TestAnthropicThinkingExplicitFalseSendsDisabled(t *testing.T) {
 		Input: []string{"text"}, MaxTokens: 4096, Reasoning: true,
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}, ThinkingProvided: true, ThinkingEnabled: false}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}, ThinkingProvided: true, ThinkingEnabled: false}
 	_, body := anthropicCapture(t, model, req, opts, anthropicSSE)
 	thinking, ok := body["thinking"].(map[string]any)
 	if !ok || thinking["type"] != "disabled" {
@@ -795,7 +794,7 @@ func TestAnthropicThinkingOffNullOmitsDisabled(t *testing.T) {
 		ThinkingLevelMap: ai.ThinkingLevelMap{"off": nil, "xhigh": strPtr("xhigh")},
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}, ThinkingProvided: true, ThinkingEnabled: false}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}, ThinkingProvided: true, ThinkingEnabled: false}
 	_, body := anthropicCapture(t, model, req, opts, anthropicSSE)
 	if _, ok := body["thinking"]; ok {
 		t.Fatalf("off:null model must omit thinking key when off, got %v", body["thinking"])
@@ -814,7 +813,7 @@ func TestAnthropicThinkingOffMappedStillSendsDisabled(t *testing.T) {
 		ThinkingLevelMap: ai.ThinkingLevelMap{"off": strPtr("none")},
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}, ThinkingProvided: true, ThinkingEnabled: false}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}, ThinkingProvided: true, ThinkingEnabled: false}
 	_, body := anthropicCapture(t, model, req, opts, anthropicSSE)
 	thinking, ok := body["thinking"].(map[string]any)
 	if !ok || thinking["type"] != "disabled" {
@@ -829,7 +828,7 @@ func TestAnthropicThinkingEnabledSendsBudget(t *testing.T) {
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	opts := &AnthropicOptions{
-		StreamOptions:    ai.StreamOptions{APIKey: "k"},
+		StreamOptions:    ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}},
 		ThinkingProvided: true, ThinkingEnabled: true, ThinkingBudgetTokens: 2048,
 	}
 	_, body := anthropicCapture(t, model, req, opts, anthropicSSE)
@@ -860,7 +859,7 @@ func TestAnthropicStreamSimpleNoReasoningDisablesThinking(t *testing.T) {
 	defer server.Close()
 	model.BaseURL = server.URL
 	StreamSimpleAnthropic(context.Background(), model, req,
-		&ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	thinking, ok := gotBody["thinking"].(map[string]any)
 	if !ok || thinking["type"] != "disabled" {
 		t.Fatalf("streamSimple without reasoning must send {type:disabled}, got %v", gotBody["thinking"])
@@ -880,7 +879,9 @@ func TestAnthropicSessionAffinityRetention(t *testing.T) {
 		}
 		req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 		opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{
-			APIKey: "k", SessionID: "sess-1", CacheRetention: retention,
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"},
+			SessionID:              "sess-1",
+			CacheRetention:         retention,
 		}}
 		headers, _ := anthropicCapture(t, model, req, opts, anthropicSSE)
 		return headers
@@ -934,7 +935,7 @@ data: {"type":"message_stop"}
 `
 	model := &ai.Model{ID: "m", Api: ai.APIAnthropicMessages, Provider: "anthropic", Input: []string{"text"}, MaxTokens: 100}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
 		io.WriteString(w, sse)
@@ -987,7 +988,7 @@ data: {"type":"message_stop"}
 	defer server.Close()
 	model.BaseURL = server.URL
 	final := StreamAnthropic(context.Background(), model, req,
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	if final.StopReason != ai.StopStop {
 		t.Fatalf("bare-CR SSE not parsed: %s (%s)", final.StopReason, final.ErrorMessage)
 	}
@@ -1009,10 +1010,9 @@ func TestAnthropicOnPayloadErrorFailsStream(t *testing.T) {
 	defer server.Close()
 	model.BaseURL = server.URL
 	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{
-		APIKey: "k",
-		OnPayload: func(payload any, m *ai.Model) (any, error) {
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", OnPayload: func(payload any, m *ai.Model) (any, error) {
 			return nil, errors.New("payload veto")
-		},
+		}},
 	}}
 	final := StreamAnthropic(context.Background(), model, req, opts).Result()
 	if final.StopReason != ai.StopError || final.ErrorMessage != "payload veto" {
@@ -1041,7 +1041,7 @@ func TestFable5DisabledThinkingGateLive(t *testing.T) {
 			"if upstream dropped off:null, re-confirm the disabled-thinking gate before changing this", present, off)
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}, ThinkingProvided: true, ThinkingEnabled: false}
+	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}, ThinkingProvided: true, ThinkingEnabled: false}
 	_, body := anthropicCapture(t, m, req, opts, anthropicSSE)
 	if _, ok := body["thinking"]; ok {
 		t.Fatalf("catalog fable-5 with thinking off must omit the thinking key, got %v", body["thinking"])
@@ -1078,7 +1078,7 @@ func TestAnthropicRefusalPreservesExplanation(t *testing.T) {
 
 	model := &ai.Model{ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", BaseURL: server.URL, MaxTokens: 4096}
 	final := StreamAnthropic(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("blocked request", 1)}},
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error stop, got %s", final.StopReason)
@@ -1105,7 +1105,7 @@ func TestAnthropicRefusalWithoutExplanationFallback(t *testing.T) {
 
 	model := &ai.Model{ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", BaseURL: server.URL, MaxTokens: 4096}
 	final := StreamAnthropic(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("blocked request", 1)}},
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error stop, got %s", final.StopReason)
@@ -1146,7 +1146,7 @@ func TestAnthropicRawStopReason(t *testing.T) {
 
 			model := &ai.Model{ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", BaseURL: server.URL, MaxTokens: 4096}
 			final := StreamAnthropic(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("blocked request", 1)}},
-				&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+				&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 
 			if final.StopReason != tt.wantStop {
 				t.Fatalf("stopReason = %s, want %s", final.StopReason, tt.wantStop)
@@ -1252,7 +1252,7 @@ func streamAnthropicSSE(t *testing.T, model *ai.Model, sse string) *ai.Assistant
 	clone := *model
 	clone.BaseURL = server.URL
 	return StreamAnthropic(context.Background(), &clone, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 }
 
 // mustBuildAnthropicParams builds a Messages request body, failing the test on
@@ -1394,7 +1394,7 @@ data: {"type":"message_stop"}
 	model.BaseURL = server.URL
 
 	stream := StreamAnthropic(context.Background(), model, req,
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}})
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}})
 	// The start events themselves must already expose the seeded content: the
 	// builder is seeded before the partial snapshot is taken.
 	var textStart, thinkingStart string

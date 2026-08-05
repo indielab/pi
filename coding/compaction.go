@@ -549,9 +549,11 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	// writes that cannot be reused (pi 9b3a2059): retention "none" and a fresh
 	// session id per request, rather than the session's own.
 	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{
-		APIKey:         s.apiKey,
+		ProviderRequestOptions: ai.ProviderRequestOptions{
+			APIKey:  s.apiKey,
+			Headers: s.Agent.Headers,
+		},
 		MaxTokens:      &maxTokens,
-		Headers:        s.Agent.Headers,
 		CacheRetention: ai.CacheNone,
 		SessionID:      uuidv7(),
 	}}

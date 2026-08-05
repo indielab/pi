@@ -24,7 +24,7 @@ type FetchDeferredFunction func(ctx context.Context, model *Model, handle Deferr
 
 // CancelDeferredFunction drops a deferred response. It has no stream to fail
 // through, so it returns an error (pi ProviderStreams.cancelDeferred).
-type CancelDeferredFunction func(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error
+type CancelDeferredFunction func(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredCancelOptions) error
 
 // ApiProvider binds an Api to its stream implementations. FetchDeferred and
 // CancelDeferred are nil unless the api supports deferred responses — pi marks
@@ -91,7 +91,7 @@ func RegisterApiProvider(p ApiProvider, sourceID ...string) {
 	cancelDeferred := p.CancelDeferred
 	if cancelDeferred != nil {
 		orig := cancelDeferred
-		cancelDeferred = func(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error {
+		cancelDeferred = func(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredCancelOptions) error {
 			if model.Api != api {
 				panic(fmt.Sprintf("Mismatched api: %s expected %s", model.Api, api))
 			}

@@ -49,7 +49,7 @@ func TestOpenAIProviderParsesStream(t *testing.T) {
 		Tools:    []ai.Tool{{Name: "get_time", Description: "time", Parameters: ai.Object()}},
 	}
 	final := StreamOpenAICompletions(context.Background(), model, req,
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-test"}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}}).Result()
 
 	if final.StopReason != ai.StopToolUse {
 		t.Fatalf("expected toolUse, got %s (%s)", final.StopReason, final.ErrorMessage)
@@ -126,7 +126,7 @@ func runOpenAIStream(t *testing.T, sse string, mutate func(*ai.Model)) *ai.Assis
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	return StreamOpenAICompletions(context.Background(), model, req,
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-test"}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}}).Result()
 }
 
 func thinkingSig(m *ai.AssistantMessage) (string, string) {
@@ -281,7 +281,7 @@ func TestOpenAIOffTriState(t *testing.T) {
 		model.BaseURL = server.URL
 		req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 		StreamOpenAICompletions(context.Background(), model, req,
-			&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-test"}}).Result()
+			&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}}).Result()
 		return got
 	}
 	strp := func(s string) *string { return &s }
@@ -338,7 +338,7 @@ func collectOpenAIEvents(t *testing.T, sse string, mutate func(*ai.Model)) ([]ai
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	stream := StreamOpenAICompletions(context.Background(), model, req,
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-test"}})
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}})
 	var events []ai.AssistantMessageEvent
 	for e := range stream.Events() {
 		events = append(events, e)
@@ -808,7 +808,7 @@ func TestOpenAICloudflareBaseURLResolved(t *testing.T) {
 		BaseURL: server.URL + "/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
 	}
 	final := StreamOpenAICompletions(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	if final.StopReason != ai.StopStop {
 		t.Fatalf("stream failed: %s (%s)", final.StopReason, final.ErrorMessage)
 	}
@@ -824,7 +824,7 @@ func TestOpenAICloudflareBaseURLMissingEnvFailsStream(t *testing.T) {
 		BaseURL: "https://api.cloudflare.com/client/v4/accounts/{CLOUDFLARE_ACCOUNT_ID}/ai/v1",
 	}
 	final := StreamOpenAICompletions(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error stop, got %s", final.StopReason)
 	}
@@ -955,7 +955,7 @@ func TestOpenAICopilotDynamicHeaders(t *testing.T) {
 			Input: []string{"text", "image"},
 		}
 		StreamOpenAICompletions(context.Background(), model, ai.Context{Messages: msgs},
-			&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k", Headers: optHeaders}}).Result()
+			&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", Headers: optHeaders}}}).Result()
 		return gotHeaders
 	}
 
@@ -1048,10 +1048,9 @@ func TestOpenAIOnPayloadErrorFailsStream(t *testing.T) {
 	model := openAIModel(func(m *ai.Model) { m.BaseURL = server.URL })
 	final := StreamOpenAICompletions(context.Background(), model, baseReq(), &OpenAIOptions{
 		StreamOptions: ai.StreamOptions{
-			APIKey: "k",
-			OnPayload: func(payload any, m *ai.Model) (any, error) {
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", OnPayload: func(payload any, m *ai.Model) (any, error) {
 				return nil, fmt.Errorf("payload rejected")
-			},
+			}},
 		},
 	}).Result()
 	if final.StopReason != ai.StopError || final.ErrorMessage != "payload rejected" {
@@ -1071,12 +1070,11 @@ func TestOpenAIOnPayloadReplacement(t *testing.T) {
 	model := openAIModel(func(m *ai.Model) { m.BaseURL = server.URL })
 	StreamOpenAICompletions(context.Background(), model, baseReq(), &OpenAIOptions{
 		StreamOptions: ai.StreamOptions{
-			APIKey: "k",
-			OnPayload: func(payload any, m *ai.Model) (any, error) {
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", OnPayload: func(payload any, m *ai.Model) (any, error) {
 				p, _ := payload.(map[string]any)
 				p["marker"] = "replaced"
 				return p, nil
-			},
+			}},
 		},
 	}).Result()
 	if gotBody["marker"] != "replaced" {
@@ -1094,7 +1092,7 @@ func TestOpenAIErrorMetadataRawAppended(t *testing.T) {
 	defer server.Close()
 	model := openAIModel(func(m *ai.Model) { m.BaseURL = server.URL })
 	final := StreamOpenAICompletions(context.Background(), model, baseReq(),
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error stop, got %s", final.StopReason)
 	}
@@ -1120,8 +1118,8 @@ func TestOpenAIHeaderPrecedence(t *testing.T) {
 	})
 	StreamOpenAICompletions(context.Background(), model, baseReq(), &OpenAIOptions{
 		StreamOptions: ai.StreamOptions{
-			APIKey: "k", SessionID: "sess-1",
-			Headers: ai.ProviderHeaders{"x-session-affinity": strPtr("from-opts")},
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", Headers: ai.ProviderHeaders{"x-session-affinity": strPtr("from-opts")}},
+			SessionID:              "sess-1",
 		},
 	}).Result()
 	if gotHeaders.Get("Session_id") != "sess-1" {
@@ -1152,7 +1150,7 @@ func TestOpenAISessionAffinityOpenRouterFormat(t *testing.T) {
 		m.Compat = json.RawMessage(`{"sendSessionAffinityHeaders":true}`)
 	})
 	StreamOpenAICompletions(context.Background(), model, baseReq(),
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k", SessionID: "sess-1"}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}, SessionID: "sess-1"}}).Result()
 	if gotHeaders.Get("x-session-id") != "sess-1" {
 		t.Fatalf("openrouter format must send x-session-id, got %q", gotHeaders.Get("x-session-id"))
 	}
@@ -1345,7 +1343,7 @@ func runOpenAIHTTPError(t *testing.T, status int, body string) *ai.AssistantMess
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	return StreamOpenAICompletions(context.Background(), model, req,
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-test"}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}}).Result()
 }
 
 // TestOpenRouterMetadataRawDedup locks upstream 6fbeba51's guard: error.metadata.raw
@@ -1586,7 +1584,7 @@ data: [DONE]
 	})
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
 	stream := StreamOpenAICompletions(context.Background(), model, req,
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-test"}})
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}})
 
 	var deltas []string
 	for ev := range stream.Events() {
@@ -1652,7 +1650,7 @@ func TestOpenAICompletionsRawStopReason(t *testing.T) {
 			model := &ai.Model{ID: "test-model", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 4096}
 			final := StreamOpenAICompletions(context.Background(), model,
 				ai.Context{Messages: []ai.Message{ai.NewUserText("hello", 1)}},
-				&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "test"}}).Result()
+				&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test"}}}).Result()
 
 			if final.StopReason != tt.wantStop {
 				t.Fatalf("stopReason = %s, want %s", final.StopReason, tt.wantStop)
@@ -1710,7 +1708,7 @@ func TestOpenAIEmptyCustomOnFunctionToolCall(t *testing.T) {
 				Tools:    []ai.Tool{{Name: "read", Description: "Read a file", Parameters: ai.Object()}},
 			}
 			final := StreamOpenAICompletions(context.Background(), model, req,
-				&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "test"}}).Result()
+				&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test"}}}).Result()
 
 			if final.StopReason != ai.StopToolUse {
 				t.Fatalf("stopReason = %s (%s)", final.StopReason, final.ErrorMessage)
@@ -1776,7 +1774,7 @@ func TestOpenAIToolCallNameNullishCoalescing(t *testing.T) {
 				Tools:    []ai.Tool{{Name: "read", Description: "Read a file", Parameters: ai.Object()}},
 			}
 			final := StreamOpenAICompletions(context.Background(), model, req,
-				&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "test"}}).Result()
+				&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test"}}}).Result()
 
 			if len(final.Content) != 1 {
 				t.Fatalf("content = %#v, want one tool call", final.Content)

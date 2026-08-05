@@ -132,7 +132,7 @@ func TestOpenAIStreamedToolCallKeepsArgumentOrder(t *testing.T) {
 	}
 	final := StreamOpenAICompletions(context.Background(), model,
 		ai.Context{Messages: []ai.Message{ai.NewUserText("what is in /tmp?", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "sk-test"}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}}).Result()
 	if final.StopReason != ai.StopToolUse {
 		t.Fatalf("expected toolUse, got %s (%s)", final.StopReason, final.ErrorMessage)
 	}

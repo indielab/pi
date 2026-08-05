@@ -337,7 +337,7 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 		return outer
 	}
 
-	cancelDeferred := func(_ context.Context, model *ai.Model, handle ai.DeferredHandle, opts *ai.StreamOptions) error {
+	cancelDeferred := func(_ context.Context, model *ai.Model, handle ai.DeferredHandle, opts *ai.DeferredCancelOptions) error {
 		reg.mu.Lock()
 		reg.State.CancelledDeferred = append(reg.State.CancelledDeferred, handle)
 		entry := reg.deferred[handle.ID]
@@ -410,29 +410,25 @@ func (r *FauxProviderRegistration) redeem(
 		return fauxDeferredMessage(model, entry.handle), nil
 	}
 	if entry.final == nil {
-		entry.final = r.resolveResponse(entry.step, entry.req, fauxRedeemOptions(entry.opts, opts), entry.model)
+		entry.final = r.resolveResponse(entry.step, entry.req, fauxRedeemOptions(entry.opts), entry.model)
 	}
 	return entry.final, nil
 }
 
 // fauxRedeemOptions builds the options the scripted step sees when a fetch
-// redeems a submission: the submission's options minus the deferral request
-// and its own response hook, with the fetch's options layered over them. pi
-// spreads `{...submissionOptions, ...fetchOptions}`, where an absent key does
-// not override; Go has no key presence, so the port's zero-means-unset
-// convention decides instead — the fetch's stream options win when they are
-// set at all.
-func fauxRedeemOptions(submission *ai.SimpleStreamOptions, fetch *ai.DeferredFetchOptions) *ai.SimpleStreamOptions {
-	merged := ai.SimpleStreamOptions{}
+// redeems a submission: the submission's own options, minus the deferral
+// request and its own response hook. The fetch's options do not participate —
+// upstream 686f193e5 stopped spreading them over the submission's, because a
+// redeemed response was shaped when it was submitted and a fetch has no
+// request body left to influence.
+func fauxRedeemOptions(submission *ai.SimpleStreamOptions) *ai.SimpleStreamOptions {
+	redeem := ai.SimpleStreamOptions{}
 	if submission != nil {
-		merged = *submission
+		redeem = *submission
 	}
-	merged.Deferred = nil
-	merged.OnResponse = nil
-	if fetch != nil {
-		merged.StreamOptions = fetch.StreamOptions
-	}
-	return &merged
+	redeem.Deferred = nil
+	redeem.OnResponse = nil
+	return &redeem
 }
 
 // fauxDeferredMessage is the empty assistant message that carries a handle.

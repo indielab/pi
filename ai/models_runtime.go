@@ -138,7 +138,7 @@ type DeferredFetcher interface {
 // response (pi's optional Provider.cancelDeferred). It is independent of
 // DeferredFetcher: an api may implement either alone.
 type DeferredCanceller interface {
-	CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error
+	CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredCancelOptions) error
 }
 
 // CreateProviderOptions are the parts createProvider assembles into a Provider.
@@ -228,7 +228,7 @@ func (p deferredFetchProvider) FetchDeferred(ctx context.Context, model *Model, 
 
 type deferredCancelProvider struct{ *providerImpl }
 
-func (p deferredCancelProvider) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error {
+func (p deferredCancelProvider) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredCancelOptions) error {
 	return p.cancelDeferred(ctx, model, handle, opts)
 }
 
@@ -238,7 +238,7 @@ func (p deferredProvider) FetchDeferred(ctx context.Context, model *Model, handl
 	return p.fetchDeferred(ctx, model, handle, opts)
 }
 
-func (p deferredProvider) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error {
+func (p deferredProvider) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredCancelOptions) error {
 	return p.cancelDeferred(ctx, model, handle, opts)
 }
 
@@ -386,7 +386,7 @@ func (p *providerImpl) fetchDeferred(ctx context.Context, model *Model, handle D
 }
 
 // cancelDeferred backs the announced DeferredCanceller.
-func (p *providerImpl) cancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *StreamOptions) error {
+func (p *providerImpl) cancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredCancelOptions) error {
 	s, ok := p.streamsFor(model)
 	if !ok || s.CancelDeferred == nil {
 		return newModelsError(ErrProvider,
@@ -416,9 +416,9 @@ type ModelsRefreshResult struct {
 	Errors  map[string]error
 }
 
-// ModelsStreamTransforms are Models-only stream hooks (pi
-// ModelsStreamTransforms); they are stripped before provider dispatch.
-type ModelsStreamTransforms struct {
+// ModelsRequestTransforms are Models-only request hooks (pi
+// ModelsRequestTransforms); they are stripped before provider dispatch.
+type ModelsRequestTransforms struct {
 	// TransformHeaders transforms the fully assembled model/auth/request
 	// headers before provider dispatch. Deletion markers (nil values) are part
 	// of the value it sees and returns: a transform that rebuilds the map must
@@ -433,21 +433,28 @@ type ModelsStreamTransforms struct {
 // options plus Models-only transforms (pi ModelsApiStreamOptions).
 type ModelsStreamOptions struct {
 	StreamOptions
-	ModelsStreamTransforms
+	ModelsRequestTransforms
 }
 
 // ModelsSimpleStreamOptions are Models.StreamSimple/CompleteSimple options
 // (pi ModelsSimpleStreamOptions).
 type ModelsSimpleStreamOptions struct {
 	SimpleStreamOptions
-	ModelsStreamTransforms
+	ModelsRequestTransforms
 }
 
-// ModelsDeferredOptions are Models.FetchDeferred/CancelDeferred options
-// (pi ModelsDeferredOptions).
-type ModelsDeferredOptions struct {
+// ModelsDeferredFetchOptions are Models.FetchDeferred options
+// (pi ModelsDeferredFetchOptions).
+type ModelsDeferredFetchOptions struct {
 	DeferredFetchOptions
-	ModelsStreamTransforms
+	ModelsRequestTransforms
+}
+
+// ModelsDeferredCancelOptions are Models.CancelDeferred options
+// (pi ModelsDeferredCancelOptions).
+type ModelsDeferredCancelOptions struct {
+	DeferredCancelOptions
+	ModelsRequestTransforms
 }
 
 // Models is the runtime collection of providers plus auth application and
@@ -512,11 +519,11 @@ type Models interface {
 	// responses — arrive as an error message rather than a Go error. A response
 	// the provider is still producing comes back with StopDeferred and the
 	// handle to retry with.
-	FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredOptions) *AssistantMessage
+	FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredFetchOptions) *AssistantMessage
 
 	// CancelDeferred drops a deferred response (pi cancelDeferred). It has no
 	// message to carry a failure, so it returns one.
-	CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredOptions) error
+	CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredCancelOptions) error
 }
 
 // MutableModels adds provider mutation (pi MutableModels).
@@ -1215,9 +1222,9 @@ func (m *modelsImpl) Logout(ctx context.Context, providerID string) error {
 func (m *modelsImpl) applyAuth(
 	ctx context.Context,
 	model *Model,
-	opts *StreamOptions,
-	transforms ModelsStreamTransforms,
-) (*Model, *StreamOptions, error) {
+	opts *ProviderRequestOptions,
+	transforms ModelsRequestTransforms,
+) (*Model, *ProviderRequestOptions, error) {
 	var overrides *AuthResolutionOverrides
 	if opts != nil {
 		overrides = &AuthResolutionOverrides{APIKey: opts.APIKey, Env: opts.Env}
@@ -1231,7 +1238,7 @@ func (m *modelsImpl) applyAuth(
 	}
 	auth := resolution.Auth
 
-	ro := StreamOptions{}
+	ro := ProviderRequestOptions{}
 	if opts != nil {
 		ro = *opts
 	}
@@ -1265,17 +1272,22 @@ func (m *modelsImpl) Stream(ctx context.Context, model *Model, req Context, opts
 	if p == nil {
 		return errorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
 	}
-	var base *StreamOptions
-	var transforms ModelsStreamTransforms
+	var base *ProviderRequestOptions
+	var transforms ModelsRequestTransforms
 	if opts != nil {
-		base = &opts.StreamOptions
-		transforms = opts.ModelsStreamTransforms
+		base = &opts.ProviderRequestOptions
+		transforms = opts.ModelsRequestTransforms
 	}
 	requestModel, requestOptions, err := m.applyAuth(ctx, model, base, transforms)
 	if err != nil {
 		return errorStream(model, err)
 	}
-	return p.Stream(ctx, requestModel, req, requestOptions)
+	stream := StreamOptions{}
+	if opts != nil {
+		stream = opts.StreamOptions
+	}
+	stream.ProviderRequestOptions = *requestOptions
+	return p.Stream(ctx, requestModel, req, &stream)
 }
 
 func (m *modelsImpl) Complete(ctx context.Context, model *Model, req Context, opts *ModelsStreamOptions) *AssistantMessage {
@@ -1287,11 +1299,11 @@ func (m *modelsImpl) StreamSimple(ctx context.Context, model *Model, req Context
 	if p == nil {
 		return errorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
 	}
-	var base *StreamOptions
-	var transforms ModelsStreamTransforms
+	var base *ProviderRequestOptions
+	var transforms ModelsRequestTransforms
 	if opts != nil {
-		base = &opts.SimpleStreamOptions.StreamOptions
-		transforms = opts.ModelsStreamTransforms
+		base = &opts.SimpleStreamOptions.ProviderRequestOptions
+		transforms = opts.ModelsRequestTransforms
 	}
 	requestModel, requestOptions, err := m.applyAuth(ctx, model, base, transforms)
 	if err != nil {
@@ -1301,9 +1313,7 @@ func (m *modelsImpl) StreamSimple(ctx context.Context, model *Model, req Context
 	if opts != nil {
 		simple = opts.SimpleStreamOptions
 	}
-	if requestOptions != nil {
-		simple.StreamOptions = *requestOptions
-	}
+	simple.ProviderRequestOptions = *requestOptions
 	return p.StreamSimple(ctx, requestModel, req, &simple)
 }
 
@@ -1311,30 +1321,42 @@ func (m *modelsImpl) CompleteSimple(ctx context.Context, model *Model, req Conte
 	return m.StreamSimple(ctx, model, req, opts).Result()
 }
 
-func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredOptions) *AssistantMessage {
+func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredFetchOptions) *AssistantMessage {
 	p := m.GetProvider(model.Provider)
 	fetcher, ok := p.(DeferredFetcher)
 	if !ok {
 		return errorStream(model, deferredUnsupported(p, model.Provider)).Result()
 	}
-	requestModel, requestOptions, err := m.applyDeferredAuth(ctx, model, opts)
+	var base *ProviderRequestOptions
+	var transforms ModelsRequestTransforms
+	if opts != nil {
+		base = &opts.ProviderRequestOptions
+		transforms = opts.ModelsRequestTransforms
+	}
+	requestModel, requestOptions, err := m.applyAuth(ctx, model, base, transforms)
 	if err != nil {
 		return errorStream(model, err).Result()
 	}
-	deferredOptions := DeferredFetchOptions{StreamOptions: *requestOptions}
+	deferredOptions := DeferredFetchOptions{ProviderRequestOptions: *requestOptions}
 	if opts != nil {
 		deferredOptions.Wait = opts.Wait
 	}
 	return fetcher.FetchDeferred(ctx, requestModel, handle, &deferredOptions).Result()
 }
 
-func (m *modelsImpl) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredOptions) error {
+func (m *modelsImpl) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredCancelOptions) error {
 	p := m.GetProvider(model.Provider)
 	canceller, ok := p.(DeferredCanceller)
 	if !ok {
 		return deferredUnsupported(p, model.Provider)
 	}
-	requestModel, requestOptions, err := m.applyDeferredAuth(ctx, model, opts)
+	var base *ProviderRequestOptions
+	var transforms ModelsRequestTransforms
+	if opts != nil {
+		base = &opts.DeferredCancelOptions
+		transforms = opts.ModelsRequestTransforms
+	}
+	requestModel, requestOptions, err := m.applyAuth(ctx, model, base, transforms)
 	if err != nil {
 		return err
 	}
@@ -1350,21 +1372,6 @@ func deferredUnsupported(p Provider, providerID string) error {
 	}
 	return newModelsError(ErrProvider,
 		"Provider "+providerID+" does not support deferred responses"+deferredUnsupportedHint, nil)
-}
-
-// applyDeferredAuth is applyAuth over ModelsDeferredOptions.
-func (m *modelsImpl) applyDeferredAuth(
-	ctx context.Context,
-	model *Model,
-	opts *ModelsDeferredOptions,
-) (*Model, *StreamOptions, error) {
-	var base *StreamOptions
-	var transforms ModelsStreamTransforms
-	if opts != nil {
-		base = &opts.StreamOptions
-		transforms = opts.ModelsStreamTransforms
-	}
-	return m.applyAuth(ctx, model, base, transforms)
 }
 
 // HasApi reports whether a model uses the given api (pi hasApi narrowing).

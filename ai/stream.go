@@ -45,7 +45,7 @@ func withEnvAPIKey(model *Model, opts *StreamOptions) *StreamOptions {
 		return opts
 	}
 	if opts == nil {
-		return &StreamOptions{APIKey: key}
+		return &StreamOptions{ProviderRequestOptions: ProviderRequestOptions{APIKey: key}}
 	}
 	clone := *opts
 	clone.APIKey = key
@@ -68,7 +68,9 @@ func withEnvAPIKeySimple(model *Model, opts *SimpleStreamOptions) *SimpleStreamO
 		return opts
 	}
 	if opts == nil {
-		return &SimpleStreamOptions{StreamOptions: StreamOptions{APIKey: key}}
+		return &SimpleStreamOptions{
+			StreamOptions: StreamOptions{ProviderRequestOptions: ProviderRequestOptions{APIKey: key}},
+		}
 	}
 	clone := *opts
 	clone.APIKey = key

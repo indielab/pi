@@ -28,7 +28,7 @@ func TestRetryDefaultIsZeroRetries(t *testing.T) {
 	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 100}
 	final := StreamOpenAICompletions(context.Background(), model,
 		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error with zero default retries, got %s", final.StopReason)
@@ -56,7 +56,7 @@ func TestProviderRetriesOn429ThenSucceeds(t *testing.T) {
 	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 100}
 	final := StreamOpenAICompletions(context.Background(), model,
 		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k", MaxRetries: 2}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", MaxRetries: 2}}}).Result()
 
 	if final.StopReason == ai.StopError {
 		t.Fatalf("expected success after retry, got error: %s", final.ErrorMessage)
@@ -79,7 +79,7 @@ func TestProviderStopsRetryingPastLimit(t *testing.T) {
 	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 100}
 	final := StreamOpenAICompletions(context.Background(), model,
 		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{APIKey: "k", MaxRetries: 1}}).Result()
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", MaxRetries: 1}}}).Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error after exhausting retries, got %s", final.StopReason)
@@ -481,14 +481,14 @@ func TestRetryFromOptionsDefaults(t *testing.T) {
 	if got := retryFromOptions(ai.StreamOptions{}, openaiSDKErrorMessage); got.maxRetries != 0 {
 		t.Fatalf("default maxRetries = %d, want 0", got.maxRetries)
 	}
-	if got := retryFromOptions(ai.StreamOptions{MaxRetries: -3}, openaiSDKErrorMessage); got.maxRetries != 0 {
+	if got := retryFromOptions(ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{MaxRetries: -3}}, openaiSDKErrorMessage); got.maxRetries != 0 {
 		t.Fatalf("negative maxRetries = %d, want 0", got.maxRetries)
 	}
-	if got := retryFromOptions(ai.StreamOptions{MaxRetries: 4}, openaiSDKErrorMessage); got.maxRetries != 4 {
+	if got := retryFromOptions(ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{MaxRetries: 4}}, openaiSDKErrorMessage); got.maxRetries != 4 {
 		t.Fatalf("explicit maxRetries = %d, want 4", got.maxRetries)
 	}
 	cap := 1234
-	if got := retryFromOptions(ai.StreamOptions{MaxRetryDelayMs: &cap}, openaiSDKErrorMessage); got.maxRetryDelayMs != 1234 {
+	if got := retryFromOptions(ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{MaxRetryDelayMs: &cap}}, openaiSDKErrorMessage); got.maxRetryDelayMs != 1234 {
 		t.Fatalf("maxRetryDelayMs override = %d, want 1234", got.maxRetryDelayMs)
 	}
 	if got := retryFromOptions(ai.StreamOptions{}, openaiSDKErrorMessage); got.maxRetryDelayMs != defaultMaxRetryDelayMs {
@@ -561,7 +561,7 @@ func TestResponsesPromptCacheKey(t *testing.T) {
 	model := &ai.Model{ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "openai", BaseURL: server.URL, MaxTokens: 100}
 	StreamOpenAIResponses(context.Background(), model,
 		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{APIKey: "k", SessionID: "sess-123", CacheRetention: ai.CacheShort}}).Result()
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}, SessionID: "sess-123", CacheRetention: ai.CacheShort}}).Result()
 
 	if gotBody["prompt_cache_key"] != "sess-123" {
 		t.Fatalf("prompt_cache_key not sent: %v", gotBody["prompt_cache_key"])
@@ -630,7 +630,7 @@ func TestGoogleRetriesTransientStatusThenSucceeds(t *testing.T) {
 	}))
 	defer server.Close()
 
-	final := googleRetryStream(t, server.URL, ai.StreamOptions{APIKey: "k", MaxRetries: 1}).Result()
+	final := googleRetryStream(t, server.URL, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", MaxRetries: 1}}).Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("expected success after retry, got error: %s", final.ErrorMessage)
 	}

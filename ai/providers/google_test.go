@@ -49,7 +49,7 @@ func TestGoogleProviderParsesStream(t *testing.T) {
 		Tools:        []ai.Tool{{Name: "lookup", Description: "look up", Parameters: ai.Object(ai.Prop("q", ai.String()))}},
 	}
 	maxTok := 8192
-	final := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{APIKey: "g-key", MaxTokens: &maxTok}}).Result()
+	final := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key"}, MaxTokens: &maxTok}}).Result()
 
 	if final.StopReason != ai.StopToolUse {
 		t.Fatalf("expected toolUse, got %s (%s)", final.StopReason, final.ErrorMessage)
@@ -376,7 +376,7 @@ func googleStreamWithFinish(t *testing.T, finish string) *ai.AssistantMessage {
 	defer server.Close()
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 }
 
 // TestGoogleFinishReasonSafety mirrors pi's google-raw-stop-reason.test.ts. Since
@@ -440,7 +440,7 @@ func TestGoogleTextSignatureRecv(t *testing.T) {
 	defer server.Close()
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	final := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+	final := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	var sig string
 	for _, c := range final.Content {
 		if tc, ok := c.(ai.TextContent); ok {
@@ -618,7 +618,7 @@ func TestGoogleDuplicateAndEmptyToolCallIDs(t *testing.T) {
 	defer server.Close()
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	final := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}}).Result()
+	final := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
 	var ids []string
 	for _, c := range final.Content {
 		if tc, ok := c.(ai.ToolCall); ok {
@@ -654,7 +654,7 @@ func googleServe(t *testing.T, modelID, sse string) *ai.AssistantMessageEventStr
 	t.Cleanup(server.Close)
 	model := &ai.Model{ID: modelID, Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{APIKey: "k"}})
+	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}})
 }
 
 // --- F1: gemma-4 thinkingLevel map ---
@@ -890,7 +890,7 @@ func TestGoogleXHighNoLevelNoBudget(t *testing.T) {
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	StreamSimpleGoogle(context.Background(), model, req, &ai.SimpleStreamOptions{
-		StreamOptions: ai.StreamOptions{APIKey: "k"}, Reasoning: ai.ThinkingXHigh,
+		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}, Reasoning: ai.ThinkingXHigh,
 	}).Result()
 	gen, _ := gotBody["generationConfig"].(map[string]any)
 	tc, _ := gen["thinkingConfig"].(map[string]any)
@@ -919,10 +919,9 @@ func TestGoogleOnPayloadErrorFailsStream(t *testing.T) {
 	defer server.Close()
 	model.BaseURL = server.URL
 	opts := &GoogleOptions{StreamOptions: ai.StreamOptions{
-		APIKey: "k",
-		OnPayload: func(payload any, m *ai.Model) (any, error) {
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", OnPayload: func(payload any, m *ai.Model) (any, error) {
 			return nil, errors.New("payload veto")
-		},
+		}},
 	}}
 	final := StreamGoogle(context.Background(), model, req, opts).Result()
 	if final.StopReason != ai.StopError || final.ErrorMessage != "payload veto" {
