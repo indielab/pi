@@ -295,10 +295,13 @@ const (
 	ErrorSessionLocked  ProtocolErrorCode = "session_locked"
 	ErrorNotFound       ProtocolErrorCode = "not_found"
 	ErrorInvalidRequest ProtocolErrorCode = "invalid_request"
+	ErrorNotImplemented ProtocolErrorCode = "not_implemented"
+	ErrorInternal       ProtocolErrorCode = "internal_error"
 )
 
 var protocolErrorCodes = []ProtocolErrorCode{
 	ErrorVersion, ErrorBusy, ErrorSessionLocked, ErrorNotFound, ErrorInvalidRequest,
+	ErrorNotImplemented, ErrorInternal,
 }
 
 // ProtocolError is a structured failure carried in a response or hello_error.

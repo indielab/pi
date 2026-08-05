@@ -142,6 +142,16 @@ const serverMessages: Array<[string, unknown]> = [
 		type: "response", id: "r9", ok: false,
 		error: { code: "not_found", message: "no such session" },
 	}],
+	// The two sanitized failure codes, carrying the exact messages the server
+	// substitutes for a failure's own text.
+	["resp_not_implemented", {
+		type: "response", id: "r9", ok: false,
+		error: { code: "not_implemented", message: "Operation is not implemented" },
+	}],
+	["resp_internal_error", {
+		type: "response", id: "r9", ok: false,
+		error: { code: "internal_error", message: "Internal server error" },
+	}],
 	["evt_server_snapshot", { type: "event", event: { type: "server_snapshot", snapshot: serverSnapshot } }],
 	["evt_session_snapshot", { type: "event", event: { type: "session_snapshot", snapshot: sessionSnapshot } }],
 	["evt_removed", { type: "event", event: { type: "session_removed", sessionId: "s1" } }],

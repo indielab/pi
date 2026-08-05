@@ -3,8 +3,10 @@
 package unix_test
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -595,7 +597,7 @@ func TestServiceFailuresAreNotExposedToClients(t *testing.T) {
 	if response.OK {
 		t.Fatalf("expected a failure, got %#v", response)
 	}
-	if response.Error.Code != protocol.ErrorInvalidRequest || response.Error.Message != "Internal server error" {
+	if response.Error.Code != protocol.ErrorInternal || response.Error.Message != server.InternalErrorMessage {
 		t.Fatalf("leaked service detail: %#v", response.Error)
 	}
 	found := false
@@ -606,6 +608,117 @@ func TestServiceFailuresAreNotExposedToClients(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("the service error must reach the observer, got %v", errs.all())
+	}
+}
+
+// A service that is missing an operation says so with a fixed code and a fixed
+// message. Whatever the error itself said is not the peer's business.
+func TestNotImplementedIsReportedWithAStableMessage(t *testing.T) {
+	t.Parallel()
+	service := servertest.NewService()
+	service.SetListSessionsHook(func(call int) error {
+		if call > 1 {
+			return server.NewNotImplementedError()
+		}
+		return nil
+	})
+	h := start(t, service, nil)
+
+	client := h.connected()
+	response := request(t, client, "list", protocol.NewListCommand())
+	if response.OK {
+		t.Fatalf("expected a failure, got %#v", response)
+	}
+	if response.Error.Code != protocol.ErrorNotImplemented {
+		t.Fatalf("code = %q, want not_implemented", response.Error.Code)
+	}
+	if response.Error.Message != "Operation is not implemented" {
+		t.Fatalf("message = %q, want the constant not_implemented message", response.Error.Message)
+	}
+}
+
+// The message a not_implemented failure carries is discarded on the way out,
+// even when a service put private detail in it.
+func TestNotImplementedDiscardsTheErrorsOwnMessage(t *testing.T) {
+	t.Parallel()
+	service := servertest.NewService()
+	service.SetListSessionsHook(func(call int) error {
+		if call > 1 {
+			return server.NewError(protocol.ErrorNotImplemented, "private backlog detail", map[string]any{
+				"ticket": "private ticket",
+			})
+		}
+		return nil
+	})
+	h := start(t, service, nil)
+
+	client := h.connected()
+	response := request(t, client, "list", protocol.NewListCommand())
+	if response.OK {
+		t.Fatalf("expected a failure, got %#v", response)
+	}
+	if response.Error.Message != "Operation is not implemented" {
+		t.Fatalf("leaked the error's own message: %q", response.Error.Message)
+	}
+	if response.Error.Details != nil {
+		t.Fatalf("leaked the error's details: %#v", *response.Error.Details)
+	}
+	assertWireIsClean(t, response)
+}
+
+// An InternalError hands its cause to the local observer and nothing at all to
+// the peer. Both halves matter: dropping the cause loses the only report of the
+// failure, and forwarding it leaks what broke.
+func TestInternalErrorCauseIsReportedButNeverSerialized(t *testing.T) {
+	t.Parallel()
+	cause := fmt.Errorf("private storage detail: %w", errors.New("private root cause"))
+	service := servertest.NewService()
+	service.SetListSessionsHook(func(call int) error {
+		if call > 1 {
+			return server.NewInternalError(cause)
+		}
+		return nil
+	})
+	var errs errorLog
+	h := start(t, service, func(o *unix.ServerOptions) { o.OnError = errs.record })
+
+	client := h.connected()
+	response := request(t, client, "list", protocol.NewListCommand())
+	if response.OK {
+		t.Fatalf("expected a failure, got %#v", response)
+	}
+	if response.Error.Code != protocol.ErrorInternal || response.Error.Message != server.InternalErrorMessage {
+		t.Fatalf("wrong sanitized failure: %#v", response.Error)
+	}
+	assertWireIsClean(t, response)
+
+	reported := errs.all()
+	found := false
+	for _, err := range reported {
+		if err == cause {
+			found = true
+		}
+		var wrapper *server.InternalError
+		if errors.As(err, &wrapper) {
+			t.Errorf("the wrapper itself must not be reported, only its cause: %v", err)
+		}
+	}
+	if !found {
+		t.Fatalf("the retained cause must reach the observer, got %v", reported)
+	}
+}
+
+// assertWireIsClean re-encodes a response exactly as the transport does and
+// fails if the word "private" survives into the bytes a peer reads. Checking
+// the frame rather than the struct catches detail smuggled into any field.
+func assertWireIsClean(t *testing.T, response *protocol.ResponseEnvelope) {
+	t.Helper()
+	frame, err := protocol.EncodeServerMessage(response, nil)
+	if err != nil {
+		t.Fatalf("encode response: %v", err)
+	}
+	if bytes.Contains(frame, []byte("private")) {
+		t.Fatalf("private detail reached the wire: %q", frame)
 	}
 }
 
@@ -632,7 +745,7 @@ func TestPanickingServiceFailsTheRequestNotTheProcess(t *testing.T) {
 	if response.OK {
 		t.Fatalf("expected a failure, got %#v", response)
 	}
-	if response.Error.Code != protocol.ErrorInvalidRequest || response.Error.Message != "Internal server error" {
+	if response.Error.Code != protocol.ErrorInternal || response.Error.Message != server.InternalErrorMessage {
 		t.Fatalf("leaked the panic to the peer: %#v", response.Error)
 	}
 	found := false

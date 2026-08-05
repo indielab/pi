@@ -667,8 +667,23 @@ func (s *Server) closeConnection(conn ByteConn, finalChunk []byte) {
 
 // toProtocolError decides what a failure is allowed to tell the peer.
 func (s *Server) toProtocolError(err error) *protocol.ProtocolError {
+	// Checked before *Error, because an InternalError may wrap one: its whole
+	// purpose is that whatever it holds stays off the wire.
+	var internalError *InternalError
+	if errors.As(err, &internalError) {
+		s.reportError(internalError.Cause)
+		return &protocol.ProtocolError{Code: protocol.ErrorInternal, Message: InternalErrorMessage}
+	}
 	var serverError *Error
 	if errors.As(err, &serverError) && serverError.crossesProtocolBoundary() {
+		// A missing operation says only that it is missing. The error's own
+		// message and details are discarded rather than risk naming internals.
+		if serverError.Code == protocol.ErrorNotImplemented {
+			return &protocol.ProtocolError{
+				Code:    protocol.ErrorNotImplemented,
+				Message: NotImplementedMessage,
+			}
+		}
 		protoErr := &protocol.ProtocolError{Code: serverError.Code, Message: serverError.Message}
 		if serverError.Details != nil {
 			details := serverError.Details
@@ -681,7 +696,7 @@ func (s *Server) toProtocolError(err error) *protocol.ProtocolError {
 		return &protocol.ProtocolError{Code: protocol.ErrorInvalidRequest, Message: validationError.Error()}
 	}
 	s.reportError(err)
-	return &protocol.ProtocolError{Code: protocol.ErrorInvalidRequest, Message: "Internal server error"}
+	return &protocol.ProtocolError{Code: protocol.ErrorInternal, Message: InternalErrorMessage}
 }
 
 // reportError hands a failure to the error observer. An observer that panics

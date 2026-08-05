@@ -229,6 +229,14 @@ func goServerMessages() map[string]ServerMessage {
 			Type: "response", ID: "r9", OK: false,
 			Error: &ProtocolError{Code: ErrorNotFound, Message: "no such session"},
 		},
+		"resp_not_implemented": &ResponseEnvelope{
+			Type: "response", ID: "r9", OK: false,
+			Error: &ProtocolError{Code: ErrorNotImplemented, Message: "Operation is not implemented"},
+		},
+		"resp_internal_error": &ResponseEnvelope{
+			Type: "response", ID: "r9", OK: false,
+			Error: &ProtocolError{Code: ErrorInternal, Message: "Internal server error"},
+		},
 		"evt_server_snapshot": &EventEnvelope{
 			Type:  "event",
 			Event: &ServerSnapshotEvent{Type: "server_snapshot", Snapshot: fixtureServerSnapshot()},

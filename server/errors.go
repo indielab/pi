@@ -13,6 +13,16 @@ const (
 	defaultNotFoundMessage = "Session was not found"
 )
 
+// The two messages the server substitutes for a failure's own text. They are
+// byte-golden: a peer reads them off the wire.
+const (
+	// InternalErrorMessage answers any failure that is not safe to describe.
+	InternalErrorMessage = "Internal server error"
+	// NotImplementedMessage answers a missing operation without naming which
+	// internals are missing.
+	NotImplementedMessage = "Operation is not implemented"
+)
+
 // operationErrorCodes are the protocol error codes a service or runtime is
 // allowed to put on the wire. auth and version belong to the handshake and are
 // the server's alone to report.
@@ -21,12 +31,15 @@ var operationErrorCodes = []protocol.ProtocolErrorCode{
 	protocol.ErrorSessionLocked,
 	protocol.ErrorNotFound,
 	protocol.ErrorInvalidRequest,
+	protocol.ErrorNotImplemented,
 }
 
 // Error is a service or runtime failure that can safely cross the protocol
-// boundary: its code and message reach the client verbatim. Any other error a
-// service returns is reported to the server's error observer and answered with
-// a generic invalid_request, so private detail never leaks to a peer.
+// boundary: its code and message reach the client verbatim — except under code
+// not_implemented, whose message is replaced by NotImplementedMessage. Any
+// other error a service returns is reported to the server's error observer and
+// answered with a generic internal_error, so private detail never leaks to a
+// peer.
 //
 // DIVERGENCE (deliberate): pi exports SessionBusyError, SessionLockedError and
 // SessionNotFoundError as subclasses that differ only in their default message.
@@ -62,6 +75,38 @@ func NewLockedError(message string, details any) *Error {
 // takes pi's default.
 func NewNotFoundError(message string, details any) *Error {
 	return NewError(protocol.ErrorNotFound, orDefault(message, defaultNotFoundMessage), details)
+}
+
+// NewNotImplementedError reports that the operation does not exist. It takes no
+// message: the one that reaches the peer is always NotImplementedMessage.
+func NewNotImplementedError() *Error {
+	return NewError(protocol.ErrorNotImplemented, NotImplementedMessage, nil)
+}
+
+// InternalError is a failure that is NOT safe to describe to a peer. It carries
+// its cause for the server's own error observer, and the wire sees only
+// InternalErrorMessage — a service wraps a storage or runtime failure in one of
+// these to have it reported locally without leaking what broke.
+//
+// DIVERGENCE (deliberate): pi's InternalServerError extends Error rather than
+// PiServerError, which is how it stays out of the branch that copies a code and
+// message onto the wire. Go has no hierarchy to lean on, so the separation is
+// the type itself — InternalError is not an *Error and carries no protocol
+// code, and toProtocolError matches it first.
+type InternalError struct {
+	Cause error
+}
+
+// Error is the message a local reader sees. It is deliberately the same
+// sanitized text that reaches the peer: the detail lives in Cause, which
+// errors.Unwrap and the error observer reach and the wire never does.
+func (e *InternalError) Error() string { return InternalErrorMessage }
+
+func (e *InternalError) Unwrap() error { return e.Cause }
+
+// NewInternalError wraps a failure whose detail must not leave the process.
+func NewInternalError(cause error) *InternalError {
+	return &InternalError{Cause: cause}
 }
 
 func orDefault(message, fallback string) string {
