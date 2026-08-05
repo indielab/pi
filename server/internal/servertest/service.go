@@ -98,25 +98,25 @@ type Service struct {
 
 // SetListSessionsHook installs a hook that runs at the top of ListSessions;
 // returning an error fails the call. It is safe to call on a running server.
-func (b *Service) SetListSessionsHook(hook func(call int) error) {
-	b.mu.Lock()
-	b.listSessionsHook = hook
-	b.mu.Unlock()
+func (s *Service) SetListSessionsHook(hook func(call int) error) {
+	s.mu.Lock()
+	s.listSessionsHook = hook
+	s.mu.Unlock()
 }
 
 // SetListModelsHook installs a hook that runs at the top of ListModels.
-func (b *Service) SetListModelsHook(hook func(call int) error) {
-	b.mu.Lock()
-	b.listModelsHook = hook
-	b.mu.Unlock()
+func (s *Service) SetListModelsHook(hook func(call int) error) {
+	s.mu.Lock()
+	s.listModelsHook = hook
+	s.mu.Unlock()
 }
 
 // SetCreateSessionIDOverride rewrites the ID the service persists, which is how
 // a test makes a service disobey its server-assigned ID.
-func (b *Service) SetCreateSessionIDOverride(id string) {
-	b.mu.Lock()
-	b.createIDOverride = id
-	b.mu.Unlock()
+func (s *Service) SetCreateSessionIDOverride(id string) {
+	s.mu.Lock()
+	s.createIDOverride = id
+	s.mu.Unlock()
 }
 
 var _ server.Service = (*Service)(nil)
@@ -131,28 +131,28 @@ func NewService() *Service {
 }
 
 // Seed stores one idle session with default fields.
-func (b *Service) Seed(id string) {
+func (s *Service) Seed(id string) {
 	if id == "" {
 		id = "session-1"
 	}
 	name := "Session " + id
-	b.SeedWith(id, &name, "/tmp/pi-server-conformance", ModelRef(), protocol.ThinkingOff)
+	s.SeedWith(id, &name, "/tmp/pi-server-conformance", ModelRef(), protocol.ThinkingOff)
 }
 
 // SeedWith stores one idle session with explicit fields.
-func (b *Service) SeedWith(
+func (s *Service) SeedWith(
 	id string,
 	name *string,
 	cwd string,
 	model protocol.ModelRef,
 	thinkingLevel protocol.ThinkingLevel,
 ) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if _, ok := b.sessions[id]; !ok {
-		b.order = append(b.order, id)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.sessions[id]; !ok {
+		s.order = append(s.order, id)
 	}
-	b.sessions[id] = &storedSession{snapshot: protocol.SessionSnapshot{
+	s.sessions[id] = &storedSession{snapshot: protocol.SessionSnapshot{
 		ID:            id,
 		Name:          name,
 		Cwd:           cwd,
@@ -165,69 +165,69 @@ func (b *Service) SeedWith(
 }
 
 // DelayNextList makes the next ListSessions block at the returned gate.
-func (b *Service) DelayNextList() *Gate {
+func (s *Service) DelayNextList() *Gate {
 	gate := NewGate()
-	b.mu.Lock()
-	b.listGate = gate
-	b.mu.Unlock()
+	s.mu.Lock()
+	s.listGate = gate
+	s.mu.Unlock()
 	return gate
 }
 
 // ForceLock marks a session held by somebody the server cannot see, which is
 // how a test provokes a session_locked failure from OpenSession.
-func (b *Service) ForceLock(id string) {
-	b.mu.Lock()
-	b.locked[id] = true
-	b.mu.Unlock()
+func (s *Service) ForceLock(id string) {
+	s.mu.Lock()
+	s.locked[id] = true
+	s.mu.Unlock()
 }
 
 // Locked reports whether the service still considers a session held.
-func (b *Service) Locked(id string) bool {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.locked[id]
+func (s *Service) Locked(id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.locked[id]
 }
 
 // LastCreatedID is the ID the most recent CreateSession actually persisted,
 // which is the override when SetCreateSessionIDOverride is in force.
-func (b *Service) LastCreatedID() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.lastCreatedID
+func (s *Service) LastCreatedID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastCreatedID
 }
 
 // LastAssignedID is the ID the server assigned to the most recent
 // CreateSession, before any override was applied.
-func (b *Service) LastAssignedID() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.lastAssignedID
+func (s *Service) LastAssignedID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.lastAssignedID
 }
 
 // Runtimes is every runtime ever handed out for a session, oldest first.
-func (b *Service) Runtimes(id string) []*Runtime {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return append([]*Runtime(nil), b.runtimes[id]...)
+func (s *Service) Runtimes(id string) []*Runtime {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]*Runtime(nil), s.runtimes[id]...)
 }
 
 // LatestRuntime is the most recent runtime handed out for a session.
-func (b *Service) LatestRuntime(id string) *Runtime {
-	runtimes := b.Runtimes(id)
+func (s *Service) LatestRuntime(id string) *Runtime {
+	runtimes := s.Runtimes(id)
 	if len(runtimes) == 0 {
 		return nil
 	}
 	return runtimes[len(runtimes)-1]
 }
 
-func (b *Service) ListSessions(context.Context) ([]protocol.SessionSummary, error) {
-	b.mu.Lock()
-	gate := b.listGate
-	b.listGate = nil
-	b.listCalls++
-	call := b.listCalls
-	hook := b.listSessionsHook
-	b.mu.Unlock()
+func (s *Service) ListSessions(context.Context) ([]protocol.SessionSummary, error) {
+	s.mu.Lock()
+	gate := s.listGate
+	s.listGate = nil
+	s.listCalls++
+	call := s.listCalls
+	hook := s.listSessionsHook
+	s.mu.Unlock()
 
 	if hook != nil {
 		if err := hook(call); err != nil {
@@ -238,29 +238,29 @@ func (b *Service) ListSessions(context.Context) ([]protocol.SessionSummary, erro
 		gate.enter()
 	}
 
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	summaries := make([]protocol.SessionSummary, 0, len(b.order))
-	for _, id := range b.order {
-		stored := b.sessions[id]
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	summaries := make([]protocol.SessionSummary, 0, len(s.order))
+	for _, id := range s.order {
+		stored := s.sessions[id]
 		if stored == nil {
 			continue
 		}
 		snapshot := stored.get()
 		summary := snapshot.Summary()
 		summary.Attached = false
-		summary.Locked = b.locked[id]
+		summary.Locked = s.locked[id]
 		summaries = append(summaries, summary)
 	}
 	return summaries, nil
 }
 
-func (b *Service) ListModels(context.Context) ([]protocol.ModelMetadata, error) {
-	b.mu.Lock()
-	b.modelCalls++
-	call := b.modelCalls
-	hook := b.listModelsHook
-	b.mu.Unlock()
+func (s *Service) ListModels(context.Context) ([]protocol.ModelMetadata, error) {
+	s.mu.Lock()
+	s.modelCalls++
+	call := s.modelCalls
+	hook := s.listModelsHook
+	s.mu.Unlock()
 	if hook != nil {
 		if err := hook(call); err != nil {
 			return nil, err
@@ -269,16 +269,16 @@ func (b *Service) ListModels(context.Context) ([]protocol.ModelMetadata, error) 
 	return []protocol.ModelMetadata{Model}, nil
 }
 
-func (b *Service) CreateSession(_ context.Context, options server.CreateSessionOptions) (server.SessionRuntime, error) {
-	b.mu.Lock()
+func (s *Service) CreateSession(_ context.Context, options server.CreateSessionOptions) (server.SessionRuntime, error) {
+	s.mu.Lock()
 	id := options.ID
-	b.lastAssignedID = options.ID
-	if b.createIDOverride != "" {
-		id = b.createIDOverride
+	s.lastAssignedID = options.ID
+	if s.createIDOverride != "" {
+		id = s.createIDOverride
 	}
-	b.lastCreatedID = id
-	_, exists := b.sessions[id]
-	b.mu.Unlock()
+	s.lastCreatedID = id
+	_, exists := s.sessions[id]
+	s.mu.Unlock()
 	if exists {
 		return nil, server.NewLockedError("Session already exists", nil)
 	}
@@ -300,47 +300,47 @@ func (b *Service) CreateSession(_ context.Context, options server.CreateSessionO
 		fallback := "Session " + id
 		name = &fallback
 	}
-	b.SeedWith(id, name, cwd, model, thinkingLevel)
-	return b.acquire(id)
+	s.SeedWith(id, name, cwd, model, thinkingLevel)
+	return s.acquire(id)
 }
 
-func (b *Service) OpenSession(_ context.Context, sessionID string) (server.SessionRuntime, error) {
-	b.mu.Lock()
-	_, exists := b.sessions[sessionID]
-	locked := b.locked[sessionID]
-	b.mu.Unlock()
+func (s *Service) OpenSession(_ context.Context, sessionID string) (server.SessionRuntime, error) {
+	s.mu.Lock()
+	_, exists := s.sessions[sessionID]
+	locked := s.locked[sessionID]
+	s.mu.Unlock()
 	if !exists {
 		return nil, server.NewNotFoundError("Unknown session: "+sessionID, nil)
 	}
 	if locked {
 		return nil, server.NewLockedError("Session is locked: "+sessionID, nil)
 	}
-	return b.acquire(sessionID)
+	return s.acquire(sessionID)
 }
 
-func (b *Service) acquire(id string) (*Runtime, error) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	stored := b.sessions[id]
+func (s *Service) acquire(id string) (*Runtime, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored := s.sessions[id]
 	if stored == nil {
 		return nil, fmt.Errorf("unknown session: %s", id)
 	}
-	b.locked[id] = true
+	s.locked[id] = true
 	runtime := &Runtime{
-		service:   b,
+		service:   s,
 		stored:    stored,
 		id:        id,
 		listeners: map[int]func(server.RuntimeEvent){},
 		disposed:  make(chan struct{}),
 	}
-	b.runtimes[id] = append(b.runtimes[id], runtime)
+	s.runtimes[id] = append(s.runtimes[id], runtime)
 	return runtime, nil
 }
 
-func (b *Service) release(id string) {
-	b.mu.Lock()
-	delete(b.locked, id)
-	b.mu.Unlock()
+func (s *Service) release(id string) {
+	s.mu.Lock()
+	delete(s.locked, id)
+	s.mu.Unlock()
 }
 
 type promptOutcome int
