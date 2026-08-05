@@ -37,28 +37,28 @@ func socketPath(t *testing.T) string {
 type harness struct {
 	t       *testing.T
 	server  *server.Server
-	backend *servertest.Backend
+	service *servertest.Service
 	path    string
 }
 
-func start(t *testing.T, backend *servertest.Backend, mutate func(*unix.ServerOptions)) *harness {
+func start(t *testing.T, service *servertest.Service, mutate func(*unix.ServerOptions)) *harness {
 	t.Helper()
-	if backend == nil {
-		backend = servertest.NewBackend()
+	if service == nil {
+		service = servertest.NewService()
 	}
 	path := socketPath(t)
 	options := unix.ServerOptions{Path: path}
 	if mutate != nil {
 		mutate(&options)
 	}
-	srv, err := unix.NewServer(backend, options)
+	srv, err := unix.NewServer(service, options)
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}
 	if err := srv.Start(context.Background()); err != nil {
 		t.Fatalf("start: %v", err)
 	}
-	h := &harness{t: t, server: srv, backend: backend, path: path}
+	h := &harness{t: t, server: srv, service: service, path: path}
 	t.Cleanup(func() { _ = srv.Close(context.Background()) })
 	return h
 }
@@ -262,13 +262,13 @@ func TestHandshakeTimeout(t *testing.T) {
 	}
 }
 
-// The timeout must survive into the handshake itself: a backend that never
+// The timeout must survive into the handshake itself: a service that never
 // answers must not buy the peer an unbounded connection.
 func TestHandshakeTimeoutCoversTheHandshake(t *testing.T) {
 	t.Parallel()
-	backend := servertest.NewBackend()
-	gate := backend.DelayNextList()
-	h := start(t, backend, func(o *unix.ServerOptions) { o.HandshakeTimeout = 20 * time.Millisecond })
+	service := servertest.NewService()
+	gate := service.DelayNextList()
+	h := start(t, service, func(o *unix.ServerOptions) { o.HandshakeTimeout = 20 * time.Millisecond })
 	client := h.connect()
 
 	if err := client.SendMessage(protocol.NewClientHello()); err != nil {
@@ -391,12 +391,12 @@ func (l *errorLog) all() []error {
 // caught up immediately, rather than waiting for the next unrelated broadcast.
 func TestHandshakeCatchUpAfterConcurrentChange(t *testing.T) {
 	t.Parallel()
-	backend := servertest.NewBackend()
-	backend.Seed("shared")
-	h := start(t, backend, nil)
+	service := servertest.NewService()
+	service.Seed("shared")
+	h := start(t, service, nil)
 	controller := h.connected()
 
-	gate := backend.DelayNextList()
+	gate := service.DelayNextList()
 	joining := h.connect()
 	helloDone := make(chan protocol.ServerMessage, 1)
 	go func() {
@@ -440,10 +440,10 @@ func TestHandshakeCatchUpAfterConcurrentChange(t *testing.T) {
 
 func TestRequestEventAttachmentAndDisconnect(t *testing.T) {
 	t.Parallel()
-	backend := servertest.NewBackend()
-	backend.Seed("first")
-	backend.Seed("second")
-	h := start(t, backend, nil)
+	service := servertest.NewService()
+	service.Seed("first")
+	service.Seed("second")
+	h := start(t, service, nil)
 
 	client := h.connect()
 	message, err := client.Hello(protocol.ProtocolVersion)
@@ -478,7 +478,7 @@ func TestRequestEventAttachmentAndDisconnect(t *testing.T) {
 		Delta:        "hello",
 	}
 	from := client.Count()
-	backend.LatestRuntime("first").EmitProgress(progress)
+	service.LatestRuntime("first").EmitProgress(progress)
 	received, err := client.NextFrom(from, func(m protocol.ServerMessage) bool {
 		_, ok := isEvent[*protocol.SessionProgressEvent](m)
 		return ok
@@ -500,7 +500,7 @@ func TestRequestEventAttachmentAndDisconnect(t *testing.T) {
 	if !detached.OK || !ok || detach.SessionID != "first" {
 		t.Fatalf("unexpected detach result: %#v", detached)
 	}
-	if got := backend.LatestRuntime("first").DisposeCount(); got != 1 {
+	if got := service.LatestRuntime("first").DisposeCount(); got != 1 {
 		t.Fatalf("dispose count = %d, want 1", got)
 	}
 
@@ -510,7 +510,7 @@ func TestRequestEventAttachmentAndDisconnect(t *testing.T) {
 		t.Fatalf("thinking level = %q", thinking.ThinkingLevel)
 	}
 
-	secondRuntime := backend.LatestRuntime("second")
+	secondRuntime := service.LatestRuntime("second")
 	if err := client.Close(); err != nil {
 		t.Fatalf("close: %v", err)
 	}
@@ -526,14 +526,14 @@ func TestRequestEventAttachmentAndDisconnect(t *testing.T) {
 
 func TestTerminalRuntimeErrorDisconnectsAttachedClients(t *testing.T) {
 	t.Parallel()
-	backend := servertest.NewBackend()
-	backend.Seed("terminal")
+	service := servertest.NewService()
+	service.Seed("terminal")
 	var errs errorLog
-	h := start(t, backend, func(o *unix.ServerOptions) { o.OnError = errs.record })
+	h := start(t, service, func(o *unix.ServerOptions) { o.OnError = errs.record })
 
 	client := h.connected()
 	request(t, client, "attach", protocol.NewAttachCommand("terminal"))
-	runtime := backend.LatestRuntime("terminal")
+	runtime := service.LatestRuntime("terminal")
 
 	runtime.SetPhase(protocol.PhaseTurn)
 	runtime.EmitError(server.NewLockedError("lock ownership lost", nil))
@@ -549,8 +549,8 @@ func TestTerminalRuntimeErrorDisconnectsAttachedClients(t *testing.T) {
 	if got := runtime.DisposeCount(); got != 1 {
 		t.Fatalf("dispose count = %d, want 1", got)
 	}
-	if backend.Locked("terminal") {
-		t.Fatal("the backend lock must have been released")
+	if service.Locked("terminal") {
+		t.Fatal("the service lock must have been released")
 	}
 	found := false
 	for _, err := range errs.all() {
@@ -568,22 +568,22 @@ func TestTerminalRuntimeErrorDisconnectsAttachedClients(t *testing.T) {
 	if session.ID != "terminal" {
 		t.Fatalf("re-attach returned %#v", session)
 	}
-	if backend.LatestRuntime("terminal") == runtime {
+	if service.LatestRuntime("terminal") == runtime {
 		t.Fatal("re-attaching must acquire a fresh runtime")
 	}
 }
 
-func TestBackendFailuresAreNotExposedToClients(t *testing.T) {
+func TestServiceFailuresAreNotExposedToClients(t *testing.T) {
 	t.Parallel()
-	backend := servertest.NewBackend()
-	backend.SetListSessionsHook(func(call int) error {
+	service := servertest.NewService()
+	service.SetListSessionsHook(func(call int) error {
 		if call > 1 {
-			return errors.New("private backend detail")
+			return errors.New("private service detail")
 		}
 		return nil
 	})
 	var errs errorLog
-	h := start(t, backend, func(o *unix.ServerOptions) {
+	h := start(t, service, func(o *unix.ServerOptions) {
 		o.OnError = func(err error) {
 			errs.record(err)
 			panic("observer failure")
@@ -596,34 +596,34 @@ func TestBackendFailuresAreNotExposedToClients(t *testing.T) {
 		t.Fatalf("expected a failure, got %#v", response)
 	}
 	if response.Error.Code != protocol.ErrorInvalidRequest || response.Error.Message != "Internal server error" {
-		t.Fatalf("leaked backend detail: %#v", response.Error)
+		t.Fatalf("leaked service detail: %#v", response.Error)
 	}
 	found := false
 	for _, err := range errs.all() {
-		if err.Error() == "private backend detail" {
+		if err.Error() == "private service detail" {
 			found = true
 		}
 	}
 	if !found {
-		t.Fatalf("the backend error must reach the observer, got %v", errs.all())
+		t.Fatalf("the service error must reach the observer, got %v", errs.all())
 	}
 }
 
-// Backend and SessionRuntime are exported extension points somebody else
+// Service and SessionRuntime are exported extension points somebody else
 // implements. One that panics must fail the request it was called from, on the
 // goroutine the server gave it, rather than taking the process with it.
-func TestPanickingBackendFailsTheRequestNotTheProcess(t *testing.T) {
+func TestPanickingServiceFailsTheRequestNotTheProcess(t *testing.T) {
 	t.Parallel()
-	backend := servertest.NewBackend()
+	service := servertest.NewService()
 	var exploding atomic.Bool
-	backend.SetListSessionsHook(func(int) error {
+	service.SetListSessionsHook(func(int) error {
 		if exploding.Load() {
-			panic("backend exploded")
+			panic("service exploded")
 		}
 		return nil
 	})
 	var errs errorLog
-	h := start(t, backend, func(o *unix.ServerOptions) { o.OnError = errs.record })
+	h := start(t, service, func(o *unix.ServerOptions) { o.OnError = errs.record })
 	client := h.connected()
 
 	exploding.Store(true)
@@ -637,7 +637,7 @@ func TestPanickingBackendFailsTheRequestNotTheProcess(t *testing.T) {
 	}
 	found := false
 	for _, err := range errs.all() {
-		if strings.Contains(err.Error(), "backend exploded") {
+		if strings.Contains(err.Error(), "service exploded") {
 			found = true
 		}
 	}
@@ -647,18 +647,18 @@ func TestPanickingBackendFailsTheRequestNotTheProcess(t *testing.T) {
 
 	// The server is still the server: the next request is answered normally.
 	if listed := request(t, client, "after", protocol.NewListCommand()); !listed.OK {
-		t.Fatalf("the server stopped serving after a backend panic: %#v", listed.Error)
+		t.Fatalf("the server stopped serving after a service panic: %#v", listed.Error)
 	}
 }
 
 func TestResponsesMayCompleteOutOfOrder(t *testing.T) {
 	t.Parallel()
-	backend := servertest.NewBackend()
-	backend.Seed("first")
-	h := start(t, backend, nil)
+	service := servertest.NewService()
+	service.Seed("first")
+	h := start(t, service, nil)
 	client := h.connected()
 
-	gate := backend.DelayNextList()
+	gate := service.DelayNextList()
 	slow := make(chan *protocol.ResponseEnvelope, 1)
 	go func() {
 		response, err := client.Request("slow", protocol.NewListCommand())
@@ -689,12 +689,12 @@ func TestResponsesMayCompleteOutOfOrder(t *testing.T) {
 
 func TestGracefulShutdownReleasesEverything(t *testing.T) {
 	t.Parallel()
-	backend := servertest.NewBackend()
-	backend.Seed("first")
-	h := start(t, backend, nil)
+	service := servertest.NewService()
+	service.Seed("first")
+	h := start(t, service, nil)
 	client := h.connected()
 	request(t, client, "attach", protocol.NewAttachCommand("first"))
-	runtime := backend.LatestRuntime("first")
+	runtime := service.LatestRuntime("first")
 
 	if err := h.server.Close(context.Background()); err != nil {
 		t.Fatalf("close: %v", err)

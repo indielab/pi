@@ -83,8 +83,8 @@ func (r *stubRuntime) unsubscribeCount() int {
 	return r.unsubscribes
 }
 
-// stubBackend hands out one stubRuntime per acquisition.
-type stubBackend struct {
+// stubService hands out one stubRuntime per acquisition.
+type stubService struct {
 	emitOnSubscribe *Error
 	subscribeDelay  time.Duration
 
@@ -92,16 +92,16 @@ type stubBackend struct {
 	runtimes []*stubRuntime
 }
 
-func (b *stubBackend) ListSessions(context.Context) ([]protocol.SessionSummary, error) {
+func (b *stubService) ListSessions(context.Context) ([]protocol.SessionSummary, error) {
 	return nil, nil
 }
-func (b *stubBackend) ListModels(context.Context) ([]protocol.ModelMetadata, error) { return nil, nil }
+func (b *stubService) ListModels(context.Context) ([]protocol.ModelMetadata, error) { return nil, nil }
 
-func (b *stubBackend) CreateSession(ctx context.Context, options CreateSessionOptions) (SessionRuntime, error) {
+func (b *stubService) CreateSession(ctx context.Context, options CreateSessionOptions) (SessionRuntime, error) {
 	return b.OpenSession(ctx, options.ID)
 }
 
-func (b *stubBackend) OpenSession(_ context.Context, sessionID string) (SessionRuntime, error) {
+func (b *stubService) OpenSession(_ context.Context, sessionID string) (SessionRuntime, error) {
 	r := &stubRuntime{id: sessionID, emitOnSubscribe: b.emitOnSubscribe, subscribeDelay: b.subscribeDelay}
 	b.mu.Lock()
 	b.runtimes = append(b.runtimes, r)
@@ -109,7 +109,7 @@ func (b *stubBackend) OpenSession(_ context.Context, sessionID string) (SessionR
 	return r, nil
 }
 
-func (b *stubBackend) latest() *stubRuntime {
+func (b *stubService) latest() *stubRuntime {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if len(b.runtimes) == 0 {
@@ -147,9 +147,9 @@ func (c *hookConn) Close([]byte) error {
 	return nil
 }
 
-func newInternalServer(t *testing.T, backend Backend) *Server {
+func newInternalServer(t *testing.T, service Service) *Server {
 	t.Helper()
-	srv, err := New(backend, Options{Listeners: []Listener{}})
+	srv, err := New(service, Options{Listeners: []Listener{}})
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
@@ -176,10 +176,10 @@ func readyConnection(t *testing.T, srv *Server, conn ByteConn) *connState {
 	return nil
 }
 
-func acquireLive(t *testing.T, m *sessionManager, backend Backend, id string) *liveSession {
+func acquireLive(t *testing.T, m *sessionManager, service Service, id string) *liveSession {
 	t.Helper()
 	live, err := m.acquire(context.Background(), id, func(ctx context.Context) (SessionRuntime, error) {
-		return backend.OpenSession(ctx, id)
+		return service.OpenSession(ctx, id)
 	})
 	if err != nil {
 		t.Fatalf("acquire: %v", err)
@@ -194,13 +194,13 @@ func acquireLive(t *testing.T, m *sessionManager, backend Backend, id string) *l
 // session's, and leaves a dead connection holding the runtime forever.
 func TestAttachPublishesBothHalvesAtOnce(t *testing.T) {
 	t.Parallel()
-	backend := &stubBackend{}
-	srv := newInternalServer(t, backend)
+	service := &stubService{}
+	srv := newInternalServer(t, service)
 	conn := &hookConn{}
 	state := readyConnection(t, srv, conn)
 
 	m := srv.sessions
-	live := acquireLive(t, m, backend, "session-1")
+	live := acquireLive(t, m, service, "session-1")
 
 	holding := make(chan struct{})
 	torn := make(chan bool, 1)
@@ -237,13 +237,13 @@ func TestAttachPublishesBothHalvesAtOnce(t *testing.T) {
 // runtime that is already being released.
 func TestRunOperationRefusesASessionThatStartedDisposing(t *testing.T) {
 	t.Parallel()
-	backend := &stubBackend{}
-	srv := newInternalServer(t, backend)
+	service := &stubService{}
+	srv := newInternalServer(t, service)
 	conn := &hookConn{}
 	state := readyConnection(t, srv, conn)
 
 	m := srv.sessions
-	live := acquireLive(t, m, backend, "session-1")
+	live := acquireLive(t, m, service, "session-1")
 	if err := m.attach(context.Background(), state, live); err != nil {
 		t.Fatalf("attach: %v", err)
 	}
@@ -276,14 +276,14 @@ func TestRunOperationRefusesASessionThatStartedDisposing(t *testing.T) {
 // return. The teardown must still cancel the real subscription.
 func TestTerminalErrorRaisedDuringSubscribeStillUnsubscribes(t *testing.T) {
 	t.Parallel()
-	backend := &stubBackend{
+	service := &stubService{
 		emitOnSubscribe: NewLockedError("lock ownership lost", nil),
 		subscribeDelay:  50 * time.Millisecond,
 	}
-	srv := newInternalServer(t, backend)
+	srv := newInternalServer(t, service)
 
 	m := srv.sessions
-	live := acquireLive(t, m, backend, "session-1")
+	live := acquireLive(t, m, service, "session-1")
 	live.queue.Wait()
 
 	m.mu.Lock()
@@ -292,7 +292,7 @@ func TestTerminalErrorRaisedDuringSubscribeStillUnsubscribes(t *testing.T) {
 	if !terminal {
 		t.Fatal("the terminal error must have marked the session")
 	}
-	if got := backend.latest().unsubscribeCount(); got != 1 {
+	if got := service.latest().unsubscribeCount(); got != 1 {
 		t.Fatalf("unsubscribes = %d, want 1: the subscription the runtime handed back was never cancelled", got)
 	}
 }

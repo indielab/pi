@@ -50,7 +50,7 @@ type openingSession struct {
 // the last connection detaches and the session goes idle.
 type sessionManager struct {
 	srv     *Server
-	backend Backend
+	service Service
 
 	mu sync.Mutex
 	// live and liveOrder are one map: liveOrder keeps insertion order, which
@@ -61,10 +61,10 @@ type sessionManager struct {
 	opening   map[string]*openingSession
 }
 
-func newSessionManager(srv *Server, backend Backend) *sessionManager {
+func newSessionManager(srv *Server, service Service) *sessionManager {
 	return &sessionManager{
 		srv:     srv,
-		backend: backend,
+		service: service,
 		live:    map[string]*liveSession{},
 		opening: map[string]*openingSession{},
 	}
@@ -94,7 +94,7 @@ func (m *sessionManager) executeCommand(
 			ThinkingLevel: cmd.ThinkingLevel,
 		}
 		live, err := m.acquire(ctx, id, func(ctx context.Context) (SessionRuntime, error) {
-			return m.backend.CreateSession(ctx, options)
+			return m.service.CreateSession(ctx, options)
 		})
 		if err != nil {
 			return nil, err
@@ -108,7 +108,7 @@ func (m *sessionManager) executeCommand(
 
 	case *protocol.AttachCommand:
 		live, err := m.acquire(ctx, cmd.SessionID, func(ctx context.Context) (SessionRuntime, error) {
-			return m.backend.OpenSession(ctx, cmd.SessionID)
+			return m.service.OpenSession(ctx, cmd.SessionID)
 		})
 		if err != nil {
 			return nil, err
@@ -259,11 +259,11 @@ func (m *sessionManager) disconnect(ctx context.Context, conn *connState) {
 	}
 }
 
-// listSummaries merges what the backend has stored with what is live now. A
+// listSummaries merges what the service has stored with what is live now. A
 // live session always wins: its snapshot is authoritative and it is reported
-// locked, and a live session the backend has not stored yet is appended.
+// locked, and a live session the service has not stored yet is appended.
 func (m *sessionManager) listSummaries(ctx context.Context, conn *connState) ([]protocol.SessionSummary, error) {
-	stored, err := m.backend.ListSessions(ctx)
+	stored, err := m.service.ListSessions(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -333,7 +333,7 @@ func (m *sessionManager) close(ctx context.Context) error {
 	}
 	m.mu.Unlock()
 	for _, op := range opening {
-		// Every wait here is bounded by ctx: an acquisition the backend never
+		// Every wait here is bounded by ctx: an acquisition the service never
 		// answers must not hold a bounded shutdown open forever.
 		select {
 		case <-op.done:
@@ -399,7 +399,7 @@ func (m *sessionManager) disposeSafely(ctx context.Context, runtime SessionRunti
 }
 
 // goSafely queues one job on the session's serial queue behind a panic barrier.
-// The job calls into a Backend or a SessionRuntime from a goroutine their
+// The job calls into a Service or a SessionRuntime from a goroutine their
 // implementer never handed us, so a panic there has nowhere to surface but the
 // error observer.
 func (m *sessionManager) goSafely(live *liveSession, what string, job func() error) {
@@ -516,7 +516,7 @@ func (m *sessionManager) create(
 	if snapshot.ID != id {
 		m.disposeQuietly(ctx, runtime)
 		return nil, NewError(protocol.ErrorInvalidRequest,
-			fmt.Sprintf("Backend returned session %s for server-assigned session %s", snapshot.ID, id), nil)
+			fmt.Sprintf("Service returned session %s for server-assigned session %s", snapshot.ID, id), nil)
 	}
 
 	live := &liveSession{
@@ -630,7 +630,7 @@ func (m *sessionManager) terminate(ctx context.Context, live *liveSession, cause
 }
 
 // normalizedSnapshot re-reads the runtime and overrides the three fields the
-// server owns rather than the backend: the live phase, whether anyone is
+// server owns rather than the service: the live phase, whether anyone is
 // attached, and that the session is locked because the server holds it.
 func (m *sessionManager) normalizedSnapshot(ctx context.Context, live *liveSession) (*protocol.SessionSnapshot, error) {
 	snapshot, err := live.runtime.Snapshot(ctx)
@@ -692,7 +692,7 @@ func (m *sessionManager) broadcastSnapshot(ctx context.Context, live *liveSessio
 // separately, a disconnect landing between them clears the connection's half
 // and finds nothing to remove from the session's; attach then registers a dead
 // connection that nothing will ever remove, and the session stays acquired —
-// and so does the backend's lock on it — for the life of the process.
+// and so does the service's lock on it — for the life of the process.
 //
 // The transport is asked whether it is closed before either lock is taken:
 // ByteConn is an interface a transport implements, and calling into it under

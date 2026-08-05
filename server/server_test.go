@@ -63,7 +63,7 @@ func TestListenerComposition(t *testing.T) {
 	t.Parallel()
 	first := &fakeListener{address: "first"}
 	second := &fakeListener{address: "second"}
-	srv, err := server.New(servertest.NewBackend(), server.Options{
+	srv, err := server.New(servertest.NewService(), server.Options{
 		Listeners: []server.Listener{first, second},
 	})
 	if err != nil {
@@ -99,7 +99,7 @@ func TestStartFailureClosesAlreadyStartedListeners(t *testing.T) {
 	failure := errors.New("listener failed")
 	first := &fakeListener{address: "first"}
 	second := &fakeListener{address: "second", startErr: failure}
-	srv, err := server.New(servertest.NewBackend(), server.Options{
+	srv, err := server.New(servertest.NewService(), server.Options{
 		Listeners: []server.Listener{first, second},
 	})
 	if err != nil {
@@ -118,7 +118,7 @@ func TestStartFailureClosesAlreadyStartedListeners(t *testing.T) {
 
 func TestOptionValidation(t *testing.T) {
 	t.Parallel()
-	backend := servertest.NewBackend()
+	service := servertest.NewService()
 	zero, huge := 0, 1<<33
 
 	cases := []struct {
@@ -139,7 +139,7 @@ func TestOptionValidation(t *testing.T) {
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
-			_, err := server.New(backend, testCase.options)
+			_, err := server.New(service, testCase.options)
 			if err == nil || !strings.Contains(err.Error(), testCase.want) {
 				t.Fatalf("error = %v, want one mentioning %q", err, testCase.want)
 			}
@@ -148,14 +148,14 @@ func TestOptionValidation(t *testing.T) {
 
 	// An empty listener slice is a server with no transport, which is a valid
 	// configuration and how the core is exercised directly.
-	if _, err := server.New(backend, server.Options{Listeners: []server.Listener{}}); err != nil {
+	if _, err := server.New(service, server.Options{Listeners: []server.Listener{}}); err != nil {
 		t.Fatalf("an empty listener slice must be accepted: %v", err)
 	}
 }
 
 func TestStartTwiceIsRejected(t *testing.T) {
 	t.Parallel()
-	srv, err := server.New(servertest.NewBackend(), server.Options{
+	srv, err := server.New(servertest.NewService(), server.Options{
 		Listeners: []server.Listener{},
 	})
 	if err != nil {
@@ -219,7 +219,7 @@ func (c *blockedConn) final() []byte {
 // drains, and it must carry the reason in the connection's final bytes.
 func TestHandshakeTimeoutDoesNotWaitForOutput(t *testing.T) {
 	t.Parallel()
-	srv, err := server.New(servertest.NewBackend(), server.Options{
+	srv, err := server.New(servertest.NewService(), server.Options{
 		Listeners:        []server.Listener{},
 		HandshakeTimeout: 10 * time.Millisecond,
 	})
@@ -276,7 +276,7 @@ func TestHandshakeTimeoutDoesNotWaitForOutput(t *testing.T) {
 // rather than being adopted.
 func TestAcceptAfterCloseClosesTheConnection(t *testing.T) {
 	t.Parallel()
-	srv, err := server.New(servertest.NewBackend(), server.Options{
+	srv, err := server.New(servertest.NewService(), server.Options{
 		Listeners: []server.Listener{},
 	})
 	if err != nil {
@@ -302,7 +302,7 @@ func TestAcceptAfterCloseClosesTheConnection(t *testing.T) {
 func TestAcceptRacingCloseNeverOutlivesTheServer(t *testing.T) {
 	t.Parallel()
 	for round := range 3000 {
-		srv, err := server.New(servertest.NewBackend(), server.Options{
+		srv, err := server.New(servertest.NewService(), server.Options{
 			Listeners: []server.Listener{},
 			// A minute, so it is the shutdown that closes the connection and
 			// never the handshake timeout stepping in to cover for it.
@@ -331,7 +331,7 @@ func TestAcceptRacingCloseNeverOutlivesTheServer(t *testing.T) {
 
 func TestServerIDIsStableAndGeneratedWhenAbsent(t *testing.T) {
 	t.Parallel()
-	explicit, err := server.New(servertest.NewBackend(), server.Options{
+	explicit, err := server.New(servertest.NewService(), server.Options{
 		Listeners: []server.Listener{}, ServerID: "fixed",
 	})
 	if err != nil {
@@ -341,13 +341,13 @@ func TestServerIDIsStableAndGeneratedWhenAbsent(t *testing.T) {
 		t.Fatalf("id = %q, want the configured one", explicit.ID())
 	}
 
-	first, err := server.New(servertest.NewBackend(), server.Options{
+	first, err := server.New(servertest.NewService(), server.Options{
 		Listeners: []server.Listener{},
 	})
 	if err != nil {
 		t.Fatalf("new: %v", err)
 	}
-	second, err := server.New(servertest.NewBackend(), server.Options{
+	second, err := server.New(servertest.NewService(), server.Options{
 		Listeners: []server.Listener{},
 	})
 	if err != nil {

@@ -15,7 +15,7 @@ import (
 // sees revision 2 has already seen revision 1.
 type snapshotPublisher struct {
 	srv     *Server
-	backend Backend
+	service Service
 
 	mu       sync.Mutex
 	revision int64
@@ -24,8 +24,8 @@ type snapshotPublisher struct {
 	idle     chan struct{}
 }
 
-func newSnapshotPublisher(srv *Server, backend Backend) *snapshotPublisher {
-	return &snapshotPublisher{srv: srv, backend: backend}
+func newSnapshotPublisher(srv *Server, service Service) *snapshotPublisher {
+	return &snapshotPublisher{srv: srv, service: service}
 }
 
 // currentRevision is the revision of the most recent completed broadcast.
@@ -36,7 +36,7 @@ func (p *snapshotPublisher) currentRevision() int64 {
 }
 
 // get builds the server snapshot as conn would see it. models, when non-nil,
-// is reused instead of asking the backend again; conn may be nil, which marks
+// is reused instead of asking the service again; conn may be nil, which marks
 // every session unattached.
 func (p *snapshotPublisher) get(
 	ctx context.Context,
@@ -54,7 +54,7 @@ func (p *snapshotPublisher) get(
 		return nil, err
 	}
 	if models == nil {
-		models, err = p.backend.ListModels(ctx)
+		models, err = p.service.ListModels(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -71,12 +71,12 @@ func (p *snapshotPublisher) get(
 // broadcast asks for a snapshot pass. It never blocks.
 //
 // DIVERGENCE (deliberate): pi chains every broadcast onto a promise, so N calls
-// run N passes. Every pass does the same thing — read the backend once, then
+// run N passes. Every pass does the same thing — read the service once, then
 // build and send the current state to each ready connection — so a pass that
 // has not started yet is indistinguishable from the one already running, and
 // at most one is kept waiting behind it. Without that, a peer pipelining
 // attach and detach enqueues passes faster than they retire, each of them
-// costing O(connections × live sessions) backend calls. What a client sees is
+// costing O(connections × live sessions) service calls. What a client sees is
 // fewer server_snapshot events carrying the same information: the revision
 // still only moves forward, and every snapshot is still whole.
 func (p *snapshotPublisher) broadcast() {
@@ -133,7 +133,7 @@ func (p *snapshotPublisher) wait(ctx context.Context) error {
 }
 
 // performSafely runs one pass behind a panic barrier: the pass reads the
-// Backend from a goroutine nobody outside this package can see, and a panic
+// Service from a goroutine nobody outside this package can see, and a panic
 // there would take the process rather than the broadcast.
 func (p *snapshotPublisher) performSafely() {
 	defer func() {
@@ -158,13 +158,13 @@ func (p *snapshotPublisher) perform() error {
 	revision := p.revision
 	p.mu.Unlock()
 
-	models, err := p.backend.ListModels(ctx)
+	models, err := p.service.ListModels(ctx)
 	if err != nil {
 		return err
 	}
 	for _, conn := range ready {
 		// Abandoning the pass on the first failure is pi's behaviour, not an
-		// oversight: its loop awaits each snapshot in turn, so a backend that
+		// oversight: its loop awaits each snapshot in turn, so a service that
 		// fails for one connection ends the pass for the rest too. The
 		// revision it consumed is simply never delivered, and the next pass
 		// carries a later one.

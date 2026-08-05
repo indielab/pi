@@ -19,7 +19,7 @@ import (
 
 func newServer(t *testing.T, path string) *server.Server {
 	t.Helper()
-	srv, err := unix.NewServer(servertest.NewBackend(), unix.ServerOptions{Path: path})
+	srv, err := unix.NewServer(servertest.NewService(), unix.ServerOptions{Path: path})
 	if err != nil {
 		t.Fatalf("new server: %v", err)
 	}

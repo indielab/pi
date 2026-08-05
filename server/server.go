@@ -44,7 +44,7 @@ type Options struct {
 	// that distinction, so empty means "generate one" and there is nothing left
 	// to reject.
 	ServerID string
-	// OnError observes failures that have nowhere else to go: backend errors
+	// OnError observes failures that have nowhere else to go: service errors
 	// hidden from clients, transport failures, dispose failures. It may be nil,
 	// may be called from any goroutine, and its own panics are swallowed.
 	OnError func(error)
@@ -65,8 +65,8 @@ type Server struct {
 	handshakeTimeout time.Duration
 	onError          func(error)
 
-	// ctx bounds backend and runtime calls. It is cancelled once Close has
-	// finished, so a backend can use it to retire whatever it started; it is
+	// ctx bounds service and runtime calls. It is cancelled once Close has
+	// finished, so a service can use it to retire whatever it started; it is
 	// deliberately still live while sessions are being disposed.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -85,9 +85,9 @@ type Server struct {
 
 // New validates options and builds a Server. It does not bind anything; call
 // Start for that.
-func New(backend Backend, options Options) (*Server, error) {
-	if backend == nil {
-		return nil, errors.New("server backend must not be nil")
+func New(service Service, options Options) (*Server, error) {
+	if service == nil {
+		return nil, errors.New("server service must not be nil")
 	}
 	if options.Listeners == nil {
 		return nil, errors.New("server listeners must not be nil; pass an empty slice for a server with no transport")
@@ -129,8 +129,8 @@ func New(backend Backend, options Options) (*Server, error) {
 		cancel:           cancel,
 		connections:      map[*connState]struct{}{},
 	}
-	s.sessions = newSessionManager(s, backend)
-	s.snapshots = newSnapshotPublisher(s, backend)
+	s.sessions = newSessionManager(s, service)
+	s.snapshots = newSnapshotPublisher(s, service)
 	return s, nil
 }
 
@@ -269,11 +269,11 @@ func (s *Server) Accept(conn ByteConn) ConnHandler {
 // session. It is idempotent: concurrent and repeated calls all wait for the
 // first one and return its result.
 //
-// It is bounded by ctx. A Backend that never answers must not be able to wedge
+// It is bounded by ctx. A Service that never answers must not be able to wedge
 // a caller that asked for a bounded shutdown, so every wait gives up when ctx
 // does and Close returns ctx.Err(). An abandoned shutdown is not resumed: the
 // server stays closing and accepts nothing new, and ctx is cancelled so a
-// backend bounded by it can unwind — but whatever had not been released by then
+// service bounded by it can unwind — but whatever had not been released by then
 // is not released later, and a later Close reports the same failure.
 func (s *Server) Close(ctx context.Context) error {
 	s.mu.Lock()
@@ -497,7 +497,7 @@ func (s *Server) handleRequest(state *connState, envelope *protocol.RequestEnvel
 	})
 }
 
-// executeCommand runs one command behind a panic barrier. A panicking Backend
+// executeCommand runs one command behind a panic barrier. A panicking Service
 // or SessionRuntime fails the request it was called from; the error it produces
 // is not an *Error, so the peer is told nothing beyond "internal server error".
 func (s *Server) executeCommand(
@@ -514,7 +514,7 @@ func (s *Server) executeCommand(
 }
 
 // serverSnapshot builds the server snapshot behind the same barrier: the
-// handshake reads the backend from the connection's read goroutine, where a
+// handshake reads the service from the connection's read goroutine, where a
 // panic would take the process down rather than the connection.
 func (s *Server) serverSnapshot(
 	ctx context.Context,
@@ -530,12 +530,12 @@ func (s *Server) serverSnapshot(
 }
 
 // panicError turns a panic that crossed an extension-point boundary into an
-// error. Backend and SessionRuntime are implemented outside this package, and
+// error. Service and SessionRuntime are implemented outside this package, and
 // they are called from goroutines their implementer never sees; a panic there
 // must fail the work in hand, not the process.
 func panicError(recovered any, what string) error {
 	return fmt.Errorf(
-		"panic while %s; a Backend or SessionRuntime must report failures as errors rather than panic: %v\n%s",
+		"panic while %s; a Service or SessionRuntime must report failures as errors rather than panic: %v\n%s",
 		what, recovered, debug.Stack())
 }
 
@@ -647,7 +647,7 @@ func (s *Server) closeServerState(ctx context.Context) error {
 	}
 
 	// Broadcasts are already no-ops once closing is set; waiting only makes
-	// sure none is still touching the backend when Close returns.
+	// sure none is still touching the service when Close returns.
 	if err := s.snapshots.wait(ctx); err != nil {
 		return err
 	}
@@ -700,7 +700,7 @@ func (s *Server) isClosing() bool {
 	return s.closing
 }
 
-// opContext is the context backend and runtime calls run under.
+// opContext is the context service and runtime calls run under.
 func (s *Server) opContext() context.Context { return s.ctx }
 
 // readyConnections snapshots the connections a broadcast may reach.

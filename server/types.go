@@ -27,13 +27,13 @@ import (
 // Unsubscribe cancels a subscription. It is safe to call more than once.
 type Unsubscribe func()
 
-// CreateSessionOptions is what a Backend needs to create one durable session.
+// CreateSessionOptions is what a Service needs to create one durable session.
 //
 // The pointer fields are the client's optionals: nil means "the client did not
 // ask", which is not the same as an explicit empty string. pi distinguishes
 // those with `undefined`; Go needs the pointer to keep the distinction.
 type CreateSessionOptions struct {
-	// ID is a collision-resistant ID assigned by the Server. The backend must
+	// ID is a collision-resistant ID assigned by the Server. The service must
 	// persist this exact ID.
 	ID            string
 	Cwd           *string
@@ -108,9 +108,9 @@ type SessionRuntime interface {
 	Dispose(ctx context.Context) error
 }
 
-// Backend is durable session storage plus the exclusively acquired runtime
-// boundary in front of it.
-type Backend interface {
+// Service is the boundary for durable sessions and the exclusively acquired
+// runtimes in front of them.
+type Service interface {
 	ListSessions(ctx context.Context) ([]protocol.SessionSummary, error)
 	ListModels(ctx context.Context) ([]protocol.ModelMetadata, error)
 	// CreateSession creates a session under the server-assigned options.ID. A

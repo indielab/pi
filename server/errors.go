@@ -13,7 +13,7 @@ const (
 	defaultNotFoundMessage = "Session was not found"
 )
 
-// operationErrorCodes are the protocol error codes a backend or runtime is
+// operationErrorCodes are the protocol error codes a service or runtime is
 // allowed to put on the wire. auth and version belong to the handshake and are
 // the server's alone to report.
 var operationErrorCodes = []protocol.ProtocolErrorCode{
@@ -23,9 +23,9 @@ var operationErrorCodes = []protocol.ProtocolErrorCode{
 	protocol.ErrorInvalidRequest,
 }
 
-// Error is a backend or runtime failure that can safely cross the protocol
+// Error is a service or runtime failure that can safely cross the protocol
 // boundary: its code and message reach the client verbatim. Any other error a
-// backend returns is reported to the server's error observer and answered with
+// service returns is reported to the server's error observer and answered with
 // a generic invalid_request, so private detail never leaks to a peer.
 //
 // DIVERGENCE (deliberate): pi exports SessionBusyError, SessionLockedError and
@@ -71,14 +71,14 @@ func orDefault(message, fallback string) string {
 	return message
 }
 
-// crossesProtocolBoundary reports whether this Error's code is one a backend
+// crossesProtocolBoundary reports whether this Error's code is one a service
 // may report.
 //
 // DIVERGENCE (deliberate): pi constrains the code with a TypeScript type, which
 // costs nothing at runtime and cannot be violated. Go cannot express that, so
 // the check moves to the one place it matters — the wire — and an out-of-range
 // code is downgraded to the generic internal error rather than letting a
-// backend forge an auth or version failure.
+// service forge an auth or version failure.
 func (e *Error) crossesProtocolBoundary() bool {
 	return slices.Contains(operationErrorCodes, e.Code)
 }

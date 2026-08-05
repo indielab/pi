@@ -1,9 +1,9 @@
-// Package servertest is an in-memory Backend and a raw protocol client, used
+// Package servertest is an in-memory Service and a raw protocol client, used
 // to exercise the server package and its transports.
 //
 // It is the Go counterpart of pi's packages/server/src/testing tree. That tree
 // is published upstream; this one is internal, because the Go port has no
-// reason to make a fake backend part of its public API — the tests that need it
+// reason to make a fake service part of its public API — the tests that need it
 // all live under server/.
 package servertest
 
@@ -17,7 +17,7 @@ import (
 	"github.com/sky-valley/pi/server"
 )
 
-// Model is the single model the fake backend publishes.
+// Model is the single model the fake service publishes.
 var Model = protocol.ModelMetadata{
 	Provider:                "test",
 	ID:                      "small",
@@ -77,16 +77,17 @@ func cloneSnapshot(snapshot protocol.SessionSnapshot) protocol.SessionSnapshot {
 	return clone
 }
 
-// Backend is an in-memory server.Backend that records every runtime it hands
+// Service is an in-memory server.Service that records every runtime it hands
 // out, so a test can inspect what the server did with them.
-type Backend struct {
-	mu            sync.Mutex
-	sessions      map[string]*storedSession
-	order         []string
-	runtimes      map[string][]*Runtime
-	locked        map[string]bool
-	lastCreatedID string
-	listGate      *Gate
+type Service struct {
+	mu             sync.Mutex
+	sessions       map[string]*storedSession
+	order          []string
+	runtimes       map[string][]*Runtime
+	locked         map[string]bool
+	lastCreatedID  string
+	lastAssignedID string
+	listGate       *Gate
 
 	listSessionsHook func(call int) error
 	listModelsHook   func(call int) error
@@ -97,32 +98,32 @@ type Backend struct {
 
 // SetListSessionsHook installs a hook that runs at the top of ListSessions;
 // returning an error fails the call. It is safe to call on a running server.
-func (b *Backend) SetListSessionsHook(hook func(call int) error) {
+func (b *Service) SetListSessionsHook(hook func(call int) error) {
 	b.mu.Lock()
 	b.listSessionsHook = hook
 	b.mu.Unlock()
 }
 
 // SetListModelsHook installs a hook that runs at the top of ListModels.
-func (b *Backend) SetListModelsHook(hook func(call int) error) {
+func (b *Service) SetListModelsHook(hook func(call int) error) {
 	b.mu.Lock()
 	b.listModelsHook = hook
 	b.mu.Unlock()
 }
 
-// SetCreateSessionIDOverride rewrites the ID the backend persists, which is how
-// a test makes a backend disobey its server-assigned ID.
-func (b *Backend) SetCreateSessionIDOverride(id string) {
+// SetCreateSessionIDOverride rewrites the ID the service persists, which is how
+// a test makes a service disobey its server-assigned ID.
+func (b *Service) SetCreateSessionIDOverride(id string) {
 	b.mu.Lock()
 	b.createIDOverride = id
 	b.mu.Unlock()
 }
 
-var _ server.Backend = (*Backend)(nil)
+var _ server.Service = (*Service)(nil)
 
-// NewBackend returns an empty backend.
-func NewBackend() *Backend {
-	return &Backend{
+// NewService returns an empty service.
+func NewService() *Service {
+	return &Service{
 		sessions: map[string]*storedSession{},
 		runtimes: map[string][]*Runtime{},
 		locked:   map[string]bool{},
@@ -130,7 +131,7 @@ func NewBackend() *Backend {
 }
 
 // Seed stores one idle session with default fields.
-func (b *Backend) Seed(id string) {
+func (b *Service) Seed(id string) {
 	if id == "" {
 		id = "session-1"
 	}
@@ -139,7 +140,7 @@ func (b *Backend) Seed(id string) {
 }
 
 // SeedWith stores one idle session with explicit fields.
-func (b *Backend) SeedWith(
+func (b *Service) SeedWith(
 	id string,
 	name *string,
 	cwd string,
@@ -164,7 +165,7 @@ func (b *Backend) SeedWith(
 }
 
 // DelayNextList makes the next ListSessions block at the returned gate.
-func (b *Backend) DelayNextList() *Gate {
+func (b *Service) DelayNextList() *Gate {
 	gate := NewGate()
 	b.mu.Lock()
 	b.listGate = gate
@@ -174,35 +175,44 @@ func (b *Backend) DelayNextList() *Gate {
 
 // ForceLock marks a session held by somebody the server cannot see, which is
 // how a test provokes a session_locked failure from OpenSession.
-func (b *Backend) ForceLock(id string) {
+func (b *Service) ForceLock(id string) {
 	b.mu.Lock()
 	b.locked[id] = true
 	b.mu.Unlock()
 }
 
-// Locked reports whether the backend still considers a session held.
-func (b *Backend) Locked(id string) bool {
+// Locked reports whether the service still considers a session held.
+func (b *Service) Locked(id string) bool {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.locked[id]
 }
 
-// LastCreatedID is the server-assigned ID of the most recent CreateSession.
-func (b *Backend) LastCreatedID() string {
+// LastCreatedID is the ID the most recent CreateSession actually persisted,
+// which is the override when SetCreateSessionIDOverride is in force.
+func (b *Service) LastCreatedID() string {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return b.lastCreatedID
 }
 
+// LastAssignedID is the ID the server assigned to the most recent
+// CreateSession, before any override was applied.
+func (b *Service) LastAssignedID() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.lastAssignedID
+}
+
 // Runtimes is every runtime ever handed out for a session, oldest first.
-func (b *Backend) Runtimes(id string) []*Runtime {
+func (b *Service) Runtimes(id string) []*Runtime {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	return append([]*Runtime(nil), b.runtimes[id]...)
 }
 
 // LatestRuntime is the most recent runtime handed out for a session.
-func (b *Backend) LatestRuntime(id string) *Runtime {
+func (b *Service) LatestRuntime(id string) *Runtime {
 	runtimes := b.Runtimes(id)
 	if len(runtimes) == 0 {
 		return nil
@@ -210,7 +220,7 @@ func (b *Backend) LatestRuntime(id string) *Runtime {
 	return runtimes[len(runtimes)-1]
 }
 
-func (b *Backend) ListSessions(context.Context) ([]protocol.SessionSummary, error) {
+func (b *Service) ListSessions(context.Context) ([]protocol.SessionSummary, error) {
 	b.mu.Lock()
 	gate := b.listGate
 	b.listGate = nil
@@ -245,7 +255,7 @@ func (b *Backend) ListSessions(context.Context) ([]protocol.SessionSummary, erro
 	return summaries, nil
 }
 
-func (b *Backend) ListModels(context.Context) ([]protocol.ModelMetadata, error) {
+func (b *Service) ListModels(context.Context) ([]protocol.ModelMetadata, error) {
 	b.mu.Lock()
 	b.modelCalls++
 	call := b.modelCalls
@@ -259,9 +269,10 @@ func (b *Backend) ListModels(context.Context) ([]protocol.ModelMetadata, error) 
 	return []protocol.ModelMetadata{Model}, nil
 }
 
-func (b *Backend) CreateSession(_ context.Context, options server.CreateSessionOptions) (server.SessionRuntime, error) {
+func (b *Service) CreateSession(_ context.Context, options server.CreateSessionOptions) (server.SessionRuntime, error) {
 	b.mu.Lock()
 	id := options.ID
+	b.lastAssignedID = options.ID
 	if b.createIDOverride != "" {
 		id = b.createIDOverride
 	}
@@ -293,7 +304,7 @@ func (b *Backend) CreateSession(_ context.Context, options server.CreateSessionO
 	return b.acquire(id)
 }
 
-func (b *Backend) OpenSession(_ context.Context, sessionID string) (server.SessionRuntime, error) {
+func (b *Service) OpenSession(_ context.Context, sessionID string) (server.SessionRuntime, error) {
 	b.mu.Lock()
 	_, exists := b.sessions[sessionID]
 	locked := b.locked[sessionID]
@@ -307,7 +318,7 @@ func (b *Backend) OpenSession(_ context.Context, sessionID string) (server.Sessi
 	return b.acquire(sessionID)
 }
 
-func (b *Backend) acquire(id string) (*Runtime, error) {
+func (b *Service) acquire(id string) (*Runtime, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	stored := b.sessions[id]
@@ -316,7 +327,7 @@ func (b *Backend) acquire(id string) (*Runtime, error) {
 	}
 	b.locked[id] = true
 	runtime := &Runtime{
-		backend:   b,
+		service:   b,
 		stored:    stored,
 		id:        id,
 		listeners: map[int]func(server.RuntimeEvent){},
@@ -326,7 +337,7 @@ func (b *Backend) acquire(id string) (*Runtime, error) {
 	return runtime, nil
 }
 
-func (b *Backend) release(id string) {
+func (b *Service) release(id string) {
 	b.mu.Lock()
 	delete(b.locked, id)
 	b.mu.Unlock()
@@ -341,7 +352,7 @@ const (
 
 // Runtime is one acquired fake session.
 type Runtime struct {
-	backend *Backend
+	service *Service
 	stored  *storedSession
 	id      string
 
@@ -534,7 +545,7 @@ func (r *Runtime) Dispose(context.Context) error {
 	r.mu.Lock()
 	r.disposeCount++
 	r.mu.Unlock()
-	r.backend.release(r.id)
+	r.service.release(r.id)
 	r.closeOnce.Do(func() { close(r.disposed) })
 	return nil
 }
