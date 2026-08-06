@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -80,6 +81,64 @@ func TestMatchFdGlobTable(t *testing.T) {
 		{"**/x.ts", "deep/x.ts", "/r/deep/x.ts", true},
 	}
 	for _, c := range cases {
+		if got := matchFdGlob(c.pattern, c.rel, c.abs); got != c.want {
+			t.Errorf("matchFdGlob(%q, %q, %q) = %v, want %v", c.pattern, c.rel, c.abs, got, c.want)
+		}
+	}
+}
+
+// TestMatchFdGlobWindowsSeparators locks the Windows behavior of upstream
+// d4eaf052b ("support path globs on Windows"): fd matches full paths with
+// NATIVE separators on Windows, so pi rewrites each "/" of a path-containing
+// pattern to the class [/\\]. This port implements fd's matching itself and
+// reaches the same accept set from the other side: matchFdGlob normalizes the
+// CANDIDATE with filepath.ToSlash (identity off Windows) and keeps the
+// pattern "/"-separated. ToSlash only converts backslashes on GOOS=windows,
+// so this table feeds the slash images it produces there for native inputs
+// like `C:\proj\src\a\t.spec.ts`; the windows-gated block feeds the raw
+// native paths, exercising the normalization itself.
+func TestMatchFdGlobWindowsSeparators(t *testing.T) {
+	cases := []struct {
+		pattern string
+		rel     string
+		abs     string
+		want    bool
+	}{
+		// the #6817 shape: a path-containing glob against a drive-absolute
+		// candidate gets the "**/" prepend and matches across "C:/proj"
+		{"src/**/*.spec.ts", "src/a/t.spec.ts", "C:/proj/src/a/t.spec.ts", true},
+		{"src/**/*.spec.ts", "other/t.spec.ts", "C:/proj/other/t.spec.ts", false},
+		{"src/*.go", "src/main.go", "C:/proj/src/main.go", true},
+		// already "**/"-prefixed: no double prepend, still crosses the drive prefix
+		{"**/x.ts", "deep/x.ts", "C:/proj/deep/x.ts", true},
+		// a leading "/" anchors to the start of the full path, which on
+		// Windows is the drive letter — no match on either side (fd anchors
+		// the rewritten [/\\] where "C" sits; here "" vs "C:" fails)
+		{"/proj/*.go", "src/main.go", "C:/proj/main.go", false},
+		// "**" alone matches via the basename branch, drive paths included
+		{"**", "any/x.txt", "C:/proj/any/x.txt", true},
+	}
+	for _, c := range cases {
+		if got := matchFdGlob(c.pattern, c.rel, c.abs); got != c.want {
+			t.Errorf("matchFdGlob(%q, %q, %q) = %v, want %v", c.pattern, c.rel, c.abs, got, c.want)
+		}
+	}
+	if runtime.GOOS != "windows" {
+		return
+	}
+	// Native-separator forms exactly as findTool's WalkDir/Rel produce them on
+	// Windows; here filepath.ToSlash performs the actual conversion.
+	native := []struct {
+		pattern string
+		rel     string
+		abs     string
+		want    bool
+	}{
+		{"src/**/*.spec.ts", `src\a\t.spec.ts`, `C:\proj\src\a\t.spec.ts`, true},
+		{"src/**/*.spec.ts", `other\t.spec.ts`, `C:\proj\other\t.spec.ts`, false},
+		{"*.ts", `src\deep\x.ts`, `C:\proj\src\deep\x.ts`, true},
+	}
+	for _, c := range native {
 		if got := matchFdGlob(c.pattern, c.rel, c.abs); got != c.want {
 			t.Errorf("matchFdGlob(%q, %q, %q) = %v, want %v", c.pattern, c.rel, c.abs, got, c.want)
 		}

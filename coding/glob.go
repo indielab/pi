@@ -139,6 +139,9 @@ func patternHasUpper(pattern string) bool {
 //   - a pattern with "/" puts fd in --full-path mode: it matches against the
 //     absolute candidate path, and fd prepends "**/" unless the pattern starts
 //     with "/", "**/", or is exactly "**";
+//   - on Windows fd sees native separators in the full path, so pi rewrites
+//     the pattern's "/" to the class [/\\] (pi d4eaf052b); this port instead
+//     normalizes the candidate with filepath.ToSlash — same accept set;
 //   - smart-case: an all-lowercase pattern matches case-insensitively;
 //   - {a,b} alternation and [!x] classes are supported (globset).
 func matchFdGlob(pattern, rel, abs string) bool {
