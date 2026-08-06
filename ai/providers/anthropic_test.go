@@ -595,6 +595,40 @@ func TestAnthropicStreamSimpleClampsMaxTokensAndBudget(t *testing.T) {
 	}
 }
 
+// streamSimpleAnthropic collapses xhigh AND max to high before reading the
+// budget table (pi clampReasoning, simple-options.ts): the table has no
+// xhigh/max rows, so an unclamped level would read a zero budget and fall to
+// the 1024 floor instead of high's 16384.
+func TestAnthropicStreamSimpleClampsXHighAndMaxToHighBudget(t *testing.T) {
+	for _, level := range []ai.ThinkingLevel{ai.ThinkingXHigh, ai.ThinkingMax} {
+		t.Run(string(level), func(t *testing.T) {
+			var gotBody map[string]any
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				b, _ := io.ReadAll(r.Body)
+				_ = json.Unmarshal(b, &gotBody)
+				w.Header().Set("content-type", "text/event-stream")
+				io.WriteString(w, anthropicSSE)
+			}))
+			defer server.Close()
+			model := &ai.Model{
+				ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", BaseURL: server.URL,
+				Input: []string{"text"}, MaxTokens: 32768, ContextWindow: 200000, Reasoning: true,
+			}
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+			opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}, Reasoning: level}
+			StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
+
+			thinking, ok := gotBody["thinking"].(map[string]any)
+			if !ok {
+				t.Fatalf("thinking object missing: %v", gotBody["thinking"])
+			}
+			if v, _ := thinking["budget_tokens"].(float64); v != 16384 {
+				t.Fatalf("budget_tokens = %v, want high's 16384 (pi clampReasoning)", thinking["budget_tokens"])
+			}
+		})
+	}
+}
+
 // --- E1: cloudflare-ai-gateway branch ---
 
 func TestAnthropicCloudflareAIGateway(t *testing.T) {

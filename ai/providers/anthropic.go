@@ -290,13 +290,18 @@ func resolveThinkingBudgets(custom *ai.ThinkingBudgets) map[ai.ThinkingLevel]int
 	return budgets
 }
 
+// clampReasoning is pi's clampReasoning (simple-options.ts): the token-budget
+// tables have no xhigh/max rows, so both levels collapse to high.
+func clampReasoning(level ai.ThinkingLevel) ai.ThinkingLevel {
+	if level == ai.ThinkingXHigh || level == ai.ThinkingMax {
+		return ai.ThinkingHigh
+	}
+	return level
+}
+
 func adjustMaxTokensForThinking(baseMaxTokens *int, modelMaxTokens int, level ai.ThinkingLevel, custom *ai.ThinkingBudgets) (int, int) {
 	budgets := resolveThinkingBudgets(custom)
-	clamped := level
-	if level == ai.ThinkingXHigh {
-		clamped = ai.ThinkingHigh
-	}
-	thinkingBudget := budgets[clamped]
+	thinkingBudget := budgets[clampReasoning(level)]
 	var maxTokens int
 	if baseMaxTokens == nil {
 		maxTokens = modelMaxTokens

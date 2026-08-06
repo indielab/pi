@@ -944,11 +944,7 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 	// phase can consume the whole response and leave no answer and no tool call
 	// (pi d07889da0).
 	if compat.SupportsThinkingTokenBudget && opts.ReasoningEffort != "" && model.Reasoning {
-		// pi clampReasoning: xhigh and max collapse to high.
-		level := ai.ThinkingLevel(opts.ReasoningEffort)
-		if level == ai.ThinkingXHigh || level == ai.ThinkingMax {
-			level = ai.ThinkingHigh
-		}
+		level := clampReasoning(ai.ThinkingLevel(opts.ReasoningEffort))
 		budgets := resolveThinkingBudgets(opts.ThinkingBudgets)
 		// pi: `params.max_tokens ?? params.max_completion_tokens ?? model.maxTokens`
 		// — presence in params is pi's non-undefined (sampling params merge later
