@@ -3,6 +3,7 @@ package coding
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -27,6 +28,54 @@ func TestLoadProjectContextFilesAncestorOrder(t *testing.T) {
 	if strings.Index(joined, "root rules") > strings.Index(joined, "leaf rules") {
 		t.Fatalf("expected root before leaf: %q", joined)
 	}
+}
+
+// Upstream 8ecf8a988: AGENTS.override.md wins within each directory — global
+// agent dir included — while directories without one keep layering as before.
+func TestContextFileOverridePreferredPerDirectory(t *testing.T) {
+	home := isolatedHome(t)
+	agentDir := filepath.Join(home, ConfigDirName, "agent")
+	cwd := t.TempDir()
+	nested := filepath.Join(cwd, "service")
+	writeFile(t, filepath.Join(agentDir, "AGENTS.md"), "global instructions")
+	writeFile(t, filepath.Join(agentDir, "AGENTS.override.md"), "global override")
+	writeFile(t, filepath.Join(cwd, "AGENTS.md"), "project instructions")
+	writeFile(t, filepath.Join(nested, "AGENTS.md"), "service instructions")
+	writeFile(t, filepath.Join(nested, "AGENTS.override.md"), "service override")
+
+	got := LoadProjectContextFiles(nested)
+	want := []ContextFile{
+		{Path: filepath.Join(agentDir, "AGENTS.override.md"), Content: "global override"},
+		{Path: filepath.Join(cwd, "AGENTS.md"), Content: "project instructions"},
+		{Path: filepath.Join(nested, "AGENTS.override.md"), Content: "service override"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v, want %v", got, want)
+	}
+}
+
+func TestContextFileOverrideBeatsClaude(t *testing.T) {
+	isolatedHome(t)
+	cwd := t.TempDir()
+	writeFile(t, filepath.Join(cwd, "CLAUDE.md"), "claude instructions")
+	writeFile(t, filepath.Join(cwd, "AGENTS.override.md"), "override instructions")
+
+	assertContents(t, contextContents(LoadProjectContextFiles(cwd)), "override instructions")
+}
+
+// A candidate that is a directory is skipped in favour of the next loadable
+// one, AGENTS.override.md included.
+func TestContextFileCandidateDirectoriesIgnored(t *testing.T) {
+	isolatedHome(t)
+	cwd := t.TempDir()
+	for _, name := range []string{"AGENTS.override.md", "AGENTS.md"} {
+		if err := os.MkdirAll(filepath.Join(cwd, name), 0o755); err != nil {
+			t.Fatalf("mkdir %s: %v", name, err)
+		}
+	}
+	writeFile(t, filepath.Join(cwd, "CLAUDE.md"), "fallback instructions")
+
+	assertContents(t, contextContents(LoadProjectContextFiles(cwd)), "fallback instructions")
 }
 
 func TestLoadSkillsAndFormat(t *testing.T) {

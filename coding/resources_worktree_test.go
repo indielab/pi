@@ -37,12 +37,14 @@ func linkWorktree(t *testing.T, mainDir, worktreeDir, name string) {
 }
 
 // isolatedHome points AgentDir() at an empty dir so the developer's own global
-// context file cannot join the results.
-func isolatedHome(t *testing.T) {
+// context file cannot join the results. Returns the home dir for tests that
+// populate it.
+func isolatedHome(t *testing.T) string {
 	t.Helper()
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
+	return home
 }
 
 func contextContents(files []ContextFile) []string {

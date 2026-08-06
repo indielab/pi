@@ -56,7 +56,9 @@ func ExamplesPath() string {
 	return p
 }
 
-var contextFileCandidates = []string{"AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}
+// AGENTS.override.md replaces the directory's AGENTS.md/CLAUDE.md when present
+// (pi 8ecf8a988).
+var contextFileCandidates = []string{"AGENTS.override.md", "AGENTS.md", "AGENTS.MD", "CLAUDE.md", "CLAUDE.MD"}
 
 func loadContextFileFromDir(dir string) (ContextFile, bool) {
 	for _, name := range contextFileCandidates {
@@ -146,8 +148,8 @@ func resolveFrom(base, p string) string {
 }
 
 // findShadowedContextFile returns the main repo's context file that a nested
-// linked worktree's own copy shadows: both are the same tracked
-// AGENTS.md/CLAUDE.md, so loading both loads it twice. Reports false when
+// linked worktree's own copy shadows: both occupy the same logical repository
+// scope, so loading both applies that context twice. Reports false when
 // nothing is shadowed, leaving normal ancestor inheritance alone.
 //
 // Paths are canonicalized, because `git worktree add` writes the .git file's
@@ -185,9 +187,9 @@ func findShadowedContextFile(cwd string) (string, bool) {
 	return filepath.Join(mainRepoRoot, filepath.Base(cf.Path)), true
 }
 
-// LoadProjectContextFiles discovers AGENTS.md/CLAUDE.md context files: the global
-// one under agentDir first, then each ancestor directory of cwd from root down to
-// cwd. Mirrors loadProjectContextFiles.
+// LoadProjectContextFiles discovers context files (AGENTS.override.md, else
+// AGENTS.md/CLAUDE.md): the global one under agentDir first, then each ancestor
+// directory of cwd from root down to cwd. Mirrors loadProjectContextFiles.
 func LoadProjectContextFiles(cwd string) []ContextFile {
 	cwd, _ = filepath.Abs(cwd)
 	agentDir := AgentDir()
