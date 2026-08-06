@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"reflect"
 	"time"
+
+	"github.com/sky-valley/pi/telemetry"
 )
 
 // Api identifies a wire protocol / API shape. Known values mirror pi's KnownApi
@@ -802,7 +804,14 @@ type HTTPDoer interface {
 // <TModel>) so image requests can hand back an ImagesModel. The port has no
 // images half, so the callbacks name *Model directly.
 type ProviderRequestOptions struct {
-	APIKey string
+	// TelemetryContext is the explicit parent context for telemetry produced
+	// by this logical request (pi telemetryContext, upstream 04d6447f7).
+	// Latent for now, like Env once was: no ported code starts spans yet, so
+	// the field rides the options through dispatch untouched until a caller
+	// wires in a consumer. Nil is pi's absent value — callers that trace fall
+	// back to telemetry.NoopContext themselves.
+	TelemetryContext telemetry.Context
+	APIKey           string
 	// OnPayload inspects or replaces a provider payload before it is sent.
 	// Returning a nil payload keeps it unchanged.
 	OnPayload func(payload any, model *Model) (any, error)
