@@ -262,7 +262,14 @@ func mapThinkingLevelToEffort(model *ai.Model, level ai.ThinkingLevel) string {
 	}
 }
 
-func adjustMaxTokensForThinking(baseMaxTokens *int, modelMaxTokens int, level ai.ThinkingLevel, custom *ai.ThinkingBudgets) (int, int) {
+// minAnswerTokens is pi's MIN_ANSWER_TOKENS (simple-options.ts, d07889da0):
+// tokens always left for the answer when a thinking budget shares the response
+// ceiling. Shared with the openai-completions thinking_token_budget clamp.
+const minAnswerTokens = 1024
+
+// resolveThinkingBudgets merges the caller's per-level overrides over pi's
+// default thinking budgets (pi: `{...defaultBudgets, ...customBudgets}`).
+func resolveThinkingBudgets(custom *ai.ThinkingBudgets) map[ai.ThinkingLevel]int {
 	budgets := map[ai.ThinkingLevel]int{
 		ai.ThinkingMinimal: 1024, ai.ThinkingLow: 2048, ai.ThinkingMedium: 8192, ai.ThinkingHigh: 16384,
 	}
@@ -280,12 +287,16 @@ func adjustMaxTokensForThinking(baseMaxTokens *int, modelMaxTokens int, level ai
 			budgets[ai.ThinkingHigh] = *custom.High
 		}
 	}
+	return budgets
+}
+
+func adjustMaxTokensForThinking(baseMaxTokens *int, modelMaxTokens int, level ai.ThinkingLevel, custom *ai.ThinkingBudgets) (int, int) {
+	budgets := resolveThinkingBudgets(custom)
 	clamped := level
 	if level == ai.ThinkingXHigh {
 		clamped = ai.ThinkingHigh
 	}
 	thinkingBudget := budgets[clamped]
-	const minOutput = 1024
 	var maxTokens int
 	if baseMaxTokens == nil {
 		maxTokens = modelMaxTokens
@@ -296,7 +307,7 @@ func adjustMaxTokensForThinking(baseMaxTokens *int, modelMaxTokens int, level ai
 		}
 	}
 	if maxTokens <= thinkingBudget {
-		thinkingBudget = maxTokens - minOutput
+		thinkingBudget = maxTokens - minAnswerTokens
 		if thinkingBudget < 0 {
 			thinkingBudget = 0
 		}

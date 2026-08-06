@@ -22,6 +22,9 @@ type OpenAIOptions struct {
 	// ToolChoice mirrors pi's OpenAICompletionsOptions.toolChoice: a string
 	// ("auto"|"none"|"required") or an object {type:"function",function:{name}}.
 	ToolChoice any
+	// ThinkingBudgets are token budgets per thinking level, only read when
+	// compat.SupportsThinkingTokenBudget is set (pi d07889da0).
+	ThinkingBudgets *ai.ThinkingBudgets
 }
 
 // StreamSimpleOpenAICompletions maps unified reasoning to OpenAI options.
@@ -29,6 +32,7 @@ func StreamSimpleOpenAICompletions(ctx context.Context, model *ai.Model, req ai.
 	o := &OpenAIOptions{}
 	if opts != nil {
 		o.StreamOptions = opts.StreamOptions
+		o.ThinkingBudgets = opts.ThinkingBudgets
 		if opts.Reasoning != "" {
 			clamped := ai.ClampThinkingLevel(model, ai.ModelThinkingLevel(opts.Reasoning))
 			if clamped != "off" {
@@ -933,6 +937,33 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 	}
 
 	applyReasoningFormat(params, model, compat, opts.ReasoningEffort)
+
+	// vLLM caps reasoning with a top-level thinking_token_budget. Independent of
+	// thinkingFormat: the same server can serve zai, qwen or chat-template models.
+	// Reasoning and the answer share max_tokens here, so an uncapped reasoning
+	// phase can consume the whole response and leave no answer and no tool call
+	// (pi d07889da0).
+	if compat.SupportsThinkingTokenBudget && opts.ReasoningEffort != "" && model.Reasoning {
+		// pi clampReasoning: xhigh and max collapse to high.
+		level := ai.ThinkingLevel(opts.ReasoningEffort)
+		if level == ai.ThinkingXHigh || level == ai.ThinkingMax {
+			level = ai.ThinkingHigh
+		}
+		budgets := resolveThinkingBudgets(opts.ThinkingBudgets)
+		// pi: `params.max_tokens ?? params.max_completion_tokens ?? model.maxTokens`
+		// — presence in params is pi's non-undefined (sampling params merge later
+		// there too, so only the field set above can be present here).
+		ceiling := model.MaxTokens
+		if v, ok := params["max_tokens"].(int); ok {
+			ceiling = v
+		} else if v, ok := params["max_completion_tokens"].(int); ok {
+			ceiling = v
+		}
+		// Always leave room for the answer, otherwise the budget recreates the bug it prevents.
+		if budget := min(budgets[level], max(0, ceiling-minAnswerTokens)); budget > 0 {
+			params["thinking_token_budget"] = budget
+		}
+	}
 
 	// OpenRouter provider routing preferences. pi checks
 	// model.compat?.openRouterRouting for truthiness (:613), so an explicit

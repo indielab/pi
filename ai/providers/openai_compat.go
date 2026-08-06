@@ -55,7 +55,13 @@ type openAICompletionsCompat struct {
 	RequiresAssistantAfterToolResult            bool
 	RequiresThinkingAsText                      bool
 	ZaiToolStream                               bool
-	SendSessionAffinityHeaders                  bool
+	// SupportsThinkingTokenBudget reports whether the provider accepts a
+	// top-level thinking_token_budget to cap reasoning tokens (vLLM). Reasoning
+	// and the answer share max_tokens on these endpoints, so without a budget a
+	// reasoning-heavy turn can consume the whole response and emit no answer
+	// (pi d07889da0). Default: false.
+	SupportsThinkingTokenBudget bool
+	SendSessionAffinityHeaders  bool
 	// DeferredToolsMode selects a provider-specific deferred-tool serialization
 	// (pi OpenAICompletionsCompat.deferredToolsMode). "kimi" withholds tools
 	// introduced by a tool result's addedToolNames from the top-level tools
@@ -148,6 +154,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		RequiresAssistantAfterToolResult:            false,
 		RequiresThinkingAsText:                      false,
 		ZaiToolStream:                               false,
+		SupportsThinkingTokenBudget:                 false,
 		SendSessionAffinityHeaders:                  false,
 		DeferredToolsMode:                           "",
 		SessionAffinityFormat:                       sessionAffinityFormatFor(isOpenRouter),
@@ -180,6 +187,7 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		RequiresAssistantAfterToolResult            *bool                 `json:"requiresAssistantAfterToolResult"`
 		RequiresThinkingAsText                      *bool                 `json:"requiresThinkingAsText"`
 		ZaiToolStream                               *bool                 `json:"zaiToolStream"`
+		SupportsThinkingTokenBudget                 *bool                 `json:"supportsThinkingTokenBudget"`
 		SendSessionAffinityHeaders                  *bool                 `json:"sendSessionAffinityHeaders"`
 		DeferredToolsMode                           *string               `json:"deferredToolsMode"`
 		SessionAffinityFormat                       *string               `json:"sessionAffinityFormat"`
@@ -236,6 +244,9 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	}
 	if raw.ZaiToolStream != nil {
 		c.ZaiToolStream = *raw.ZaiToolStream
+	}
+	if raw.SupportsThinkingTokenBudget != nil {
+		c.SupportsThinkingTokenBudget = *raw.SupportsThinkingTokenBudget
 	}
 	if raw.SendSessionAffinityHeaders != nil {
 		c.SendSessionAffinityHeaders = *raw.SendSessionAffinityHeaders
