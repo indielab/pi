@@ -20,7 +20,7 @@ for cancellation, goroutines for parallel tool execution).
 | [`ai`](ai/) | `@earendil-works/pi-ai` | Unified multi-provider LLM API: message/content/tool/model types, the channel-based `EventStream`, JSON-Schema tool validation, model catalog + cost, provider registry. |
 | [`ai/providers`](ai/providers/) | `pi-ai/providers` | Concrete providers, all with real `net/http` SSE: **faux** (deterministic test double), **Anthropic** Messages, **OpenAI** Chat Completions, **OpenAI** Responses (GPT-5/o-series), **Google** Gemini. These four wire APIs cover ~816 of pi's 999 catalog models. |
 | [`agent`](agent/) | `@earendil-works/pi-agent-core` | The agent runtime: low-level `AgentLoop`, the stateful `Agent` with tool calling, hooks, steering/follow-up queues, sequential + parallel tool execution. |
-| [`coding`](coding/) | `@earendil-works/pi-coding-agent` | The coding agent: the seven built-in tools (`read`, `write`, `edit`, `bash`, `ls`, `find`, `grep`), the system prompt builder (with AGENTS.md/CLAUDE.md context files + Agent Skills), model resolver, the session runner, and JSONL session persistence. |
+| [`coding`](coding/) | `@earendil-works/pi-coding-agent` | The coding agent: the seven built-in tools (`read`, `write`, `edit`, `bash`, `ls`, `find`, `grep`), the system prompt builder (with AGENTS.override.md/AGENTS.md/CLAUDE.md context files + Agent Skills), model resolver, the session runner, and JSONL session persistence. |
 | [`cmd/pi`](cmd/pi/) | `pi` CLI | The `pi` command — print mode, interactive REPL with slash commands, session resume, `pi models`, `pi sessions`. |
 
 ## Build & test
@@ -48,7 +48,8 @@ pi sessions                                 # list saved sessions for this direc
 
 Sessions are persisted as append-only JSONL under `~/.pi/agent/sessions/--<cwd>--/`,
 matching pi's on-disk format (`-c`/`--continue` resumes the latest; `--resume PATH`
-resumes a specific file). Project context files (`AGENTS.md`/`CLAUDE.md`, discovered up
+resumes a specific file). Project context files (`AGENTS.md`/`CLAUDE.md` — an
+`AGENTS.override.md` replaces both within its directory — discovered up
 the directory tree) and Agent Skills (`.pi/skills/*/SKILL.md`) are folded into the system
 prompt exactly as upstream pi does.
 
