@@ -250,7 +250,11 @@ type OAuthAuth struct {
 	// Name is the display name, e.g. "Anthropic (Claude Pro/Max)".
 	Name string
 
-	// LoginLabel is the selector label for the subscription login option,
+	// IsSubscription reports whether access through this auth method is backed
+	// by a provider subscription (pi b0bd0ff9d; optional, false when unset).
+	IsSubscription bool
+
+	// LoginLabel is the selector label for the OAuth login option,
 	// e.g. "Sign in with SuperGrok or X Premium" (pi a01baaae; optional, ""
 	// when unset). Latent: the interactive login UI is unported.
 	LoginLabel string

@@ -44,22 +44,43 @@ func EnvAPIKeyAuth(name string, envVars ...string) *ApiKeyAuth {
 	}
 }
 
+// LazyOAuthOptions is LazyOAuth's input (pi helpers.ts lazyOAuth, b0bd0ff9d):
+// the descriptor fields a provider advertises up front plus the deferred
+// implementation load.
+type LazyOAuthOptions struct {
+	// Name is the display name, e.g. "Anthropic (Claude Pro/Max)".
+	Name string
+
+	// IsSubscription marks subscription-backed access (OAuthAuth.IsSubscription).
+	IsSubscription bool
+
+	// LoginLabel is the selector label for the OAuth login option
+	// (OAuthAuth.LoginLabel; optional, "" when unset).
+	LoginLabel string
+
+	// Load constructs the implementation; called once on first use.
+	Load func() (*OAuthAuth, error)
+}
+
 // LazyOAuth wraps a lazily-loaded OAuthAuth so provider definitions can
 // advertise OAuth without constructing the implementation up front (pi
-// helpers.ts lazyOAuth). The implementation loads once on first
-// Login/Refresh/ToAuth; pi memoizes the load promise, Go uses sync.Once.
-func LazyOAuth(name string, load func() (*OAuthAuth, error)) *OAuthAuth {
+// helpers.ts lazyOAuth). The descriptor fields carry over to the wrapper so
+// they are readable without loading; the implementation loads once on first
+// Login/Refresh/ToAuth — pi memoizes the load promise, Go uses sync.Once.
+func LazyOAuth(opts LazyOAuthOptions) *OAuthAuth {
 	var (
 		once    sync.Once
 		loaded  *OAuthAuth
 		loadErr error
 	)
 	get := func() (*OAuthAuth, error) {
-		once.Do(func() { loaded, loadErr = load() })
+		once.Do(func() { loaded, loadErr = opts.Load() })
 		return loaded, loadErr
 	}
 	return &OAuthAuth{
-		Name: name,
+		Name:           opts.Name,
+		IsSubscription: opts.IsSubscription,
+		LoginLabel:     opts.LoginLabel,
 		Login: func(ctx context.Context, interaction AuthInteraction) (*Credential, error) {
 			o, err := get()
 			if err != nil {

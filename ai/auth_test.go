@@ -392,6 +392,73 @@ func TestResolveStoredOAuthRefreshContextIsComposite(t *testing.T) {
 	}
 }
 
+// TestLazyOAuthCarriesDescriptorFields locks upstream b0bd0ff9d
+// (IsSubscription) and a01baaae (LoginLabel): LazyOAuth carries the descriptor
+// fields onto the wrapper itself, readable without loading the implementation,
+// so hosts can label subscription-backed OAuth (the footer's "(sub)") before
+// any auth flow runs — while Login/Refresh/ToAuth still route to the lazily
+// loaded implementation.
+func TestLazyOAuthCarriesDescriptorFields(t *testing.T) {
+	loads := 0
+	impl := &OAuthAuth{
+		Login: func(_ context.Context, _ AuthInteraction) (*Credential, error) {
+			return &Credential{Type: CredentialOAuth, Access: "logged-in"}, nil
+		},
+		Refresh: func(_ context.Context, c OAuthCredentials) (OAuthCredentials, error) {
+			return OAuthCredentials{Refresh: "r1", Access: "new", Expires: 42}, nil
+		},
+		ToAuth: func(c OAuthCredentials) (ModelAuth, error) {
+			return ModelAuth{APIKey: c.Access}, nil
+		},
+	}
+	wrapper := LazyOAuth(LazyOAuthOptions{
+		Name:           "Test (subscription)",
+		IsSubscription: true,
+		LoginLabel:     "Sign in with Test",
+		Load: func() (*OAuthAuth, error) {
+			loads++
+			return impl, nil
+		},
+	})
+
+	// The descriptor fields are readable without loading the implementation.
+	if wrapper.Name != "Test (subscription)" {
+		t.Errorf("Name = %q, want the input's name", wrapper.Name)
+	}
+	if !wrapper.IsSubscription {
+		t.Error("IsSubscription was dropped by the wrapper")
+	}
+	if wrapper.LoginLabel != "Sign in with Test" {
+		t.Error("LoginLabel was dropped by the wrapper")
+	}
+	if loads != 0 {
+		t.Fatalf("reading descriptor fields must not load the implementation (loaded %d times)", loads)
+	}
+
+	// Login, Refresh, and ToAuth route to the implementation, loading it once.
+	cred, err := wrapper.Login(context.Background(), nil)
+	if err != nil || cred == nil || cred.Access != "logged-in" {
+		t.Fatalf("Login must route to the implementation: %+v (err %v)", cred, err)
+	}
+	refreshed, err := wrapper.Refresh(context.Background(), OAuthCredentials{Refresh: "r0"})
+	if err != nil || refreshed.Access != "new" {
+		t.Fatalf("Refresh must route to the implementation: %+v (err %v)", refreshed, err)
+	}
+	auth, err := wrapper.ToAuth(refreshed)
+	if err != nil || auth.APIKey != "new" {
+		t.Fatalf("ToAuth must route to the implementation: %+v (err %v)", auth, err)
+	}
+	if loads != 1 {
+		t.Fatalf("expected exactly one load, got %d", loads)
+	}
+
+	// Like pi's openRouterOAuth, a wrapper that never opts in reports false.
+	plain := LazyOAuth(LazyOAuthOptions{Name: "Plain OAuth", Load: func() (*OAuthAuth, error) { return impl, nil }})
+	if plain.IsSubscription {
+		t.Error("a wrapper without the opt-in must not report a subscription")
+	}
+}
+
 // TestCredentialStoreList locks pi ff28097a's list(): non-secret metadata
 // only, one entry per provider.
 func TestCredentialStoreList(t *testing.T) {
