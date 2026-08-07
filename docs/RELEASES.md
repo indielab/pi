@@ -20,6 +20,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.84.17`](#v08417) | 2026-08-07 | `PLACEHOLDER` | `e0900a6ea` | pi-ai 0.84.1 | Two releases crossed (v0.84.0, v0.84.1) — first catalog move since 0.83.0: 511,913 B, 1153→1220 models, 37→39 providers (+baseten data, +qwen-token-plan-individual), activating the already-ported `chat_template_args` / `stream_options.include_usage` paths; **breaking wire change** — session summaries replaced by durable `SessionMetadata`, so listing is no longer per-connection and one snapshot is broadcast to all peers; `Agent.Reset()` now refuses mid-run (API break); blocked tool calls can join the batch early-termination rule; telemetry gains an in-memory reference recorder; PI_* system-prompt guideline softened |
 | [`v0.83.16`](#v08316) | 2026-07-30 | `13088d2` | `c13ffe18` | pi-ai 0.83.0 | First catalog move since 0.82.0 — 1116→1153 models (477,229 B), regenerated from the 0.83.0 build and endpoint-pinned both ends; Qwen token-plan `reasoning_effort` via `thinkingLevelMap` under `??` semantics (a live request-body change for 27 models); `rawStopReason` preserved across the four ported providers with pi's `Provider stopped with: …` strings; tool calls carrying both `custom` and `function` treated as function calls; three missing `defaultModelPerProvider` entries restored (qwen-token-plan fallbacks were cloning the wrong context/token limits) |
 | [`v0.82.15`](#v08215) | 2026-07-26 | `b3785a1` | `5bc1c2c0` | pi-ai 0.82.1 | Release v0.82.1 crossed but catalog byte-identical to 0.82.0 (no regen); `ANTHROPIC_AUTH_TOKEN` bearer auth via a custom anthropic resolver (credential-first precedence, `Authorization: Bearer`, never `x-api-key`); `ModelsStoreEntry.etag` for remote-catalog ETag revalidation (latent); ModelsError keeps its underlying cause (already faithful in Go, locked) |
 | [`v0.82.14`](#v08214) | 2026-07-24 | `b017378` | `7df73a00` | pi-ai 0.82.0 | Catalog 0.81.1→0.82.0 (456,576 B, +19/−1 models); constrained sampling — JSON-schema `strict` and Lark/regex grammar tools across anthropic/openai-completions/openai-responses/google, incl. `custom` tool calls and streaming grammar deltas; abortable provider retries with fail-fast on oversized `Retry-After`; explicit prompt-cache mode for GPT-5.6+ |
@@ -40,6 +41,38 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.84.17
+Upstream sync `9859eaa26 → e0900a6ea` (pi 0.84.1). 51 first-parent changes:
+9 ports, 41 n/a, 1 decide (resolved). **Two release tags crossed**, so the
+catalog was regenerated for the first time since 0.83.0 — 511,913 B, derived by
+executing the integrity-verified build and endpoint-pinned at both ends. Its
+only schema drift is two compat keys that Go already consumed, so the regen
+mostly *activated* the Baseten support ported in an earlier cycle (17 models,
+`chat_template_args` + `stream_options.include_usage` now live).
+
+The headline behaviour change is upstream `6189e53b3`: `SessionSummary` is
+replaced by `SessionMetadata`, dropping every live field from server snapshots
+and list results. Because `attached` was per-connection, the server now builds
+one snapshot and broadcasts it to every peer, and the client can no longer
+rebuild attachments from a snapshot. The wire byte-goldens moved and were
+re-derived by executing upstream's own codec at the new sha — proved
+non-circular against the previous pin, with exactly three vectors changing.
+
+Also: `Agent.Reset()` and `coding.Session.Reset()` return an error and refuse
+while a run is active (sanctioned API break); `beforeToolCall` can return
+`terminate` alongside `block`; a new `telemetry.InMemoryContext` reference
+recorder; the Qwen Token Plan Individual provider; and the PI_* environment
+guideline softened, moving the system-prompt golden.
+
+Gates: parity **FAITHFUL**, go-review **SHIP WITH NITS**, all findings applied.
+Differential harness 13/13 against the 0.84.1 build, now including a permanent
+catalog-backed baseten scenario. `go test -race ./...` green.
+
+**Scope note:** the owner reopened the agent-harness boundary this cycle
+(ruling (c)). `packages/agent/src/harness/**` and `packages/session-backends/**`
+are in scope as of this release but are **not ported** — ~12.4k lines tracked
+as an explicit deferral in UPSTREAM.md. This tag does not imply harness parity.
 
 ### v0.83.16
 
