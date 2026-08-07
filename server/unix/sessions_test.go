@@ -176,7 +176,9 @@ func TestCreateListAttachDetach(t *testing.T) {
 
 	listed := request(t, client, "list", protocol.NewListCommand())
 	list := listed.Result.(*protocol.ListResult)
-	if len(list.Sessions) != 1 || !list.Sessions[0].Attached || !list.Sessions[0].Locked {
+	// 6189e53b3 removed attached/locked from the listed shape; the live view of
+	// those still rides on the session snapshot asserted just above.
+	if len(list.Sessions) != 1 || list.Sessions[0].ID != created.ID {
 		t.Fatalf("list returned %#v", list.Sessions)
 	}
 
@@ -286,8 +288,12 @@ func TestOneLiveRuntimeIsSharedByEveryAttachedClient(t *testing.T) {
 
 	listed := request(t, second, "list", protocol.NewListCommand())
 	sessions := listed.Result.(*protocol.ListResult).Sessions
-	if len(sessions) != 1 || sessions[0].Attached || !sessions[0].Locked {
-		t.Fatalf("a session held by another connection must list as locked but unattached: %#v", sessions)
+	// Before 6189e53b3 this asserted the session listed as locked-but-unattached
+	// for the second connection. That distinction left the wire with the
+	// per-connection fields, so what remains to check is that the session is
+	// listed at all -- the shared-runtime assertion below is the real subject.
+	if len(sessions) != 1 || sessions[0].ID != "session-1" {
+		t.Fatalf("a session held by another connection must still be listed: %#v", sessions)
 	}
 
 	request(t, second, "attach", protocol.NewAttachCommand("session-1"))

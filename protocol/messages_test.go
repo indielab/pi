@@ -126,11 +126,14 @@ func fixtureToolError() *ToolTranscriptItem {
 	}
 }
 
-func fixtureSessionSummary() SessionSummary {
-	return SessionSummary{
-		ID: "s1", Name: ptr("work"), Cwd: "/tmp", CreatedAt: 1, UpdatedAt: 2,
-		Phase: PhaseIdle, Model: fixtureModel(), ThinkingLevel: ThinkingMedium,
-		Attached: true, Locked: false,
+// Mirrors gen-messages.ts's sessionMetadata fixture exactly, every optional
+// field populated, so the encoder is compared against the upstream-derived
+// frames on the whole shape.
+func fixtureSessionMetadata() SessionMetadata {
+	updatedAt := int64(2)
+	return SessionMetadata{
+		ID: "s1", CreatedAt: 1, UpdatedAt: &updatedAt,
+		ParentSessionID: ptr("s0"), SessionName: ptr("work"), Cwd: ptr("/tmp"),
 	}
 }
 
@@ -159,7 +162,7 @@ func fixtureModelMetadata() ModelMetadata {
 func fixtureServerSnapshot() ServerSnapshot {
 	return ServerSnapshot{
 		ServerID: "srv1", ProtocolVersion: ProtocolVersion, Revision: 3,
-		Sessions: []SessionSummary{fixtureSessionSummary()},
+		Sessions: []SessionMetadata{fixtureSessionMetadata()},
 		Models:   []ModelMetadata{fixtureModelMetadata()},
 	}
 }
@@ -211,7 +214,7 @@ func goServerMessages() map[string]ServerMessage {
 		},
 		"resp_list": &ResponseEnvelope{
 			Type: "response", ID: "r1", OK: true,
-			Result: &ListResult{Command: "list", Sessions: []SessionSummary{fixtureSessionSummary()}},
+			Result: &ListResult{Command: "list", Sessions: []SessionMetadata{fixtureSessionMetadata()}},
 		},
 		"resp_detach": &ResponseEnvelope{
 			Type: "response", ID: "r5", OK: true,

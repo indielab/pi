@@ -17,7 +17,7 @@ func TestCoalescedOutOfOrderResponses(t *testing.T) {
 	requests := recordRequests(server)
 
 	type listOutcome struct {
-		sessions []protocol.SessionSummary
+		sessions []protocol.SessionMetadata
 		err      error
 	}
 	listed := make(chan listOutcome, 1)
@@ -42,7 +42,7 @@ func TestCoalescedOutOfOrderResponses(t *testing.T) {
 		okResponse(requests.find(t, "attach").ID, attachResult(sessionSnapshot("session-1", 1, true))),
 		okResponse(requests.find(t, "list").ID, &protocol.ListResult{
 			Command:  "list",
-			Sessions: []protocol.SessionSummary{},
+			Sessions: []protocol.SessionMetadata{},
 		}),
 	)
 
@@ -99,7 +99,7 @@ func TestUnsolicitedResponseFailsConnection(t *testing.T) {
 
 	server.send(t, okResponse("request-999", &protocol.ListResult{
 		Command:  "list",
-		Sessions: []protocol.SessionSummary{},
+		Sessions: []protocol.SessionMetadata{},
 	}))
 
 	if client.ConnectionState() != Disconnected {
@@ -179,7 +179,7 @@ func TestCancelledRequestKeepsCorrelation(t *testing.T) {
 
 	server.send(t, okResponse(requests.last(t).ID, &protocol.ListResult{
 		Command:  "list",
-		Sessions: []protocol.SessionSummary{},
+		Sessions: []protocol.SessionMetadata{},
 	}))
 
 	if client.ConnectionState() != Connected {

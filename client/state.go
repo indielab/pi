@@ -348,14 +348,10 @@ func (s *State) applyServerSnapshotLocked(snapshot *protocol.ServerSnapshot) not
 		return nil
 	}
 	s.snapshot = snapshot
-	// The server snapshot is authoritative, so attachments are rebuilt from it
-	// rather than merged into what was already there.
-	clear(s.attached)
-	for _, session := range snapshot.Sessions {
-		if session.Attached {
-			s.attached[session.ID] = true
-		}
-	}
+	// 6189e53b3 dropped `attached` from the listed session shape, so a server
+	// snapshot no longer says anything about this connection's attachments and
+	// cannot rebuild them. They are now maintained solely by the attach and
+	// detach paths, exactly as pi's ClientState does after the same change.
 	return queue(s, func() *listenerSet[*protocol.ServerSnapshot] { return s.snapshotListeners }, snapshot)
 }
 

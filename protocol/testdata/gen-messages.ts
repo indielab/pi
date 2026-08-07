@@ -80,12 +80,18 @@ const toolOrderedInput = toProtocolToolResultMessage(
 	} as never,
 	{ id: "t3", call: orderedCall } as never,
 );
-const sessionSummary = {
-	id: "s1", name: "work", cwd: "/tmp", createdAt: 1, updatedAt: 2,
-	phase: "idle", model, thinkingLevel: "medium", attached: true, locked: false,
+// Upstream 6189e53b3 replaced SessionSummary with SessionMetadata and stopped
+// deriving the snapshot from it, so the two no longer share a field list.
+// Every optional metadata field is populated here, parentSessionId included,
+// so the vectors exercise the whole shape.
+const sessionMetadata = {
+	id: "s1", createdAt: 1, updatedAt: 2,
+	parentSessionId: "s0", sessionName: "work", cwd: "/tmp",
 };
 const sessionSnapshot = {
-	...sessionSummary, revision: 7,
+	id: "s1", name: "work", cwd: "/tmp", createdAt: 1, updatedAt: 2,
+	phase: "idle", model, thinkingLevel: "medium", attached: true, locked: false,
+	revision: 7,
 	transcript: [userItem, assistantComplete, toolItem],
 	queuedSteer: [userItem], queuedSteerCount: 1,
 };
@@ -97,7 +103,7 @@ const modelMetadata = {
 };
 const serverSnapshot = {
 	serverId: "srv1", protocolVersion: 1, revision: 3,
-	sessions: [sessionSummary], models: [modelMetadata],
+	sessions: [sessionMetadata], models: [modelMetadata],
 };
 
 const clientMessages: Array<[string, unknown]> = [
@@ -128,7 +134,7 @@ const serverMessages: Array<[string, unknown]> = [
 		type: "hello_error",
 		error: { code: "version", message: "nope", details: { supported: [1] } },
 	}],
-	["resp_list", { type: "response", id: "r1", ok: true, result: { command: "list", sessions: [sessionSummary] } }],
+	["resp_list", { type: "response", id: "r1", ok: true, result: { command: "list", sessions: [sessionMetadata] } }],
 	["resp_detach", { type: "response", id: "r5", ok: true, result: { command: "detach", sessionId: "s1" } }],
 	["resp_create", {
 		type: "response", id: "r2", ok: true,

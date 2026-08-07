@@ -435,8 +435,11 @@ func TestHandshakeCatchUpAfterConcurrentChange(t *testing.T) {
 		t.Fatalf("catch-up: %v", err)
 	}
 	event, _ := isEvent[*protocol.ServerSnapshotEvent](catchUp)
-	if len(event.Snapshot.Sessions) != 1 || !event.Snapshot.Sessions[0].Locked {
-		t.Fatalf("expected one locked session, got %#v", event.Snapshot.Sessions)
+	// The snapshot's sessions are durable metadata since 6189e53b3, so the
+	// former `locked` assertion has no field to read; the catch-up itself is
+	// what this case is proving.
+	if len(event.Snapshot.Sessions) != 1 {
+		t.Fatalf("expected one session, got %#v", event.Snapshot.Sessions)
 	}
 }
 

@@ -220,7 +220,7 @@ func (s *Service) LatestRuntime(id string) *Runtime {
 	return runtimes[len(runtimes)-1]
 }
 
-func (s *Service) ListSessions(context.Context) ([]protocol.SessionSummary, error) {
+func (s *Service) ListSessions(context.Context) ([]protocol.SessionMetadata, error) {
 	s.mu.Lock()
 	gate := s.listGate
 	s.listGate = nil
@@ -240,19 +240,19 @@ func (s *Service) ListSessions(context.Context) ([]protocol.SessionSummary, erro
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	summaries := make([]protocol.SessionSummary, 0, len(s.order))
+	metadata := make([]protocol.SessionMetadata, 0, len(s.order))
 	for _, id := range s.order {
 		stored := s.sessions[id]
 		if stored == nil {
 			continue
 		}
+		// Since 6189e53b3 the stored view is durable metadata only: the live
+		// fields the fake used to report here (attached, locked) are no longer
+		// part of the listed shape.
 		snapshot := stored.get()
-		summary := snapshot.Summary()
-		summary.Attached = false
-		summary.Locked = s.locked[id]
-		summaries = append(summaries, summary)
+		metadata = append(metadata, snapshot.Metadata())
 	}
-	return summaries, nil
+	return metadata, nil
 }
 
 func (s *Service) ListModels(context.Context) ([]protocol.ModelMetadata, error) {

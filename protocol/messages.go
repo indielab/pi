@@ -2,40 +2,47 @@ package protocol
 
 import "slices"
 
-// SessionSummary is the cheap view of a session, carried in server snapshots.
-type SessionSummary struct {
-	ID            string        `cbor:"id"`
-	Name          *string       `cbor:"name,omitempty"`
-	Cwd           string        `cbor:"cwd"`
-	CreatedAt     int64         `cbor:"createdAt"`
-	UpdatedAt     int64         `cbor:"updatedAt"`
-	Phase         SessionPhase  `cbor:"phase"`
-	Model         ModelRef      `cbor:"model"`
-	ThinkingLevel ThinkingLevel `cbor:"thinkingLevel"`
-	Attached      bool          `cbor:"attached"`
-	Locked        bool          `cbor:"locked"`
+// SessionMetadata is the durable view of a session, carried in server
+// snapshots and list results (pi SessionMetadataSchema).
+//
+// Upstream 6189e53b3 replaced the former SessionSummary with this: everything
+// live -- phase, model, thinkingLevel, attached, locked -- is gone, leaving
+// only what survives a restart. `attached` in particular was per-connection,
+// which is why listing no longer takes a connection. Only id and createdAt
+// remain required; cwd and updatedAt became optional here even though a
+// SessionSnapshot still carries them.
+type SessionMetadata struct {
+	ID              string  `cbor:"id"`
+	CreatedAt       int64   `cbor:"createdAt"`
+	UpdatedAt       *int64  `cbor:"updatedAt,omitempty"`
+	ParentSessionID *string `cbor:"parentSessionId,omitempty"`
+	SessionName     *string `cbor:"sessionName,omitempty"`
+	Cwd             *string `cbor:"cwd,omitempty"`
 }
 
-func (s *SessionSummary) Validate() error {
+func (s *SessionMetadata) Validate() error {
 	if err := requireID("id", s.ID); err != nil {
-		return err
-	}
-	if err := requireNonEmpty("cwd", s.Cwd); err != nil {
 		return err
 	}
 	if err := requireTimestamp("createdAt", s.CreatedAt); err != nil {
 		return err
 	}
-	if err := requireTimestamp("updatedAt", s.UpdatedAt); err != nil {
-		return err
+	if s.UpdatedAt != nil {
+		if err := requireTimestamp("updatedAt", *s.UpdatedAt); err != nil {
+			return err
+		}
 	}
-	if err := s.Phase.Validate(); err != nil {
-		return err
+	if s.ParentSessionID != nil {
+		if err := requireID("parentSessionId", *s.ParentSessionID); err != nil {
+			return err
+		}
 	}
-	if err := s.Model.Validate(); err != nil {
-		return err
+	if s.Cwd != nil {
+		if err := requireNonEmpty("cwd", *s.Cwd); err != nil {
+			return err
+		}
 	}
-	return s.ThinkingLevel.Validate()
+	return nil
 }
 
 // SessionSnapshot is the authoritative view of one session.
@@ -57,10 +64,29 @@ type SessionSnapshot struct {
 }
 
 func (s *SessionSnapshot) Validate() error {
-	// The shared fields are checked through the projection rather than a second
-	// copy of the field list: one place to update when the summary changes.
-	summary := s.Summary()
-	if err := summary.Validate(); err != nil {
+	// Checked field by field. Before 6189e53b3 these rode on the summary
+	// projection, but a snapshot and its metadata no longer share a field
+	// list -- the snapshot still requires cwd, updatedAt and the live fields
+	// that SessionMetadata dropped.
+	if err := requireID("id", s.ID); err != nil {
+		return err
+	}
+	if err := requireNonEmpty("cwd", s.Cwd); err != nil {
+		return err
+	}
+	if err := requireTimestamp("createdAt", s.CreatedAt); err != nil {
+		return err
+	}
+	if err := requireTimestamp("updatedAt", s.UpdatedAt); err != nil {
+		return err
+	}
+	if err := s.Phase.Validate(); err != nil {
+		return err
+	}
+	if err := s.Model.Validate(); err != nil {
+		return err
+	}
+	if err := s.ThinkingLevel.Validate(); err != nil {
 		return err
 	}
 	if err := requireNonNegative("revision", s.Revision); err != nil {
@@ -82,22 +108,29 @@ func (s *SessionSnapshot) Validate() error {
 	return requireNonNegative("queuedSteerCount", s.QueuedSteerCount)
 }
 
-// Summary projects the cheap view out of a snapshot.
-func (s *SessionSnapshot) Summary() SessionSummary {
-	return SessionSummary{
-		ID: s.ID, Name: s.Name, Cwd: s.Cwd, CreatedAt: s.CreatedAt, UpdatedAt: s.UpdatedAt,
-		Phase: s.Phase, Model: s.Model, ThinkingLevel: s.ThinkingLevel,
-		Attached: s.Attached, Locked: s.Locked,
+// Metadata projects the durable view out of a snapshot (pi's toMetadata).
+// Note the field rename -- a snapshot's `name` is metadata's `sessionName` --
+// and that a snapshot carries no parentSessionId, so the projection never
+// sets one.
+func (s *SessionSnapshot) Metadata() SessionMetadata {
+	updatedAt := s.UpdatedAt
+	cwd := s.Cwd
+	return SessionMetadata{
+		ID:          s.ID,
+		CreatedAt:   s.CreatedAt,
+		UpdatedAt:   &updatedAt,
+		SessionName: s.Name,
+		Cwd:         &cwd,
 	}
 }
 
 // ServerSnapshot is the authoritative view of the whole server.
 type ServerSnapshot struct {
-	ServerID        string           `cbor:"serverId"`
-	ProtocolVersion int64            `cbor:"protocolVersion"`
-	Revision        int64            `cbor:"revision"`
-	Sessions        []SessionSummary `cbor:"sessions"`
-	Models          []ModelMetadata  `cbor:"models"`
+	ServerID        string            `cbor:"serverId"`
+	ProtocolVersion int64             `cbor:"protocolVersion"`
+	Revision        int64             `cbor:"revision"`
+	Sessions        []SessionMetadata `cbor:"sessions"`
+	Models          []ModelMetadata   `cbor:"models"`
 }
 
 func (s *ServerSnapshot) Validate() error {
@@ -349,8 +382,8 @@ type CommandResult interface {
 
 // ListResult answers list.
 type ListResult struct {
-	Command  string           `cbor:"command"`
-	Sessions []SessionSummary `cbor:"sessions"`
+	Command  string            `cbor:"command"`
+	Sessions []SessionMetadata `cbor:"sessions"`
 }
 
 func (*ListResult) ResultCommandName() string { return "list" }

@@ -35,7 +35,9 @@ func assertServerPayload(t *testing.T, item protocol.TranscriptItem) {
 	if err != nil {
 		t.Fatalf("model metadata: %v", err)
 	}
-	summary := protocol.SessionSummary{
+	// The snapshot keeps the full live shape; only the server snapshot's
+	// session list narrowed to durable metadata in 6189e53b3.
+	snapshot := protocol.SessionSnapshot{
 		ID:            "session-1",
 		Cwd:           "/workspace",
 		CreatedAt:     1,
@@ -45,6 +47,8 @@ func assertServerPayload(t *testing.T, item protocol.TranscriptItem) {
 		ThinkingLevel: protocol.ThinkingOff,
 		Attached:      true,
 		Locked:        true,
+		Revision:      1,
+		Transcript:    []protocol.TranscriptItem{item},
 	}
 	hello := &protocol.ServerHello{
 		Type:         "hello",
@@ -54,7 +58,7 @@ func assertServerPayload(t *testing.T, item protocol.TranscriptItem) {
 			ServerID:        "server-1",
 			ProtocolVersion: protocol.ProtocolVersion,
 			Revision:        0,
-			Sessions:        []protocol.SessionSummary{summary},
+			Sessions:        []protocol.SessionMetadata{snapshot.Metadata()},
 			Models:          []protocol.ModelMetadata{*metadata},
 		},
 	}
@@ -62,12 +66,6 @@ func assertServerPayload(t *testing.T, item protocol.TranscriptItem) {
 		t.Fatalf("encode hello: %v", err)
 	}
 
-	snapshot := protocol.SessionSnapshot{
-		ID: summary.ID, Cwd: summary.Cwd, CreatedAt: summary.CreatedAt, UpdatedAt: summary.UpdatedAt,
-		Phase: summary.Phase, Model: summary.Model, ThinkingLevel: summary.ThinkingLevel,
-		Attached: true, Locked: true, Revision: 1,
-		Transcript: []protocol.TranscriptItem{item},
-	}
 	event := &protocol.EventEnvelope{
 		Type:  "event",
 		Event: &protocol.SessionSnapshotEvent{Type: "session_snapshot", Snapshot: snapshot},

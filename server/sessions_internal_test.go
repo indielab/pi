@@ -92,7 +92,7 @@ type stubService struct {
 	runtimes []*stubRuntime
 }
 
-func (b *stubService) ListSessions(context.Context) ([]protocol.SessionSummary, error) {
+func (b *stubService) ListSessions(context.Context) ([]protocol.SessionMetadata, error) {
 	return nil, nil
 }
 func (b *stubService) ListModels(context.Context) ([]protocol.ModelMetadata, error) { return nil, nil }
@@ -294,5 +294,50 @@ func TestTerminalErrorRaisedDuringSubscribeStillUnsubscribes(t *testing.T) {
 	}
 	if got := service.latest().unsubscribeCount(); got != 1 {
 		t.Fatalf("unsubscribes = %d, want 1: the subscription the runtime handed back was never cancelled", got)
+	}
+}
+
+// TestMergeSessionMetadataOverlaysLiveOverStored pins pi's
+// `{ ...item, ...toMetadata(snapshot) }` (upstream 6189e53b3): every field the
+// live projection produces wins, INCLUDING when it produces nothing, and
+// parentSessionId -- the one field toMetadata never sets -- survives from the
+// stored record.
+func TestMergeSessionMetadataOverlaysLiveOverStored(t *testing.T) {
+	parent := "parent-1"
+	storedUpdated := int64(10)
+	storedName := "stored name"
+	storedCwd := "/stored"
+	stored := protocol.SessionMetadata{
+		ID:              "s1",
+		CreatedAt:       1,
+		UpdatedAt:       &storedUpdated,
+		ParentSessionID: &parent,
+		SessionName:     &storedName,
+		Cwd:             &storedCwd,
+	}
+
+	liveUpdated := int64(99)
+	liveCwd := "/live"
+	live := protocol.SessionMetadata{
+		ID:        "s1",
+		CreatedAt: 2,
+		UpdatedAt: &liveUpdated,
+		Cwd:       &liveCwd,
+		// SessionName deliberately absent: a live session with no name.
+	}
+
+	merged := mergeSessionMetadata(stored, live)
+
+	if merged.CreatedAt != 2 || merged.UpdatedAt == nil || *merged.UpdatedAt != 99 {
+		t.Fatalf("live timestamps did not win: %+v", merged)
+	}
+	if merged.Cwd == nil || *merged.Cwd != "/live" {
+		t.Fatalf("live cwd did not win: %+v", merged.Cwd)
+	}
+	if merged.SessionName != nil {
+		t.Fatalf("an absent live sessionName must clear the stored one, got %q", *merged.SessionName)
+	}
+	if merged.ParentSessionID == nil || *merged.ParentSessionID != parent {
+		t.Fatalf("parentSessionId must survive from storage, got %+v", merged.ParentSessionID)
 	}
 }

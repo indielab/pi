@@ -27,7 +27,7 @@ func baseSnapshot(revision int64) *protocol.ServerSnapshot {
 		ServerID:        "server-1",
 		ProtocolVersion: protocol.ProtocolVersion,
 		Revision:        revision,
-		Sessions:        []protocol.SessionSummary{},
+		Sessions:        []protocol.SessionMetadata{},
 		Models:          []protocol.ModelMetadata{},
 	}
 }

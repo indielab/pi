@@ -111,7 +111,7 @@ type SessionRuntime interface {
 // Service is the boundary for durable sessions and the exclusively acquired
 // runtimes in front of them.
 type Service interface {
-	ListSessions(ctx context.Context) ([]protocol.SessionSummary, error)
+	ListSessions(ctx context.Context) ([]protocol.SessionMetadata, error)
 	ListModels(ctx context.Context) ([]protocol.ModelMetadata, error)
 	// CreateSession creates a session under the server-assigned options.ID. A
 	// runtime whose snapshot reports a different ID is rejected and disposed.

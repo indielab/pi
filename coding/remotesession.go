@@ -321,11 +321,11 @@ func (s *RemoteSession) Models() []protocol.ModelMetadata {
 // Sessions is every session the server knows about, as of the last server
 // snapshot. It is empty rather than nil before the first one, for the reason
 // given on Models.
-func (s *RemoteSession) Sessions() []protocol.SessionSummary {
+func (s *RemoteSession) Sessions() []protocol.SessionMetadata {
 	if snapshot := s.client.Snapshot(); snapshot != nil {
 		return snapshot.Sessions
 	}
-	return []protocol.SessionSummary{}
+	return []protocol.SessionMetadata{}
 }
 
 // ConnectionState is where the borrowed client's connection sits.

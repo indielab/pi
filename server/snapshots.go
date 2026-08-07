@@ -35,13 +35,12 @@ func (p *snapshotPublisher) currentRevision() int64 {
 	return p.revision
 }
 
-// get builds the server snapshot as conn would see it. models, when non-nil,
-// is reused instead of asking the service again; conn may be nil, which marks
-// every session unattached.
+// get builds the server snapshot. models, when non-nil, is reused instead of
+// asking the service again. Since 6189e53b3 the snapshot is the same for every
+// peer, so it takes no connection.
 func (p *snapshotPublisher) get(
 	ctx context.Context,
 	models []protocol.ModelMetadata,
-	conn *connState,
 ) (*protocol.ServerSnapshot, error) {
 	// The revision is read before the sessions are listed, not after. pi gets
 	// that ordering from evaluating its object literal left to right, and it is
@@ -49,7 +48,7 @@ func (p *snapshotPublisher) get(
 	// at, so a change that lands while it is being built leaves it visibly
 	// stale and the handshake knows to send a catch-up.
 	revision := p.currentRevision()
-	sessions, err := p.srv.sessions.listSummaries(ctx, conn)
+	sessions, err := p.srv.sessions.listMetadata(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -162,21 +161,23 @@ func (p *snapshotPublisher) perform() error {
 	if err != nil {
 		return err
 	}
+	// One snapshot for every connection. Before 6189e53b3 this built a
+	// per-connection snapshot because the listed sessions carried a
+	// per-connection `attached` flag; the listed shape is now durable metadata
+	// that is identical for every peer, so pi hoisted the build out of the
+	// loop and so do we. A service failure now ends the pass before anything
+	// is sent, rather than after some connections were already served.
+	snapshot, err := p.get(ctx, models)
+	if err != nil {
+		return err
+	}
+	snapshot.Revision = revision
+	envelope := &protocol.EventEnvelope{
+		Type:  "event",
+		Event: &protocol.ServerSnapshotEvent{Type: "server_snapshot", Snapshot: *snapshot},
+	}
 	for _, conn := range ready {
-		// Abandoning the pass on the first failure is pi's behaviour, not an
-		// oversight: its loop awaits each snapshot in turn, so a service that
-		// fails for one connection ends the pass for the rest too. The
-		// revision it consumed is simply never delivered, and the next pass
-		// carries a later one.
-		snapshot, err := p.get(ctx, models, conn)
-		if err != nil {
-			return err
-		}
-		snapshot.Revision = revision
-		p.srv.sendMessage(conn, &protocol.EventEnvelope{
-			Type:  "event",
-			Event: &protocol.ServerSnapshotEvent{Type: "server_snapshot", Snapshot: *snapshot},
-		})
+		p.srv.sendMessage(conn, envelope)
 	}
 	return nil
 }

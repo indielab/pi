@@ -274,7 +274,7 @@ func (c *Client) OnConnectionStateChange(listener func(ConnectionStateChange)) (
 }
 
 // ListSessions asks the server for every session it knows about.
-func (c *Client) ListSessions(ctx context.Context) ([]protocol.SessionSummary, error) {
+func (c *Client) ListSessions(ctx context.Context) ([]protocol.SessionMetadata, error) {
 	result, err := c.request(ctx, protocol.NewListCommand())
 	if err != nil {
 		return nil, err

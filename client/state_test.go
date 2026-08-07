@@ -7,19 +7,19 @@ import (
 	"github.com/sky-valley/pi/protocol"
 )
 
-func serverSnapshot(revision int64, sessions ...protocol.SessionSummary) *protocol.ServerSnapshot {
+func serverSnapshot(revision int64, sessions ...protocol.SessionMetadata) *protocol.ServerSnapshot {
 	return &protocol.ServerSnapshot{
 		ServerID: "srv", ProtocolVersion: protocol.ProtocolVersion,
 		Revision: revision, Sessions: sessions,
 	}
 }
 
-func summary(id string, attached bool) protocol.SessionSummary {
-	return protocol.SessionSummary{
-		ID: id, Cwd: "/tmp", CreatedAt: 1, UpdatedAt: 1,
-		Phase: protocol.PhaseIdle, Model: protocol.ModelRef{Provider: "p", ID: "m"},
-		ThinkingLevel: protocol.ThinkingOff, Attached: attached,
-	}
+// metadata builds the durable session view a server snapshot now carries.
+// Since 6189e53b3 it says nothing about attachment, which is the whole point
+// of the tests below.
+func metadata(id string) protocol.SessionMetadata {
+	cwd := "/tmp"
+	return protocol.SessionMetadata{ID: id, CreatedAt: 1, Cwd: &cwd}
 }
 
 func sessionSnapshot(id string, revision int64, attached bool) *protocol.SessionSnapshot {
@@ -37,7 +37,7 @@ func TestApplyServerSnapshotStoresAndNotifies(t *testing.T) {
 	var seen []int64
 	state.Subscribe(func(s *protocol.ServerSnapshot) { seen = append(seen, s.Revision) })
 
-	state.ApplyServerSnapshot(serverSnapshot(1, summary("s1", true), summary("s2", false)))
+	state.ApplyServerSnapshot(serverSnapshot(1, metadata("s1"), metadata("s2")))
 
 	if got := state.Snapshot(); got == nil || got.Revision != 1 {
 		t.Errorf("Snapshot() = %#v, want revision 1", got)
@@ -45,11 +45,8 @@ func TestApplyServerSnapshotStoresAndNotifies(t *testing.T) {
 	if len(seen) != 1 || seen[0] != 1 {
 		t.Errorf("listener saw %v, want [1]", seen)
 	}
-	if !state.IsSessionAttached("s1") {
-		t.Error("s1 should be attached")
-	}
-	if state.IsSessionAttached("s2") {
-		t.Error("s2 should not be attached")
+	if got := state.Snapshot().Sessions; len(got) != 2 || got[0].ID != "s1" || got[1].ID != "s2" {
+		t.Errorf("stored sessions = %#v, want s1 and s2", got)
 	}
 }
 
@@ -61,8 +58,9 @@ func TestApplyServerSnapshotIgnoresStale(t *testing.T) {
 	notifications := 0
 	state.Subscribe(func(*protocol.ServerSnapshot) { notifications++ })
 
-	state.ApplyServerSnapshot(serverSnapshot(5, summary("s1", true)))
-	state.ApplyServerSnapshot(serverSnapshot(4, summary("s1", false)))
+	state.ApplyEvent(&protocol.SessionSnapshotEvent{Type: "session_snapshot", Snapshot: *sessionSnapshot("s1", 1, true)})
+	state.ApplyServerSnapshot(serverSnapshot(5, metadata("s1")))
+	state.ApplyServerSnapshot(serverSnapshot(4, metadata("s1")))
 
 	if got := state.Snapshot(); got == nil || got.Revision != 5 {
 		t.Errorf("Snapshot() = %#v, want revision 5", got)
@@ -75,18 +73,26 @@ func TestApplyServerSnapshotIgnoresStale(t *testing.T) {
 	}
 }
 
-// TestApplyServerSnapshotRebuildsAttachments: the server snapshot is
-// authoritative, so attachments are rebuilt from it rather than merged.
-func TestApplyServerSnapshotRebuildsAttachments(t *testing.T) {
+// TestApplyServerSnapshotKeepsAttachments mirrors pi's "keeps session leases
+// attached across server metadata snapshots" (upstream 6189e53b3). This
+// replaces the former RebuildsAttachments test, whose contract the same commit
+// deleted: a server snapshot now carries durable metadata with no `attached`
+// field, so it can no longer speak to attachment at all. Rebuilding from it
+// would silently detach every live session.
+func TestApplyServerSnapshotKeepsAttachments(t *testing.T) {
 	state := NewState(nil)
-	state.ApplyServerSnapshot(serverSnapshot(1, summary("s1", true), summary("s2", true)))
-	state.ApplyServerSnapshot(serverSnapshot(2, summary("s1", false), summary("s2", true)))
-
-	if state.IsSessionAttached("s1") {
-		t.Error("s1 should have been detached by the newer snapshot")
+	state.ApplyEvent(&protocol.SessionSnapshotEvent{Type: "session_snapshot", Snapshot: *sessionSnapshot("s1", 1, true)})
+	if !state.IsSessionAttached("s1") {
+		t.Fatal("attach path did not record the attachment")
 	}
-	if !state.IsSessionAttached("s2") {
-		t.Error("s2 should still be attached")
+
+	state.ApplyServerSnapshot(serverSnapshot(2, metadata("s1"), metadata("s2")))
+
+	if !state.IsSessionAttached("s1") {
+		t.Error("a server snapshot cleared an attachment it says nothing about")
+	}
+	if state.IsSessionAttached("s2") {
+		t.Error("a server snapshot invented an attachment")
 	}
 }
 
@@ -171,7 +177,7 @@ func TestApplyResultListIsIgnored(t *testing.T) {
 	state := NewState(nil)
 	calls := 0
 	state.Subscribe(func(*protocol.ServerSnapshot) { calls++ })
-	state.ApplyResult(&protocol.ListResult{Command: "list", Sessions: []protocol.SessionSummary{summary("s1", true)}})
+	state.ApplyResult(&protocol.ListResult{Command: "list", Sessions: []protocol.SessionMetadata{metadata("s1")}})
 
 	if state.IsSessionAttached("s1") {
 		t.Error("a list result must not change attachments")
@@ -275,7 +281,7 @@ func TestListenerPanicIsContainedAndReported(t *testing.T) {
 	secondCalled := false
 	state.Subscribe(func(*protocol.ServerSnapshot) { secondCalled = true })
 
-	state.ApplyServerSnapshot(serverSnapshot(1, summary("s1", true)))
+	state.ApplyServerSnapshot(serverSnapshot(1, metadata("s1")))
 
 	if !secondCalled {
 		t.Error("a panicking listener stopped later listeners")
@@ -283,8 +289,11 @@ func TestListenerPanicIsContainedAndReported(t *testing.T) {
 	if len(reported) != 1 {
 		t.Errorf("onListenerError called %d times, want 1", len(reported))
 	}
-	if state.Snapshot() == nil || !state.IsSessionAttached("s1") {
-		t.Error("a panicking listener corrupted client state")
+	// Probes the stored snapshot rather than attachment: since 6189e53b3 a
+	// server snapshot no longer conveys attachment, so it is no longer a
+	// witness that the state survived the panic.
+	if got := state.Snapshot(); got == nil || got.Revision != 1 || len(got.Sessions) != 1 {
+		t.Errorf("a panicking listener corrupted client state: %#v", got)
 	}
 }
 
@@ -335,7 +344,7 @@ func TestResetKeepsListenersButDropsState(t *testing.T) {
 	state := NewState(nil)
 	calls := 0
 	state.Subscribe(func(*protocol.ServerSnapshot) { calls++ })
-	state.ApplyServerSnapshot(serverSnapshot(1, summary("s1", true)))
+	state.ApplyServerSnapshot(serverSnapshot(1, metadata("s1")))
 	state.ApplyEvent(&protocol.SessionSnapshotEvent{Type: "session_snapshot", Snapshot: *sessionSnapshot("s1", 1, true)})
 
 	state.Reset()
@@ -398,7 +407,7 @@ func TestDisposeIsALatch(t *testing.T) {
 	state := NewState(nil)
 	state.Dispose()
 
-	state.ApplyServerSnapshot(serverSnapshot(1, summary("s1", true)))
+	state.ApplyServerSnapshot(serverSnapshot(1, metadata("s1")))
 	if got := state.Snapshot(); got != nil {
 		t.Errorf("Snapshot() = %#v after Dispose, want nil", got)
 	}
@@ -455,7 +464,7 @@ func TestConcurrentReadsAndApplies(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := range 200 {
-			state.ApplyServerSnapshot(serverSnapshot(int64(i), summary("s1", i%2 == 0)))
+			state.ApplyServerSnapshot(serverSnapshot(int64(i), metadata("s1")))
 		}
 	}()
 	go func() {

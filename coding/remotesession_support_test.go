@@ -268,7 +268,7 @@ func remoteServerSnapshot() *protocol.ServerSnapshot {
 		ServerID:        "server-1",
 		ProtocolVersion: protocol.ProtocolVersion,
 		Revision:        1,
-		Sessions:        []protocol.SessionSummary{},
+		Sessions:        []protocol.SessionMetadata{},
 		Models:          []protocol.ModelMetadata{},
 	}
 }

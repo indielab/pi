@@ -217,7 +217,7 @@ func TestClientOverRealUnixSocket(t *testing.T) {
 		ServerID:        "unix-server",
 		ProtocolVersion: protocol.ProtocolVersion,
 		Revision:        4,
-		Sessions:        []protocol.SessionSummary{},
+		Sessions:        []protocol.SessionMetadata{},
 		Models:          []protocol.ModelMetadata{},
 	}
 	path := unixTestServer(t, func(conn net.Conn) {
@@ -255,7 +255,7 @@ func TestClientOverRealUnixSocket(t *testing.T) {
 							Type:   "response",
 							ID:     typed.ID,
 							OK:     true,
-							Result: &protocol.ListResult{Command: "list", Sessions: []protocol.SessionSummary{}},
+							Result: &protocol.ListResult{Command: "list", Sessions: []protocol.SessionMetadata{}},
 						}, nil)
 						split := len(frame) / 2
 						if _, err := conn.Write(frame[:split]); err != nil {
@@ -321,7 +321,7 @@ func TestClientRejectsTruncatedFrameFromUnixSocket(t *testing.T) {
 		ServerID:        "unix-truncated",
 		ProtocolVersion: protocol.ProtocolVersion,
 		Revision:        1,
-		Sessions:        []protocol.SessionSummary{},
+		Sessions:        []protocol.SessionMetadata{},
 		Models:          []protocol.ModelMetadata{},
 	}
 	path := unixTestServer(t, func(conn net.Conn) {

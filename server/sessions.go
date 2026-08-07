@@ -78,7 +78,7 @@ func (m *sessionManager) executeCommand(
 ) (protocol.CommandResult, error) {
 	switch cmd := command.(type) {
 	case *protocol.ListCommand:
-		sessions, err := m.listSummaries(ctx, conn)
+		sessions, err := m.listMetadata(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -259,10 +259,14 @@ func (m *sessionManager) disconnect(ctx context.Context, conn *connState) {
 	}
 }
 
-// listSummaries merges what the service has stored with what is live now. A
-// live session always wins: its snapshot is authoritative and it is reported
-// locked, and a live session the service has not stored yet is appended.
-func (m *sessionManager) listSummaries(ctx context.Context, conn *connState) ([]protocol.SessionSummary, error) {
+// listMetadata merges what the service has stored with what is live now. A
+// live session always wins: its snapshot is authoritative, and a live session
+// the service has not stored yet is appended.
+//
+// It takes no connection: since 6189e53b3 the listed shape is durable metadata
+// with no per-connection `attached` field, which is what lets one snapshot be
+// built once and broadcast to every peer.
+func (m *sessionManager) listMetadata(ctx context.Context) ([]protocol.SessionMetadata, error) {
 	stored, err := m.service.ListSessions(ctx)
 	if err != nil {
 		return nil, err
@@ -288,29 +292,37 @@ func (m *sessionManager) listSummaries(ctx context.Context, conn *connState) ([]
 		byID[live.id] = snapshot
 	}
 
-	summaries := make([]protocol.SessionSummary, 0, len(stored)+len(liveIDs))
-	for _, summary := range stored {
-		snapshot, ok := byID[summary.ID]
+	metadata := make([]protocol.SessionMetadata, 0, len(stored)+len(liveIDs))
+	for _, item := range stored {
+		snapshot, ok := byID[item.ID]
 		if !ok {
-			summary.Attached = false
-			summaries = append(summaries, summary)
+			metadata = append(metadata, item)
 			continue
 		}
-		delete(byID, summary.ID)
-		merged := snapshot.Summary()
-		merged.Attached = conn.attachedTo(summary.ID)
-		summaries = append(summaries, merged)
+		delete(byID, item.ID)
+		metadata = append(metadata, mergeSessionMetadata(item, snapshot.Metadata()))
 	}
 	for _, id := range liveIDs {
 		snapshot, ok := byID[id]
 		if !ok {
 			continue
 		}
-		merged := snapshot.Summary()
-		merged.Attached = conn.attachedTo(id)
-		summaries = append(summaries, merged)
+		metadata = append(metadata, snapshot.Metadata())
 	}
-	return summaries, nil
+	return metadata, nil
+}
+
+// mergeSessionMetadata overlays a live snapshot's projection onto the stored
+// record, reproducing pi's `{ ...item, ...toMetadata(snapshot) }`.
+//
+// Every field the projection produces wins, including when it is absent --
+// a live session whose snapshot has no name clears a stored sessionName,
+// because in pi the spread writes the key with `undefined`. ParentSessionID
+// is the one field toMetadata never produces, so it survives from storage.
+func mergeSessionMetadata(stored, live protocol.SessionMetadata) protocol.SessionMetadata {
+	merged := live
+	merged.ParentSessionID = stored.ParentSessionID
+	return merged
 }
 
 // attachedTo answers the attachment question for a possibly-nil connection,

@@ -526,7 +526,7 @@ func (s *Server) serverSnapshot(
 			err = panicError(recovered, "building the server snapshot")
 		}
 	}()
-	return s.snapshots.get(ctx, nil, state)
+	return s.snapshots.get(ctx, nil)
 }
 
 // panicError turns a panic that crossed an extension-point boundary into an
