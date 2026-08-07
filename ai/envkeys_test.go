@@ -153,6 +153,9 @@ func TestQwenTokenPlanEnvKeys(t *testing.T) {
 	want := map[string]string{
 		"qwen-token-plan":    "QWEN_TOKEN_PLAN_API_KEY",
 		"qwen-token-plan-cn": "QWEN_TOKEN_PLAN_CN_API_KEY",
+		// pi c03d78bdc: the Individual plan deliberately REUSES the base
+		// plan's env var rather than introducing its own.
+		"qwen-token-plan-individual": "QWEN_TOKEN_PLAN_API_KEY",
 	}
 	m := BuiltinModels()
 	for provider, envVar := range want {

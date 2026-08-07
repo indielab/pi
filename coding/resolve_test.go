@@ -233,9 +233,10 @@ func TestDefaultModelPerProviderOpenAI(t *testing.T) {
 // carried for faithfulness. Values taken from pi 0.83.0's model-resolver.
 func TestDefaultModelPerProviderQwenTokenPlanAndRadius(t *testing.T) {
 	cases := map[string]string{
-		"qwen-token-plan":    "qwen3.7-max",
-		"qwen-token-plan-cn": "qwen3.7-max",
-		"radius":             "auto",
+		"qwen-token-plan":            "qwen3.7-max",
+		"qwen-token-plan-cn":         "qwen3.7-max",
+		"qwen-token-plan-individual": "qwen3.8-max",
+		"radius":                     "auto",
 	}
 	for provider, want := range cases {
 		t.Run(provider, func(t *testing.T) {
