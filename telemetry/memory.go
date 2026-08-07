@@ -1,6 +1,7 @@
 package telemetry
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"sync"
@@ -41,17 +42,22 @@ type RecordedSpan struct {
 // callers routinely start sibling spans from several goroutines, so the
 // recorder takes a mutex around its state. The lock is never held across a
 // callback — a callback starting a child span would otherwise deadlock.
+//
+// The usable zero value is deliberate: span ids and end-sequences are derived
+// from state the recorder already keeps rather than from counters a constructor
+// has to seed. A `var c InMemoryContext` that recorded id 0 spans would break
+// the 0-means-root and 0-means-open invariants below without erroring.
 type InMemoryContext struct {
-	mu              sync.Mutex
-	spans           []*recordedSpan
-	nextSpanID      int
-	nextEndSequence int
+	mu    sync.Mutex
+	spans []*recordedSpan
+	// settledCount is the number of spans settled so far; the next one to
+	// settle takes settledCount+1 as its end-sequence.
+	settledCount int
 }
 
-// NewInMemoryContext returns an empty recorder.
-func NewInMemoryContext() *InMemoryContext {
-	return &InMemoryContext{nextSpanID: 1, nextEndSequence: 1}
-}
+// NewInMemoryContext returns an empty recorder. The zero value is equally
+// usable; this exists for symmetry with the rest of the package.
+func NewInMemoryContext() *InMemoryContext { return &InMemoryContext{} }
 
 // recordedSpan is the mutable state behind a live span
 // (pi MutableRecordedTelemetrySpan).
@@ -99,24 +105,20 @@ func (c *InMemoryContext) Spans() []RecordedSpan {
 
 func (c *InMemoryContext) startSpan(parent *recordedSpan, options SpanOptions, callback func(span Span) error) error {
 	// pi: a child started under an already-settled parent is not recorded, it
-	// runs against the noop context instead.
-	if parent != nil {
-		c.mu.Lock()
-		settled := parent.settled
+	// runs against the noop context instead. The check and the append share one
+	// critical section -- splitting them lets the parent settle in between and
+	// a child still be recorded under it.
+	c.mu.Lock()
+	if parent != nil && parent.settled {
 		c.mu.Unlock()
-		if settled {
-			return NoopContext.StartSpan(options, callback)
-		}
+		return NoopContext.StartSpan(options, callback)
 	}
-
 	span := &recordedSpan{
+		id:         len(c.spans) + 1,
 		name:       options.Name,
 		attributes: copyAttributes(options.Attributes),
 		status:     SpanStatus{Code: StatusOK},
 	}
-	c.mu.Lock()
-	span.id = c.nextSpanID
-	c.nextSpanID++
 	if parent != nil {
 		span.parentID = parent.id
 	}
@@ -130,7 +132,7 @@ func (c *InMemoryContext) startSpan(parent *recordedSpan, options SpanOptions, c
 	// idempotent, so the normal path below is unaffected.
 	defer func() {
 		if r := recover(); r != nil {
-			c.settle(span, true, fmt.Errorf("panic: %v", r))
+			c.settle(span, true, panicError{value: r})
 			panic(r)
 		}
 	}()
@@ -152,16 +154,33 @@ func (c *InMemoryContext) settle(span *recordedSpan, failed bool, err error) {
 		span.status = automaticErrorStatus(err)
 	}
 	span.settled = true
-	span.endSequence = c.nextEndSequence
-	c.nextEndSequence++
+	c.settledCount++
+	span.endSequence = c.settledCount
 }
+
+// panicError carries a recovered panic into the status derivation so a panic
+// is distinguishable from an ordinary returned error, which %T alone cannot do
+// (both collapse to *errors.errorString for most stdlib errors).
+type panicError struct{ value any }
+
+func (e panicError) Error() string { return fmt.Sprintf("panic: %v", e.value) }
 
 // automaticErrorStatus derives the status of a span that failed without one
 // being set explicitly. pi reads a JS Error's name and message; Go's nearest
-// equivalent of `error.name` is the error's concrete type.
+// equivalent of `error.name` is the error's concrete type, which carries real
+// signal only for typed errors.
 func automaticErrorStatus(err error) SpanStatus {
+	// Unreachable today -- both callers pass a non-nil error -- but kept so a
+	// future caller cannot turn a nil into a nil-deref inside err.Error().
 	if err == nil {
 		return SpanStatus{Code: StatusError}
+	}
+	var pe panicError
+	if errors.As(err, &pe) {
+		return SpanStatus{
+			Code:  StatusError,
+			Error: &SpanError{Name: "panic", Message: fmt.Sprint(pe.value)},
+		}
 	}
 	return SpanStatus{
 		Code:  StatusError,

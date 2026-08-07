@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+
+	"github.com/sky-valley/pi/protocol/cbor"
 )
 
 // testdata/upstream_messages.json is produced by testdata/gen-messages.ts run
@@ -42,8 +44,6 @@ func loadMessages(t testing.TB) upstreamMessages {
 	}
 	return v
 }
-
-func ptr[T any](v T) *T { return &v }
 
 // The fixture values, mirroring the constants in gen-messages.ts.
 func fixtureModel() ModelRef { return ModelRef{Provider: "anthropic", ID: "claude-opus-5"} }
@@ -728,3 +728,99 @@ func TestJSONValueKeyOrderDivergence(t *testing.T) {
 // detailsPtr wraps a details value for the *any field: a nil pointer is the
 // absent property, a pointer to a nil interface is JSON null.
 func detailsPtr(v any) *any { return &v }
+
+// TestSessionSnapshotMetadataProjection pins pi's toMetadata field for field.
+// The projection decides what every peer sees in `list` and `server_snapshot`,
+// and before this test five behavioural mutations of it survived the whole
+// suite: emitting a nil Cwd, emitting a nil UpdatedAt, inventing a
+// ParentSessionID, dropping the SessionName carry, and (via Validate) dropping
+// the snapshot's own cwd requirement.
+func TestSessionSnapshotMetadataProjection(t *testing.T) {
+	snapshot := fixtureSessionSnapshot()
+	got := snapshot.Metadata()
+
+	if got.ID != "s1" {
+		t.Errorf("ID = %q, want s1", got.ID)
+	}
+	if got.CreatedAt != 1 {
+		t.Errorf("CreatedAt = %d, want 1", got.CreatedAt)
+	}
+	if got.UpdatedAt == nil || *got.UpdatedAt != 2 {
+		t.Errorf("UpdatedAt = %v, want 2 (a snapshot always has one)", got.UpdatedAt)
+	}
+	if got.Cwd == nil || *got.Cwd != "/tmp" {
+		t.Errorf("Cwd = %v, want /tmp (a snapshot always has one)", got.Cwd)
+	}
+	// The rename is the easy thing to get wrong: a snapshot's `name` becomes
+	// metadata's `sessionName`.
+	if got.SessionName == nil || *got.SessionName != "work" {
+		t.Errorf("SessionName = %v, want work", got.SessionName)
+	}
+	// pi's toMetadata never produces a parentSessionId; inventing one here
+	// would let the server's overlay clobber the stored value.
+	if got.ParentSessionID != nil {
+		t.Errorf("ParentSessionID = %v, want nil (toMetadata never sets it)", *got.ParentSessionID)
+	}
+
+	// A snapshot with no name projects no sessionName, which is what lets the
+	// server's overlay clear a stored one.
+	unnamed := fixtureSessionSnapshot()
+	unnamed.Name = nil
+	if projected := unnamed.Metadata(); projected.SessionName != nil {
+		t.Errorf("SessionName = %v, want nil for an unnamed snapshot", *projected.SessionName)
+	}
+}
+
+// A snapshot still requires cwd and updatedAt even though metadata made both
+// optional; the two shapes stopped sharing a field list in 6189e53b3.
+func TestSessionSnapshotStillRequiresCwdAndUpdatedAt(t *testing.T) {
+	withoutCwd := fixtureSessionSnapshot()
+	withoutCwd.Cwd = ""
+	if err := withoutCwd.Validate(); err == nil {
+		t.Error("a snapshot with no cwd must be rejected")
+	}
+	// 0 is a legitimate timestamp here (requireTimestamp is non-negative), so
+	// a negative one is what proves the snapshot still checks the field at all.
+	badUpdated := fixtureSessionSnapshot()
+	badUpdated.UpdatedAt = -1
+	if err := badUpdated.Validate(); err == nil {
+		t.Error("a snapshot with a negative updatedAt must be rejected")
+	}
+
+	// Metadata, by contrast, accepts both as absent -- and still validates
+	// them when present.
+	minimal := SessionMetadata{ID: "s1", CreatedAt: 1}
+	if err := minimal.Validate(); err != nil {
+		t.Errorf("id+createdAt alone must be a valid metadata: %v", err)
+	}
+	emptyCwd := SessionMetadata{ID: "s1", CreatedAt: 1, Cwd: ptr("")}
+	if err := emptyCwd.Validate(); err == nil {
+		t.Error("a present but empty cwd must be rejected (minLength 1)")
+	}
+	badMetaUpdated := SessionMetadata{ID: "s1", CreatedAt: 1, UpdatedAt: ptr(int64(-1))}
+	if err := badMetaUpdated.Validate(); err == nil {
+		t.Error("a present but negative updatedAt must be rejected")
+	}
+}
+
+// Mirrors the strict-reject case upstream added alongside 6189e53b3: a listed
+// session carrying a field the new shape dropped must be rejected outright,
+// not silently ignored.
+func TestListResultRejectsLeftoverSummaryFields(t *testing.T) {
+	for _, field := range []string{"phase", "attached", "locked", "thinkingLevel", "name"} {
+		t.Run(field, func(t *testing.T) {
+			session := map[string]any{"id": "s1", "createdAt": int64(1), field: "x"}
+			payload := map[string]any{
+				"type": "response", "id": "r1", "ok": true,
+				"result": map[string]any{"command": "list", "sessions": []any{session}},
+			}
+			frame, err := cbor.Encode(payload, nil)
+			if err != nil {
+				t.Fatalf("encode: %v", err)
+			}
+			if _, err := ParseServerMessage(frame); err == nil {
+				t.Fatalf("a list session carrying %q must be rejected", field)
+			}
+		})
+	}
+}

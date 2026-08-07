@@ -269,7 +269,7 @@ func handleSlash(sess *coding.Session, line string) bool {
 		fmt.Printf("thinking level: %s\n", arg)
 	case "/new":
 		if err := sess.Reset(); err != nil {
-			fmt.Println(err)
+			fmt.Fprintf(os.Stderr, "\033[31m%v\033[0m\n", err)
 			break
 		}
 		fmt.Println("started a new transcript")

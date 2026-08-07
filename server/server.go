@@ -420,7 +420,7 @@ func (s *Server) beginHandshake(state *connState, hello *protocol.ClientHello) b
 // the connection. It reports whether the connection reached ready.
 func (s *Server) finishHandshake(state *connState) bool {
 	ctx := s.opContext()
-	snapshot, err := s.serverSnapshot(ctx, state)
+	snapshot, err := s.serverSnapshot(ctx)
 	if err != nil {
 		s.failProtocol(state, s.toProtocolError(err))
 		return false
@@ -466,7 +466,7 @@ func (s *Server) finishHandshake(state *connState) bool {
 	if snapshot.Revision == s.snapshots.currentRevision() {
 		return true
 	}
-	current, err := s.serverSnapshot(ctx, state)
+	current, err := s.serverSnapshot(ctx)
 	if err != nil {
 		s.failProtocol(state, s.toProtocolError(err))
 		return false
@@ -516,10 +516,7 @@ func (s *Server) executeCommand(
 // serverSnapshot builds the server snapshot behind the same barrier: the
 // handshake reads the service from the connection's read goroutine, where a
 // panic would take the process down rather than the connection.
-func (s *Server) serverSnapshot(
-	ctx context.Context,
-	state *connState,
-) (snapshot *protocol.ServerSnapshot, err error) {
+func (s *Server) serverSnapshot(ctx context.Context) (snapshot *protocol.ServerSnapshot, err error) {
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			snapshot = nil

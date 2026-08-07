@@ -3,6 +3,7 @@ package server_test
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -50,6 +51,18 @@ func assertServerPayload(t *testing.T, item protocol.TranscriptItem) {
 		Revision:      1,
 		Transcript:    []protocol.TranscriptItem{item},
 	}
+	// Written out rather than projected from the snapshot: feeding
+	// snapshot.Metadata() in here would make the encode self-consistent under
+	// any mutation of the projection.
+	metaUpdated := int64(1)
+	metaCwd := "/workspace"
+	wantMetadata := protocol.SessionMetadata{
+		ID: "session-1", CreatedAt: 1, UpdatedAt: &metaUpdated, Cwd: &metaCwd,
+	}
+	if got := snapshot.Metadata(); !reflect.DeepEqual(got, wantMetadata) {
+		t.Fatalf("Metadata() = %+v, want %+v", got, wantMetadata)
+	}
+
 	hello := &protocol.ServerHello{
 		Type:         "hello",
 		Version:      protocol.ProtocolVersion,
@@ -58,7 +71,7 @@ func assertServerPayload(t *testing.T, item protocol.TranscriptItem) {
 			ServerID:        "server-1",
 			ProtocolVersion: protocol.ProtocolVersion,
 			Revision:        0,
-			Sessions:        []protocol.SessionMetadata{snapshot.Metadata()},
+			Sessions:        []protocol.SessionMetadata{wantMetadata},
 			Models:          []protocol.ModelMetadata{*metadata},
 		},
 	}

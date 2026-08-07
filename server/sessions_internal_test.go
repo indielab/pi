@@ -297,12 +297,12 @@ func TestTerminalErrorRaisedDuringSubscribeStillUnsubscribes(t *testing.T) {
 	}
 }
 
-// TestMergeSessionMetadataOverlaysLiveOverStored pins pi's
+// TestOverlayLiveMetadataWinsOverStored pins pi's
 // `{ ...item, ...toMetadata(snapshot) }` (upstream 6189e53b3): every field the
 // live projection produces wins, INCLUDING when it produces nothing, and
 // parentSessionId -- the one field toMetadata never sets -- survives from the
 // stored record.
-func TestMergeSessionMetadataOverlaysLiveOverStored(t *testing.T) {
+func TestOverlayLiveMetadataWinsOverStored(t *testing.T) {
 	parent := "parent-1"
 	storedUpdated := int64(10)
 	storedName := "stored name"
@@ -326,7 +326,7 @@ func TestMergeSessionMetadataOverlaysLiveOverStored(t *testing.T) {
 		// SessionName deliberately absent: a live session with no name.
 	}
 
-	merged := mergeSessionMetadata(stored, live)
+	merged := overlayLiveMetadata(stored, live)
 
 	if merged.CreatedAt != 2 || merged.UpdatedAt == nil || *merged.UpdatedAt != 99 {
 		t.Fatalf("live timestamps did not win: %+v", merged)

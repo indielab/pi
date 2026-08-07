@@ -300,7 +300,7 @@ func (m *sessionManager) listMetadata(ctx context.Context) ([]protocol.SessionMe
 			continue
 		}
 		delete(byID, item.ID)
-		metadata = append(metadata, mergeSessionMetadata(item, snapshot.Metadata()))
+		metadata = append(metadata, overlayLiveMetadata(item, snapshot.Metadata()))
 	}
 	for _, id := range liveIDs {
 		snapshot, ok := byID[id]
@@ -312,22 +312,22 @@ func (m *sessionManager) listMetadata(ctx context.Context) ([]protocol.SessionMe
 	return metadata, nil
 }
 
-// mergeSessionMetadata overlays a live snapshot's projection onto the stored
-// record, reproducing pi's `{ ...item, ...toMetadata(snapshot) }`.
+// overlayLiveMetadata lays a live snapshot's projection over the stored record,
+// reproducing pi's `{ ...item, ...toMetadata(snapshot) }`. It is not a merge:
+// the live side wins outright, including where it has nothing to say.
 //
 // Every field the projection produces wins, including when it is absent --
 // a live session whose snapshot has no name clears a stored sessionName,
 // because in pi the spread writes the key with `undefined`. ParentSessionID
 // is the one field toMetadata never produces, so it survives from storage.
-func mergeSessionMetadata(stored, live protocol.SessionMetadata) protocol.SessionMetadata {
+func overlayLiveMetadata(stored, live protocol.SessionMetadata) protocol.SessionMetadata {
 	merged := live
 	merged.ParentSessionID = stored.ParentSessionID
 	return merged
 }
 
-// attachedTo answers the attachment question for a possibly-nil connection,
-// which is how a snapshot built outside any connection reports every session
-// unattached.
+// attachedTo answers the attachment question for a possibly-nil connection; a
+// nil connection holds nothing.
 func (c *connState) attachedTo(sessionID string) bool {
 	if c == nil {
 		return false

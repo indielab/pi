@@ -58,15 +58,15 @@ func TestApplyServerSnapshotIgnoresStale(t *testing.T) {
 	notifications := 0
 	state.Subscribe(func(*protocol.ServerSnapshot) { notifications++ })
 
-	state.ApplyEvent(&protocol.SessionSnapshotEvent{Type: "session_snapshot", Snapshot: *sessionSnapshot("s1", 1, true)})
 	state.ApplyServerSnapshot(serverSnapshot(5, metadata("s1")))
-	state.ApplyServerSnapshot(serverSnapshot(4, metadata("s1")))
+	state.ApplyServerSnapshot(serverSnapshot(4, metadata("s2")))
 
 	if got := state.Snapshot(); got == nil || got.Revision != 5 {
 		t.Errorf("Snapshot() = %#v, want revision 5", got)
 	}
-	if !state.IsSessionAttached("s1") {
-		t.Error("stale snapshot was allowed to clear the attachment")
+	// The stale snapshot must not have replaced the stored sessions either.
+	if got := state.Snapshot().Sessions; len(got) != 1 || got[0].ID != "s1" {
+		t.Errorf("stored sessions = %#v, want the revision-5 view", got)
 	}
 	if notifications != 1 {
 		t.Errorf("listener called %d times, want 1", notifications)

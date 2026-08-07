@@ -239,13 +239,13 @@ func TestInMemoryContextConcurrentSiblings(t *testing.T) {
 		var wg sync.WaitGroup
 		for i := 0; i < 8; i++ {
 			wg.Add(1)
-			go func(i int) {
+			go func() {
 				defer wg.Done()
 				_ = root.StartSpan(SpanOptions{Name: fmt.Sprintf("child-%d", i)}, func(s Span) error {
 					s.AddEvent("tick", SpanAttributes{"i": i})
 					return nil
 				})
-			}(i)
+			}()
 		}
 		wg.Wait()
 		return nil
@@ -259,5 +259,44 @@ func TestInMemoryContextConcurrentSiblings(t *testing.T) {
 			t.Fatalf("duplicate span id %d", s.ID)
 		}
 		ids[s.ID] = true
+	}
+}
+
+// TestInMemoryContextZeroValueIsUsable pins the invariant the reviewer broke by
+// hand: ids and end-sequences must come out of recorder state, not out of
+// counters a constructor seeds, or `var c InMemoryContext` silently records
+// id-0 spans with lost parent links and inverted settle order.
+func TestInMemoryContextZeroValueIsUsable(t *testing.T) {
+	var c InMemoryContext
+	_ = c.StartSpan(SpanOptions{Name: "root"}, func(root Span) error {
+		return root.StartSpan(SpanOptions{Name: "child"}, func(Span) error { return nil })
+	})
+	spans := c.Spans()
+	if len(spans) != 2 {
+		t.Fatalf("spans = %d, want 2", len(spans))
+	}
+	root, child := spans[0], spans[1]
+	if root.ID != 1 || root.ParentID != 0 {
+		t.Fatalf("root id/parent = %d/%d, want 1/0", root.ID, root.ParentID)
+	}
+	if child.ID != 2 || child.ParentID != root.ID {
+		t.Fatalf("child id/parent = %d/%d, want 2/%d", child.ID, child.ParentID, root.ID)
+	}
+	if child.EndSequence != 1 || root.EndSequence != 2 {
+		t.Fatalf("end sequences = child %d, root %d, want 1 then 2", child.EndSequence, root.EndSequence)
+	}
+}
+
+// A panic must be distinguishable from an ordinary returned error, which the
+// bare %T of the error type cannot do (both are *errors.errorString).
+func TestInMemoryContextPanicStatusIsDistinguishable(t *testing.T) {
+	c := NewInMemoryContext()
+	func() {
+		defer func() { _ = recover() }()
+		_ = c.StartSpan(SpanOptions{Name: "panicking"}, func(Span) error { panic("kaboom") })
+	}()
+	got := c.Spans()[0].Status
+	if got.Error == nil || got.Error.Name != "panic" || got.Error.Message != "kaboom" {
+		t.Fatalf("status.error = %+v, want name panic / message kaboom", got.Error)
 	}
 }

@@ -108,19 +108,23 @@ func (s *SessionSnapshot) Validate() error {
 	return requireNonNegative("queuedSteerCount", s.QueuedSteerCount)
 }
 
+// ptr returns a pointer to a copy of v, for the optional protocol fields that
+// model pi's `Type.Optional(...)` as a nullable pointer.
+func ptr[T any](v T) *T { return &v }
+
 // Metadata projects the durable view out of a snapshot (pi's toMetadata).
 // Note the field rename -- a snapshot's `name` is metadata's `sessionName` --
 // and that a snapshot carries no parentSessionId, so the projection never
 // sets one.
 func (s *SessionSnapshot) Metadata() SessionMetadata {
-	updatedAt := s.UpdatedAt
-	cwd := s.Cwd
 	return SessionMetadata{
-		ID:          s.ID,
-		CreatedAt:   s.CreatedAt,
-		UpdatedAt:   &updatedAt,
+		ID:        s.ID,
+		CreatedAt: s.CreatedAt,
+		UpdatedAt: ptr(s.UpdatedAt),
+		// Shares the snapshot's pointer, like every other optional field on
+		// these structs: protocol values are immutable after construction.
 		SessionName: s.Name,
-		Cwd:         &cwd,
+		Cwd:         ptr(s.Cwd),
 	}
 }
 
