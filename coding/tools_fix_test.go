@@ -33,7 +33,7 @@ func TestToolPromptGuidelines(t *testing.T) {
 		},
 		"write": {"Use write only for new files or complete rewrites."},
 		// pi bb3d7d39: bash advertises the PI_* session metadata it exports.
-		"bash": {"Inspect PI_* environment variables for current model and session details."},
+		"bash": {"You can inspect PI_* environment variables for current model and session details."},
 	}
 	for name, guidelines := range want {
 		tool, err := CreateTool(name, dir)
