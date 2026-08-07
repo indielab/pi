@@ -778,15 +778,19 @@ func TestDiffQwenReasoningEffort(t *testing.T) {
 // TestQwenTokenPlanReasoningEffortLive drives the catalog-resolved Qwen Token
 // Plan models end-to-end, mirroring pi's qwen-token-plan-models.test.ts.
 //
-// The expectations below come from the regenerated 0.83.0 catalog, which is
-// where 4c1a0b92's generator hunk first ships. Three distinct shapes matter:
+// The expectations below come from the regenerated 0.84.1 catalog, where
+// 4c1a0b92's generator hunk ships. Three distinct shapes matter:
 //
 //   - glm-5*: supportsReasoningEffort with the high/max map, so "high" maps to
 //     itself and is emitted.
-//   - qwen3.8-max-preview: supportsReasoningEffort with the qwen3.8 map, whose
-//     "high" entry is an explicit null. pi uses `??` here, so a present-null
-//     falls back to the RAW level and is still emitted — the distinction from
-//     the zai branch's `=== undefined`, which would omit it.
+//   - qwen3.8-max: supportsReasoningEffort with the qwen3.8 map, whose "high"
+//     entry is an explicit null. pi uses `??` here, so a present-null falls
+//     back to the RAW level and is still emitted — the distinction from the
+//     zai branch's `=== undefined`, which would omit it. Upstream 2f7f75a20
+//     retired `qwen3.8-max-preview` and moved this map onto `qwen3.8-max`,
+//     which did not exist in the 0.83.0 catalog; the shape is unchanged
+//     (`{"minimal":null,"low":"low","medium":"medium","high":null,
+//     "xhigh":"xhigh","max":null}`), only the id it hangs on.
 //   - deepseek-v3.2 / kimi-k2.5: supportsReasoningEffort:false, so no
 //     reasoning_effort is emitted at all — these are exactly the models
 //     4c1a0b92 was written to exclude. enable_thinking is still set, because
@@ -800,7 +804,7 @@ func TestQwenTokenPlanReasoningEffortLive(t *testing.T) {
 		{"glm-5", "high", true},
 		{"glm-5.1", "high", true},
 		{"glm-5.2", "high", true},
-		{"qwen3.8-max-preview", "high", true},
+		{"qwen3.8-max", "high", true},
 		{"deepseek-v3.2", "", false},
 		{"kimi-k2.5", "", false},
 	}
