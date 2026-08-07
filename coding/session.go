@@ -343,8 +343,8 @@ func (s *Session) SetThinkingLevel(level agent.ThinkingLevel) {
 // History returns the current transcript.
 func (s *Session) History() []agent.AgentMessage { return s.Agent.State().Messages }
 
-// Reset clears the transcript.
-func (s *Session) Reset() { s.Agent.Reset() }
+// Reset clears the transcript. It errors while a run is active.
+func (s *Session) Reset() error { return s.Agent.Reset() }
 
 // LastAssistantText returns the most recent assistant message text.
 func (s *Session) LastAssistantText() string {

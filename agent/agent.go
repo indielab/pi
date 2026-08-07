@@ -303,10 +303,15 @@ func (a *Agent) WaitForIdle() {
 	}
 }
 
-// Reset clears transcript, runtime state, and queued messages.
-func (a *Agent) Reset() {
+// Reset clears transcript, runtime state, and queued messages. It refuses
+// while a run is active, so a reset cannot race the run that is mutating the
+// state it clears (pi agent.ts reset()).
+func (a *Agent) Reset() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	if a.active != nil {
+		return errors.New("Agent is already processing. Wait for completion before resetting.")
+	}
 	a.state.Messages = nil
 	a.state.IsStreaming = false
 	a.state.StreamingMessage = nil
@@ -314,6 +319,7 @@ func (a *Agent) Reset() {
 	a.state.ErrorMessage = ""
 	a.steeringQueue.clear()
 	a.followUpQueue.clear()
+	return nil
 }
 
 // Prompt starts a new run from text. Blocks until the run completes.

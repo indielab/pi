@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -314,6 +315,105 @@ func TestAgentRejectsConcurrentPrompt(t *testing.T) {
 	}
 	close(block)
 	a.WaitForIdle()
+}
+
+// TestAgentRejectsResetWhileProcessing mirrors pi agent.test.ts "should reject
+// reset while processing without corrupting the transcript" (upstream
+// 1532c9994). The point is not just the error: a refused reset must leave the
+// in-flight transcript and streaming flag untouched, and the run must still
+// settle normally afterwards.
+func TestAgentRejectsResetWhileProcessing(t *testing.T) {
+	block := make(chan struct{})
+	started := make(chan struct{})
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel},
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			s := ai.NewAssistantMessageEventStream()
+			go func() {
+				// Mirrors pi's streamStarted deferred: signal only once the
+				// run is genuinely mid-stream, i.e. after the user message has
+				// been committed to the transcript.
+				close(started)
+				<-block
+				s.Push(ai.AssistantMessageEvent{Type: ai.EventDone, Message: &ai.AssistantMessage{
+					Content:    ai.ContentList{ai.TextContent{Text: "Done"}},
+					StopReason: ai.StopStop,
+				}})
+				s.End()
+			}()
+			return s
+		},
+	})
+
+	go a.Prompt(context.Background(), "Hello")
+	<-started
+
+	if got := messageRoles(a.State().Messages); !slices.Equal(got, []string{"user"}) {
+		t.Fatalf("roles before reset = %v, want [user]", got)
+	}
+	err := a.Reset()
+	if err == nil {
+		t.Fatal("expected Reset to be rejected while a run is active")
+	}
+	const want = "Agent is already processing. Wait for completion before resetting."
+	if err.Error() != want {
+		t.Fatalf("Reset error = %q, want %q", err.Error(), want)
+	}
+	// The refused reset must not have partially cleared state.
+	if !a.State().IsStreaming {
+		t.Fatal("refused Reset cleared IsStreaming")
+	}
+	if got := messageRoles(a.State().Messages); !slices.Equal(got, []string{"user"}) {
+		t.Fatalf("roles after refused reset = %v, want [user]", got)
+	}
+
+	close(block)
+	a.WaitForIdle()
+
+	if a.State().IsStreaming {
+		t.Fatal("still streaming after completion")
+	}
+	if got := messageRoles(a.State().Messages); !slices.Equal(got, []string{"user", "assistant"}) {
+		t.Fatalf("roles after completion = %v, want [user assistant]", got)
+	}
+}
+
+// TestAgentResetClearsWhenIdle pins the success path the guard must not break.
+func TestAgentResetClearsWhenIdle(t *testing.T) {
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel},
+		StreamFn: scriptedStream(&ai.AssistantMessage{
+			Content:    ai.ContentList{ai.TextContent{Text: "hi"}},
+			StopReason: ai.StopStop,
+		}),
+	})
+	if err := a.Prompt(context.Background(), "Hello"); err != nil {
+		t.Fatalf("prompt: %v", err)
+	}
+	if len(a.State().Messages) == 0 {
+		t.Fatal("expected a transcript to clear")
+	}
+	if err := a.Reset(); err != nil {
+		t.Fatalf("Reset while idle: %v", err)
+	}
+	if got := len(a.State().Messages); got != 0 {
+		t.Fatalf("messages after reset = %d, want 0", got)
+	}
+}
+
+func messageRoles(messages []AgentMessage) []string {
+	roles := make([]string, 0, len(messages))
+	for _, m := range messages {
+		switch m.(type) {
+		case ai.UserMessage:
+			roles = append(roles, "user")
+		case *ai.AssistantMessage:
+			roles = append(roles, "assistant")
+		default:
+			roles = append(roles, "other")
+		}
+	}
+	return roles
 }
 
 // ---------------------------------------------------------------------------

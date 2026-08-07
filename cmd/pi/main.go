@@ -268,7 +268,10 @@ func handleSlash(sess *coding.Session, line string) bool {
 		sess.SetThinkingLevel(agent.ThinkingLevel(arg))
 		fmt.Printf("thinking level: %s\n", arg)
 	case "/new":
-		sess.Reset()
+		if err := sess.Reset(); err != nil {
+			fmt.Println(err)
+			break
+		}
 		fmt.Println("started a new transcript")
 	case "/session":
 		if sess.Recorder != nil {
