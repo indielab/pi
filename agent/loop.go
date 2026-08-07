@@ -638,7 +638,13 @@ func prepareToolCall(ctx context.Context, current *AgentContext, msg *ai.Assista
 			if reason == "" {
 				reason = "Tool execution was blocked"
 			}
-			return prepareResult{immediate: &immediateOutcome{result: errorToolResult(reason), isError: true}}
+			result := errorToolResult(reason)
+			// pi 1eb988cfe: a blocked call can opt into the batch
+			// early-termination rule. pi guards on `terminate === true`, which
+			// a plain bool reproduces exactly -- absent and false both leave
+			// the field unset.
+			result.Terminate = before.Terminate
+			return prepareResult{immediate: &immediateOutcome{result: result, isError: true}}
 		}
 	}
 	if aborted(ctx) {

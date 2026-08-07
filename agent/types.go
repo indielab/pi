@@ -130,6 +130,11 @@ type BeforeToolCallContext struct {
 type BeforeToolCallResult struct {
 	Block  bool
 	Reason string
+	// Terminate hints that the agent should stop after the current tool batch
+	// when this call is blocked. Like any other result, it only ends the batch
+	// if every finalized result in it terminates (see shouldTerminateBatch).
+	// Ignored unless Block is set.
+	Terminate bool
 }
 
 // AfterToolCallContext is passed to AfterToolCall.

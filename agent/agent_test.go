@@ -261,6 +261,121 @@ func TestAgentBlockedToolViaBeforeHook(t *testing.T) {
 	}
 }
 
+// TestAgentBlockedToolTerminatesBatch mirrors pi agent-loop.test.ts "should
+// stop after a blocked tool call when beforeToolCall sets terminate=true"
+// (upstream 1eb988cfe). The blocked call is the whole batch, so the batch
+// terminates and the loop never asks the model again.
+func TestAgentBlockedToolTerminatesBatch(t *testing.T) {
+	var ran bool
+	var llmCalls atomic.Int32
+	tool := AgentTool{
+		Name:       "echo",
+		Parameters: ai.Object(),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			ran = true
+			return AgentToolResult{}, nil
+		},
+	}
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			n := llmCalls.Add(1)
+			s := ai.NewAssistantMessageEventStream()
+			go func() {
+				msg := &ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "should not run"}}, StopReason: ai.StopStop}
+				if n == 1 {
+					msg = assistantWithToolCall("tool-1", "echo", map[string]any{})
+				}
+				s.Push(ai.AssistantMessageEvent{Type: ai.EventDone, Message: msg})
+				s.End()
+			}()
+			return s
+		},
+		BeforeToolCall: func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult {
+			return &BeforeToolCallResult{Block: true, Reason: "Blocked by policy", Terminate: true}
+		},
+	})
+	if err := a.Prompt(context.Background(), "echo something"); err != nil {
+		t.Fatal(err)
+	}
+	if ran {
+		t.Fatal("blocked tool should not have executed")
+	}
+	if got := llmCalls.Load(); got != 1 {
+		t.Fatalf("llm calls = %d, want 1 (terminate should stop the loop)", got)
+	}
+	tr, ok := a.State().Messages[2].(ai.ToolResultMessage)
+	if !ok || !tr.IsError {
+		t.Fatalf("expected an error tool result, got %#v", a.State().Messages[2])
+	}
+	if got := textOf(&ai.AssistantMessage{Content: tr.Content}); got != "Blocked by policy" {
+		t.Fatalf("block reason = %q, want %q", got, "Blocked by policy")
+	}
+}
+
+// TestAgentBlockedToolTerminateNeedsWholeBatch mirrors pi agent-loop.test.ts
+// "should continue after a mixed batch with one terminating blocked call".
+// This is the case that proves terminate joins the AND rule rather than
+// unilaterally ending the batch: one blocked+terminate call beside one normal
+// call must NOT stop the loop.
+func TestAgentBlockedToolTerminateNeedsWholeBatch(t *testing.T) {
+	var mu sync.Mutex
+	var executed []string
+	var llmCalls atomic.Int32
+	tool := AgentTool{
+		Name:       "echo",
+		Parameters: ai.Object(ai.Prop("value", ai.String())),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			v, _ := params["value"].(string)
+			mu.Lock()
+			executed = append(executed, v)
+			mu.Unlock()
+			return AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "echoed: " + v}}}, nil
+		},
+	}
+	a := NewAgent(AgentOptions{
+		InitialState:  &AgentState{Model: testModel, Tools: []AgentTool{tool}},
+		ToolExecution: ToolParallel,
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			n := llmCalls.Add(1)
+			s := ai.NewAssistantMessageEventStream()
+			go func() {
+				msg := &ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "done"}}, StopReason: ai.StopStop}
+				if n == 1 {
+					msg = &ai.AssistantMessage{
+						Content: ai.ContentList{
+							ai.ToolCall{ID: "tool-1", Name: "echo", Arguments: map[string]any{"value": "first"}},
+							ai.ToolCall{ID: "tool-2", Name: "echo", Arguments: map[string]any{"value": "second"}},
+						},
+						StopReason: ai.StopToolUse,
+					}
+				}
+				s.Push(ai.AssistantMessageEvent{Type: ai.EventDone, Message: msg})
+				s.End()
+			}()
+			return s
+		},
+		BeforeToolCall: func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult {
+			if v, _ := c.Args["value"].(string); v == "first" {
+				return &BeforeToolCallResult{Block: true, Reason: "Blocked first", Terminate: true}
+			}
+			return nil
+		},
+	})
+	if err := a.Prompt(context.Background(), "echo both"); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	got := slices.Clone(executed)
+	mu.Unlock()
+	if !slices.Equal(got, []string{"second"}) {
+		t.Fatalf("executed = %v, want [second]", got)
+	}
+	if n := llmCalls.Load(); n != 2 {
+		t.Fatalf("llm calls = %d, want 2 (mixed batch must not terminate)", n)
+	}
+}
+
 func TestAgentParallelToolsTerminate(t *testing.T) {
 	mkTool := func(name string) AgentTool {
 		return AgentTool{
