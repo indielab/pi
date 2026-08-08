@@ -387,6 +387,70 @@ func TestDeferredToolsResponsesToolSearch(t *testing.T) {
 	}
 }
 
+// pi e47b8e37a: models that take additional_tools get the deferred definitions
+// as a message-anchored developer item instead of a synthetic client tool
+// search, and without the defer_loading marker.
+func TestDeferredToolsResponsesAdditionalTools(t *testing.T) {
+	model := dtResponsesModel("gpt-5.6-sol", false)
+	model.Compat = json.RawMessage(`{"supportsAdditionalTools":true}`)
+	ctx := dtResponsesContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
+	body, err := buildResponsesParams(model, ctx, &OpenAIResponsesOptions{})
+	if err != nil {
+		t.Fatalf("buildResponsesParams: %v", err)
+	}
+	// Deferral is still on: the late tool stays out of body.tools.
+	if got := dtResponsesToolNames(body); len(got) != 1 || got[0] != "base_tool" {
+		t.Fatalf("tools = %v, want [base_tool]", got)
+	}
+	var additional map[string]any
+	for _, item := range dtResponsesInputItems(t, body) {
+		m, _ := item.(map[string]any)
+		switch m["type"] {
+		case "additional_tools":
+			additional = m
+		case "tool_search_call", "tool_search_output":
+			t.Fatalf("additional_tools models must not emit a tool search: %v", m)
+		}
+	}
+	if additional == nil {
+		t.Fatalf("no additional_tools item: %v", dtResponsesInputItems(t, body))
+	}
+	if additional["role"] != "developer" {
+		t.Fatalf("role = %v, want developer", additional["role"])
+	}
+	tools, _ := additional["tools"].([]map[string]any)
+	if len(tools) != 1 || tools[0]["name"] != "late_tool" {
+		t.Fatalf("additional_tools tools = %v, want [late_tool]", tools)
+	}
+	if _, has := tools[0]["defer_loading"]; has {
+		t.Fatalf("additional_tools must not mark tools deferred: %v", tools[0])
+	}
+}
+
+// additional-tools outranks tool-search when a model claims both.
+func TestDeferredToolsResponsesAdditionalToolsBeatsToolSearch(t *testing.T) {
+	model := dtResponsesModel("gpt-5.6-sol", false)
+	model.Compat = json.RawMessage(`{"supportsAdditionalTools":true,"supportsToolSearch":true}`)
+	ctx := dtResponsesContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")
+	body, err := buildResponsesParams(model, ctx, &OpenAIResponsesOptions{})
+	if err != nil {
+		t.Fatalf("buildResponsesParams: %v", err)
+	}
+	var sawAdditional bool
+	for _, item := range dtResponsesInputItems(t, body) {
+		m, _ := item.(map[string]any)
+		if m["type"] == "additional_tools" {
+			sawAdditional = true
+		}
+		if m["type"] == "tool_search_call" || m["type"] == "tool_search_output" {
+			t.Fatalf("tool search must lose to additional_tools: %v", m)
+		}
+	}
+	if !sawAdditional {
+		t.Fatalf("no additional_tools item")
+	}
+}
+
 func TestDeferredToolsResponsesDisabled(t *testing.T) {
 	model := dtResponsesModel("gpt-5.4", false)
 	ctx := dtResponsesContext(model, []ai.Tool{dtTool("base_tool"), dtTool("late_tool")}, "late_tool")

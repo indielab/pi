@@ -44,7 +44,11 @@ type responsesCompat struct {
 	// Lark/regex grammar formats. When false, grammar-constrained tools fall back
 	// to normal function tools. Default: false.
 	SupportsOpenAIGrammarTools bool
-	SupportsToolSearch         bool
+	// SupportsAdditionalTools reports whether the model accepts message-anchored
+	// `additional_tools` input items. Default: false. It outranks
+	// SupportsToolSearch — see responsesDeferredToolsMode.
+	SupportsAdditionalTools bool
+	SupportsToolSearch      bool
 	// SupportsExplicitPromptCacheMode reports whether the model accepts
 	// `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older
 	// OpenAI models reject the parameter. Default: false.
@@ -73,6 +77,7 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 		SupportsLongCacheRetention      *bool   `json:"supportsLongCacheRetention"`
 		SupportsStrictMode              *bool   `json:"supportsStrictMode"`
 		SupportsOpenAIGrammarTools      *bool   `json:"supportsOpenAIGrammarTools"`
+		SupportsAdditionalTools         *bool   `json:"supportsAdditionalTools"`
 		SupportsToolSearch              *bool   `json:"supportsToolSearch"`
 		SupportsExplicitPromptCacheMode *bool   `json:"supportsExplicitPromptCacheMode"`
 	}
@@ -94,6 +99,9 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 	if raw.SupportsOpenAIGrammarTools != nil {
 		c.SupportsOpenAIGrammarTools = *raw.SupportsOpenAIGrammarTools
 	}
+	if raw.SupportsAdditionalTools != nil {
+		c.SupportsAdditionalTools = *raw.SupportsAdditionalTools
+	}
 	if raw.SupportsToolSearch != nil {
 		c.SupportsToolSearch = *raw.SupportsToolSearch
 	}
@@ -101,6 +109,29 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 		c.SupportsExplicitPromptCacheMode = *raw.SupportsExplicitPromptCacheMode
 	}
 	return c
+}
+
+// deferredToolsMode is how a request delivers tool definitions that arrive
+// mid-transcript: as message-anchored additional_tools items, as a completed
+// client tool search, or not at all (pi e47b8e37a). additional-tools wins when
+// the model supports both.
+type deferredToolsMode string
+
+const (
+	deferredToolsNone       deferredToolsMode = ""
+	deferredToolsAdditional deferredToolsMode = "additional-tools"
+	deferredToolsSearch     deferredToolsMode = "tool-search"
+)
+
+func responsesDeferredToolsMode(c responsesCompat) deferredToolsMode {
+	switch {
+	case c.SupportsAdditionalTools:
+		return deferredToolsAdditional
+	case c.SupportsToolSearch:
+		return deferredToolsSearch
+	default:
+		return deferredToolsNone
+	}
 }
 
 // textSignatureV1 is the encoded provider metadata carried on assistant text
@@ -878,10 +909,11 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 }
 
 func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponsesOptions) (map[string]any, error) {
-	// Only immediate tools go in body.tools; deferred definitions are emitted as
-	// client tool_search items at their tool-result markers inside responsesInput.
+	// Only immediate tools go in body.tools; deferred definitions are emitted at
+	// their tool-result markers inside responsesInput, as additional_tools or
+	// client tool_search items depending on the model.
 	compat := getResponsesCompat(model)
-	placement := ai.SplitDeferredTools(req, compat.SupportsToolSearch, nil)
+	placement := ai.SplitDeferredTools(req, responsesDeferredToolsMode(compat) != deferredToolsNone, nil)
 	input, err := responsesInput(model, req, placement.ByName)
 	if err != nil {
 		return nil, err
@@ -1263,8 +1295,9 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 				"type": outputType, "call_id": callID, "output": outputVal,
 			})
 
-			// Load tools introduced by this result via a completed client tool
-			// search anchored at this transcript point (deduped across results).
+			// Load tools introduced by this result at this transcript point,
+			// deduped across results. How they are delivered depends on the
+			// model — see deferredToolsMode.
 			var deferred []ai.Tool
 			for _, name := range tr.AddedToolNames {
 				tool, ok := deferredByName[name]
@@ -1274,7 +1307,18 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 				loadedToolNames[name] = true
 				deferred = append(deferred, tool)
 			}
-			if len(deferred) > 0 {
+			if len(deferred) > 0 && responsesDeferredToolsMode(compat) == deferredToolsAdditional {
+				// Models that take additional_tools get the definitions inline at
+				// this transcript point, with no synthetic search call and no
+				// deferred-loading marker on the tools themselves.
+				additional, err := convertResponsesTools(deferred, compat, false)
+				if err != nil {
+					return nil, err
+				}
+				items = append(items, map[string]any{
+					"type": "additional_tools", "role": "developer", "tools": additional,
+				})
+			} else if len(deferred) > 0 && responsesDeferredToolsMode(compat) == deferredToolsSearch {
 				names := make([]string, len(deferred))
 				for i, t := range deferred {
 					names[i] = t.Name
