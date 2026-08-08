@@ -98,6 +98,13 @@ func TestIsRetryableAssistantError(t *testing.T) {
 			want: true,
 		},
 		{
+			// pi fe10558eb: proxies that give up buffering a retried upstream
+			// request (message byte-identical to pi's vitest constant).
+			name: "upstream request buffer exhaustion is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "Error: exceeded request buffer limit while retrying upstream"},
+			want: true,
+		},
+		{
 			name: "non-matching error message is not retryable",
 			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "model refused to answer"},
 			want: false,
