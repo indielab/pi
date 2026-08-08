@@ -267,6 +267,40 @@ func TestConstrainedSamplingUnknownTypeRejected(t *testing.T) {
 // pi c3e7bc60a carries endTurn as an optional boolean, so an explicit false has
 // to survive the wire distinctly from an absent field. No provider this port
 // carries sets it, so the shape is all there is to pin.
+// ToolCall has a hand-written marshaller with an explicit field list, so a new
+// field survives only if it was added there too (pi 02bd2d1c6 `namespace?`).
+func TestToolCallNamespaceRoundTrip(t *testing.T) {
+	plain := ToolCall{ID: "call_1|fc_1", Name: "calc", Arguments: map[string]any{"x": 1.0}}
+	raw, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "namespace") {
+		t.Fatalf("an unset namespace must be omitted: %s", raw)
+	}
+
+	ns := plain
+	ns.Namespace = "mcp_math"
+	raw, err = json.Marshal(ns)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"namespace":"mcp_math"`) {
+		t.Fatalf("namespace not persisted: %s", raw)
+	}
+
+	var back ToolCall
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.Namespace != "mcp_math" {
+		t.Fatalf("namespace round-trip = %q, want mcp_math", back.Namespace)
+	}
+	if back.ID != ns.ID || back.Name != ns.Name {
+		t.Fatalf("namespace displaced a sibling field: %+v", back)
+	}
+}
+
 func TestAssistantEndTurnRoundTrip(t *testing.T) {
 	base := AssistantMessage{
 		Content: ContentList{TextContent{Text: "hi"}}, Api: "api", Provider: "p",

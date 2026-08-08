@@ -493,7 +493,10 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				b = &blockBuilder{kind: "text"}
 				startEvent = ai.EventTextStart
 			case "function_call":
-				b = &blockBuilder{kind: "toolCall", toolID: item.CallID + "|" + item.ID, toolName: item.Name, args: map[string]any{}}
+				b = &blockBuilder{
+					kind: "toolCall", toolID: item.CallID + "|" + item.ID, toolName: item.Name,
+					toolNamespace: item.Namespace, args: map[string]any{},
+				}
 				b.partialJSON.WriteString(item.Arguments)
 				startEvent = ai.EventToolCallStart
 			case "custom_tool_call":
@@ -511,7 +514,8 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				}
 				b = &blockBuilder{
 					kind: "toolCall", toolID: item.CallID + "|" + item.ID, toolName: item.Name,
-					args: map[string]any{property: seed}, grammar: newGrammarInputBuffer(property),
+					toolNamespace: item.Namespace,
+					args:          map[string]any{property: seed}, grammar: newGrammarInputBuffer(property),
 				}
 				startEvent = ai.EventToolCallStart
 			default:
@@ -779,6 +783,9 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 						argsJSON = slot.block.partialJSON.String()
 					}
 					slot.block.args, slot.block.argsOrder = parseStreamingJSON(orEmptyJSON(argsJSON))
+					if ev.Item.Namespace != "" {
+						slot.block.toolNamespace = ev.Item.Namespace
+					}
 					materialize()
 					tc := slot.block.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: slot.contentIndex, ToolCall: &tc, Partial: output.Clone()})
@@ -793,6 +800,9 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 						return gerr
 					}
 					slot.block.grammar = nil
+					if ev.Item.Namespace != "" {
+						slot.block.toolNamespace = ev.Item.Namespace
+					}
 					materialize()
 					tc := slot.block.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: slot.contentIndex, ToolCall: &tc, Partial: output.Clone()})
@@ -1112,7 +1122,9 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 			items = append(items, map[string]any{"role": "user", "content": content})
 		} else if am, ok := asAssistantMsg(m); ok {
 			var output []any
-			isDifferentModel := am.Model != model.ID && am.Provider == model.Provider && am.Api == model.Api
+			sameProviderAndApi := am.Provider == model.Provider && am.Api == model.Api
+			isSameModel := sameProviderAndApi && am.Model == model.ID
+			isDifferentModel := sameProviderAndApi && am.Model != model.ID
 			textBlockIndex := 0
 			for _, c := range am.Content {
 				switch v := c.(type) {
@@ -1169,6 +1181,11 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 						(!isGrammar && !strings.HasPrefix(itemID, "fc_")) {
 						itemID = ""
 					}
+					// A namespace only replays for a call the current model could
+					// have made itself: same model, or a deferred tool this
+					// request is loading (upstream 02bd2d1c6).
+					_, isDeferredTool := deferredByName[v.Name]
+					canReplayNamespace := isSameModel || isDeferredTool
 					var item map[string]any
 					if isGrammar {
 						input, gerr := grammarToolInput(v.Name, v.Arguments, property)
@@ -1185,6 +1202,9 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 							"type": "function_call", "call_id": callID, "name": v.Name,
 							"arguments": string(args),
 						}
+					}
+					if canReplayNamespace && v.Namespace != "" {
+						item["namespace"] = v.Namespace
 					}
 					if itemID != "" {
 						item["id"] = itemID
@@ -1438,7 +1458,10 @@ type responsesItem struct {
 	Arguments string `json:"arguments"`
 	// Input is a pointer so an absent field is distinguishable from an
 	// empty string, which pi's `item.input ?? …` depends on.
-	Input            *string                `json:"input"`
+	Input *string `json:"input"`
+	// Namespace rides on function_call / custom_tool_call items for
+	// dynamically loaded or namespaced tools (upstream 02bd2d1c6).
+	Namespace        string                 `json:"namespace"`
 	Phase            string                 `json:"phase"`
 	EncryptedContent string                 `json:"encrypted_content"`
 	Summary          []responsesContentPart `json:"summary"`

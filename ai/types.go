@@ -258,6 +258,13 @@ type ToolCall struct {
 	ArgumentsOrder OrderedObject `json:"-"`
 	// ThoughtSignature is a Google-specific opaque signature for reusing thought context.
 	ThoughtSignature string `json:"thoughtSignature,omitempty"`
+	// Namespace is the OpenAI Responses namespace for calls to dynamically
+	// loaded or namespaced tools (pi 02bd2d1c6 `namespace?`). It is echoed back
+	// when the call is replayed, but only for a call the current model could
+	// have made — see canReplayNamespace in ai/providers/openai_responses.go.
+	// Plain string like ThoughtSignature: pi's guard is `!== undefined`, so a
+	// provider-sent empty string would replay there and is dropped here.
+	Namespace string `json:"namespace,omitempty"`
 }
 
 func (ToolCall) contentType() string { return "toolCall" }
@@ -279,7 +286,8 @@ func (t ToolCall) MarshalJSON() ([]byte, error) {
 		Name             string `json:"name"`
 		Arguments        any    `json:"arguments"`
 		ThoughtSignature string `json:"thoughtSignature,omitempty"`
-	}{t.ID, t.Name, t.OrderedArguments(), t.ThoughtSignature})
+		Namespace        string `json:"namespace,omitempty"`
+	}{t.ID, t.Name, t.OrderedArguments(), t.ThoughtSignature, t.Namespace})
 }
 
 // UnmarshalJSON recovers the argument key order from the source bytes, so a
@@ -290,11 +298,12 @@ func (t *ToolCall) UnmarshalJSON(data []byte) error {
 		Name             string          `json:"name"`
 		Arguments        json.RawMessage `json:"arguments"`
 		ThoughtSignature string          `json:"thoughtSignature,omitempty"`
+		Namespace        string          `json:"namespace,omitempty"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	*t = ToolCall{ID: raw.ID, Name: raw.Name, ThoughtSignature: raw.ThoughtSignature}
+	*t = ToolCall{ID: raw.ID, Name: raw.Name, ThoughtSignature: raw.ThoughtSignature, Namespace: raw.Namespace}
 	if len(raw.Arguments) == 0 {
 		return nil
 	}

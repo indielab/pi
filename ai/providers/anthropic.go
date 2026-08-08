@@ -619,8 +619,11 @@ type blockBuilder struct {
 	redacted    bool
 	toolID      string
 	toolName    string
-	partialJSON strings.Builder
-	args        map[string]any
+	// toolNamespace is the OpenAI Responses namespace of a namespaced or
+	// dynamically loaded tool call; empty for every other provider.
+	toolNamespace string
+	partialJSON   strings.Builder
+	args          map[string]any
 	// argsOrder is args in the key order the model streamed them in.
 	argsOrder ai.OrderedObject
 	// grammar is set on custom (grammar-constrained) tool calls, whose raw input
@@ -639,7 +642,7 @@ func (b *blockBuilder) toContent() ai.Content {
 		if args == nil {
 			args = map[string]any{}
 		}
-		return ai.ToolCall{ID: b.toolID, Name: b.toolName, Arguments: args, ArgumentsOrder: b.argsOrder}
+		return ai.ToolCall{ID: b.toolID, Name: b.toolName, Arguments: args, ArgumentsOrder: b.argsOrder, Namespace: b.toolNamespace}
 	}
 	return ai.TextContent{}
 }

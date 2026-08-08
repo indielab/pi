@@ -2122,3 +2122,133 @@ func assertGrammarArgs(t *testing.T, final *ai.AssistantMessage, property, want 
 	}
 	t.Fatalf("no tool call in final message (stop=%s err=%s)", final.StopReason, final.ErrorMessage)
 }
+
+// pi 02bd2d1c6: namespaces ride on function_call / custom_tool_call items and
+// are echoed back on replay, but only for a call the current model could have
+// made itself — its own call, or a deferred tool this request is loading.
+func TestResponsesNamespaceParsedFromStream(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r"}}
+
+data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"calc","arguments":"","namespace":"mcp_math"}}
+
+data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"calc","arguments":"{\"x\":7}","namespace":"mcp_math"}}
+
+data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
+
+`
+	model := reasoningModel()
+	req := ai.Context{
+		Messages: []ai.Message{ai.NewUserText("hi", 1)},
+		Tools:    []ai.Tool{{Name: "calc", Description: "calc", Parameters: ai.Object(ai.Prop("x", ai.Integer()))}},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	t.Cleanup(server.Close)
+	m := *model
+	m.BaseURL = server.URL
+	stream := StreamOpenAIResponses(context.Background(), &m, req,
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
+	for range stream.Events() {
+	}
+	final := stream.Result()
+	var tool *ai.ToolCall
+	for _, c := range final.Content {
+		if tc, ok := c.(ai.ToolCall); ok {
+			v := tc
+			tool = &v
+		}
+	}
+	if tool == nil {
+		t.Fatalf("no tool call (stop=%s err=%s)", final.StopReason, final.ErrorMessage)
+	}
+	if tool.Namespace != "mcp_math" {
+		t.Fatalf("namespace = %q, want mcp_math", tool.Namespace)
+	}
+}
+
+// The model's own call replays with its namespace intact.
+func TestResponsesNamespaceReplayedForSameModel(t *testing.T) {
+	model := reasoningModel() // gpt-5 / openai / openai-responses
+	req := ai.Context{Messages: []ai.Message{
+		ai.NewUserText("hi", 1),
+		ai.AssistantMessage{
+			Content: ai.ContentList{ai.ToolCall{
+				ID: "call_1|fc_1", Name: "calc", Arguments: map[string]any{}, Namespace: "mcp_math",
+			}},
+			Api:        ai.APIOpenAIResponses,
+			Provider:   "openai",
+			Model:      "gpt-5",
+			StopReason: ai.StopToolUse,
+		},
+		ai.ToolResultMessage{ToolCallID: "call_1|fc_1", ToolName: "calc", Content: ai.ContentList{ai.TextContent{Text: "ok"}}, Timestamp: 2},
+	}}
+	fc := findResponsesItem(mustResponsesInput(t, model, req), "function_call")
+	if fc == nil {
+		t.Fatalf("no function_call item")
+	}
+	if fc["namespace"] != "mcp_math" {
+		t.Fatalf("namespace = %v, want mcp_math", fc["namespace"])
+	}
+}
+
+// A different model's call cannot claim this model's namespace.
+func TestResponsesNamespaceDroppedForDifferentModel(t *testing.T) {
+	model := reasoningModel()
+	req := ai.Context{Messages: []ai.Message{
+		ai.NewUserText("hi", 1),
+		ai.AssistantMessage{
+			Content: ai.ContentList{ai.ToolCall{
+				ID: "call_1|fc_1", Name: "calc", Arguments: map[string]any{}, Namespace: "mcp_math",
+			}},
+			Api:        ai.APIOpenAIResponses,
+			Provider:   "openai",
+			Model:      "gpt-4.1", // different model id, same provider/api
+			StopReason: ai.StopToolUse,
+		},
+		ai.ToolResultMessage{ToolCallID: "call_1|fc_1", ToolName: "calc", Content: ai.ContentList{ai.TextContent{Text: "ok"}}, Timestamp: 2},
+	}}
+	fc := findResponsesItem(mustResponsesInput(t, model, req), "function_call")
+	if fc == nil {
+		t.Fatalf("no function_call item")
+	}
+	if ns, has := fc["namespace"]; has {
+		t.Fatalf("cross-model namespace should be dropped, got %v", ns)
+	}
+}
+
+// ...unless the tool is one this request defers, in which case the namespace is
+// the loaded tool's and replays regardless of which model called it.
+func TestResponsesNamespaceReplayedForDeferredTool(t *testing.T) {
+	model := reasoningModel()
+	model.Compat = json.RawMessage(`{"supportsToolSearch":true}`)
+	req := ai.Context{
+		Tools: []ai.Tool{{Name: "calc", Description: "calc", Parameters: ai.Object(ai.Prop("x", ai.Integer()))}},
+		Messages: []ai.Message{
+			ai.NewUserText("hi", 1),
+			// The marker precedes the call, so "calc" is deferred, not immediate.
+			ai.ToolResultMessage{
+				ToolCallID: "call_0|fc_0", ToolName: "loader", AddedToolNames: []string{"calc"},
+				Content: ai.ContentList{ai.TextContent{Text: "loaded"}}, Timestamp: 2,
+			},
+			ai.AssistantMessage{
+				Content: ai.ContentList{ai.ToolCall{
+					ID: "call_1|fc_1", Name: "calc", Arguments: map[string]any{}, Namespace: "mcp_math",
+				}},
+				Api:        ai.APIOpenAIResponses,
+				Provider:   "openai",
+				Model:      "gpt-4.1", // different model id
+				StopReason: ai.StopToolUse,
+			},
+			ai.ToolResultMessage{ToolCallID: "call_1|fc_1", ToolName: "calc", Content: ai.ContentList{ai.TextContent{Text: "ok"}}, Timestamp: 3},
+		},
+	}
+	fc := findResponsesItem(mustResponsesInput(t, model, req), "function_call")
+	if fc == nil {
+		t.Fatalf("no function_call item")
+	}
+	if fc["namespace"] != "mcp_math" {
+		t.Fatalf("deferred-tool namespace = %v, want mcp_math", fc["namespace"])
+	}
+}
