@@ -403,11 +403,14 @@ func TestDeferredToolsResponsesAdditionalTools(t *testing.T) {
 		t.Fatalf("tools = %v, want [base_tool]", got)
 	}
 	var additional map[string]any
-	for _, item := range dtResponsesInputItems(t, body) {
+	additionalAt, outputAt := -1, -1
+	for i, item := range dtResponsesInputItems(t, body) {
 		m, _ := item.(map[string]any)
 		switch m["type"] {
 		case "additional_tools":
-			additional = m
+			additional, additionalAt = m, i
+		case "function_call_output":
+			outputAt = i
 		case "tool_search_call", "tool_search_output":
 			t.Fatalf("additional_tools models must not emit a tool search: %v", m)
 		}
@@ -415,12 +418,51 @@ func TestDeferredToolsResponsesAdditionalTools(t *testing.T) {
 	if additional == nil {
 		t.Fatalf("no additional_tools item: %v", dtResponsesInputItems(t, body))
 	}
+	// "Message-anchored" is the point: the definitions land at the tool result
+	// that introduced them, not at the head of the input.
+	if outputAt < 0 || additionalAt != outputAt+1 {
+		t.Fatalf("additional_tools at %d, want directly after the tool result at %d", additionalAt, outputAt)
+	}
 	if additional["role"] != "developer" {
 		t.Fatalf("role = %v, want developer", additional["role"])
 	}
 	tools, _ := additional["tools"].([]map[string]any)
 	if len(tools) != 1 || tools[0]["name"] != "late_tool" {
 		t.Fatalf("additional_tools tools = %v, want [late_tool]", tools)
+	}
+	if _, has := tools[0]["defer_loading"]; has {
+		t.Fatalf("additional_tools must not mark tools deferred: %v", tools[0])
+	}
+}
+
+// A deferred grammar tool must arrive as a custom tool inside additional_tools,
+// not silently fall back to a plain function tool.
+func TestDeferredToolsResponsesAdditionalToolsGrammarTool(t *testing.T) {
+	model := dtResponsesModel("gpt-5.6-sol", false)
+	model.Compat = json.RawMessage(`{"supportsAdditionalTools":true,"supportsOpenAIGrammarTools":true}`)
+	ctx := dtResponsesContext(model, []ai.Tool{dtTool("base_tool"), grammarSamplingTool()}, grammarSamplingTool().Name)
+	body, err := buildResponsesParams(model, ctx, &OpenAIResponsesOptions{})
+	if err != nil {
+		t.Fatalf("buildResponsesParams: %v", err)
+	}
+	var additional map[string]any
+	for _, item := range dtResponsesInputItems(t, body) {
+		if m, _ := item.(map[string]any); m["type"] == "additional_tools" {
+			additional = m
+		}
+	}
+	if additional == nil {
+		t.Fatalf("no additional_tools item")
+	}
+	tools, _ := additional["tools"].([]map[string]any)
+	if len(tools) != 1 {
+		t.Fatalf("additional_tools tools = %v, want 1", tools)
+	}
+	if tools[0]["type"] != "custom" {
+		t.Fatalf("grammar tool must stay custom inside additional_tools, got %v", tools[0])
+	}
+	if _, has := tools[0]["format"]; !has {
+		t.Fatalf("grammar tool lost its format: %v", tools[0])
 	}
 	if _, has := tools[0]["defer_loading"]; has {
 		t.Fatalf("additional_tools must not mark tools deferred: %v", tools[0])

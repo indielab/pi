@@ -287,7 +287,13 @@ func (t ToolCall) MarshalJSON() ([]byte, error) {
 		Arguments        any    `json:"arguments"`
 		ThoughtSignature string `json:"thoughtSignature,omitempty"`
 		Namespace        string `json:"namespace,omitempty"`
-	}{t.ID, t.Name, t.OrderedArguments(), t.ThoughtSignature, t.Namespace})
+	}{
+		ID:               t.ID,
+		Name:             t.Name,
+		Arguments:        t.OrderedArguments(),
+		ThoughtSignature: t.ThoughtSignature,
+		Namespace:        t.Namespace,
+	})
 }
 
 // UnmarshalJSON recovers the argument key order from the source bytes, so a
@@ -547,9 +553,13 @@ type AssistantMessage struct {
 	// EndTurn is the provider's own indication of whether the model explicitly
 	// ended its turn. Preserved for debugging; it does not affect control flow
 	// here any more than it does in pi (pi c3e7bc60a `endTurn?`). A pointer
-	// because pi distinguishes an explicit false from an absent field, and only
-	// pi's openai-codex-responses provider — which this port does not carry —
-	// ever sets it, so it stays nil on every path we do carry.
+	// because pi distinguishes an explicit false from an absent field.
+	//
+	// Nothing in this port writes it: the only provider that does is pi's
+	// openai-codex-responses, which is deliberately not ported. It is carried
+	// anyway because session files and the server wire are shared with pi
+	// proper — a session pi wrote must round-trip through here without losing
+	// the field — the same reason ToolResultMessage.Usage is carried.
 	EndTurn   *bool `json:"endTurn,omitempty"`
 	Timestamp int64 `json:"timestamp"`
 }

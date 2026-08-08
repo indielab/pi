@@ -170,7 +170,9 @@ func TestResponsesToolChoiceForwarded(t *testing.T) {
 // mustResponsesInput converts messages, failing the test on conversion errors.
 func mustResponsesInput(t *testing.T, model *ai.Model, req ai.Context) []any {
 	t.Helper()
-	placement := ai.SplitDeferredTools(req, getResponsesCompat(model).SupportsToolSearch, nil)
+	// Same gate as buildResponsesParams, so a helper-driven test sees the
+	// deferral the production path would.
+	placement := ai.SplitDeferredTools(req, responsesDeferredToolsMode(getResponsesCompat(model)) != deferredToolsNone, nil)
 	in, err := responsesInput(model, req, placement.ByName)
 	if err != nil {
 		t.Fatalf("responsesInput: %v", err)
@@ -2127,44 +2129,55 @@ func assertGrammarArgs(t *testing.T, final *ai.AssistantMessage, property, want 
 // are echoed back on replay, but only for a call the current model could have
 // made itself — its own call, or a deferred tool this request is loading.
 func TestResponsesNamespaceParsedFromStream(t *testing.T) {
-	sse := `data: {"type":"response.created","response":{"id":"r"}}
+	const fnAdded = `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"calc","arguments":""%s}}`
+	const fnDone = `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"calc","arguments":"{\"x\":7}"%s}}`
+	const ctcAdded = `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_1","call_id":"ctc_call","name":"gram","input":""%s}}`
+	const ctcDone = `data: {"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_1","call_id":"ctc_call","name":"gram","input":"SELECT \"a\""%s}}`
+	const ns = `,"namespace":"mcp_math"`
 
-data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"calc","arguments":"","namespace":"mcp_math"}}
+	body := func(added, done string) string {
+		return "data: {\"type\":\"response.created\",\"response\":{\"id\":\"r\"}}\n\n" +
+			added + "\n\n" + done + "\n\n" +
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"r\",\"status\":\"completed\"}}\n\n"
+	}
 
-data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"calc","arguments":"{\"x\":7}","namespace":"mcp_math"}}
-
-data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
-
-`
-	model := reasoningModel()
-	req := ai.Context{
+	fnModel := reasoningModel()
+	fnReq := ai.Context{
 		Messages: []ai.Message{ai.NewUserText("hi", 1)},
 		Tools:    []ai.Tool{{Name: "calc", Description: "calc", Parameters: ai.Object(ai.Prop("x", ai.Integer()))}},
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("content-type", "text/event-stream")
-		io.WriteString(w, sse)
-	}))
-	t.Cleanup(server.Close)
-	m := *model
-	m.BaseURL = server.URL
-	stream := StreamOpenAIResponses(context.Background(), &m, req,
-		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
-	for range stream.Events() {
-	}
-	final := stream.Result()
-	var tool *ai.ToolCall
-	for _, c := range final.Content {
-		if tc, ok := c.(ai.ToolCall); ok {
-			v := tc
-			tool = &v
-		}
-	}
-	if tool == nil {
-		t.Fatalf("no tool call (stop=%s err=%s)", final.StopReason, final.ErrorMessage)
-	}
-	if tool.Namespace != "mcp_math" {
-		t.Fatalf("namespace = %q, want mcp_math", tool.Namespace)
+	grammarModel := grammarResponsesModel(`{"supportsOpenAIGrammarTools":true}`)
+	grammarReq := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
+
+	for _, tc := range []struct {
+		name  string
+		model *ai.Model
+		req   ai.Context
+		sse   string
+	}{
+		{"function_call, both items", fnModel, fnReq, body(fmt.Sprintf(fnAdded, ns), fmt.Sprintf(fnDone, ns))},
+		// Only the done item carries it: this is what the != "" guards are for.
+		{"function_call, done only", fnModel, fnReq, body(fmt.Sprintf(fnAdded, ""), fmt.Sprintf(fnDone, ns))},
+		{"function_call, added only", fnModel, fnReq, body(fmt.Sprintf(fnAdded, ns), fmt.Sprintf(fnDone, ""))},
+		{"custom_tool_call, both items", grammarModel, grammarReq, body(fmt.Sprintf(ctcAdded, ns), fmt.Sprintf(ctcDone, ns))},
+		{"custom_tool_call, done only", grammarModel, grammarReq, body(fmt.Sprintf(ctcAdded, ""), fmt.Sprintf(ctcDone, ns))},
+		{"custom_tool_call, added only", grammarModel, grammarReq, body(fmt.Sprintf(ctcAdded, ns), fmt.Sprintf(ctcDone, ""))},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			final := runResponsesSSE(t, tc.model, tc.req, tc.sse)
+			var tool *ai.ToolCall
+			for _, c := range final.Content {
+				if call, ok := c.(ai.ToolCall); ok {
+					tool = &call
+				}
+			}
+			if tool == nil {
+				t.Fatalf("no tool call (stop=%s err=%s)", final.StopReason, final.ErrorMessage)
+			}
+			if tool.Namespace != "mcp_math" {
+				t.Fatalf("namespace = %q, want mcp_math", tool.Namespace)
+			}
+		})
 	}
 }
 
@@ -2215,6 +2228,71 @@ func TestResponsesNamespaceDroppedForDifferentModel(t *testing.T) {
 	}
 	if ns, has := fc["namespace"]; has {
 		t.Fatalf("cross-model namespace should be dropped, got %v", ns)
+	}
+}
+
+// A call from another provider or another api is not this model's call either,
+// so its namespace cannot be replayed (pi gates all three on provider+api+id).
+func TestResponsesNamespaceDroppedAcrossProviderAndApi(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		provider string
+		api      string
+	}{
+		{"different provider", "azure", ai.APIOpenAIResponses},
+		{"different api", "openai", ai.APIOpenAICodexResponses},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := reasoningModel()
+			req := ai.Context{Messages: []ai.Message{
+				ai.NewUserText("hi", 1),
+				ai.AssistantMessage{
+					Content: ai.ContentList{ai.ToolCall{
+						ID: "call_1|fc_1", Name: "calc", Arguments: map[string]any{}, Namespace: "mcp_math",
+					}},
+					Api:        tc.api,
+					Provider:   tc.provider,
+					Model:      "gpt-5", // same model id, so only provider/api can rule it out
+					StopReason: ai.StopToolUse,
+				},
+				ai.ToolResultMessage{ToolCallID: "call_1|fc_1", ToolName: "calc", Content: ai.ContentList{ai.TextContent{Text: "ok"}}, Timestamp: 2},
+			}}
+			fc := findResponsesItem(mustResponsesInput(t, model, req), "function_call")
+			if fc == nil {
+				t.Fatalf("no function_call item")
+			}
+			if ns, has := fc["namespace"]; has {
+				t.Fatalf("namespace must not cross provider/api, got %v", ns)
+			}
+		})
+	}
+}
+
+// DELIBERATE DIVERGENCE, pinned so it cannot drift silently: pi guards on
+// `namespace !== undefined`, so a provider-sent empty string replays there as
+// `"namespace": ""`. Go models the field as a plain string (the ThoughtSignature
+// precedent) and drops it. Recorded in docs/UPSTREAM.md; see the 2026-08-08 entry.
+func TestResponsesEmptyNamespaceDroppedDivergence(t *testing.T) {
+	model := reasoningModel()
+	req := ai.Context{Messages: []ai.Message{
+		ai.NewUserText("hi", 1),
+		ai.AssistantMessage{
+			Content: ai.ContentList{ai.ToolCall{
+				ID: "call_1|fc_1", Name: "calc", Arguments: map[string]any{}, Namespace: "",
+			}},
+			Api:        ai.APIOpenAIResponses,
+			Provider:   "openai",
+			Model:      "gpt-5",
+			StopReason: ai.StopToolUse,
+		},
+		ai.ToolResultMessage{ToolCallID: "call_1|fc_1", ToolName: "calc", Content: ai.ContentList{ai.TextContent{Text: "ok"}}, Timestamp: 2},
+	}}
+	fc := findResponsesItem(mustResponsesInput(t, model, req), "function_call")
+	if fc == nil {
+		t.Fatalf("no function_call item")
+	}
+	if ns, has := fc["namespace"]; has {
+		t.Fatalf("pi would emit \"\" here and we deliberately do not; got %v", ns)
 	}
 }
 

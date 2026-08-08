@@ -814,6 +814,8 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 						argsJSON = slot.block.partialJSON.String()
 					}
 					slot.block.args, slot.block.argsOrder = parseStreamingJSON(orEmptyJSON(argsJSON))
+					// Guarded so an absent namespace on the done item cannot clobber
+					// the one captured at output_item.added.
 					if ev.Item.Namespace != "" {
 						slot.block.toolNamespace = ev.Item.Namespace
 					}
@@ -831,6 +833,8 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 						return gerr
 					}
 					slot.block.grammar = nil
+					// Guarded so an absent namespace on the done item cannot clobber
+					// the one captured at output_item.added.
 					if ev.Item.Namespace != "" {
 						slot.block.toolNamespace = ev.Item.Namespace
 					}
@@ -1118,6 +1122,7 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 	loadedToolNames := map[string]bool{}
 
 	compat := getResponsesCompat(model)
+	mode := responsesDeferredToolsMode(compat)
 	grammarProps, err := grammarToolInputProperties(req.Tools, compat.SupportsOpenAIGrammarTools)
 	if err != nil {
 		return nil, err
@@ -1154,9 +1159,9 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 			items = append(items, map[string]any{"role": "user", "content": content})
 		} else if am, ok := asAssistantMsg(m); ok {
 			var output []any
-			sameProviderAndApi := am.Provider == model.Provider && am.Api == model.Api
-			isSameModel := sameProviderAndApi && am.Model == model.ID
-			isDifferentModel := sameProviderAndApi && am.Model != model.ID
+			sameProviderAndAPI := am.Provider == model.Provider && am.Api == model.Api
+			isSameModel := sameProviderAndAPI && am.Model == model.ID
+			isDifferentModel := sameProviderAndAPI && am.Model != model.ID
 			textBlockIndex := 0
 			for _, c := range am.Content {
 				switch v := c.(type) {
@@ -1213,11 +1218,6 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 						(!isGrammar && !strings.HasPrefix(itemID, "fc_")) {
 						itemID = ""
 					}
-					// A namespace only replays for a call the current model could
-					// have made itself: same model, or a deferred tool this
-					// request is loading (upstream 02bd2d1c6).
-					_, isDeferredTool := deferredByName[v.Name]
-					canReplayNamespace := isSameModel || isDeferredTool
 					var item map[string]any
 					if isGrammar {
 						input, gerr := grammarToolInput(v.Name, v.Arguments, property)
@@ -1235,8 +1235,14 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 							"arguments": string(args),
 						}
 					}
-					if canReplayNamespace && v.Namespace != "" {
-						item["namespace"] = v.Namespace
+					if v.Namespace != "" {
+						// A namespace only replays for a call the current model could
+						// have made itself: its own call, or a deferred tool this
+						// request is loading (upstream 02bd2d1c6).
+						_, isDeferredTool := deferredByName[v.Name]
+						if isSameModel || isDeferredTool {
+							item["namespace"] = v.Namespace
+						}
 					}
 					if itemID != "" {
 						item["id"] = itemID
@@ -1307,35 +1313,38 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 				loadedToolNames[name] = true
 				deferred = append(deferred, tool)
 			}
-			if len(deferred) > 0 && responsesDeferredToolsMode(compat) == deferredToolsAdditional {
-				// Models that take additional_tools get the definitions inline at
-				// this transcript point, with no synthetic search call and no
-				// deferred-loading marker on the tools themselves.
-				additional, err := convertResponsesTools(deferred, compat, false)
-				if err != nil {
-					return nil, err
+			if len(deferred) > 0 {
+				switch mode {
+				case deferredToolsAdditional:
+					// Models that take additional_tools get the definitions inline at
+					// this transcript point, with no synthetic search call and no
+					// deferred-loading marker on the tools themselves.
+					additional, err := convertResponsesTools(deferred, compat, false)
+					if err != nil {
+						return nil, err
+					}
+					items = append(items, map[string]any{
+						"type": "additional_tools", "role": "developer", "tools": additional,
+					})
+				case deferredToolsSearch:
+					names := make([]string, len(deferred))
+					for i, t := range deferred {
+						names[i] = t.Name
+					}
+					searchCallID := "pi_tool_load_" + shortHash(tr.ToolCallID+":"+strings.Join(names, ","))
+					items = append(items, map[string]any{
+						"type": "tool_search_call", "call_id": searchCallID, "execution": "client", "status": "completed",
+						"arguments": map[string]any{"query": strings.Join(names, " "), "limit": len(names)},
+					})
+					deferredTools, err := convertResponsesTools(deferred, compat, true)
+					if err != nil {
+						return nil, err
+					}
+					items = append(items, map[string]any{
+						"type": "tool_search_output", "call_id": searchCallID, "execution": "client", "status": "completed",
+						"tools": deferredTools,
+					})
 				}
-				items = append(items, map[string]any{
-					"type": "additional_tools", "role": "developer", "tools": additional,
-				})
-			} else if len(deferred) > 0 && responsesDeferredToolsMode(compat) == deferredToolsSearch {
-				names := make([]string, len(deferred))
-				for i, t := range deferred {
-					names[i] = t.Name
-				}
-				searchCallID := "pi_tool_load_" + shortHash(tr.ToolCallID+":"+strings.Join(names, ","))
-				items = append(items, map[string]any{
-					"type": "tool_search_call", "call_id": searchCallID, "execution": "client", "status": "completed",
-					"arguments": map[string]any{"query": strings.Join(names, " "), "limit": len(names)},
-				})
-				deferredTools, err := convertResponsesTools(deferred, compat, true)
-				if err != nil {
-					return nil, err
-				}
-				items = append(items, map[string]any{
-					"type": "tool_search_output", "call_id": searchCallID, "execution": "client", "status": "completed",
-					"tools": deferredTools,
-				})
 			}
 		}
 		msgIndex++
