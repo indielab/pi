@@ -2,6 +2,7 @@ package ai
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -263,6 +264,47 @@ func TestConstrainedSamplingUnknownTypeRejected(t *testing.T) {
 // half: a deferred assistant message persists its stop reason and handle, and
 // a message without one is byte-identical to what it was before the field
 // existed.
+// pi c3e7bc60a carries endTurn as an optional boolean, so an explicit false has
+// to survive the wire distinctly from an absent field. No provider this port
+// carries sets it, so the shape is all there is to pin.
+func TestAssistantEndTurnRoundTrip(t *testing.T) {
+	base := AssistantMessage{
+		Content: ContentList{TextContent{Text: "hi"}}, Api: "api", Provider: "p",
+		Model: "m", StopReason: StopStop, Timestamp: 5,
+	}
+
+	raw, err := json.Marshal(base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "endTurn") {
+		t.Fatalf("an unset endTurn must be omitted: %s", raw)
+	}
+
+	for _, want := range []bool{true, false} {
+		msg := base
+		msg.EndTurn = &want
+		raw, err := json.Marshal(msg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(string(raw), fmt.Sprintf(`"endTurn":%t`, want)) {
+			t.Fatalf("endTurn=%t not persisted: %s", want, raw)
+		}
+		back, err := UnmarshalMessage(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, ok := back.(AssistantMessage)
+		if !ok {
+			t.Fatalf("round-trip type = %T, want AssistantMessage", back)
+		}
+		if got.EndTurn == nil || *got.EndTurn != want {
+			t.Fatalf("endTurn round-trip = %v, want %t", got.EndTurn, want)
+		}
+	}
+}
+
 func TestAssistantDeferredHandleRoundTrip(t *testing.T) {
 	plain := AssistantMessage{
 		Content: ContentList{TextContent{Text: "hi"}}, Api: "api", Provider: "p",

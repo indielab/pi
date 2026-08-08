@@ -535,7 +535,14 @@ type AssistantMessage struct {
 	// RawStopReason preserves the provider's own stop/finish reason verbatim,
 	// before it was mapped onto StopReason (pi d7b02636 `rawStopReason?`).
 	RawStopReason string `json:"rawStopReason,omitempty"`
-	Timestamp     int64  `json:"timestamp"`
+	// EndTurn is the provider's own indication of whether the model explicitly
+	// ended its turn. Preserved for debugging; it does not affect control flow
+	// here any more than it does in pi (pi c3e7bc60a `endTurn?`). A pointer
+	// because pi distinguishes an explicit false from an absent field, and only
+	// pi's openai-codex-responses provider — which this port does not carry —
+	// ever sets it, so it stays nil on every path we do carry.
+	EndTurn   *bool `json:"endTurn,omitempty"`
+	Timestamp int64 `json:"timestamp"`
 }
 
 func (AssistantMessage) MessageRole() Role { return RoleAssistant }
