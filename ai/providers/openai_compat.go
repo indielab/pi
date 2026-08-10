@@ -109,10 +109,10 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		has("deepseek.com") || isZai || isMoonshot || provider == "opencode" ||
 		has("opencode.ai") || isCloudflareWorkersAI || isCloudflareAiGateway || isAntLing
 
-	useMaxTokens := has("chutes.ai") || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing || isZai
+	isDeepSeek := provider == "deepseek" || has("deepseek.com")
+	useMaxTokens := has("chutes.ai") || isDeepSeek || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing || isZai
 
 	isGrok := provider == "xai" || has("api.x.ai")
-	isDeepSeek := provider == "deepseek" || has("deepseek.com")
 	isOpenRouterDeveloperRoleModel := isOpenRouter && (strings.HasPrefix(model.ID, "anthropic/") || strings.HasPrefix(model.ID, "openai/"))
 	cacheControlFormat := ""
 	if provider == "openrouter" && strings.HasPrefix(model.ID, "anthropic/") {

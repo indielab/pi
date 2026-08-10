@@ -133,6 +133,52 @@ func TestOpenAICompatZaiSendsMaxTokensInBody(t *testing.T) {
 	}
 }
 
+// pi c185d412 added isDeepSeek to detectCompat's useMaxTokens disjunction, so
+// built-in and custom DeepSeek API models now yield max_tokens. The catalog at
+// npm 0.84.1 predates the fix and carries no maxTokensField for deepseek, so
+// runtime detection is what governs the resolved field for built-ins too.
+func TestOpenAICompatDeepSeekUsesMaxTokens(t *testing.T) {
+	models := []*ai.Model{
+		{ID: "custom-deepseek-model", Api: ai.APIOpenAICompletions, Provider: "deepseek"},
+		{ID: "custom-deepseek-model", Api: ai.APIOpenAICompletions, Provider: "custom-deepseek", BaseURL: "https://api.deepseek.com"},
+	}
+	// Built-in catalog models, matching pi's native coverage.
+	for _, id := range []string{"deepseek-v4-flash", "deepseek-v4-pro"} {
+		m := ai.GetModel("deepseek", id)
+		if m == nil {
+			t.Fatalf("catalog model deepseek/%s missing", id)
+		}
+		models = append(models, m)
+	}
+	for _, m := range models {
+		if got := getOpenAICompat(m).MaxTokensField; got != "max_tokens" {
+			t.Fatalf("%s/%s maxTokensField = %q, want max_tokens", m.Provider, m.ID, got)
+		}
+	}
+}
+
+func TestOpenAICompatDeepSeekSendsMaxTokensInBody(t *testing.T) {
+	// Copy: GetModel returns the shared registry entry and captureOpenAIBody
+	// rewrites BaseURL to the stub server. That rewrite also means only the
+	// provider-name route into isDeepSeek is reachable here; the baseUrl route
+	// is covered by the compat table above.
+	m := ai.GetModel("deepseek", "deepseek-v4-flash")
+	if m == nil {
+		t.Fatal("catalog model deepseek/deepseek-v4-flash missing")
+	}
+	model := *m
+	mt := 123
+	body := captureOpenAIBody(t, &model,
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+		&ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{MaxTokens: &mt}})
+	if v, _ := body["max_tokens"].(float64); v != 123 {
+		t.Fatalf("deepseek max_tokens = %v, want 123 (keys %v)", body["max_tokens"], keysOf(body))
+	}
+	if _, ok := body["max_completion_tokens"]; ok {
+		t.Fatalf("deepseek must not use max_completion_tokens")
+	}
+}
+
 func TestOpenAICompatDeepSeekReasoningContent(t *testing.T) {
 	model := &ai.Model{ID: "deepseek-reasoner", Api: ai.APIOpenAICompletions, Provider: "deepseek", Reasoning: true, MaxTokens: 1000}
 	body := captureOpenAIBody(t, model,
