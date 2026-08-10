@@ -151,9 +151,11 @@ func TestOpenAICompatDeepSeekUsesMaxTokens(t *testing.T) {
 		models = append(models, m)
 	}
 	for _, m := range models {
-		if got := getOpenAICompat(m).MaxTokensField; got != "max_tokens" {
-			t.Fatalf("%s/%s maxTokensField = %q, want max_tokens", m.Provider, m.ID, got)
-		}
+		t.Run(m.Provider+"/"+m.ID, func(t *testing.T) {
+			if got := getOpenAICompat(m).MaxTokensField; got != "max_tokens" {
+				t.Fatalf("maxTokensField = %q, want max_tokens", got)
+			}
+		})
 	}
 }
 
