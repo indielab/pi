@@ -141,6 +141,7 @@ func TestOpenAICompatDeepSeekUsesMaxTokens(t *testing.T) {
 	models := []*ai.Model{
 		{ID: "custom-deepseek-model", Api: ai.APIOpenAICompletions, Provider: "deepseek"},
 		{ID: "custom-deepseek-model", Api: ai.APIOpenAICompletions, Provider: "custom-deepseek", BaseURL: "https://api.deepseek.com"},
+		{ID: "custom-uppercase-deepseek-model", Api: ai.APIOpenAICompletions, Provider: "custom-deepseek-upper", BaseURL: "https://API.DeepSeek.COM"},
 	}
 	// Built-in catalog models, matching pi's native coverage.
 	for _, id := range []string{"deepseek-v4-flash", "deepseek-v4-pro"} {
@@ -154,6 +155,55 @@ func TestOpenAICompatDeepSeekUsesMaxTokens(t *testing.T) {
 		t.Run(m.Provider+"/"+m.ID, func(t *testing.T) {
 			if got := getOpenAICompat(m).MaxTokensField; got != "max_tokens" {
 				t.Fatalf("maxTokensField = %q, want max_tokens", got)
+			}
+		})
+	}
+}
+
+// pi b647d1879 made the deepseek.com baseURL probe case-insensitive and hoisted
+// isDeepSeek above the isNonStandard disjunction, so an uppercase DeepSeek
+// baseURL now resolves the whole DeepSeek profile, not just maxTokensField.
+// Only the DeepSeek probe is case-insensitive upstream; every other baseURL
+// probe in detectCompat stays case-sensitive.
+func TestOpenAICompatDeepSeekBaseURLIsCaseInsensitive(t *testing.T) {
+	upper := &ai.Model{
+		ID: "custom-uppercase-deepseek-model", Api: ai.APIOpenAICompletions,
+		Provider: "custom-deepseek-upper", BaseURL: "https://API.DeepSeek.COM",
+	}
+	got := getOpenAICompat(upper)
+	if got.MaxTokensField != "max_tokens" {
+		t.Errorf("maxTokensField = %q, want max_tokens", got.MaxTokensField)
+	}
+	if got.ThinkingFormat != "deepseek" {
+		t.Errorf("thinkingFormat = %q, want deepseek", got.ThinkingFormat)
+	}
+	if !got.RequiresReasoningContentOnAssistantMessages {
+		t.Error("requiresReasoningContentOnAssistantMessages = false, want true")
+	}
+	// isDeepSeek now feeds isNonStandard, so these two flip off as well.
+	if got.SupportsStore {
+		t.Error("supportsStore = true, want false (DeepSeek is non-standard)")
+	}
+	if got.SupportsDeveloperRole {
+		t.Error("supportsDeveloperRole = true, want false (DeepSeek is non-standard)")
+	}
+}
+
+// The case-insensitive probe is DeepSeek-only: detectCompat's shared baseURL
+// helper must stay case-sensitive for every other provider, exactly as upstream
+// left them. An uppercase host for another provider therefore does NOT match.
+func TestOpenAICompatOtherBaseURLProbesStayCaseSensitive(t *testing.T) {
+	for _, tc := range []struct{ name, baseURL string }{
+		{"zai", "https://API.Z.AI/v1"},
+		{"moonshot", "https://API.Moonshot.CN/v1"},
+		{"chutes", "https://LLM.Chutes.AI/v1"},
+		{"together", "https://API.Together.AI/v1"},
+		{"nvidia", "https://Integrate.API.Nvidia.COM/v1"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := &ai.Model{ID: "m", Api: ai.APIOpenAICompletions, Provider: "custom-" + tc.name, BaseURL: tc.baseURL}
+			if got := getOpenAICompat(m).MaxTokensField; got != "max_completion_tokens" {
+				t.Fatalf("maxTokensField = %q, want max_completion_tokens (uppercase host must not match)", got)
 			}
 		})
 	}

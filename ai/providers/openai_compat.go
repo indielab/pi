@@ -103,13 +103,15 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	isCloudflareAiGateway := provider == "cloudflare-ai-gateway" || has("gateway.ai.cloudflare.com")
 	isNvidia := provider == "nvidia" || has("integrate.api.nvidia.com")
 	isAntLing := provider == "ant-ling" || has("api.ant-ling.com")
+	// pi b647d1879: the DeepSeek probe alone folds case, and it is hoisted above
+	// isNonStandard so both disjunctions read from it. Every other probe here
+	// stays case-sensitive, exactly as upstream leaves them.
+	isDeepSeek := provider == "deepseek" || strings.Contains(strings.ToLower(baseURL), "deepseek.com")
 
 	isNonStandard := isNvidia || provider == "cerebras" || has("cerebras.ai") ||
 		provider == "xai" || has("api.x.ai") || isTogether || has("chutes.ai") ||
-		has("deepseek.com") || isZai || isMoonshot || provider == "opencode" ||
+		isDeepSeek || isZai || isMoonshot || provider == "opencode" ||
 		has("opencode.ai") || isCloudflareWorkersAI || isCloudflareAiGateway || isAntLing
-
-	isDeepSeek := provider == "deepseek" || has("deepseek.com")
 	useMaxTokens := has("chutes.ai") || isDeepSeek || isMoonshot || isCloudflareAiGateway || isTogether || isNvidia || isAntLing || isZai
 
 	isGrok := provider == "xai" || has("api.x.ai")
