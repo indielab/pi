@@ -1,3 +1,5 @@
+package providers
+
 // AI Gateway transport over the Workers AI binding (pi 230029078,
 // packages/ai/src/api/cloudflare-gateway-binding.ts).
 //
@@ -33,7 +35,14 @@
 // header shapes, with fetch-spec rules for `body: null` and `signal: null`.
 // An *http.Request has already normalized all of that, so the port keeps the
 // observable behavior and drops the reconciliation.
-package providers
+//
+// What does NOT come for free is pi's URL layer: `new URL()` applies WHATWG
+// normalization that neither url.Parse nor path.Clean reproduces. Empty path
+// segments survive, a trailing "."/".." leaves a trailing slash, the host is
+// lowercased and a default port is dropped. resolveGatewayPath and
+// normalizedGatewayOrigin below exist to match it; path.Clean is wrong here
+// because it collapses "//" (which would change how provider/endpoint splits)
+// and drops the trailing slash (which decides which rejection fires).
 
 import (
 	"context"
@@ -43,7 +52,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"path"
+	"slices"
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
@@ -70,9 +79,17 @@ type AIGatewayUniversalRequest struct {
 	Provider string
 	Endpoint string
 	Headers  map[string]string
-	// Query is the request body, decoded from JSON. pi types it `unknown` and
-	// passes whatever JSON.parse returned, so any JSON value can appear here.
-	Query any
+	// Query is the validated JSON request body, passed through byte-for-byte.
+	//
+	// pi types this `unknown` and hands over whatever JSON.parse returned,
+	// because a JS object is what AiGateway.run() takes. Decoding to `any` here
+	// instead would be lossy in two ways HTTPS is not: every number would become
+	// a float64 (corrupting integer ids past 2^53), and Go map iteration would
+	// replace the body's key order with encoding/json's alphabetical order —
+	// where JS preserves insertion order and therefore re-serializes the keys as
+	// the provider wrote them. Raw bytes keep both properties, so the body a
+	// host forwards is the body the provider built.
+	Query json.RawMessage
 }
 
 // CloudflareGatewayBindingAuthSentinel is the placeholder value for auth headers
@@ -87,25 +104,38 @@ type AIGatewayUniversalRequest struct {
 // key that overrides its stored keys — the same as it would over HTTPS.
 const CloudflareGatewayBindingAuthSentinel = "cloudflare-gateway-binding"
 
-// GatewayBindingDoerOptions configures [NewGatewayBindingDoer].
-type GatewayBindingDoerOptions struct {
-	// Binding is the Workers AI binding (e.g. `env.AI`).
-	Binding AIGatewayBinding
-	// BaseURL is the gateway HTTPS prefix every request must fall under,
-	// without a trailing slash:
-	// `https://gateway.ai.cloudflare.com/v1/{accountId}/{gatewayName}`.
-	BaseURL string
-	// Gateway is the gateway name passed to Binding.Gateway. It must match the
-	// BaseURL gateway.
-	Gateway string
+// Failure classes a caller can branch on. pi throws plain Errors here; sentinels
+// let an SDK consumer decide to re-route over HTTPS without string-matching,
+// while Error() stays byte-identical to pi's message (the retry.go precedent).
+// These are exported, unlike errServerRetryDelayTooLong, because the consumer of
+// this transport is outside the repo.
+var (
+	// ErrOutsideGatewayPrefix marks a request URL that does not fall under the
+	// configured gateway prefix. Route it over HTTPS instead.
+	ErrOutsideGatewayPrefix = errors.New("request URL is outside the configured gateway prefix")
+	// ErrUnexpressibleGatewayRequest marks an in-prefix request the universal
+	// endpoint cannot express (non-POST, absent or non-JSON body, or no
+	// provider/endpoint path). Route it over HTTPS with gateway auth instead.
+	ErrUnexpressibleGatewayRequest = errors.New("request cannot be expressed as a universal gateway request")
+)
+
+type gatewayBindingError struct {
+	sentinel error
+	msg      string
 }
 
-// stripHeaders are never forwarded to the binding: hop-by-hop/derived headers,
-// and gateway auth (binding calls are pre-authenticated; the sentinel must not
-// reach the wire).
-var stripHeaders = map[string]bool{"content-length": true, "host": true, "cf-aig-authorization": true}
+func (e *gatewayBindingError) Error() string { return e.msg }
+
+func (e *gatewayBindingError) Is(target error) bool { return target == e.sentinel }
+
+// gatewayBindingStripHeaders are never forwarded to the binding: hop-by-hop and
+// derived headers, plus gateway auth (binding calls are pre-authenticated; the
+// sentinel must not reach the wire).
+var gatewayBindingStripHeaders = map[string]bool{"content-length": true, "host": true, "cf-aig-authorization": true}
 
 // gatewayBindingDoer routes AI Gateway requests through the Workers AI binding.
+// It is safe for concurrent use: every field is set at construction and only
+// read thereafter.
 type gatewayBindingDoer struct {
 	binding  AIGatewayBinding
 	gateway  string
@@ -114,7 +144,7 @@ type gatewayBindingDoer struct {
 }
 
 // NewGatewayBindingDoer creates an [ai.HTTPDoer] that routes AI Gateway requests
-// through the Workers AI binding. See the package-level docs for behavior and
+// through the Workers AI binding. See the file-level comment for behavior and
 // composition notes.
 //
 // pi's constructor throws on an unparseable baseUrl; this returns the error.
@@ -130,58 +160,119 @@ func NewGatewayBindingDoer(opts GatewayBindingDoerOptions) (ai.HTTPDoer, error) 
 		return nil, fmt.Errorf("NewGatewayBindingDoer: BaseURL %q must be absolute, like "+
 			"https://gateway.ai.cloudflare.com/v1/{accountId}/{gatewayName}", opts.BaseURL)
 	}
-	// Prefix matching runs on URL-normalized components (origin + path), not raw
-	// strings: dot segments resolve away and fragments drop, matching what a real
-	// request would put on the wire, so a lexical variant cannot split
-	// provider/endpoint differently than HTTPS would.
-	basePath := normalizeURLPath(base.Path)
+	basePath := resolveGatewayPath(base.EscapedPath())
 	if !strings.HasSuffix(basePath, "/") {
 		basePath += "/"
 	}
 	return &gatewayBindingDoer{
 		binding:  opts.Binding,
 		gateway:  opts.Gateway,
-		origin:   base.Scheme + "://" + base.Host,
+		origin:   normalizedGatewayOrigin(base),
 		basePath: basePath,
 	}, nil
 }
 
-// normalizeURLPath resolves dot segments the way the WHATWG URL parser does,
-// preserving a trailing slash (path.Clean drops it, and whether the path ends in
-// a slash decides "missing provider/endpoint" versus "outside the prefix").
-func normalizeURLPath(p string) string {
-	if p == "" {
+// GatewayBindingDoerOptions configures [NewGatewayBindingDoer].
+type GatewayBindingDoerOptions struct {
+	// Binding is the Workers AI binding (e.g. `env.AI`).
+	Binding AIGatewayBinding
+	// BaseURL is the gateway HTTPS prefix every request must fall under,
+	// without a trailing slash:
+	// `https://gateway.ai.cloudflare.com/v1/{accountId}/{gatewayName}`.
+	BaseURL string
+	// Gateway is the gateway name passed to Binding.Gateway. It must match the
+	// BaseURL gateway.
+	Gateway string
+}
+
+// normalizedGatewayOrigin renders a URL's origin the way WHATWG does: scheme and
+// host lowercased, and a scheme-default port dropped. url.Parse lowercases the
+// scheme but leaves the host and an explicit `:443` alone, so comparing raw
+// u.Host would reject requests pi accepts.
+func normalizedGatewayOrigin(u *url.URL) string {
+	scheme := strings.ToLower(u.Scheme)
+	host := strings.ToLower(u.Host)
+	defaultPort := ""
+	switch scheme {
+	case "https":
+		defaultPort = ":443"
+	case "http":
+		defaultPort = ":80"
+	}
+	if defaultPort != "" && strings.HasSuffix(host, defaultPort) {
+		host = strings.TrimSuffix(host, defaultPort)
+	}
+	return scheme + "://" + host
+}
+
+// resolveGatewayPath resolves dot segments in an absolute URL path the way the
+// WHATWG URL parser does. Unlike path.Clean it preserves empty segments and
+// keeps the trailing slash that a final "." or ".." leaves behind — see the
+// file-level comment for why both matter.
+func resolveGatewayPath(escapedPath string) string {
+	if escapedPath == "" {
 		return "/"
 	}
-	cleaned := path.Clean(p)
-	if strings.HasSuffix(p, "/") && !strings.HasSuffix(cleaned, "/") {
-		cleaned += "/"
+	segments := strings.Split(escapedPath, "/")
+	out := make([]string, 0, len(segments))
+	for i, segment := range segments {
+		last := i == len(segments)-1
+		switch segment {
+		case ".":
+			if last {
+				out = append(out, "")
+			}
+		case "..":
+			// Never pop the leading empty segment: "/.." stays at the root.
+			if len(out) > 1 {
+				out = out[:len(out)-1]
+			}
+			if last {
+				out = append(out, "")
+			}
+		default:
+			out = append(out, segment)
+		}
 	}
-	return cleaned
+	return strings.Join(out, "/")
 }
 
 func (d *gatewayBindingDoer) Do(req *http.Request) (*http.Response, error) {
-	// pi normalizes `init.method ?? request.method ?? "GET"` and uppercases it;
-	// an empty Method is GET here for the same reason.
-	method := strings.ToUpper(req.Method)
+	// This stands in for *http.Client, whose contract is that the transport
+	// closes a non-nil body — callers written against it do not close their own.
+	if req.Body != nil {
+		defer req.Body.Close()
+	}
+
+	// pi resolves `init.method ?? request.method ?? "GET"` and uppercases it. The
+	// uppercasing is kept for parity even though http.Client would send "post"
+	// verbatim (and the gateway would reject it).
+	method := req.Method
 	if method == "" {
 		method = http.MethodGet
 	}
+	method = strings.ToUpper(method)
+
 	rawURL := ""
 	if req.URL != nil {
-		rawURL = req.URL.String()
+		// Redacted keeps any userinfo out of an error a caller may log.
+		rawURL = req.URL.Redacted()
 	}
-
-	if req.URL == nil || req.URL.Scheme == "" || req.URL.Host == "" ||
-		req.URL.Scheme+"://"+req.URL.Host != d.origin ||
-		!strings.HasPrefix(normalizeURLPath(req.URL.Path), d.basePath) {
+	if req.URL == nil {
+		return nil, d.outsidePrefix(method, rawURL)
+	}
+	// Split on the ENCODED path: url.URL.Path is percent-decoded, so a segment
+	// containing %2F would otherwise split as if it were a separator, unlike
+	// what http.Client puts on the wire and unlike pi's URL.pathname.
+	reqPath := resolveGatewayPath(req.URL.EscapedPath())
+	if normalizedGatewayOrigin(req.URL) != d.origin || !strings.HasPrefix(reqPath, d.basePath) {
 		return nil, d.outsidePrefix(method, rawURL)
 	}
 	if method != http.MethodPost {
 		return nil, unexpressibleGatewayRequest(method, rawURL, "only POST is supported")
 	}
 
-	rest := strings.TrimPrefix(normalizeURLPath(req.URL.Path), d.basePath)
+	rest := strings.TrimPrefix(reqPath, d.basePath)
 	slash := strings.Index(rest, "/")
 	if slash <= 0 {
 		return nil, unexpressibleGatewayRequest(method, rawURL, "missing provider/endpoint path")
@@ -193,19 +284,21 @@ func (d *gatewayBindingDoer) Do(req *http.Request) (*http.Response, error) {
 		endpoint += "?" + req.URL.RawQuery
 	}
 
-	// An absent body is "missing body"; a present-but-unparseable one (including
-	// empty, which JSON.parse also rejects) is "non-JSON body".
-	if req.Body == nil || req.Body == http.NoBody {
+	// Only an absent body is "missing body". A present-but-empty one reads as
+	// zero bytes and falls through to "non-JSON body", because that is what
+	// JSON.parse("") does — http.NoBody is present-and-empty, not absent.
+	if req.Body == nil {
 		return nil, unexpressibleGatewayRequest(method, rawURL, "missing body")
 	}
 	// Consuming a one-shot body here is fine — unexpressible requests reject
 	// rather than replay, so nothing downstream needs it again.
 	bodyBytes, err := io.ReadAll(req.Body)
 	if err != nil {
-		return nil, unexpressibleGatewayRequest(method, rawURL, "unreadable body: "+err.Error())
+		return nil, &gatewayBindingError{sentinel: ErrUnexpressibleGatewayRequest, msg: fmt.Sprintf(
+			"NewGatewayBindingDoer: cannot express %s %s as a universal gateway request (unreadable body: %s); "+
+				"route it over HTTPS with gateway auth instead", method, rawURL, err)}
 	}
-	var query any
-	if err := json.Unmarshal(bodyBytes, &query); err != nil {
+	if !json.Valid(bodyBytes) {
 		return nil, unexpressibleGatewayRequest(method, rawURL, "non-JSON body")
 	}
 
@@ -213,39 +306,59 @@ func (d *gatewayBindingDoer) Do(req *http.Request) (*http.Response, error) {
 		Provider: provider,
 		Endpoint: endpoint,
 		Headers:  collectGatewayHeaders(req.Header),
-		Query:    query,
+		Query:    bodyBytes,
 	})
 }
 
 // outsidePrefix mirrors pi's out-of-prefix throw. Out-of-prefix URLs are a
 // configuration bug, not passthrough traffic: silently forwarding would ship the
 // auth sentinel to whatever host the URL names.
+//
+// The message names the constructor rather than Do, as pi's names
+// createGatewayBindingFetch rather than the fetch it returns.
 func (d *gatewayBindingDoer) outsidePrefix(method, rawURL string) error {
-	return fmt.Errorf("NewGatewayBindingDoer: %s %s is outside the configured gateway prefix (%s%s); "+
-		"this doer only serves its gateway-bound client", method, rawURL, d.origin, d.basePath)
+	return &gatewayBindingError{sentinel: ErrOutsideGatewayPrefix, msg: fmt.Sprintf(
+		"NewGatewayBindingDoer: %s %s is outside the configured gateway prefix (%s%s); "+
+			"this doer only serves its gateway-bound client", method, rawURL, d.origin, d.basePath)}
 }
 
-// unexpressible mirrors pi's unexpressible throw. In-prefix requests the
-// universal endpoint cannot express always reject: forwarding them over HTTPS
-// would send the sentinel to the gateway and fail with a misleading auth error
-// instead of naming the real problem. Callers that need such endpoints route
-// them over HTTPS with real gateway auth themselves.
+// unexpressibleGatewayRequest mirrors pi's unexpressible throw. In-prefix
+// requests the universal endpoint cannot express always reject: forwarding them
+// over HTTPS would send the sentinel to the gateway and fail with a misleading
+// auth error instead of naming the real problem. Callers that need such
+// endpoints route them over HTTPS with real gateway auth themselves.
 func unexpressibleGatewayRequest(method, rawURL, reason string) error {
-	return fmt.Errorf("NewGatewayBindingDoer: cannot express %s %s as a universal gateway request (%s); "+
-		"route it over HTTPS with gateway auth instead", method, rawURL, reason)
+	return &gatewayBindingError{sentinel: ErrUnexpressibleGatewayRequest, msg: fmt.Sprintf(
+		"NewGatewayBindingDoer: cannot express %s %s as a universal gateway request (%s); "+
+			"route it over HTTPS with gateway auth instead", method, rawURL, reason)}
 }
 
 // collectGatewayHeaders lowercases entry header names so case-variant duplicates
-// collapse and stripping is uniform. Multi-value headers join the way a fetch
+// collapse and stripping is uniform, joining multi-value headers the way a fetch
 // Headers iterator yields them.
+//
+// pi collapses case-variant duplicates in insertion order, which http.Header
+// (a map) does not have. Names are visited in sorted order so the collapse is at
+// least deterministic; the case only arises from a raw map write, since
+// Header.Set and Header.Add canonicalize.
 func collectGatewayHeaders(h http.Header) map[string]string {
+	names := make([]string, 0, len(h))
+	for key := range h {
+		names = append(names, key)
+	}
+	slices.Sort(names)
+
 	result := make(map[string]string, len(h))
-	for key, values := range h {
+	for _, key := range names {
 		name := strings.ToLower(key)
-		if stripHeaders[name] {
+		if gatewayBindingStripHeaders[name] {
 			continue
 		}
-		result[name] = strings.Join(values, ", ")
+		value := strings.Join(h[key], ", ")
+		if existing, ok := result[name]; ok {
+			value = existing + ", " + value
+		}
+		result[name] = value
 	}
 	return result
 }
