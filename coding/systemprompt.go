@@ -72,7 +72,10 @@ func BuildSystemPrompt(opts BuildSystemPromptOptions) string {
 
 	if opts.CustomPrompt != "" {
 		prompt := opts.CustomPrompt + appendSection + contextSection() + skillsSection
-		prompt += "\nCurrent working directory: " + promptCwd
+		// Custom prompts terminate the cwd footer with a newline; the default
+		// prompt below deliberately does not (upstream 3dd4623ee touched only
+		// this branch, leaving its twin unchanged).
+		prompt += "\nCurrent working directory: " + promptCwd + "\n"
 		return prompt
 	}
 	var visible []string

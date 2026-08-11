@@ -108,7 +108,8 @@ When a skill file references a relative path, resolve it against the skill direc
     <location>/proj/.pi/skills/demo/SKILL.md</location>
   </skill>
 </available_skills>
-Current working directory: /proj`
+Current working directory: /proj
+`
 
 	if got != want {
 		t.Fatalf("custom system prompt assembly drift.\n--- got ---\n%s\n--- want ---\n%s", got, want)
