@@ -13,8 +13,22 @@ stopped.
 - Repo: clean working tree on `main`, `git pull` first. Full gate must be
   green BEFORE starting (`go build ./... && go vet ./... && go test ./...`);
   never start a sync on a broken base.
-- Upstream clone at `$PI_UPSTREAM_DIR` (default `~/.cache/pi-upstream`);
-  clone if missing, `git fetch origin main`.
+- Upstream clone at `$PI_UPSTREAM_DIR` (default `~/.cache/pi-upstream`); clone
+  if missing, `git fetch origin main`, then **fast-forward its working tree**:
+  `git -C "$dir" checkout -B main origin/main`. The clone is a read-only mirror
+  — nothing is ever committed to it, and the differential harness extracts from
+  it with `git archive <sha>` — so this is always safe. Without it the checkout
+  drifts arbitrarily far behind: at the 2026-08-11 sync it was still on a
+  2026-06-07 commit, ~2 months stale, and a plain `grep` of it reported the
+  OPPOSITE of what the pin contained, reading as though upstream had reverted
+  the change being ported.
+- **Standing rule, independent of the above: never read the clone's working
+  tree.** Every upstream read names a sha — `git show <sha>:<path>`,
+  `git diff <sha>^1..<sha>`, `git grep <pattern> <sha> -- <path>`. A
+  fast-forwarded tree is at `origin/main`, which mid-cycle is AHEAD of the pin,
+  so it is not the thing under triage or review either. Pass this rule to every
+  triage/review subagent you spawn; the 2026-08-11 cycle is on record because a
+  reviewer nearly filed a phantom finding from it.
 - Read the pin from `docs/UPSTREAM.md`. Delta = first-parent main-line
   changes `pin..origin/main` (a merged PR = one unit). If empty: record the
   check date in UPSTREAM.md and stop.

@@ -645,16 +645,30 @@ to pin `system` vs `developer` for real. `config.env` `PI_UPSTREAM_SHA` advanced
 `31b513e31` → `536eb7179` with the pin; parity independently verified the
 reference side is genuinely post-fix rather than a stale cache.
 
-### Triage lesson — the upstream clone's WORKING TREE is stale; always read via sha
+### Triage lesson — the upstream clone's WORKING TREE was stale; always read via sha (FIXED)
 
-`~/.cache/pi-upstream`'s checked-out `main` is at `130ae577a` (2026-06-07) — an
+`~/.cache/pi-upstream`'s checked-out `main` was at `130ae577a` (2026-06-07) — an
 ancestor of `origin/main` by roughly two months, because the sync only ever
-fetches `origin/main` and never merges. A `grep` of the clone's working tree for
-this cycle's cwd-footer change therefore shows **no** trailing `\n` and reads as
-if upstream had reverted it. It has not: `git show 536eb7179:…/system-prompt.ts`
-line 69 is `` prompt += `\nCurrent working directory: ${promptCwd}\n` ``, verified
-byte-level. Every triage and parity read must go through an explicit sha
-(`git show <sha>:<path>`, `git diff <sha>^1..<sha>`), never the working tree.
+fetched `origin/main` and never moved the branch. A `grep` of the clone's working
+tree for this cycle's cwd-footer change therefore showed **no** trailing `\n` and
+read as if upstream had reverted it. It had not: `git show
+536eb7179:…/system-prompt.ts` line 69 is
+`` prompt += `\nCurrent working directory: ${promptCwd}\n` ``, verified
+byte-level. The parity reviewer hit exactly this and nearly filed a phantom
+finding against a correct port.
+
+**Fixed in this cycle, at both layers.** (1) `/pi-sync` §0, `/pi-triage` Setup
+and the scheduled report job now fast-forward the checkout after fetching
+(`git -C "$dir" checkout -B main origin/main`). That is safe unconditionally: the
+clone is a read-only mirror with nothing committed to it, and the differential
+harness extracts from it by `git archive <sha>` (`run.sh:94`), never from the
+checkout — verified by re-running the harness after the move, 18/18 PASS.
+(2) All three skills plus `/pi-parity-review` now carry the standing rule that
+**no upstream read may come from the working tree** — `git show <sha>:<path>`,
+`git diff <sha>^1..<sha>`, `git grep <pattern> <sha> -- <path>` — because a
+fast-forwarded tree sits at `origin/main`, which mid-cycle is *ahead* of the pin
+and so is still not the thing under triage or review. `/pi-sync` is told to pass
+that rule to every subagent it spawns.
 
 ## Drift at last sync check (2026-08-10) — pin advanced to 31b513e31
 

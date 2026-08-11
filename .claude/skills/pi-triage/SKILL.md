@@ -11,7 +11,14 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
 ## Setup
 - Upstream clone: `$PI_UPSTREAM_DIR` if set, else `~/.cache/pi-upstream`. If
   missing: `git clone https://github.com/earendil-works/pi "$dir"`. Always
-  `git fetch origin main` first.
+  `git fetch origin main` first, then `git -C "$dir" checkout -B main
+  origin/main` to keep the checkout from drifting (it is a read-only mirror;
+  the harness extracts by `git archive <sha>`, so this is safe).
+- **Never judge from the working tree — name a sha.** `git show <sha>:<path>`,
+  `git diff <sha>^1..<sha>`, `git grep <pattern> <sha> -- <path>`. A stale
+  checkout can show the exact opposite of what the pin holds (2026-08-11: the
+  tree was ~2 months behind and read as though a ported change had been
+  reverted), and a fresh one is at `origin/main`, which is ahead of the pin.
 - The authoritative non-port list and current pin live in `docs/UPSTREAM.md`
   ("Current pin" section). Read it before judging anything.
 

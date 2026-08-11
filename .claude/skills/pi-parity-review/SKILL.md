@@ -21,8 +21,16 @@ never touch the live file. If you ever do dirty the tree, restore it exactly
 and say so loudly in your report.
 
 ## References
-- Upstream TS: `$PI_UPSTREAM_DIR` (default `~/.cache/pi-upstream`), checked out
-  at the relevant sha (`git -C dir show <sha>:<path>` reads without checkout).
+- Upstream TS: `$PI_UPSTREAM_DIR` (default `~/.cache/pi-upstream`). **Never read
+  its working tree — always name a sha**: `git -C dir show <sha>:<path>`,
+  `git -C dir diff <sha>^1..<sha>`, `git -C dir grep <pattern> <sha> -- <path>`.
+  The checkout is whatever was last checked out and is nobody's contract; during
+  the 2026-08-11 cycle it sat at a 2026-06-07 commit, ~2 months behind, so a
+  plain `grep` of it reported the OPPOSITE of what the pin contained and read as
+  though upstream had reverted the change under review. `/pi-sync` now
+  fast-forwards it during preflight, which makes that failure less likely but
+  not impossible — and even a correct tree is at `origin/main`, which mid-cycle
+  is AHEAD of the pin and so is still not what you are reviewing.
 - Published npm build: install/refresh `@earendil-works/pi-ai` +
   `pi-coding-agent` at the matching release into a scratch dir. **When the TS
   source and the shipped build disagree, the BUILD wins** — it's what real pi
