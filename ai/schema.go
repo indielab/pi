@@ -6,6 +6,7 @@ import (
 	"math"
 	"math/big"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -159,14 +160,8 @@ func (s *Schema) MarshalJSON() ([]byte, error) {
 			return nil, err
 		}
 	}
-	if s.Type == "object" || len(s.Properties) > 0 {
-		order := s.PropertyOrder
-		if len(order) == 0 && len(s.Properties) > 0 {
-			for k := range s.Properties {
-				order = append(order, k)
-			}
-			sort.Strings(order)
-		}
+	if s.Properties != nil {
+		order := s.OrderedProperties()
 		props := json.RawMessage("{}")
 		if len(order) > 0 {
 			var pb strings.Builder
@@ -190,10 +185,10 @@ func (s *Schema) MarshalJSON() ([]byte, error) {
 		if err := write("properties", props); err != nil {
 			return nil, err
 		}
-		if len(s.Required) > 0 {
-			if err := write("required", s.Required); err != nil {
-				return nil, err
-			}
+	}
+	if s.Required != nil {
+		if err := write("required", s.Required); err != nil {
+			return nil, err
 		}
 	}
 	if s.Items != nil {
@@ -306,6 +301,26 @@ func (s *Schema) MarshalJSON() ([]byte, error) {
 
 // UnmarshalJSON decodes a JSON Schema object into a Schema, preserving property
 // order from the source bytes.
+// OrderedProperties returns an object schema's property names in the order
+// they serialize, the way pi reads them with Object.keys(properties): JS
+// insertion order is PropertyOrder, with a sorted fallback when no order was
+// recorded. MarshalJSON and the strict tool schema conversion both derive
+// property order from this one rule, so the `required` array that strict
+// conversion rebuilds from the property names always matches the order
+// `properties` appears in on the wire. The result is a fresh, non-nil slice
+// the caller may keep.
+func (s *Schema) OrderedProperties() []string {
+	if len(s.PropertyOrder) > 0 {
+		return append([]string(nil), s.PropertyOrder...)
+	}
+	names := make([]string, 0, len(s.Properties))
+	for name := range s.Properties {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
 func (s *Schema) UnmarshalJSON(data []byte) error {
 	var generic map[string]json.RawMessage
 	if err := json.Unmarshal(data, &generic); err != nil {
@@ -420,8 +435,8 @@ func (s *Schema) Clone() *Schema {
 			cp.Properties[name] = prop.Clone()
 		}
 	}
-	cp.PropertyOrder = cloneStrings(s.PropertyOrder)
-	cp.Required = cloneStrings(s.Required)
+	cp.PropertyOrder = slices.Clone(s.PropertyOrder)
+	cp.Required = slices.Clone(s.Required)
 	cp.Items = s.Items.Clone()
 	if s.Enum != nil {
 		cp.Enum = make([]any, len(s.Enum))
@@ -430,17 +445,17 @@ func (s *Schema) Clone() *Schema {
 		}
 	}
 	cp.Default = deepCopy(s.Default)
-	cp.AdditionalAllowed = cloneBoolPtr(s.AdditionalAllowed)
+	cp.AdditionalAllowed = clonePtr(s.AdditionalAllowed)
 	cp.AdditionalSchema = s.AdditionalSchema.Clone()
-	cp.Minimum = cloneFloatPtr(s.Minimum)
-	cp.Maximum = cloneFloatPtr(s.Maximum)
-	cp.ExclusiveMinimum = cloneFloatPtr(s.ExclusiveMinimum)
-	cp.ExclusiveMaximum = cloneFloatPtr(s.ExclusiveMaximum)
-	cp.MultipleOf = cloneFloatPtr(s.MultipleOf)
-	cp.MinLength = cloneIntPtr(s.MinLength)
-	cp.MaxLength = cloneIntPtr(s.MaxLength)
-	cp.MinItems = cloneIntPtr(s.MinItems)
-	cp.MaxItems = cloneIntPtr(s.MaxItems)
+	cp.Minimum = clonePtr(s.Minimum)
+	cp.Maximum = clonePtr(s.Maximum)
+	cp.ExclusiveMinimum = clonePtr(s.ExclusiveMinimum)
+	cp.ExclusiveMaximum = clonePtr(s.ExclusiveMaximum)
+	cp.MultipleOf = clonePtr(s.MultipleOf)
+	cp.MinLength = clonePtr(s.MinLength)
+	cp.MaxLength = clonePtr(s.MaxLength)
+	cp.MinItems = clonePtr(s.MinItems)
+	cp.MaxItems = clonePtr(s.MaxItems)
 	cp.Const = deepCopy(s.Const)
 	cp.AnyOf = cloneSchemas(s.AnyOf)
 	cp.OneOf = cloneSchemas(s.OneOf)
@@ -465,32 +480,7 @@ func cloneSchemas(list []*Schema) []*Schema {
 	return out
 }
 
-func cloneStrings(list []string) []string {
-	if list == nil {
-		return nil
-	}
-	out := make([]string, len(list))
-	copy(out, list)
-	return out
-}
-
-func cloneBoolPtr(p *bool) *bool {
-	if p == nil {
-		return nil
-	}
-	v := *p
-	return &v
-}
-
-func cloneFloatPtr(p *float64) *float64 {
-	if p == nil {
-		return nil
-	}
-	v := *p
-	return &v
-}
-
-func cloneIntPtr(p *int) *int {
+func clonePtr[T any](p *T) *T {
 	if p == nil {
 		return nil
 	}

@@ -3,6 +3,7 @@ package ai
 import (
 	"encoding/json"
 	"math"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -471,6 +472,116 @@ func TestKeywordRoundTrip(t *testing.T) {
 	}
 	if s.Properties["v"].Extra != nil {
 		t.Errorf("promoted keywords still landing in Extra: %#v", s.Properties["v"].Extra)
+	}
+}
+
+// TestSchemaCloneNoAliasing: Clone promises that nothing reachable from the
+// copy aliases the receiver. The fixture must populate every reference-typed
+// field (pointer/map/slice/any) with a non-zero value — the test fails on any
+// zero reference field, so adding a field to Schema without teaching Clone
+// (and this fixture) about it fails here instead of silently shallow-copying.
+func TestSchemaCloneNoAliasing(t *testing.T) {
+	b, f, i := true, 1.5, 2
+	src := &Schema{
+		Type:              "object",
+		Description:       "d",
+		Properties:        map[string]*Schema{"p": {Type: "string"}},
+		PropertyOrder:     []string{"p"},
+		Required:          []string{"p"},
+		Items:             &Schema{Type: "number"},
+		Enum:              []any{"a", []any{"nested"}},
+		Default:           map[string]any{"k": "v"},
+		AdditionalAllowed: &b,
+		AdditionalSchema:  &Schema{Type: "string"},
+		Minimum:           &f,
+		Maximum:           &f,
+		ExclusiveMinimum:  &f,
+		ExclusiveMaximum:  &f,
+		MultipleOf:        &f,
+		MinLength:         &i,
+		MaxLength:         &i,
+		Pattern:           "^x",
+		MinItems:          &i,
+		MaxItems:          &i,
+		Const:             []any{"c"},
+		HasConst:          true,
+		Format:            "uuid",
+		Nullable:          true,
+		AnyOf:             []*Schema{{Type: "string"}},
+		OneOf:             []*Schema{{Type: "number"}},
+		AllOf:             []*Schema{{Type: "boolean"}},
+		Extra:             map[string]any{"x-note": []any{"e"}},
+	}
+
+	sv := reflect.ValueOf(src).Elem()
+	for idx := 0; idx < sv.NumField(); idx++ {
+		if sv.Field(idx).IsZero() {
+			t.Fatalf("fixture leaves Schema.%s zero; populate it so aliasing is checked", sv.Type().Field(idx).Name)
+		}
+	}
+
+	cp := src.Clone()
+	cv := reflect.ValueOf(cp).Elem()
+	for idx := 0; idx < sv.NumField(); idx++ {
+		name := sv.Type().Field(idx).Name
+		a, c := sv.Field(idx), cv.Field(idx)
+		if a.Kind() == reflect.Interface {
+			a, c = a.Elem(), c.Elem()
+		}
+		switch a.Kind() {
+		case reflect.Pointer, reflect.Map, reflect.Slice:
+			if a.Pointer() == c.Pointer() {
+				t.Errorf("Clone aliases Schema.%s", name)
+			}
+		}
+	}
+	if src.Properties["p"] == cp.Properties["p"] {
+		t.Error("Clone aliases Properties values")
+	}
+	if &src.Enum[1] == &cp.Enum[1] || reflect.ValueOf(src.Enum[1]).Pointer() == reflect.ValueOf(cp.Enum[1]).Pointer() {
+		t.Error("Clone aliases Enum elements")
+	}
+	if reflect.ValueOf(src.Extra["x-note"]).Pointer() == reflect.ValueOf(cp.Extra["x-note"]).Pointer() {
+		t.Error("Clone aliases Extra values")
+	}
+	if got, want := mustJSON(t, cp), mustJSON(t, src); got != want {
+		t.Errorf("Clone changed schema:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+func mustJSON(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}
+
+// TestSchemaRoundTripPreservesPresence: marshal must emit `properties` and
+// `required` exactly when the source schema carried the key — pi serializes
+// whatever keys the object has, so `{"type":"object"}` must not grow a
+// properties key and an explicit `required: []` must survive. Load-bearing for
+// strict tool schema conversion (upstream 7915cdac6), which emits
+// required: [] for zero-property objects.
+func TestSchemaRoundTripPreservesPresence(t *testing.T) {
+	for _, src := range []string{
+		`{"type":"object"}`,
+		`{"type":"object","required":[]}`,
+		`{"type":"object","properties":{}}`,
+		`{"type":"object","properties":{},"required":[]}`,
+	} {
+		var s Schema
+		if err := json.Unmarshal([]byte(src), &s); err != nil {
+			t.Fatal(err)
+		}
+		raw, err := json.Marshal(&s)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(raw) != src {
+			t.Errorf("round-trip changed schema:\n got: %s\nwant: %s", raw, src)
+		}
 	}
 }
 

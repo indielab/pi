@@ -3,7 +3,6 @@ package providers
 import (
 	"errors"
 	"fmt"
-	"sort"
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
@@ -144,7 +143,7 @@ func makeJSONSchemaNodeStrict(schema *ai.Schema) error {
 	// a string array" shape checks have no Go equivalents: Properties and
 	// Required are typed.
 
-	propertyNames := orderedPropertyNames(schema)
+	propertyNames := schema.OrderedProperties()
 	required := make(map[string]bool, len(schema.Required))
 	for _, key := range schema.Required {
 		if _, known := schema.Properties[key]; !known {
@@ -165,22 +164,6 @@ func makeJSONSchemaNodeStrict(schema *ai.Schema) error {
 	closed := false
 	schema.AdditionalAllowed = &closed
 	return nil
-}
-
-// orderedPropertyNames lists an object schema's property names the way pi's
-// Object.keys(properties) does: JS insertion order is PropertyOrder, with
-// Schema.MarshalJSON's sorted fallback when no order was recorded, so
-// `required` always matches the order `properties` serializes in.
-func orderedPropertyNames(schema *ai.Schema) []string {
-	if len(schema.PropertyOrder) > 0 {
-		return append([]string(nil), schema.PropertyOrder...)
-	}
-	names := make([]string, 0, len(schema.Properties))
-	for name := range schema.Properties {
-		names = append(names, name)
-	}
-	sort.Strings(names)
-	return names
 }
 
 // makeStrictJSONSchema converts a tool schema to the strict subset expected by

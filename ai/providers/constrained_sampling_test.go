@@ -103,6 +103,49 @@ func TestMakeStrictJSONSchema(t *testing.T) {
 	}
 }
 
+// Zero-property objects: pi's makeJsonSchemaNodeStrict assigns
+// required = Object.keys(properties) unconditionally, so a strict-converted
+// empty object carries required: [] on the wire — and a source schema that
+// never had a `properties` key must not grow one (upstream reads
+// `schema.properties ?? {}` without assigning back).
+func TestMakeStrictJSONSchemaEmptyObject(t *testing.T) {
+	tests := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "empty properties",
+			src:  `{"type":"object","properties":{}}`,
+			want: `{"type":"object","properties":{},"required":[],"additionalProperties":false}`,
+		},
+		{
+			name: "no properties key",
+			src:  `{"type":"object"}`,
+			want: `{"type":"object","required":[],"additionalProperties":false}`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var parameters ai.Schema
+			if err := json.Unmarshal([]byte(tt.src), &parameters); err != nil {
+				t.Fatal(err)
+			}
+			strict, err := makeStrictJSONSchema(&parameters)
+			if err != nil {
+				t.Fatalf("makeStrictJSONSchema: %v", err)
+			}
+			got, err := json.Marshal(strict)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(got) != tt.want {
+				t.Fatalf("strict schema mismatch:\n got: %s\nwant: %s", got, tt.want)
+			}
+		})
+	}
+}
+
 // Port of "falls back or rejects schemas that cannot be safely converted"
 // (constrained-sampling.test.ts, upstream 7915cdac6): an inconvertible schema
 // makes strict:"prefer" fall back to unconstrained sampling (strict:false with
