@@ -10,10 +10,10 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `536eb7179` — "chore: approve contributors from issue #7912" (2026-08-11; **3 port → 3 Go port commits + 1 review-fix commit, 2 port-but-CATALOG-ONLY, 1 port-but-DEFERRED (harness), 32 n/a, 1 decide → RULED and ported this cycle** — delta `31b513e31..536eb7179`, **38** first-parent changes, no merges. **No release crossed** — no `packages/*/package.json` version bump (pi-ai still 0.84.1) and `models.generated.ts` untouched, so NO catalog regen, the npm reference build did not move, and no port tag was cut this cycle. Ports: `3dd4623ee` custom-prompt cwd footer newline (Go `7e787c2`, **system-prompt byte-golden**, custom branch only — the default-prompt twin is deliberately untouched, as upstream leaves it); `b647d1879` case-insensitive DeepSeek baseURL detect (Go `f499e8a`, **request-body/compat-detect surface**, follow-on to `c185d4123`); `230029078` AI Gateway transport over the Cloudflare AI binding (Go `1674990`, **new public Go API, LATENT** — see the 2026-08-11 ruling). Review gates: parity **FIX-FIRST** (7 measured divergences in the new URL layer, 2 of them dispatch-changing), go-review **FIX-FIRST** — all applied in `663e8f5`, with 3 go-review nits declined on parity grounds and recorded. Differential harness 17 → **18 scenarios, 18/18 PASS** (new `deepseek-fix-upper` sibling, `backend: "src"` at the new pin). The `deepseek` scenario is still on `backend: "src"` from last cycle — flip back to dist at the next release. The pin still means *"everything in scope is reviewed and ported **except the harness tree**"* — see the 2026-08-07 ruling; this delta added 1 more deferred harness commit (backlog now 8) and parked 2 catalog-only deltas (3 queued total). Prior pin: `31b513e31` (2026-08-10, 1 port, no release). |
-| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.84.1**, unchanged again at the 2026-08-11 pin `536eb7179` (no release crossed; nothing recaptured) — with two caveats now on record: the shipped build **predates `c185d4123`** and sends `max_completion_tokens` to DeepSeek, and it also predates `b647d1879` so it matches `deepseek.com` case-sensitively. For both surfaces the reference is TS source at the pin, not dist (harness `deepseek`, `deepseek-fix-custom` and `deepseek-fix-upper` scenarios are all `backend: "src"`). Three generator-only deltas are queued for the next catalog regen: deepseek `maxTokensField` (`c185d4123`), `supportsStrictMode` on 19 cloudflare-ai-gateway openai-responses models (`75c7fd662`), and `deepseek-v4-flash` `thinkingLevelMap.low` (`2f8b4b42f`). |
-| Parity proofs at the pin | **2026-08-11 (3 ports):** the cwd-footer port was **byte-proven** — the reviewer built both prompt branches from verbatim upstream `system-prompt.ts` + `skills.ts` at `536eb7179` and from `coding.BuildSystemPrompt` with identical inputs; `cmp` reported byte-identical output for both branches (custom ends `/proj\n`, single `0a`; default ends `/proj` with no terminator). The DeepSeek fold was proven FAITHFUL on disjunction membership *and* order (15 terms, element-for-element), on `strings.Contains(ToLower)` ≡ `.toLowerCase().includes` for an ASCII needle (İ/final-sigma/U+212A all checked), and the generator half was verified a **no-op for the catalog** (one deepseek baseUrl, zero mixed-case). The gateway binding was proven by running real upstream TS at `536eb7179` against real Go `Do()` over a shared case table — that is what produced the 7 divergences, each now pinned by a test asserting pi's measured behavior. |
-| Reviewed via | 2026-08-11 cycle (3 ports, no release) — independent **pi-parity-review** (**FIX-FIRST**: changes 1 and 2 faithful, change 3's dropped fetch-polymorphism justified and unbreakable, but its `url.Parse`+`path.Clean` substitute for `new URL()` diverged 7 ways) and **pi-go-review** (**FIX-FIRST**: a second package comment leading `go doc`, the same URL-layer defect reached independently, nondeterministic header collapse, an unclosed request body, and `Query any` losing key order and >2^53 integers). Both gates reached the URL layer separately, from different directions. All findings applied in `663e8f5`. |
+| TS source fully reviewed/ported | `2e4d23959` — "fix(tui): give focused fullscreen overlays wheel and viewport keys" (2026-08-12; **1 port → 1 Go port commit + 1 review-fix commit, 1 port-but-DEFERRED (harness), 28 n/a, 0 decide** — delta `536eb7179..2e4d23959`, **30** first-parent changes, no merges. **No release crossed** — no `packages/*/package.json` version bump (pi-ai still 0.84.1) and `models.generated.ts` untouched, so NO catalog regen, the npm reference build did not move, and no port tag was cut this cycle. Port: `7915cdac6` strict tool schema conversion (Go `d3978d3` + review fixes `446162e`, **request-body golden surface** — strict-converted tool schemas on the anthropic/google/openai-completions/openai-responses wires, plus an **unconditional** null-normalization in `ValidateToolArguments`, not experimental-gated). Review gates: parity **FIX-FIRST** (a zero-property strict object dropped `required: []` on 3 wires — fixed by presence-based `MarshalJSON` emission, red-observed first; a pre-existing `properties: {}` invention fixed the same way; one **decode-boundary drift class recorded**, see the 2026-08-12 cycle section), go-review **CLEAN** (3 MED nits applied in `446162e` incl. the `OrderedProperties` hoist guarding the required-matches-properties wire invariant; 2 LOW declined and recorded). New public Go API (additive): `ai.Schema.Clone`, `ai.Schema.OrderedProperties`. Differential harness 18 → **21 scenarios, 21/21 PASS** (new `strict-tools-{anthropic,openai,responses}`, `backend: "src"` at the new pin; harness `PI_UPSTREAM_SHA` advanced). The `deepseek` scenario is still on `backend: "src"` — flip back to dist at the next release. The pin still means *"everything in scope is reviewed and ported **except the harness tree**"* — see the 2026-08-07 ruling; this delta added 1 more deferred harness commit (backlog now 9: `b75be04d9` search refactor) and the catalog-only queue is unchanged (3). Prior pin: `536eb7179` (2026-08-11, 3 ports, no release). |
+| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.84.1**, unchanged again at the 2026-08-12 pin `2e4d23959` (no release crossed; nothing recaptured) — with three caveats now on record: the shipped build **predates `c185d4123`** and sends `max_completion_tokens` to DeepSeek, it **predates `b647d1879`** so it matches `deepseek.com` case-sensitively, and it **predates `7915cdac6`** so it carries no strict tool schema conversion at all. For all three surfaces the reference is TS source at the pin, not dist (harness `deepseek*` and `strict-tools-*` scenarios are all `backend: "src"`). Three generator-only deltas are queued for the next catalog regen: deepseek `maxTokensField` (`c185d4123`), `supportsStrictMode` on 19 cloudflare-ai-gateway openai-responses models (`75c7fd662`), and `deepseek-v4-flash` `thinkingLevelMap.low` (`2f8b4b42f`). |
+| Parity proofs at the pin | **2026-08-12 (1 port):** the strict conversion was proven against **executed upstream TS at `7915cdac6`** three ways: a 28-case conversion probe (`makeStrictJsonSchema` run via node from sha-extracted source vs Go) byte-identical on 24/28 including every error string and the unsupported-key precedence order — the 4 mismatches are the recorded decode-boundary drift class, not wire-reachable through pi's own tools; a 10-case `validateToolArguments` probe vs **real TypeBox** (npm 0.84.1's) 10/10 including the nested-`$ref` compile-path constructed to break the `Check(nil)` mapping; and 3 new differential-harness scenarios asserting full request bodies on the anthropic/openai-completions/openai-responses wires (required ordering with deliberately non-alphabetical properties, anyOf-null widening, no-rewrap of already-nullable shapes, nested object closing, zero-property object, inconvertible-tool fallback carrying the ORIGINAL parameters). The harness is what caught the one real divergence (`required: []` dropped on zero-property strict objects) — fixed, then re-verified **21/21 PASS**. **2026-08-11 (3 ports):** cwd-footer byte-proven via `cmp` on both prompt branches; DeepSeek fold faithful on membership and order (15 terms) and on `strings.Contains(ToLower)` ≡ `.toLowerCase().includes` for the ASCII needle; gateway binding proven by running real upstream TS against real Go `Do()` over a shared case table (7 divergences found and pinned). |
+| Reviewed via | 2026-08-12 cycle (1 port, no release) — independent **pi-parity-review** (**FIX-FIRST**: one new wire divergence — `required: []` dropped by length-gated marshalling — plus a pre-existing `properties: {}` invention newly routed onto strict wires, both fixed in `446162e` red-first; one decode-boundary drift class recorded, not fixed) and **pi-go-review** (**CLEAN**, nits only: 3 MED applied in `446162e` — `OrderedProperties` hoist, generic `clonePtr`/`slices.Clone`, reflection Clone-aliasing test; 2 LOW declined — method-receiver cosmetics, and the up-to-3× conversion that mirrors upstream's own resolve/convert decomposition). |
 
 Deliberately not ported (out of scope for the ledger unless a commit changes
 that decision): TUI, extensions runtime, OAuth token acquisition, project-trust
@@ -474,6 +474,115 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   list (2026-06-12). Porting them would mean inventing an entire exported
   subsystem to serve no ported consumer. Future `resource-loader.ts` commits are
   `n/a` UNLESS the port grows a resource-loader analog.
+
+## Drift at last sync check (2026-08-12) — pin advanced to 2e4d23959
+
+Delta `536eb7179..2e4d23959`, **30** first-parent changes, no merges. **No
+release crossed**: no `packages/*/package.json` version bump (pi-ai still
+0.84.1) and `models.generated.ts` untouched at both ends, so no catalog regen,
+no npm reference-build move, and **no port tag** this cycle. Verdicts: **1 port
+→ 1 Go commit + 1 review-fix commit; 1 port-but-DEFERRED (harness); 28 n/a; 0
+decide**.
+
+Whole-range reconciliation (the merge-smuggling guard) found in-scope deltas
+only in the files of `7915cdac6`, `b75be04d9`, and `b3edf0170`, all accounted
+for by the rows below.
+
+### Port worklist (1 → 1 Go commit + review fixes)
+
+| upstream | subject | Go | notes |
+|---|---|---|---|
+| `7915cdac6` | feat(ai): add strict tool schema conversion | `d3978d3` + `446162e` | **Request-body golden surface** on every strict-capable wire. Two independent behavior changes: (1) `makeStrictJsonSchema` — deep-clone + recursive walk that rejects 16 unsupported keywords (byte-exact error strings, first-present-key precedence), forbids object/array unions and tuples, widens every non-required non-nullable property to `anyOf:[schema,{type:"null"}]`, and sets `required` = ALL property names in serialization order + `additionalProperties:false`; `resolveJSONSchemaStrictSampling` now probes convertibility (prefer → fall back to unconstrained, require → error naming the tool). (2) `normalizeOptionalNulls` — **unconditional** in `ValidateToolArguments` (not experimental-gated): explicit `null` for an optional property whose schema rejects null is deleted instead of failing validation (consumer `agent/loop.go:621`). Go homes: `ai/providers/constrained_sampling.go`, `ai/validation.go`, `ai/schema.go` (new `Clone`), call-sites in `anthropic.go`/`google.go`/`openai.go`/`openai_responses.go` (bedrock/vertex/mistral call-sites have no Go homes; the `create-harness.ts` hunk rides the deferred harness tree), `coding/experimental.go` + `coding/tools.go` (`PI_EXPERIMENTAL=1` sets `{type:"json_schema",strict:"prefer"}` on read/bash/edit/write). Property-order invariant: `required` is derived from the same rule `Schema.MarshalJSON` serializes `properties` with (PropertyOrder, sorted fallback), hoisted to `ai.Schema.OrderedProperties` by review so the two sites cannot drift. Upstream's `defaultStrict` half of `convertResponsesTools` is vacuous in Go (only codex — unported — ever passes one; noted inline). Tests mirror upstream's `constrained-sampling.test.ts` / `validation.test.ts` / `experimental-tool-strict-mode.test.ts`; every lock observed red first. |
+
+### Port-but-DEFERRED — 1 more onto the harness backlog (now 9)
+
+`b75be04d9` "refactor: search (#7797)": extracts session search from
+`harness/session/search.ts` into a new standalone `packages/agent/src/search/`
+module (`SessionSearch` interface + scanning implementation over
+`SessionStorage`), rewires the jsonl repo and the sqlite-node backend onto it,
+and swaps the `agent/src/index.ts` export. The new module's types import
+`harness/session/types.ts` — same project, same deferral. This is the code half
+of the harness.md redesign's "search becomes a standalone service" (see the
+design-docs note below).
+
+### Notable n/a (28)
+
+- **Harness design docs (19)**: `43b4e057a`, `9c75cd2f3`, `f13284565`,
+  `f98629b39`, `638ac1123`, `bcd056a8c`, `01701fd37`, `b8349db85`, `e1b444ba6`,
+  `2862eb4ed`, `a348560b1`, `e33e74450`, `254558539`, `47b021a65`, `8d8c60da7`,
+  `b6557f43e`, `51b45bc5b`, `40a3d8556` — all `packages/agent/docs/harness-v3.md`
+  editing passes — and `85a206081`, which **deletes `harness-v2.md` (−4,612),
+  `agent-harness-spec.md` (−2,524) and the v2 test matrix, renaming
+  `harness-v3.md` → `harness.md`** as the sole plan of record. No boundary
+  change (harness already in-scope-deferred), but the deferred backlog's spec
+  base has been replaced wholesale: one sqlite file per session, search external
+  (see `b75be04d9`), parallel storage/runtime build tracks. Another data point
+  for the 2026-08-07 standing caution to port against the published npm surface
+  rather than head-of-churn.
+- **TUI (5)**: `452923b54` + `534bcbffb` (LaTeX argument/control-space parsing),
+  `2a95ef70d` (`PI_TUI_ESC_TIMEOUT` scoped to lone ESC; also brushes
+  `coding-agent/docs/environment-variables.md` — docs), `2e4d23959` (fullscreen
+  overlay wheel/viewport keys), `9c53c47f8` ("fix indent" — tui test file only).
+- `b3edf0170` "fix(ai): bound Copilot policy update concurrency" — confined to
+  `ai/src/auth/oauth/github-copilot.ts` (+test): `enableAllGitHubCopilotModels`
+  inside the device-code login flow now enables models in batches of 4. OAuth
+  token acquisition is excluded; checked that Go's `ai/providers/copilot.go`
+  carries no policy-update logic, so nothing leaks into ported surface.
+- `2a9b4ebc6` "docs: document terminal-specific fullscreen mouse behavior" —
+  coding-agent docs only.
+- **Meta (2)**: `00eb2d151` (contributor approvals), `f8c71c6a0` (SECURITY.md
+  typos).
+
+### Review gates, and one recorded drift class
+
+Independent **pi-parity-review**: **FIX-FIRST**. Its differential-harness run
+measured one real, model-visible divergence introduced by the port — a
+strict-converted **zero-property object dropped `required: []`** (pi assigns
+`required = Object.keys(properties)` unconditionally; Go's marshalling gated the
+key on `len > 0`) — on all three strict wires, nested nodes included. Fixed in
+`446162e` by presence-based emission (`Required != nil`), red-observed first.
+The same fix round corrected a **pre-existing** inverse: marshalling invented
+`properties: {}` for object nodes that never carried the key (now emitted only
+when the map is non-nil; `ai.Object()` always initializes it, and a sweep found
+no production schema built with `Type: "object"` and a nil map, so no other wire
+moves). The reviewer's 28-case conversion probe (executed upstream TS at
+`7915cdac6` vs Go) and 10-case validation probe vs real TypeBox came back
+byte-identical apart from the drift class below; error strings and
+unsupported-key precedence all match.
+
+**Recorded drift (accepted, not fixed) — decode-boundary flips.**
+`ai.Schema.UnmarshalJSON` silently drops malformed/exotic keywords
+(pre-existing lenient-decode convention), so for tool schemas **decoded from
+JSON** the strict probe can resolve `strict=true` where pi errors or falls
+back: tuple `items` / boolean `items` / boolean `anyOf` variants are dropped
+rather than rejected (pi: "tuple schemas are unsupported" / "boolean schemas
+are unsupported"), non-array `anyOf`/`required` and `type:["object"]` convert
+where pi errors, and a partially-string `required` errors with a different
+string ("required contains an unknown property" vs pi's "object required must
+be a string array"). Unreachable through pi's own built-in tools (json_schema
+sampling is set only on Go-constructed definitions); reachable by a library
+caller decoding tool schemas from JSON. Tied to the decode convention — fixing
+it means strictifying `UnmarshalJSON`, a separate decision from this port.
+
+Independent **pi-go-review**: **CLEAN** (nits only). Applied (all
+behavior-identical, in `446162e`): the `OrderedProperties` hoist above; generic
+`clonePtr` + `slices.Clone` replacing four hand-rolled clone helpers; a
+reflection-based Clone-aliasing test that fails if a `Schema` field is added
+without teaching `Clone` about it. Declined and recorded: making
+`normalizeOptionalNulls` a method (cosmetic churn); collapsing the up-to-3×
+strict conversion per request (mirrors upstream's exact resolve/convert
+decomposition — the reviewer itself recommended keeping it).
+
+**New public Go API (additive):** `ai.Schema.Clone` (structuredClone analogue
+the conversion needs) and `ai.Schema.OrderedProperties` (review-driven, guards
+the required-matches-properties wire invariant).
+
+Differential harness: 18 → **21 scenarios, 21/21 PASS** — new
+`strict-tools-{anthropic,openai,responses}` (full request-body assertions:
+required ordering, anyOf-null widening, no-rewrap of already-nullable shapes,
+nested object closing, zero-property object, inconvertible-tool fallback with
+original parameters), all `backend: "src"` at the new pin; the harness's
+`PI_UPSTREAM_SHA` advanced `536eb7179` → `2e4d23959`.
 
 ## Drift at last sync check (2026-08-11) — pin advanced to 536eb7179
 
