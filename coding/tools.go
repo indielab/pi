@@ -408,6 +408,7 @@ func readTool(cwd string) agent.AgentTool {
 			ai.Opt("offset", ai.Integer("Line number to start reading from (1-indexed)")),
 			ai.Opt("limit", ai.Integer("Maximum number of lines to read")),
 		),
+		ConstrainedSampling: GetExperimentalToolSampling(),
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			path := argStr(params, "path")
 			abs := resolveReadPath(path, cwd)
@@ -538,6 +539,7 @@ func writeTool(cwd string) agent.AgentTool {
 			ai.Prop("path", ai.String("Path to the file to write (relative or absolute)")),
 			ai.Prop("content", ai.String("Content to write to the file")),
 		),
+		ConstrainedSampling: GetExperimentalToolSampling(),
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			path := argStr(params, "path")
 			content := argStr(params, "content")
@@ -580,6 +582,7 @@ func editTool(cwd string) agent.AgentTool {
 			ai.Prop("path", ai.String("Path to the file to edit (relative or absolute)")),
 			ai.Prop("edits", ai.ArrayOf(editObjSchema, "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.")),
 		),
+		ConstrainedSampling: GetExperimentalToolSampling(),
 		// The harness runs PrepareArguments before schema validation (loop.go),
 		// matching pi's prepareArguments hook (edit.ts:307).
 		PrepareArguments: prepareEditArguments,
@@ -771,6 +774,7 @@ func bashTool(cwd string, sessionEnv sessionEnvFn) agent.AgentTool {
 			ai.Prop("command", ai.String("Bash command to execute")),
 			ai.Opt("timeout", ai.Number("Timeout in seconds (optional, no default timeout)")),
 		),
+		ConstrainedSampling: GetExperimentalToolSampling(),
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			command := argStr(params, "command")
 			// pi resolveTimeoutMs (bash.ts) validates the timeout before spawning:

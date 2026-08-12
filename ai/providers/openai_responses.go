@@ -1086,13 +1086,21 @@ func convertResponsesTools(tools []ai.Tool, compat responsesCompat, deferLoading
 			out = append(out, tool)
 			continue
 		}
+		// pi computes `strict = constrainedStrict ?? defaultStrict`; the only
+		// ported caller (openai-responses.ts) never sets a defaultStrict, so the
+		// resolver's answer is the whole story here (openai-codex-responses.ts,
+		// which passes strict:null, is deliberately unported).
 		strict, err := resolveJSONSchemaStrictSampling(t, compat.SupportsStrictMode)
 		if err != nil {
 			return nil, err
 		}
+		parameters, err := jsonSchemaToolParameters(t, strict)
+		if err != nil {
+			return nil, err
+		}
 		var p any = map[string]any{"type": "object", "properties": map[string]any{}}
-		if t.Parameters != nil {
-			if raw, err := json.Marshal(t.Parameters); err == nil {
+		if parameters != nil {
+			if raw, err := json.Marshal(parameters); err == nil {
 				var decoded any
 				_ = json.Unmarshal(raw, &decoded)
 				p = decoded

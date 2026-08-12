@@ -630,8 +630,13 @@ func buildGoogleParams(model *ai.Model, req ai.Context, opts *GoogleOptions) (ma
 		}
 	}
 	if len(req.Tools) > 0 {
-		params["tools"] = googleTools(req.Tools, useParameters(model.ID))
-		mode, err := resolveGoogleFunctionCallingMode(req.Tools, opts.ToolChoice, supportsGoogleStrictToolSampling(model.ID))
+		supportsStrictMode := supportsGoogleStrictToolSampling(model.ID)
+		tools, err := googleTools(req.Tools, useParameters(model.ID), supportsStrictMode)
+		if err != nil {
+			return nil, err
+		}
+		params["tools"] = tools
+		mode, err := resolveGoogleFunctionCallingMode(req.Tools, opts.ToolChoice, supportsStrictMode)
 		if err != nil {
 			return nil, err
 		}
@@ -696,9 +701,9 @@ func mapToolChoice(choice string) string {
 
 // useParameters selects the legacy OpenAPI `parameters` field (vs full-JSON-Schema
 // `parametersJsonSchema`). pi's convertTools (google-shared.ts) defaults
-// useParameters=false, and BOTH runtime callers — google.ts:356 and
-// google-vertex.ts:445 — invoke `convertTools(context.tools)` with no second
-// argument. So the google-generative-ai / google-vertex providers ALWAYS emit
+// useParameters=false, and BOTH runtime callers — google-generative-ai.ts and
+// google-vertex.ts — pass useParameters=false explicitly (upstream 7915cdac6).
+// So the google-generative-ai / google-vertex providers ALWAYS emit
 // `parametersJsonSchema`; the `parameters` branch is a library affordance for
 // out-of-tree callers (Cloud Code Assist) that pi never exercises here. Returning
 // false unconditionally pins pi's actual runtime field choice for all models,
@@ -922,24 +927,33 @@ func schemaToGeneric(s *ai.Schema) any {
 
 // googleTools converts tools to Gemini functionDeclarations. When useParameters is
 // true it emits the legacy OpenAPI `parameters` field (sanitized of meta-keys),
-// otherwise the full-JSON-Schema `parametersJsonSchema`. (pi convertTools.)
-func googleTools(tools []ai.Tool, useParameters bool) []any {
+// otherwise the full-JSON-Schema `parametersJsonSchema`; either way the schema
+// sent is the strict conversion for tools that resolved strict. (pi convertTools.)
+func googleTools(tools []ai.Tool, useParameters, supportsStrictMode bool) ([]any, error) {
 	if len(tools) == 0 {
-		return nil
+		return nil, nil
 	}
 	var decls []any
 	for _, t := range tools {
+		strict, err := resolveJSONSchemaStrictSampling(t, supportsStrictMode)
+		if err != nil {
+			return nil, err
+		}
+		parameters, err := jsonSchemaToolParameters(t, strict)
+		if err != nil {
+			return nil, err
+		}
 		decl := map[string]any{"name": t.Name, "description": t.Description}
 		if useParameters {
-			if t.Parameters != nil {
-				decl["parameters"] = sanitizeForOpenApi(schemaToGeneric(t.Parameters))
+			if parameters != nil {
+				decl["parameters"] = sanitizeForOpenApi(schemaToGeneric(parameters))
 			}
-		} else if t.Parameters != nil {
-			decl["parametersJsonSchema"] = t.Parameters
+		} else if parameters != nil {
+			decl["parametersJsonSchema"] = parameters
 		}
 		decls = append(decls, decl)
 	}
-	return []any{map[string]any{"functionDeclarations": decls}}
+	return []any{map[string]any{"functionDeclarations": decls}}, nil
 }
 
 // mapGoogleStopReason maps a Gemini FinishReason to our StopReason, returning a

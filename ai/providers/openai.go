@@ -1070,20 +1070,24 @@ func convertOpenAITools(tools []ai.Tool, compat openAICompletionsCompat) ([]map[
 			})
 			continue
 		}
-		var schema any = map[string]any{"type": "object", "properties": map[string]any{}}
-		if t.Parameters != nil {
-			if raw, err := json.Marshal(t.Parameters); err == nil {
-				var p any
-				_ = json.Unmarshal(raw, &p)
-				schema = p
-			}
-		}
 		// Resolved unconditionally: a tool that REQUIRES strict sampling must fail
 		// the request on a provider that cannot do it, even though the key itself
 		// is only emitted where the provider supports it (some reject unknown fields).
 		strict, err := resolveJSONSchemaStrictSampling(t, compat.SupportsStrictMode)
 		if err != nil {
 			return nil, err
+		}
+		parameters, err := jsonSchemaToolParameters(t, strict)
+		if err != nil {
+			return nil, err
+		}
+		var schema any = map[string]any{"type": "object", "properties": map[string]any{}}
+		if parameters != nil {
+			if raw, err := json.Marshal(parameters); err == nil {
+				var p any
+				_ = json.Unmarshal(raw, &p)
+				schema = p
+			}
 		}
 		fn := map[string]any{"name": t.Name, "description": t.Description, "parameters": schema}
 		if compat.SupportsStrictMode {

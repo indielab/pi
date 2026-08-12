@@ -18,6 +18,7 @@ func ValidateToolArguments(tool Tool, toolCall ToolCall) (map[string]any, error)
 	if args == nil {
 		args = map[string]any{}
 	}
+	normalizeOptionalNulls(args, tool.Parameters)
 
 	coerced := tool.Parameters.Coerce(args)
 	if obj, ok := coerced.(map[string]any); ok {
@@ -36,6 +37,48 @@ func ValidateToolArguments(tool Tool, toolCall ToolCall) (map[string]any, error)
 			toolCall.Name, strings.Join(lines, "\n"), string(received))
 	}
 	return args, nil
+}
+
+// normalizeOptionalNulls treats null as omission: strict constrained sampling
+// forces the model to emit every property, so optional properties come back as
+// explicit nulls. A null value for a present property is deleted when the
+// property is not required and its schema does not accept null (port of
+// normalizeOptionalNulls, utils/validation.ts).
+func normalizeOptionalNulls(value any, schema *Schema) {
+	if arr, ok := value.([]any); ok {
+		// pi also walks per-index tuple items here; ai.Schema cannot represent
+		// tuple items, so only the single-schema branch exists.
+		if schema.Items != nil {
+			for _, item := range arr {
+				normalizeOptionalNulls(item, schema.Items)
+			}
+		}
+		return
+	}
+	obj, ok := value.(map[string]any)
+	if !ok || schema.Properties == nil {
+		return
+	}
+
+	required := make(map[string]bool, len(schema.Required))
+	for _, key := range schema.Required {
+		required[key] = true
+	}
+	for key, propertySchema := range schema.Properties {
+		v, present := obj[key]
+		if !present || propertySchema == nil {
+			continue
+		}
+		// pi skips $ref properties (their compiled validator may not resolve)
+		// and otherwise asks the compiled sub-validator whether null passes;
+		// the Go schema validates structurally, so Check(nil) plays that role.
+		_, refIsString := propertySchema.Extra["$ref"].(string)
+		if v == nil && !required[key] && !refIsString && !propertySchema.Check(nil) {
+			delete(obj, key)
+		} else {
+			normalizeOptionalNulls(v, propertySchema)
+		}
+	}
 }
 
 // ValidateToolCall finds a tool by name and validates the call's arguments.

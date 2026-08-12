@@ -1303,11 +1303,10 @@ func mustBuildAnthropicParams(t *testing.T, model *ai.Model, req ai.Context, oau
 // Upstream 24bace27: with compat.supportsStrictTools, a json_schema-constrained
 // tool gains `strict: true` and its input_schema becomes the full parameter
 // schema with the legacy {type, properties, required} shape layered over it.
-// Expectations captured from pi 0.82.0 (onPayload on anthropic-messages.stream):
-//
-//	strict   -> {"name":"rich",…,"strict":true,"input_schema":{"$schema":…,"type":"object",
-//	             "properties":{"x":{"type":"integer"}},"required":["x"],"additionalProperties":false}}
-//	default  -> no "strict"; input_schema is only {"type","properties","required"}
+// Upstream 7915cdac6 converts the schema first: the input_schema is the STRICT
+// conversion (closed object, every property required, non-nullable optionals
+// widened to anyOf-with-null), and the legacy fields are read from it — the
+// expectations below mirror anthropic-eager-tool-input-compat.test.ts.
 func TestAnthropicStrictTools(t *testing.T) {
 	model := func(compat string) *ai.Model {
 		m := &ai.Model{ID: "claude-x", Api: ai.APIAnthropicMessages, Provider: "anthropic", Input: []string{"text"}, MaxTokens: 100}
@@ -1316,8 +1315,8 @@ func TestAnthropicStrictTools(t *testing.T) {
 		}
 		return m
 	}
-	params := ai.Object(ai.Prop("x", ai.Integer()))
-	params.AdditionalAllowed = boolPtr(false)
+	params := ai.Object(ai.Prop("value", ai.String()), ai.Opt("optional", ai.Number()))
+	params.Extra = map[string]any{"title": "StrictLookupInput"}
 	tool := ai.Tool{
 		Name: "rich", Description: "d", Parameters: params,
 		ConstrainedSampling: &ai.ConstrainedSamplingConfig{
@@ -1344,14 +1343,21 @@ func TestAnthropicStrictTools(t *testing.T) {
 	if schema["type"] != "object" {
 		t.Fatalf("input_schema type: %#v", schema)
 	}
-	if _, has := schema["additionalProperties"]; !has {
+	if schema["additionalProperties"] != false {
+		t.Fatalf("strict input_schema must close the object: %#v", schema)
+	}
+	if schema["title"] != "StrictLookupInput" {
 		t.Fatalf("strict input_schema must spread the full parameter schema: %#v", schema)
 	}
-	if props, _ := schema["properties"].(map[string]any); len(props) != 1 || props["x"] == nil {
-		t.Fatalf("legacy properties must win: %#v", schema["properties"])
+	props, _ := schema["properties"].(map[string]any)
+	if len(props) != 2 || props["value"] == nil {
+		t.Fatalf("converted properties must win: %#v", schema["properties"])
 	}
-	if req, _ := schema["required"].([]string); len(req) != 1 || req[0] != "x" {
-		t.Fatalf("legacy required must win: %#v", schema["required"])
+	if optional, _ := json.Marshal(props["optional"]); string(optional) != `{"anyOf":[{"type":"number"},{"type":"null"}]}` {
+		t.Fatalf("optional property must be widened to allow null: %s", optional)
+	}
+	if req, _ := schema["required"].([]string); len(req) != 2 || req[0] != "value" || req[1] != "optional" {
+		t.Fatalf("converted required must list every property: %#v", schema["required"])
 	}
 
 	plainTool := firstTool("")
@@ -1380,8 +1386,6 @@ func TestAnthropicStrictToolsRequireFails(t *testing.T) {
 	_, err := buildAnthropicParams(model, req, false, &AnthropicOptions{})
 	assertErrString(t, err, `Tool "js_require" requires JSON-schema constrained sampling, but strict tools are unsupported.`)
 }
-
-func boolPtr(b bool) *bool { return &b }
 
 // Upstream 59ad3dea: content_block_start may already carry the block's first
 // chunk (text, or thinking + signature). It must be kept and the following

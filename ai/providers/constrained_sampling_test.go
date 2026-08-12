@@ -1,6 +1,8 @@
 package providers
 
 import (
+	"encoding/json"
+	"reflect"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
@@ -58,6 +60,132 @@ func TestResolveJSONSchemaStrictSampling(t *testing.T) {
 			if err == nil && got != tc.want {
 				t.Fatalf("strict = %v, want %v", got, tc.want)
 			}
+		})
+	}
+}
+
+// Port of "derives strict provider schemas without changing tool definitions"
+// (constrained-sampling.test.ts, upstream 7915cdac6): the strict conversion
+// closes objects, requires every property in original property order, widens
+// non-nullable optionals to anyOf-with-null, and never mutates its input.
+func TestMakeStrictJSONSchema(t *testing.T) {
+	parameters := ai.Object(
+		ai.Prop("path", ai.String()),
+		ai.Opt("offset", ai.Number()),
+		ai.Prop("metadata", ai.Object(ai.Opt("enabled", ai.Boolean()))),
+		ai.Opt("nullable", &ai.Schema{AnyOf: []*ai.Schema{{Type: "string"}, {Type: "null"}}}),
+	)
+	before, err := json.Marshal(parameters)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	strict, err := makeStrictJSONSchema(parameters)
+	if err != nil {
+		t.Fatalf("makeStrictJSONSchema: %v", err)
+	}
+
+	if after, _ := json.Marshal(parameters); string(after) != string(before) {
+		t.Fatalf("tool definition changed:\n got: %s\nwant: %s", after, before)
+	}
+	got, err := json.Marshal(strict)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"type":"object","properties":{` +
+		`"path":{"type":"string"},` +
+		`"offset":{"anyOf":[{"type":"number"},{"type":"null"}]},` +
+		`"metadata":{"type":"object","properties":{"enabled":{"anyOf":[{"type":"boolean"},{"type":"null"}]}},"required":["enabled"],"additionalProperties":false},` +
+		`"nullable":{"anyOf":[{"type":"string"},{"type":"null"}]}` +
+		`},"required":["path","offset","metadata","nullable"],"additionalProperties":false}`
+	if string(got) != want {
+		t.Fatalf("strict schema mismatch:\n got: %s\nwant: %s", got, want)
+	}
+}
+
+// Port of "falls back or rejects schemas that cannot be safely converted"
+// (constrained-sampling.test.ts, upstream 7915cdac6): an inconvertible schema
+// makes strict:"prefer" fall back to unconstrained sampling (strict:false with
+// the original parameters on the wire) and makes strict:"require" fail the
+// request. Error strings are byte-for-byte pi's.
+func TestMakeStrictJSONSchemaUnsupported(t *testing.T) {
+	openMetadata := ai.Object()
+	openMetadata.AdditionalSchema = ai.String()
+	var refSchema ai.Schema
+	if err := json.Unmarshal([]byte(
+		`{"type":"object","properties":{"child":{"$ref":"https://example.com/child.json"}},"required":["child"]}`,
+	), &refSchema); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		name       string
+		parameters *ai.Schema
+		reason     string
+	}{
+		{
+			"schema-valued additionalProperties",
+			ai.Object(ai.Prop("metadata", openMetadata)),
+			"schema-valued or true additionalProperties is unsupported",
+		},
+		{
+			"intersection",
+			&ai.Schema{AllOf: []*ai.Schema{
+				ai.Object(ai.Prop("a", ai.String())),
+				ai.Object(ai.Prop("b", ai.Number())),
+			}},
+			"allOf schemas are unsupported",
+		},
+		{
+			"object union",
+			ai.Object(ai.Prop("value", &ai.Schema{AnyOf: []*ai.Schema{
+				ai.Object(ai.Prop("nested", ai.String())),
+				{Type: "null"},
+			}})),
+			"object and array unions are unsupported",
+		},
+		{
+			"$ref property",
+			&refSchema,
+			"$ref schemas are unsupported",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			tool := ai.Tool{
+				Name: "cannot", Description: "d", Parameters: tc.parameters,
+				ConstrainedSampling: &ai.ConstrainedSamplingConfig{
+					Type: ai.ConstrainedSamplingJSONSchema, Strict: ai.ConstrainedSamplingPrefer,
+				},
+			}
+
+			if _, err := makeStrictJSONSchema(tc.parameters); err == nil || err.Error() != tc.reason {
+				t.Fatalf("makeStrictJSONSchema error = %v, want %q", err, tc.reason)
+			}
+			strict, err := resolveJSONSchemaStrictSampling(tool, true)
+			if err != nil || strict {
+				t.Fatalf("prefer must fall back to unconstrained: strict=%v err=%v", strict, err)
+			}
+
+			converted, err := convertResponsesTools([]ai.Tool{tool}, responsesCompat{SupportsStrictMode: true}, false)
+			if err != nil {
+				t.Fatalf("convertResponsesTools: %v", err)
+			}
+			if converted[0]["strict"] != false {
+				t.Fatalf("fallback tool must carry strict:false: %#v", converted[0])
+			}
+			raw, _ := json.Marshal(tc.parameters)
+			var original any
+			_ = json.Unmarshal(raw, &original)
+			if !reflect.DeepEqual(converted[0]["parameters"], original) {
+				t.Fatalf("fallback tool must keep its original parameters:\n got: %#v\nwant: %#v",
+					converted[0]["parameters"], original)
+			}
+
+			tool.ConstrainedSampling = &ai.ConstrainedSamplingConfig{
+				Type: ai.ConstrainedSamplingJSONSchema, Strict: ai.ConstrainedSamplingRequire,
+			}
+			_, err = resolveJSONSchemaStrictSampling(tool, true)
+			assertErrString(t, err, `Tool "cannot" requires JSON-schema constrained sampling, but `+tc.reason+`.`)
 		})
 	}
 }

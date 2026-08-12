@@ -403,6 +403,101 @@ func (s *Schema) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Clone returns a deep copy of the schema (nil-safe). It is the analogue of
+// pi's structuredClone(schema) for callers that mutate a copy (strict tool
+// schema conversion): nothing reachable from the returned schema aliases the
+// receiver. Empty-but-non-nil slices and maps stay non-nil, so "present but
+// empty" keywords (e.g. anyOf: []) survive the copy the way structuredClone
+// preserves them.
+func (s *Schema) Clone() *Schema {
+	if s == nil {
+		return nil
+	}
+	cp := *s
+	if s.Properties != nil {
+		cp.Properties = make(map[string]*Schema, len(s.Properties))
+		for name, prop := range s.Properties {
+			cp.Properties[name] = prop.Clone()
+		}
+	}
+	cp.PropertyOrder = cloneStrings(s.PropertyOrder)
+	cp.Required = cloneStrings(s.Required)
+	cp.Items = s.Items.Clone()
+	if s.Enum != nil {
+		cp.Enum = make([]any, len(s.Enum))
+		for i, v := range s.Enum {
+			cp.Enum[i] = deepCopy(v)
+		}
+	}
+	cp.Default = deepCopy(s.Default)
+	cp.AdditionalAllowed = cloneBoolPtr(s.AdditionalAllowed)
+	cp.AdditionalSchema = s.AdditionalSchema.Clone()
+	cp.Minimum = cloneFloatPtr(s.Minimum)
+	cp.Maximum = cloneFloatPtr(s.Maximum)
+	cp.ExclusiveMinimum = cloneFloatPtr(s.ExclusiveMinimum)
+	cp.ExclusiveMaximum = cloneFloatPtr(s.ExclusiveMaximum)
+	cp.MultipleOf = cloneFloatPtr(s.MultipleOf)
+	cp.MinLength = cloneIntPtr(s.MinLength)
+	cp.MaxLength = cloneIntPtr(s.MaxLength)
+	cp.MinItems = cloneIntPtr(s.MinItems)
+	cp.MaxItems = cloneIntPtr(s.MaxItems)
+	cp.Const = deepCopy(s.Const)
+	cp.AnyOf = cloneSchemas(s.AnyOf)
+	cp.OneOf = cloneSchemas(s.OneOf)
+	cp.AllOf = cloneSchemas(s.AllOf)
+	if s.Extra != nil {
+		cp.Extra = make(map[string]any, len(s.Extra))
+		for key, v := range s.Extra {
+			cp.Extra[key] = deepCopy(v)
+		}
+	}
+	return &cp
+}
+
+func cloneSchemas(list []*Schema) []*Schema {
+	if list == nil {
+		return nil
+	}
+	out := make([]*Schema, len(list))
+	for i, s := range list {
+		out[i] = s.Clone()
+	}
+	return out
+}
+
+func cloneStrings(list []string) []string {
+	if list == nil {
+		return nil
+	}
+	out := make([]string, len(list))
+	copy(out, list)
+	return out
+}
+
+func cloneBoolPtr(p *bool) *bool {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func cloneFloatPtr(p *float64) *float64 {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+func cloneIntPtr(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
 func unmarshalFloatPtr(raw json.RawMessage) *float64 {
 	var f float64
 	if err := json.Unmarshal(raw, &f); err != nil {

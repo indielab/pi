@@ -318,7 +318,10 @@ func TestGoogleConvertToolsAlwaysUsesJsonSchema(t *testing.T) {
 		if useParameters(modelID) {
 			t.Fatalf("useParameters(%q) must be false to match pi (always parametersJsonSchema)", modelID)
 		}
-		tools := googleTools([]ai.Tool{{Name: "t", Description: "d", Parameters: schema}}, useParameters(modelID))
+		tools, err := googleTools([]ai.Tool{{Name: "t", Description: "d", Parameters: schema}}, useParameters(modelID), supportsGoogleStrictToolSampling(modelID))
+		if err != nil {
+			t.Fatalf("googleTools: %v", err)
+		}
 		fd := roundtripFD(t, tools)
 		if _, ok := fd["parametersJsonSchema"]; !ok {
 			t.Fatalf("model %q must use parametersJsonSchema: %v", modelID, fd)

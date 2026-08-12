@@ -794,11 +794,15 @@ func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bo
 		if err != nil {
 			return nil, err
 		}
+		parameters, err := jsonSchemaToolParameters(t, strict)
+		if err != nil {
+			return nil, err
+		}
 		var full map[string]any
 		props := map[string]any{}
 		var required []string
-		if t.Parameters != nil {
-			if raw, err := json.Marshal(t.Parameters); err == nil {
+		if parameters != nil {
+			if raw, err := json.Marshal(parameters); err == nil {
 				if strict {
 					// Only strict tools carry the full schema, so skip this
 					// decode on the common path (it runs per tool per request).

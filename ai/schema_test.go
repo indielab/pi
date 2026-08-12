@@ -50,6 +50,60 @@ func TestValidateToolArgumentsMissingRequired(t *testing.T) {
 	}
 }
 
+// Port of "treats null as omission for optional non-nullable properties"
+// (validation.test.ts, upstream 7915cdac6): strict constrained sampling makes
+// models emit every property, so a null for an optional property whose schema
+// rejects null is deleted before coercion; nullable optionals keep their null.
+func TestValidateToolArgumentsTreatsNullAsOmission(t *testing.T) {
+	tool := Tool{
+		Name:        "echo",
+		Description: "Echo tool",
+		Parameters: Object(
+			Prop("path", String()),
+			Opt("offset", Number()),
+			Opt("nullable", &Schema{AnyOf: []*Schema{{Type: "string"}, {Type: "null"}}}),
+			Prop("metadata", Object(Opt("enabled", Boolean()))),
+		),
+	}
+	tc := ToolCall{
+		ID: "tool-1", Name: "echo",
+		Arguments: map[string]any{"path": "file.txt", "offset": nil, "nullable": nil, "metadata": map[string]any{"enabled": nil}},
+	}
+
+	args, err := ValidateToolArguments(tool, tc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got, _ := json.Marshal(args)
+	want := `{"metadata":{},"nullable":null,"path":"file.txt"}`
+	if string(got) != want {
+		t.Fatalf("args = %s, want %s", got, want)
+	}
+}
+
+// Port of "preserves optional nulls whose referenced schema is nullable"
+// (validation.test.ts, upstream 7915cdac6): a $ref property is never treated
+// as omission — pi cannot ask the compiled validator about an unresolved
+// reference, so the null is kept.
+func TestValidateToolArgumentsPreservesRefNull(t *testing.T) {
+	var params Schema
+	if err := json.Unmarshal([]byte(
+		`{"type":"object","properties":{"value":{"$ref":"#/$defs/value"}},"$defs":{"value":{"anyOf":[{"type":"number"},{"type":"null"}]}}}`,
+	), &params); err != nil {
+		t.Fatal(err)
+	}
+	tool := Tool{Name: "echo", Description: "Echo tool", Parameters: &params}
+	tc := ToolCall{ID: "tool-1", Name: "echo", Arguments: map[string]any{"value": nil}}
+
+	args, err := ValidateToolArguments(tool, tc)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if v, present := args["value"]; !present || v != nil {
+		t.Fatalf("value must stay an explicit null: %#v", args)
+	}
+}
+
 func TestValidateToolArgumentsWrongType(t *testing.T) {
 	tool := Tool{Name: "calc", Parameters: Object(Prop("items", ArrayOf(String())))}
 	tc := ToolCall{Name: "calc", Arguments: map[string]any{"items": "not-an-array"}}
