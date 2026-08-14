@@ -10,10 +10,10 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `46bb9a2c3` — "docs(coding-agent): clarify Windows paths in settings" (2026-08-13; **0 port, 9 n/a, 0 decide** — delta `2e4d23959..46bb9a2c3`, **9** first-parent changes, no merges — a **triage-only advance**: no Go commits, no review gates run. **No release crossed** — no `packages/*/package.json` version bump (pi-ai still 0.84.1) and `models.generated.ts` untouched, so NO catalog regen, the npm reference build did not move, and no port tag was cut this cycle. Every in-scope hunk (4 files, 25(+)/9(−): agent-session / sdk / settings-manager / main.ts) mapped to recorded non-ported surface — `sendCustomMessage` custom-message delivery, settings-manager-fed initial tool selection (`findInitialModel` class), TUI theme / HTML-export plumbing, `--mode json` stdout shaping; see the 2026-08-13 cycle section, including the **watch-item tripwire on `defaultTools`** (becomes `port` if it ever surfaces as a `createAgentSession` option). Differential harness unchanged at **21 scenarios** (nothing in ported surface moved); the `deepseek` scenario is still on `backend: "src"` — flip back to dist at the next release. The pin still means *"everything in scope is reviewed and ported **except the harness tree**"* — see the 2026-08-07 ruling; this delta added NO harness commits (backlog stays 9, through `b75be04d9`) and the catalog-only queue is unchanged (3). Prior pin: `2e4d23959` (2026-08-12, 1 port, no release). |
-| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.84.1**, unchanged again at the 2026-08-13 pin `46bb9a2c3` (no release crossed; nothing recaptured) — with three caveats now on record: the shipped build **predates `c185d4123`** and sends `max_completion_tokens` to DeepSeek, it **predates `b647d1879`** so it matches `deepseek.com` case-sensitively, and it **predates `7915cdac6`** so it carries no strict tool schema conversion at all. For all three surfaces the reference is TS source at the pin, not dist (harness `deepseek*` and `strict-tools-*` scenarios are all `backend: "src"`). Three generator-only deltas are queued for the next catalog regen: deepseek `maxTokensField` (`c185d4123`), `supportsStrictMode` on 19 cloudflare-ai-gateway openai-responses models (`75c7fd662`), and `deepseek-v4-flash` `thinkingLevelMap.low` (`2f8b4b42f`). |
-| Parity proofs at the pin | **2026-08-13 (0 ports):** nothing new to prove — no ported surface moved; the proofs below still stand at this pin. **2026-08-12 (1 port):** the strict conversion was proven against **executed upstream TS at `7915cdac6`** three ways: a 28-case conversion probe (`makeStrictJsonSchema` run via node from sha-extracted source vs Go) byte-identical on 24/28 including every error string and the unsupported-key precedence order — the 4 mismatches are the recorded decode-boundary drift class, not wire-reachable through pi's own tools; a 10-case `validateToolArguments` probe vs **real TypeBox** (npm 0.84.1's) 10/10 including the nested-`$ref` compile-path constructed to break the `Check(nil)` mapping; and 3 new differential-harness scenarios asserting full request bodies on the anthropic/openai-completions/openai-responses wires (required ordering with deliberately non-alphabetical properties, anyOf-null widening, no-rewrap of already-nullable shapes, nested object closing, zero-property object, inconvertible-tool fallback carrying the ORIGINAL parameters). The harness is what caught the one real divergence (`required: []` dropped on zero-property strict objects) — fixed, then re-verified **21/21 PASS**. **2026-08-11 (3 ports):** cwd-footer byte-proven via `cmp` on both prompt branches; DeepSeek fold faithful on membership and order (15 terms) and on `strings.Contains(ToLower)` ≡ `.toLowerCase().includes` for the ASCII needle; gateway binding proven by running real upstream TS against real Go `Do()` over a shared case table (7 divergences found and pinned). |
-| Reviewed via | 2026-08-13 cycle (0 ports — triage-only advance) — per-commit diff triage of all 9 changes plus the whole-range reconciliation sweep over `packages/{ai,agent}/src` + `coding-agent/src/{core,main,sdk}` (4 files, 25(+)/9(−), every hunk accounted for by an n/a verdict); no port, so no parity/go-review gates ran. Last full gates: the 2026-08-12 cycle (parity **FIX-FIRST**, go-review **CLEAN** — see that cycle's section). |
+| TS source fully reviewed/ported | `f3c406a9b` — "chore: approve contributors from issue #8018" (2026-08-14; **1 port, 9 n/a, 0 decide** — delta `46bb9a2c3..f3c406a9b`, **10** first-parent changes, no merges. The port: `9d2ec7ffa` — the **kimi-coding runtime User-Agent override** on the anthropic-messages wire (`68cdb4e` + review fixes `89511fa`; parity **CLEAN**, go-review **CLEAN**) — a request-**header** golden surface, proven outside the bodies-only harness (see the 2026-08-14 cycle section). **No release crossed** — no `packages/*/package.json` version bump (pi-ai still 0.84.1) and `models.generated.ts` untouched, so NO catalog regen, the npm reference build did not move, and no port tag was cut this cycle. Differential harness unchanged at **21 scenarios, 21/21 PASS** this cycle; the `deepseek` scenario is still on `backend: "src"` — flip back to dist at the next release. The **catalog-only queue grows 3 → 4** (`KIMI_STATIC_HEADERS` removal rides `9d2ec7ffa`'s generator half). The pin still means *"everything in scope is reviewed and ported **except the harness tree**"* — see the 2026-08-07 ruling; this delta added NO harness commits (backlog stays 9, through `b75be04d9`). The `defaultTools` tripwire (2026-08-13) was not hit. Prior pin: `46bb9a2c3` (2026-08-13, triage-only). |
+| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.84.1**, unchanged again at the 2026-08-14 pin `f3c406a9b` (no release crossed; nothing recaptured) — with four caveats now on record: the shipped build **predates `c185d4123`** and sends `max_completion_tokens` to DeepSeek, it **predates `b647d1879`** so it matches `deepseek.com` case-sensitively, it **predates `7915cdac6`** so it carries no strict tool schema conversion at all, and it **predates `9d2ec7ffa`** so kimi-coding requests carry the static `KimiCLI/1.5` header (shipped in `dist/providers/data/kimi-coding.json` — per-provider dist layout) with no runtime pi-UA override. For all four surfaces the reference is TS source at the pin, not dist (harness `deepseek*` and `strict-tools-*` scenarios are all `backend: "src"`; the kimi UA surface is headers, outside the harness entirely). Four generator-only deltas are queued for the next catalog regen: deepseek `maxTokensField` (`c185d4123`), `supportsStrictMode` on 19 cloudflare-ai-gateway openai-responses models (`75c7fd662`), `deepseek-v4-flash` `thinkingLevelMap.low` (`2f8b4b42f`), and the `KIMI_STATIC_HEADERS` removal (`9d2ec7ffa` — inert for the wire once regenerated, since the runtime override already forces the pi UA). |
+| Parity proofs at the pin | **2026-08-14 (1 port):** the kimi UA override proven **sha-anchored + mutation-verified** (headers are outside the bodies-only harness): all three upstream `createClient` branches confirmed to route through `mergeClientHeaders` after `optionsHeaders` with no per-request header bypass; the Go single-`Set` equivalence established by reading every write path (all canonicalize — no raw map writes); Node token fidelity checked down to the `RTL_OSVERSIONINFOW` layout and libuv's `uv_os_uname` release format; the authentic 0.84.1 dist (integrity-matched) shown to carry `KimiCLI/1.5` and no pi-user-agent module, making TS-at-`9d2ec7ffa` the reference; and both tests mutation-verified in a throwaway worktree (override removed → wire shows `[custom-client]`; made unconditional → non-kimi test fails). Harness re-run anyway for the body surface: **21/21 PASS**. **2026-08-12 (1 port):** the strict conversion was proven against **executed upstream TS at `7915cdac6`** three ways: a 28-case conversion probe (`makeStrictJsonSchema` run via node from sha-extracted source vs Go) byte-identical on 24/28 including every error string and the unsupported-key precedence order — the 4 mismatches are the recorded decode-boundary drift class, not wire-reachable through pi's own tools; a 10-case `validateToolArguments` probe vs **real TypeBox** (npm 0.84.1's) 10/10 including the nested-`$ref` compile-path constructed to break the `Check(nil)` mapping; and 3 new differential-harness scenarios asserting full request bodies on the anthropic/openai-completions/openai-responses wires (required ordering with deliberately non-alphabetical properties, anyOf-null widening, no-rewrap of already-nullable shapes, nested object closing, zero-property object, inconvertible-tool fallback carrying the ORIGINAL parameters). The harness is what caught the one real divergence (`required: []` dropped on zero-property strict objects) — fixed, then re-verified **21/21 PASS**. **2026-08-11 (3 ports):** cwd-footer byte-proven via `cmp` on both prompt branches; DeepSeek fold faithful on membership and order (15 terms) and on `strings.Contains(ToLower)` ≡ `.toLowerCase().includes` for the ASCII needle; gateway binding proven by running real upstream TS against real Go `Do()` over a shared case table (7 divergences found and pinned). |
+| Reviewed via | 2026-08-14 cycle (1 port) — per-commit diff triage of all 10 changes plus the whole-range reconciliation sweep over `packages/{ai,agent}/src` + `coding-agent/src/{core,main,sdk}` (5 files, every hunk attributed); full gates ran: independent parity **CLEAN** (harness 21/21, mutation-verified tests) and go-review **CLEAN** (1 should-fix + 2 nits, applied in `89511fa`); full `-race` suite green. |
 
 Deliberately not ported (out of scope for the ledger unless a commit changes
 that decision): TUI, extensions runtime, OAuth token acquisition, project-trust
@@ -474,6 +474,75 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   list (2026-06-12). Porting them would mean inventing an entire exported
   subsystem to serve no ported consumer. Future `resource-loader.ts` commits are
   `n/a` UNLESS the port grows a resource-loader analog.
+
+## Drift at last sync check (2026-08-14) — pin advanced to f3c406a9b
+
+Delta `46bb9a2c3..f3c406a9b`, **10** first-parent changes, no merges. **No
+release crossed**: no `packages/*/package.json` version bump (pi-ai still
+0.84.1) and `models.generated.ts` untouched at both ends, so no catalog regen,
+no npm reference-build move, and **no port tag** this cycle. Verdicts: **1 port
+→ 1 Go commit + 1 review-fix commit; 9 n/a; 0 decide**.
+
+Whole-range reconciliation (the merge-smuggling guard) found in-scope deltas in
+exactly 5 files — `ai/src/api/anthropic-messages.ts`, `ai/src/utils/pi-user-agent.ts`
+(both `9d2ec7ffa`, ported), `ai/src/api/openai-codex-responses.ts` (`9d2ec7ffa`,
+excluded codex provider), and `core/tools/{find,grep}.ts` (`6f707eb36`, see its
+row) — all accounted for. `packages/agent/src` untouched (harness backlog stays
+9); the catalog-only queue grows **3 → 4** (see the port row).
+
+### Port worklist (1 → 1 Go commit + review fixes)
+
+| upstream | subject | Go | notes |
+|---|---|---|---|
+| `9d2ec7ffa` | fix(ai): use pi user agent for Kimi Coding requests | `68cdb4e` + `89511fa` | **Request-header golden surface** on the anthropic-messages wire — a surface the differential harness does NOT capture (bodies only, per its README); parity was proven by sha-anchored review + mutation-verified wire tests instead. pi's `mergeClientHeaders` (anthropic-messages.ts): after the FULL defaultHeaders merge, in all three `createClient` branches (copilot / OAuth / API-key, each after `optionsHeaders`), iff `model.provider === "kimi-coding"`, every case variant of `user-agent` is deleted and `User-Agent` is set to `getPiUserAgent()` = `` `pi (${platform()} ${release()}; ${arch()})` `` (new `utils/pi-user-agent.ts`; `"pi (browser)"` without node:os) — so the pi UA outranks the catalog's static header, the OAuth claude-cli identity, and consumer options. Go: one canonicalizing `Header.Set` at the tail of `applyAnthropicHeaders` (`ai/providers/anthropic.go`), equivalent because every write in the Go pipeline goes through `Set`/`Del` (parity-verified, no raw map writes); new unexported `piUserAgent()` (`ai/providers/pi_user_agent.go` + per-GOOS `osRelease`: linux `uname(2)` w/ int8-vs-uint8 generic, darwin+BSD `sysctl kern.osrelease`, windows `RtlGetVersion` "major.minor.build" ≡ libuv `uv_os_uname` ≡ Node, guarded `Find()`) with Node token maps (`windows→win32`; `amd64→x64`, `386→ia32`, `mipsle→mipsel`, `ppc64le→ppc64`), `sync.OnceValue`-cached. **Why it matters at 0.84.1:** the npm build predates this commit and ships `"User-Agent": "KimiCLI/1.5"` (in `dist/providers/data/kimi-coding.json` — per-provider dist layout), and our catalog carries it on all **4** kimi-coding models; the runtime override defeats the stale header until the next regen (test-locked, red-observed: wire showed `custom-client` before the fix). Tests mirror upstream's auth-token additions at the sha: catalog `KimiCLI/1.5` + consumer `user-agent` both replaced by exactly one pi UA (`headers.Values` length-1 assertion), non-kimi consumer passthrough, plus a token-map shape test (fallback GOOSes assert `"pi (browser)"`). Generator half (`generate-models.ts` drops `KIMI_STATIC_HEADERS`) is generator-only → **queued as the 4th catalog-regen delta**. Codex half + codex stream test: excluded provider (UA construction there unchanged, just moved to the shared util). |
+
+### n/a (9)
+
+| sha | subject | reason |
+|---|---|---|
+| `6f707eb36` | show managed-tool startup status in TUI | substance is `utils/tools-manager.ts` (recorded non-ported host-utils surface: `ensureTool`'s `silent` flag becomes an `onStatus` callback feeding new interactive-mode startup status) + `modes/interactive`; the `core/tools/{find,grep}.ts` hunks are call-site signature adaptation only (`ensureTool(x, true)` → `ensureTool(x)` — silent before, silent after). Go's find/grep are native implementations with no rg/fd provisioning, so neither half has a Go home |
+| `9d2ec7ffa` | *(port — see worklist)* | — |
+| `5f7195c51` | update Cloudflare compat test model | upstream test file only (`kimi-k2.5` → `kimi-k2.6` in coding-agent's cloudflare compat test) |
+| `d268454e9` | accept array-form `tools` in the subagent example (#7598) | examples only |
+| `721e2768e` | approve contributors #7973 | meta |
+| `663361835` | update vulnerable nanoid dependency | npm lockfile bump; no Go dependency analogue |
+| `83aed2ba5` | handle generic SGR mouse releases | TUI only |
+| `e14afc648` | collapse fallback tool output (#7979) | `modes/interactive/components/tool-execution.ts` rendering component only |
+| `0589435e7` | approve contributors #8007 | meta |
+| `f3c406a9b` | approve contributors #8018 | meta |
+
+### Review gates
+
+Independent **pi-parity-review**: **CLEAN**, differential harness **21/21
+PASS** (run although the surface is header-only, since `anthropic.go` request
+building was touched — no body regression). Verified sha-anchored: all three
+`createClient` branches route through `mergeClientHeaders` with no per-request
+header bypass; the Go single-`Set` equivalence argument (every pipeline write
+canonicalizes); Node token fidelity incl. the `RTL_OSVERSIONINFOW` layout;
+npm-0.84.1-authentic dist carries `KimiCLI/1.5` (per-provider
+`dist/providers/data/kimi-coding.json`) with no pi-user-agent module — TS at
+`9d2ec7ffa` is the reference (unreleased). Mutation-verified in a throwaway
+worktree: override removed → kimi test fails with `[custom-client]`; override
+made unconditional → non-kimi test fails. Two INFO notes, no action: (1)
+unshipped-GOOS fallback (solaris/aix would say `pi (browser)` where Node says
+`pi (sunos …)` — conditions coincide on every platform the port targets,
+comment records it); (2) the non-kimi test asserts consumer *passthrough*
+rather than upstream's *absence*, because Go's transport injects
+`Go-http-client/1.1` when unset — pre-existing base-UA territory the harness
+README scopes out.
+
+Independent **pi-go-review**: **CLEAN** (1 should-fix + 2 nits, all applied in
+`89511fa`): fallback-GOOS test degradation, `Find()` guard keeping windows
+`osRelease`'s soft-fail contract total, lowercase `user-agent` key for
+intra-function consistency. Judged sound: the 5-file build-tag split, the
+load-bearing `utsField` generic (stdlib `Utsname` is `[65]int8` vs `[65]uint8`
+per GOARCH), first-in-repo `sync.OnceValue`, zero new exported identifiers
+(tighter than upstream's `utils/` placement), stdlib `syscall` over an x/sys
+dependency. Full `-race` suite green; cross-vetted on 21 GOOS/GOARCH combos.
+
+**No new public Go API.** No new deliberate divergence beyond the two INFO
+notes above (recorded here, not in the divergence ledger — both are
+outside-target-platform or pre-existing-transport territory).
 
 ## Drift at last sync check (2026-08-13) — pin advanced to 46bb9a2c3
 
