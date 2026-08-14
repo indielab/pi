@@ -1164,6 +1164,16 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// above, including model.Headers and the attribution defaults — a deletion
 	// marker here suppresses any of them.
 	applyProviderHeaders(r.Header, opts.Headers)
+	// pi mergeClientHeaders (anthropic-messages.ts, upstream 9d2ec7ffa): Kimi
+	// For Coding requests always carry pi's runtime user agent. pi deletes
+	// every case variant of user-agent from the fully merged headers and then
+	// sets its own, so the override outranks the catalog's static header
+	// (KimiCLI/1.5 at npm 0.84.1), the OAuth claude-cli identity, and consumer
+	// opts.Headers. Everything above writes through Set/Del, which canonicalize
+	// the key, so one Set here replaces all case variants.
+	if model.Provider == "kimi-coding" {
+		r.Header.Set("User-Agent", piUserAgent())
+	}
 }
 
 // mapAnthropicStopReason maps an Anthropic stop_reason to the unified
