@@ -1172,7 +1172,7 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// opts.Headers. Everything above writes through Set/Del, which canonicalize
 	// the key, so one Set here replaces all case variants.
 	if model.Provider == "kimi-coding" {
-		r.Header.Set("User-Agent", piUserAgent())
+		r.Header.Set("user-agent", piUserAgent())
 	}
 }
 

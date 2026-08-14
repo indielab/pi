@@ -26,6 +26,9 @@ var procRtlGetVersion = syscall.NewLazyDLL("ntdll.dll").NewProc("RtlGetVersion")
 // os.release() on Windows (libuv uv_os_uname formats the same three fields;
 // unlike GetVersion it is not capped by the process manifest).
 func osRelease() (string, bool) {
+	if procRtlGetVersion.Find() != nil {
+		return "", false
+	}
 	var vi rtlOSVersionInfo
 	vi.osVersionInfoSize = uint32(unsafe.Sizeof(vi))
 	if ret, _, _ := procRtlGetVersion.Call(uintptr(unsafe.Pointer(&vi))); ret != 0 {

@@ -10,6 +10,13 @@ import (
 // compared byte-for-byte against pi (utils/pi-user-agent.ts getPiUserAgent).
 func TestPiUserAgentShape(t *testing.T) {
 	ua := piUserAgent()
+	if _, ok := osRelease(); !ok {
+		// GOOSes without a release syscall degrade to pi's no-node:os string.
+		if ua != "pi (browser)" {
+			t.Fatalf("piUserAgent() = %q, want \"pi (browser)\" fallback", ua)
+		}
+		return
+	}
 	m := regexp.MustCompile(`^pi \((\S+) (.+); (\S+)\)$`).FindStringSubmatch(ua)
 	if m == nil {
 		t.Fatalf("piUserAgent() = %q, want \"pi (<platform> <release>; <arch>)\"", ua)
