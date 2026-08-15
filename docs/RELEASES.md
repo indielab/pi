@@ -20,6 +20,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.84.18`](#v08418) | 2026-08-15 | `PLACEHOLDER` | `086c32e74` | pi-ai 0.84.2 | Release v0.84.2 crossed — the catalog regen (536,642 B, 1220→1267 models) drains the entire four-item generator queue: DeepSeek `max_tokens` field, `supportsStrictMode` on 34 cloudflare-ai-gateway models, deepseek-v4-flash low thinking level, and the KimiCLI/1.5 static headers gone; Google MAX_TOKENS stops with tool calls keep `length` instead of being clobbered to `toolUse`; Z.AI Coding Plan defaults glm-5.1→glm-5.3 plus a new every-default-resolves-in-catalog guard test; differential harness fully dist-backed for the first time — all 21 scenarios against the published 0.84.2 build, 21/21 PASS with an empty known-divergence baseline |
 | [`v0.84.17`](#v08417) | 2026-08-07 | `7a95c4b` | `e0900a6ea` | pi-ai 0.84.1 | Two releases crossed (v0.84.0, v0.84.1) — first catalog move since 0.83.0: 511,913 B, 1153→1220 models, 37→39 providers (+baseten data, +qwen-token-plan-individual), activating the already-ported `chat_template_args` / `stream_options.include_usage` paths; **breaking wire change** — session summaries replaced by durable `SessionMetadata`, so listing is no longer per-connection and one snapshot is broadcast to all peers; `Agent.Reset()` now refuses mid-run (API break); blocked tool calls can join the batch early-termination rule; telemetry gains an in-memory reference recorder; PI_* system-prompt guideline softened |
 | [`v0.83.16`](#v08316) | 2026-07-30 | `13088d2` | `c13ffe18` | pi-ai 0.83.0 | First catalog move since 0.82.0 — 1116→1153 models (477,229 B), regenerated from the 0.83.0 build and endpoint-pinned both ends; Qwen token-plan `reasoning_effort` via `thinkingLevelMap` under `??` semantics (a live request-body change for 27 models); `rawStopReason` preserved across the four ported providers with pi's `Provider stopped with: …` strings; tool calls carrying both `custom` and `function` treated as function calls; three missing `defaultModelPerProvider` entries restored (qwen-token-plan fallbacks were cloning the wrong context/token limits) |
 | [`v0.82.15`](#v08215) | 2026-07-26 | `b3785a1` | `5bc1c2c0` | pi-ai 0.82.1 | Release v0.82.1 crossed but catalog byte-identical to 0.82.0 (no regen); `ANTHROPIC_AUTH_TOKEN` bearer auth via a custom anthropic resolver (credential-first precedence, `Authorization: Bearer`, never `x-api-key`); `ModelsStoreEntry.etag` for remote-catalog ETag revalidation (latent); ModelsError keeps its underlying cause (already faithful in Go, locked) |
@@ -41,6 +42,34 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.84.18
+Upstream sync `f3c406a9b → 086c32e74` (pi 0.84.2). 14 first-parent changes:
+4 ports (one a verified no-op), 10 n/a, 0 decide. **Release v0.84.2 crossed**,
+so the catalog was regenerated from the integrity-verified build — 536,642 B,
+1220→1267 models (+71/−24) — and independently re-derived byte-identical by
+the parity reviewer. The regen drains the whole four-item generator queue that
+had accumulated since 0.84.1: DeepSeek now gets `max_tokens` from catalog data,
+34 cloudflare-ai-gateway models carry `supportsStrictMode`, deepseek-v4-flash
+maps the `low` thinking level, and the static `KimiCLI/1.5` headers are gone
+(the runtime UA override ported last cycle now merely re-asserts the catalog).
+
+Behaviour: upstream `5093641a5` — a Gemini turn that hits MAX_TOKENS while
+carrying a tool call now keeps its `length` stop instead of being reported as
+`toolUse` (the override applies only to plain STOP finishes). And `e429d90b8`
+re-points the Z.AI Coding Plan defaults to glm-5.3 — glm-5.1 had left the zai
+catalogs at 0.84.1, so the defaults dangled for a whole release; the newly
+ported guard test (every catalog provider's default must resolve) makes that
+class of orphan impossible to reintroduce silently.
+
+Milestone: with 0.84.2 shipping every wire-relevant behaviour the port
+carries, all 15 remaining `backend: "src"` harness scenarios flipped to
+`"dist"` — the entire 21-scenario suite now compares against the published
+build, the strongest ground truth, with an empty known-divergence baseline:
+21/21 PASS.
+
+Gates: parity **4/4 FAITHFUL**, go-review **SHIP** (4 LOW applied). Full
+`-race` suite green.
 
 ### v0.84.17
 Upstream sync `9859eaa26 → e0900a6ea` (pi 0.84.1). 51 first-parent changes:
