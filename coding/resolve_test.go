@@ -262,9 +262,11 @@ func TestDefaultModelPerProviderQwenTokenPlanAndRadius(t *testing.T) {
 	}
 }
 
-// pi e429d90b8: the Z.AI Coding Plan defaults advance glm-5.1 → glm-5.3 (0.84.2
-// dropped glm-5.1 from the catalog). Mirrors upstream's "zai, minimax, cerebras,
-// and ant-ling defaults track current models" as of that commit.
+// pi e429d90b8: the Z.AI Coding Plan defaults advance glm-5.1 → glm-5.3.
+// glm-5.1 left the zai catalogs at 0.84.1, so the defaults had been dangling
+// for a whole release; 0.84.2 adds glm-5.3 and e429d90b8 re-points them.
+// Mirrors upstream's "zai, minimax, cerebras, and ant-ling defaults track
+// current models" as of that commit.
 func TestDefaultModelPerProviderZaiCohort(t *testing.T) {
 	cases := map[string]string{
 		"zai":           "glm-5.3",
@@ -275,9 +277,11 @@ func TestDefaultModelPerProviderZaiCohort(t *testing.T) {
 		"ant-ling":      "Ring-2.6-1T",
 	}
 	for provider, want := range cases {
-		if got := defaultModelPerProvider[provider]; got != want {
-			t.Fatalf("default model for %q: got %q, want %q", provider, got, want)
-		}
+		t.Run(provider, func(t *testing.T) {
+			if got := defaultModelPerProvider[provider]; got != want {
+				t.Fatalf("default model for %q: got %q, want %q", provider, got, want)
+			}
+		})
 	}
 }
 

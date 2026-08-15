@@ -369,9 +369,8 @@ func roundtripFD(t *testing.T, tools []any) map[string]any {
 
 // --- Task 6: unknown / safety finishReason ---
 
-func googleStreamWithFinish(t *testing.T, finish string) *ai.AssistantMessage {
+func googleStreamSSE(t *testing.T, sse string) *ai.AssistantMessage {
 	t.Helper()
-	sse := "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]},\"finishReason\":\"" + finish + "\"}]}\n\n"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
 		io.WriteString(w, sse)
@@ -380,6 +379,11 @@ func googleStreamWithFinish(t *testing.T, finish string) *ai.AssistantMessage {
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
+}
+
+func googleStreamWithFinish(t *testing.T, finish string) *ai.AssistantMessage {
+	t.Helper()
+	return googleStreamSSE(t, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]},\"finishReason\":\""+finish+"\"}]}\n\n")
 }
 
 // TestGoogleFinishReasonSafety mirrors pi's google-raw-stop-reason.test.ts. Since
@@ -433,15 +437,7 @@ func TestGoogleFinishReasonStop(t *testing.T) {
 
 func googleStreamWithFinishAndToolCall(t *testing.T, finish string) *ai.AssistantMessage {
 	t.Helper()
-	sse := "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"echo\",\"args\":{\"value\":\"truncated\"}}}]},\"finishReason\":\"" + finish + "\"}]}\n\n"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("content-type", "text/event-stream")
-		io.WriteString(w, sse)
-	}))
-	defer server.Close()
-	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
+	return googleStreamSSE(t, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"echo\",\"args\":{\"value\":\"truncated\"}}}]},\"finishReason\":\""+finish+"\"}]}\n\n")
 }
 
 // TestGoogleLengthStopPreservedWithToolCalls mirrors pi's "preserves MAX_TOKENS
@@ -455,12 +451,10 @@ func TestGoogleLengthStopPreservedWithToolCalls(t *testing.T) {
 	if final.RawStopReason != "MAX_TOKENS" {
 		t.Fatalf("rawStopReason = %q, want MAX_TOKENS", final.RawStopReason)
 	}
-	hasToolCall := false
-	for _, b := range final.Content {
-		if _, ok := b.(ai.ToolCall); ok {
-			hasToolCall = true
-		}
-	}
+	hasToolCall := slices.ContainsFunc(final.Content, func(b ai.Content) bool {
+		_, ok := b.(ai.ToolCall)
+		return ok
+	})
 	if !hasToolCall {
 		t.Fatalf("content should carry the tool call: %+v", final.Content)
 	}
