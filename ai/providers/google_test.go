@@ -431,6 +431,53 @@ func TestGoogleFinishReasonStop(t *testing.T) {
 	}
 }
 
+func googleStreamWithFinishAndToolCall(t *testing.T, finish string) *ai.AssistantMessage {
+	t.Helper()
+	sse := "data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"call-1\",\"name\":\"echo\",\"args\":{\"value\":\"truncated\"}}}]},\"finishReason\":\"" + finish + "\"}]}\n\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
+}
+
+// TestGoogleLengthStopPreservedWithToolCalls mirrors pi's "preserves MAX_TOKENS
+// with a tool call as length": the toolUse override only applies to a plain
+// STOP, so a truncated response keeps its length stop.
+func TestGoogleLengthStopPreservedWithToolCalls(t *testing.T) {
+	final := googleStreamWithFinishAndToolCall(t, "MAX_TOKENS")
+	if final.StopReason != ai.StopLength {
+		t.Fatalf("MAX_TOKENS with tool call should stay length, got %s", final.StopReason)
+	}
+	if final.RawStopReason != "MAX_TOKENS" {
+		t.Fatalf("rawStopReason = %q, want MAX_TOKENS", final.RawStopReason)
+	}
+	hasToolCall := false
+	for _, b := range final.Content {
+		if _, ok := b.(ai.ToolCall); ok {
+			hasToolCall = true
+		}
+	}
+	if !hasToolCall {
+		t.Fatalf("content should carry the tool call: %+v", final.Content)
+	}
+}
+
+// TestGoogleStopWithToolCallsMapsToolUse pins the surviving half of the
+// override: a plain STOP with tool calls still becomes toolUse.
+func TestGoogleStopWithToolCallsMapsToolUse(t *testing.T) {
+	final := googleStreamWithFinishAndToolCall(t, "STOP")
+	if final.StopReason != ai.StopToolUse {
+		t.Fatalf("STOP with tool call should map to toolUse, got %s", final.StopReason)
+	}
+	if final.RawStopReason != "STOP" {
+		t.Fatalf("rawStopReason = %q, want STOP", final.RawStopReason)
+	}
+}
+
 // --- Task 7: text-part thoughtSignature both directions ---
 
 func TestGoogleTextSignatureRecv(t *testing.T) {

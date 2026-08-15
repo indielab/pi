@@ -525,10 +525,12 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 						return rerr
 					}
 					output.StopReason = reason
-					for _, b := range builders {
-						if b.kind == "toolCall" {
-							output.StopReason = ai.StopToolUse
-							break
+					if reason == ai.StopStop {
+						for _, b := range builders {
+							if b.kind == "toolCall" {
+								output.StopReason = ai.StopToolUse
+								break
+							}
 						}
 					}
 				}
