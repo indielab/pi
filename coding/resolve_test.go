@@ -262,6 +262,44 @@ func TestDefaultModelPerProviderQwenTokenPlanAndRadius(t *testing.T) {
 	}
 }
 
+// pi e429d90b8: the Z.AI Coding Plan defaults advance glm-5.1 → glm-5.3 (0.84.2
+// dropped glm-5.1 from the catalog). Mirrors upstream's "zai, minimax, cerebras,
+// and ant-ling defaults track current models" as of that commit.
+func TestDefaultModelPerProviderZaiCohort(t *testing.T) {
+	cases := map[string]string{
+		"zai":           "glm-5.3",
+		"zai-coding-cn": "glm-5.3",
+		"minimax":       "MiniMax-M2.7",
+		"minimax-cn":    "MiniMax-M2.7",
+		"cerebras":      "zai-glm-4.7",
+		"ant-ling":      "Ring-2.6-1T",
+	}
+	for provider, want := range cases {
+		if got := defaultModelPerProvider[provider]; got != want {
+			t.Fatalf("default model for %q: got %q, want %q", provider, got, want)
+		}
+	}
+}
+
+// pi e429d90b8 also added "built-in defaults exist in generated provider
+// catalogs": every provider in the generated catalog must have a default that
+// resolves to a real catalog model, so a catalog regen can never orphan a
+// default silently again. Entries for providers absent from the catalog
+// (e.g. radius) are deliberately out of scope, as upstream iterates catalog
+// providers, not table entries.
+func TestDefaultModelsExistInCatalog(t *testing.T) {
+	for _, provider := range ai.GetProviders() {
+		defaultID, ok := defaultModelPerProvider[provider]
+		if !ok {
+			t.Errorf("catalog provider %q has no defaultModelPerProvider entry", provider)
+			continue
+		}
+		if ai.GetModel(provider, defaultID) == nil {
+			t.Errorf("%s default %s should exist in its generated catalog", provider, defaultID)
+		}
+	}
+}
+
 // pi a01baaae trims the xai model list and re-points defaultModelPerProvider's
 // xai entry to grok-4.5 (the old grok-4.20-0309-reasoning id is removed from
 // the catalog at 0.80.10). Pin the constant through the custom-id fallback:
