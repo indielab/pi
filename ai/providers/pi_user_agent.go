@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"net/http"
 	"runtime"
 	"sync"
 )
@@ -19,6 +20,15 @@ var piUserAgent = sync.OnceValue(func() string {
 	}
 	return "pi (" + nodePlatform() + " " + release + "; " + nodeArch() + ")"
 })
+
+// forcePiUserAgent replaces any user-agent on the merged headers with pi's
+// runtime user agent (pi utils/pi-user-agent.ts forcePiUserAgent, upstream
+// 70e878d4c). pi deletes every case variant before setting its own; here every
+// write path goes through Header.Set/Del, which canonicalize the key, so one
+// Set replaces all variants.
+func forcePiUserAgent(h http.Header) {
+	h.Set("user-agent", piUserAgent())
+}
 
 // nodePlatform maps runtime.GOOS to Node's process.platform name. They agree
 // everywhere the port builds except Windows.

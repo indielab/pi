@@ -174,6 +174,13 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			// everything above, including model.headers and the attribution
 			// defaults — a deletion marker here suppresses any of them.
 			applyProviderHeaders(r.Header, opts.Headers)
+			// pi createClient (openai-completions.ts, upstream 70e878d4c): xAI
+			// requests carry pi's runtime user agent for provider-side
+			// attribution, forced after the options merge so it outranks
+			// consumer headers.
+			if model.Provider == "xai" {
+				forcePiUserAgent(r.Header)
+			}
 			return r, nil
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, openaiSDKErrorMessage))

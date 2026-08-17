@@ -285,6 +285,17 @@ func TestDefaultModelPerProviderZaiCohort(t *testing.T) {
 	}
 }
 
+// pi 70e878d4c: the xAI default advances grok-4.5 → grok-4.6 alongside the
+// move of every built-in xAI model onto the Responses API. grok-4.6 is already
+// in the 0.84.2 catalog (as openai-completions until the next regen carries
+// the routing flip), so the default is not dangling. Mirrors upstream's "xai
+// default tracks current model".
+func TestDefaultModelPerProviderXai(t *testing.T) {
+	if got := defaultModelPerProvider["xai"]; got != "grok-4.6" {
+		t.Fatalf("default model for %q: got %q, want %q", "xai", got, "grok-4.6")
+	}
+}
+
 // pi e429d90b8 also added "built-in defaults exist in generated provider
 // catalogs": every provider in the generated catalog must have a default that
 // resolves to a real catalog model, so a catalog regen can never orphan a
