@@ -388,6 +388,41 @@ func TestCompactionSplitTurnSummaries(t *testing.T) {
 	}
 }
 
+// pi 58302d34e (compaction routing sessions): summarization requests reuse a
+// caller-supplied routing session ID instead of minting a fresh uuidv7 per
+// request, while cache retention stays "none" — the routing ID is forwarded
+// without enabling prompt caching. Callers without one (including branch
+// summaries) keep fresh per-request ids (pi `options.sessionId ?? uuidv7()`).
+func TestCompactionRoutingSessionIDForwarded(t *testing.T) {
+	sess, reg := newCompactionTestSession(t)
+	var sessionIDs []string
+	var retentions []ai.CacheRetention
+	capture := func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+		sessionIDs = append(sessionIDs, opts.SessionID)
+		retentions = append(retentions, opts.CacheRetention)
+		return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "## Goal\nsummary"}}, ai.StopStop)
+	}
+	reg.SetResponses([]providers.FauxResponseStep{capture, capture})
+
+	settings := compactionTestSettings
+	settings.SessionID = "routing-session-1"
+	state := &compactionState{settings: settings}
+	sess.compact(context.Background(), state, bigTranscript(6))
+
+	if len(sessionIDs) != 1 || sessionIDs[0] != "routing-session-1" {
+		t.Fatalf("summarization sessionIDs = %v, want exactly the caller routing id", sessionIDs)
+	}
+	if retentions[0] != ai.CacheNone {
+		t.Fatalf("summarization cacheRetention = %v, want none (a routing id must not enable caching)", retentions[0])
+	}
+
+	// Without a caller id, each request mints a fresh one.
+	sess.summarize(context.Background(), []agent.AgentMessage{ai.NewUserText("hi", 1)}, 16384)
+	if len(sessionIDs) != 2 || sessionIDs[1] == "" || sessionIDs[1] == "routing-session-1" {
+		t.Fatalf("callers without a session id must get a fresh one, got %v", sessionIDs)
+	}
+}
+
 // TestSummaryTextBlocksJoinedWithNewline locks I3: assistant text blocks of the
 // summarization response join with "\n" (pi compaction.js join("\n")).
 func TestSummaryTextBlocksJoinedWithNewline(t *testing.T) {

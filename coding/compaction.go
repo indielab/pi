@@ -19,6 +19,11 @@ type CompactionSettings struct {
 	Enabled          bool
 	ReserveTokens    int
 	KeepRecentTokens int
+	// SessionID, when set, is the routing session ID summarization requests
+	// reuse instead of minting a fresh one per request; cache retention stays
+	// "none" either way (pi compact()'s optional sessionId param, upstream
+	// 58302d34e "support compaction routing sessions").
+	SessionID string
 }
 
 // DefaultCompactionSettings mirrors pi's defaults.
@@ -392,19 +397,19 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	if cp.isSplitTurn && len(turnPrefix) > 0 {
 		historyResult := "No prior history."
 		if len(history) > 0 {
-			hr, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, summary)
+			hr, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, summary, state.settings.SessionID)
 			if !ok {
 				return current // summarization failed; keep current view
 			}
 			historyResult = hr
 		}
-		tp, ok := s.generateTurnPrefixSummary(ctx, turnPrefix, state.settings.ReserveTokens)
+		tp, ok := s.generateTurnPrefixSummary(ctx, turnPrefix, state.settings.ReserveTokens, state.settings.SessionID)
 		if !ok {
 			return current
 		}
 		newSummary = historyResult + "\n\n---\n\n**Turn Context (split turn):**\n\n" + tp
 	} else {
-		ns, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, summary)
+		ns, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, summary, state.settings.SessionID)
 		if !ok {
 			return current
 		}
@@ -445,8 +450,10 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 // summarize asks the model to produce a structured checkpoint of older messages
 // with no previous summary, appending the read/modified file lists computed from
 // those messages (pi compact, compaction.ts:803-819 for the non-split path).
+// Branch-summary-style callers carry no routing session ID (pi generateSummary's
+// optional sessionId stays undefined for them), so each request gets a fresh one.
 func (s *Session) summarize(ctx context.Context, older []agent.AgentMessage, reserveTokens int) string {
-	text, ok := s.generateSummary(ctx, older, reserveTokens, "")
+	text, ok := s.generateSummary(ctx, older, reserveTokens, "", "")
 	if !ok {
 		return ""
 	}
@@ -461,7 +468,7 @@ func (s *Session) summarize(ctx context.Context, older []agent.AgentMessage, res
 // SUMMARIZATION_SYSTEM_PROMPT and a capped maxTokens. Returns ok=false where pi
 // throws (stopReason "error"); an aborted response returns the text produced so
 // far, like pi (compaction.js:466 throws only on "error").
-func (s *Session) generateSummary(ctx context.Context, older []agent.AgentMessage, reserveTokens int, previousSummary string) (string, bool) {
+func (s *Session) generateSummary(ctx context.Context, older []agent.AgentMessage, reserveTokens int, previousSummary, sessionID string) (string, bool) {
 	conversationText := serializeConversation(messagesAsLlm(older))
 
 	promptText := "<conversation>\n" + conversationText + "\n</conversation>\n\n"
@@ -472,16 +479,16 @@ func (s *Session) generateSummary(ctx context.Context, older []agent.AgentMessag
 		promptText += summarizationPrompt
 	}
 
-	return s.completeSummarization(ctx, promptText, s.summaryMaxTokens(0.8, reserveTokens))
+	return s.completeSummarization(ctx, promptText, s.summaryMaxTokens(0.8, reserveTokens), sessionID)
 }
 
 // generateTurnPrefixSummary ports pi's generateTurnPrefixSummary
 // (compaction.ts:836-876): the prefix of a split turn is summarized with the
 // dedicated turn-prefix prompt and a smaller (0.5 * reserve) token budget.
-func (s *Session) generateTurnPrefixSummary(ctx context.Context, messages []agent.AgentMessage, reserveTokens int) (string, bool) {
+func (s *Session) generateTurnPrefixSummary(ctx context.Context, messages []agent.AgentMessage, reserveTokens int, sessionID string) (string, bool) {
 	conversationText := serializeConversation(messagesAsLlm(messages))
 	promptText := "<conversation>\n" + conversationText + "\n</conversation>\n\n" + turnPrefixSummarizationPrompt
-	return s.completeSummarization(ctx, promptText, s.summaryMaxTokens(0.5, reserveTokens))
+	return s.completeSummarization(ctx, promptText, s.summaryMaxTokens(0.5, reserveTokens), sessionID)
 }
 
 // summaryMaxTokens = min(floor(frac * reserveTokens), model.maxTokens if > 0).
@@ -542,12 +549,16 @@ func (s *Session) summarizationRequestModel(ctx context.Context) *ai.Model {
 // level is set and not off — the thinking level are passed through. Returns
 // ok=false on a stream error (pi throws); aborted responses return the text
 // blocks produced so far, joined with "\n" (pi .map(c => c.text).join("\n")).
-func (s *Session) completeSummarization(ctx context.Context, promptText string, maxTokens int) (string, bool) {
+func (s *Session) completeSummarization(ctx context.Context, promptText string, maxTokens int, sessionID string) (string, bool) {
 	summarizationMessages := []ai.Message{ai.NewUserText(promptText, nowMillisCoding())}
 
-	// Summaries are standalone requests, so isolate routing and avoid cache
-	// writes that cannot be reused (pi 9b3a2059): retention "none" and a fresh
-	// session id per request, rather than the session's own.
+	// Avoid cache writes for one-off summaries (pi 9b3a2059): retention "none".
+	// Reuse caller-supplied routing when available; callers without a session
+	// ID, including branch summaries, receive a fresh routing ID (pi
+	// `options.sessionId ?? uuidv7()`, upstream 58302d34e).
+	if sessionID == "" {
+		sessionID = uuidv7()
+	}
 	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{
 		ProviderRequestOptions: ai.ProviderRequestOptions{
 			APIKey:  s.apiKey,
@@ -555,7 +566,7 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 		},
 		MaxTokens:      &maxTokens,
 		CacheRetention: ai.CacheNone,
-		SessionID:      uuidv7(),
+		SessionID:      sessionID,
 	}}
 	level := s.Agent.State().ThinkingLevel
 	if s.Model != nil && s.Model.Reasoning && level != "" && level != agent.ThinkOff {
