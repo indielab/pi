@@ -162,6 +162,79 @@ func diagMessages(diags []SkillDiagnostic) []string {
 	return out
 }
 
+// pi 8c2529dae: markdown files not declared as skills (basename other than
+// SKILL.md) with no usable description are silently skipped — no skill, no
+// diagnostics. A stray README.md in a skills root must not warn. SKILL.md
+// files keep the full diagnostics, including "description is required".
+func TestLoadSkillsUndeclaredRootMdSilentSkip(t *testing.T) {
+	root := t.TempDir()
+	// A README with no frontmatter at all.
+	if err := os.WriteFile(filepath.Join(root, "README.md"), []byte("# Just a readme\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// A root .md with frontmatter but no description.
+	writeSkillFile(t, filepath.Join(root, "notes.md"), "notes", "")
+	// A declared skill without description still warns and is dropped.
+	writeSkillFile(t, filepath.Join(root, "nodesc", "SKILL.md"), "nodesc-skill", "")
+
+	skills, diags := loadSkillsFromDir(root)
+	if len(skills) != 0 {
+		t.Fatalf("no skill should load: %+v", skills)
+	}
+	for _, d := range diags {
+		if filepath.Base(d.Path) != "SKILL.md" {
+			t.Fatalf("undeclared .md must not produce diagnostics, got: %+v", d)
+		}
+	}
+	if !strings.Contains(strings.Join(diagMessages(diags), "|"), "description is required") {
+		t.Fatalf("SKILL.md must keep the required-description diagnostic: %+v", diags)
+	}
+}
+
+// pi 8c2529dae type guards: frontmatter values that the YAML core schema types
+// as non-strings (plain null/bool/int/float scalars) are not descriptions or
+// names. Quoted forms stay strings; a non-string name falls back to the
+// directory name.
+func TestSkillFrontmatterNonStringScalars(t *testing.T) {
+	root := t.TempDir()
+	write := func(rel, content string) {
+		t.Helper()
+		full := filepath.Join(root, rel)
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	write("boolean-desc/SKILL.md", "---\ndescription: true\n---\n# b\n")
+	write("number-desc.md", "---\ndescription: 42\n---\n# n\n")
+	write("quoted-desc/SKILL.md", "---\ndescription: \"true\"\n---\n# q\n")
+	write("num-name/SKILL.md", "---\nname: 123\ndescription: a skill\n---\n# s\n")
+
+	skills, diags := loadSkillsFromDir(root)
+
+	// Plain `description: true` is not a string: declared skill drops + warns.
+	if findSkill(skills, "boolean-desc") != nil {
+		t.Fatalf("plain-boolean description must not load: %+v", skills)
+	}
+	// Undeclared .md with a plain-number description: silent skip.
+	for _, d := range diags {
+		if filepath.Base(d.Path) != "SKILL.md" {
+			t.Fatalf("number-desc.md must skip silently, got: %+v", d)
+		}
+	}
+	// Quoted "true" IS a string description.
+	q := findSkill(skills, "quoted-desc")
+	if q == nil || q.Description != "true" {
+		t.Fatalf("quoted description must load as the string \"true\": %+v", skills)
+	}
+	// Plain-number name falls back to the parent directory name.
+	if findSkill(skills, "num-name") == nil || findSkill(skills, "123") != nil {
+		t.Fatalf("non-string name must fall back to the directory name: %+v", skills)
+	}
+}
+
 // TestValidateNameAccepts verifies a well-formed name produces no errors.
 func TestValidateNameAccepts(t *testing.T) {
 	if errs := validateName("good-skill-1"); len(errs) != 0 {

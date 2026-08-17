@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 )
 
@@ -383,9 +384,14 @@ func loadSkillsFromDirInternal(dir, root string, includeRootFiles bool, ig *skil
 
 // loadSkillFromFile parses one skill markdown file (port of loadSkillFromFile).
 // The skill loads even with name/description warnings, except when description is
-// missing entirely.
+// missing entirely. Markdown files not declared as skills (basename other than
+// SKILL.md) with no usable description are silently skipped — no skill, no
+// diagnostics (pi 8c2529dae "dont load root mds as skills"). pi also routes
+// YAML parse errors to a SKILL.md-only warning; the port's forgiving line
+// parser never fails, so that branch has no Go home.
 func loadSkillFromFile(filePath string) (*Skill, []SkillDiagnostic) {
 	var diags []SkillDiagnostic
+	isDeclaredSkill := filepath.Base(filePath) == "SKILL.md"
 	data, err := os.ReadFile(filePath)
 	if err != nil {
 		return nil, []SkillDiagnostic{{Type: "warning", Message: err.Error(), Path: filePath}}
@@ -393,12 +399,27 @@ func loadSkillFromFile(filePath string) (*Skill, []SkillDiagnostic) {
 	fm, _ := parseFrontmatter(string(data))
 	skillDir := filepath.Dir(filePath)
 
-	desc := fm["description"].value
+	// pi 8c2529dae: only string-typed frontmatter values count for description
+	// and name (typeof checks over a real YAML parse). The forgiving parser
+	// keeps every scalar as its source text, so YAML-core non-string plain
+	// scalars are screened by literal shape instead (fmValue.isString).
+	desc := ""
+	if v := fm["description"]; v.isString() {
+		desc = v.value
+	}
+	hasDescription := strings.TrimSpace(desc) != ""
+	if !isDeclaredSkill && !hasDescription {
+		return nil, diags
+	}
+
 	for _, e := range validateDescription(desc) {
 		diags = append(diags, SkillDiagnostic{Type: "warning", Message: e, Path: filePath})
 	}
 
-	name := fm["name"].value
+	name := ""
+	if v := fm["name"]; v.isString() {
+		name = v.value
+	}
 	if name == "" {
 		name = filepath.Base(skillDir)
 	}
@@ -406,7 +427,7 @@ func loadSkillFromFile(filePath string) (*Skill, []SkillDiagnostic) {
 		diags = append(diags, SkillDiagnostic{Type: "warning", Message: e, Path: filePath})
 	}
 
-	if strings.TrimSpace(desc) == "" {
+	if !hasDescription {
 		return nil, diags
 	}
 	return &Skill{
@@ -529,6 +550,31 @@ const (
 // package produces for `=== true` checks. Quoted "true" is a string.
 func (v fmValue) isBoolTrue() bool {
 	return v.kind == fmPlain && (v.value == "true" || v.value == "True" || v.value == "TRUE")
+}
+
+// YAML 1.2 core schema int and float literal shapes (the schema pi's `yaml`
+// parse resolves plain scalars against).
+var (
+	yamlCoreIntRe   = regexp.MustCompile(`^([-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+)$`)
+	yamlCoreFloatRe = regexp.MustCompile(`^[-+]?(\.[0-9]+|[0-9]+(\.[0-9]*)?)([eE][-+]?[0-9]+)?$`)
+)
+
+// isString reports whether the scalar is a string under the YAML core schema:
+// quoted and block scalars always are; a plain scalar is unless it is a
+// null/bool/int/float literal (pi 8c2529dae reads only string-typed
+// frontmatter values — `typeof x === "string"` over a real YAML parse).
+func (v fmValue) isString() bool {
+	if v.kind != fmPlain {
+		return true
+	}
+	switch v.value {
+	case "", "~", "null", "Null", "NULL",
+		"true", "True", "TRUE", "false", "False", "FALSE",
+		".inf", ".Inf", ".INF", "+.inf", "+.Inf", "+.INF", "-.inf", "-.Inf", "-.INF",
+		".nan", ".NaN", ".NAN":
+		return false
+	}
+	return !yamlCoreIntRe.MatchString(v.value) && !yamlCoreFloatRe.MatchString(v.value)
 }
 
 // parseFrontmatter extracts a `--- ... ---` YAML header into a flat scalar map
