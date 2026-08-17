@@ -883,6 +883,45 @@ data: [DONE]
 	}
 }
 
+// pi d3ab2af96: Kimi documents cache hits as top-level usage.cached_tokens on
+// the final usage chunk — the third arm of the fallback chain
+// (prompt_tokens_details.cached_tokens ?? prompt_cache_hit_tokens ?? cached_tokens ?? 0).
+func TestOpenAICachedTokensTopLevelKimiFallback(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"cached_tokens":3}}
+
+data: [DONE]
+
+`
+	final := runOpenAIStream(t, sse, nil)
+	if final.Usage.CacheRead != 3 {
+		t.Fatalf("top-level cached_tokens must be the cache-read fallback, got cacheRead=%d", final.Usage.CacheRead)
+	}
+	if final.Usage.Input != 7 {
+		t.Fatalf("input = %d, want 7", final.Usage.Input)
+	}
+}
+
+// The middle arm is nullish, not falsy: an explicit prompt_cache_hit_tokens of
+// 0 (DeepSeek's no-hit shape) must NOT fall through to top-level cached_tokens.
+func TestOpenAICachedTokensExplicitZeroHitBeatsTopLevel(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"content":"hi"},"finish_reason":"stop"}]}
+
+data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":2,"prompt_cache_hit_tokens":0,"cached_tokens":3}}
+
+data: [DONE]
+
+`
+	final := runOpenAIStream(t, sse, nil)
+	if final.Usage.CacheRead != 0 {
+		t.Fatalf("explicit prompt_cache_hit_tokens:0 must not fall through to cached_tokens, got cacheRead=%d", final.Usage.CacheRead)
+	}
+	if final.Usage.Input != 10 {
+		t.Fatalf("input = %d, want 10", final.Usage.Input)
+	}
+}
+
 // ---- C7: toolcall_delta pushed for every delta entry; id/name first-wins ----
 
 func TestOpenAIToolCallDeltaPushedForArglessDeltas(t *testing.T) {

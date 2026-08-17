@@ -1408,11 +1408,20 @@ func parseChunkUsage(raw *openAIChunkUsage, model *ai.Model) ai.Usage {
 	if raw.PromptTokensDetails != nil {
 		cacheWriteTokens = raw.PromptTokensDetails.CacheWriteTokens
 	}
-	// pi: `cached_tokens ?? prompt_cache_hit_tokens ?? 0` — an explicit
-	// cached_tokens of 0 must NOT fall back to prompt_cache_hit_tokens.
-	cacheReadTokens := raw.PromptCacheHitTokens
-	if raw.PromptTokensDetails != nil && raw.PromptTokensDetails.CachedTokens != nil {
+	// pi (upstream d3ab2af96): `prompt_tokens_details?.cached_tokens ??
+	// prompt_cache_hit_tokens ?? cached_tokens ?? 0`. Providers disagree on
+	// placement: OpenAI/OpenRouter use prompt_tokens_details.cached_tokens,
+	// DeepSeek uses prompt_cache_hit_tokens, and Kimi documents top-level
+	// usage.cached_tokens on the final usage chunk. Each arm is nullish — an
+	// explicit 0 at any arm must NOT fall through to the next.
+	cacheReadTokens := 0
+	switch {
+	case raw.PromptTokensDetails != nil && raw.PromptTokensDetails.CachedTokens != nil:
 		cacheReadTokens = *raw.PromptTokensDetails.CachedTokens
+	case raw.PromptCacheHitTokens != nil:
+		cacheReadTokens = *raw.PromptCacheHitTokens
+	case raw.CachedTokens != nil:
+		cacheReadTokens = *raw.CachedTokens
 	}
 	input := promptTokens - cacheReadTokens - cacheWriteTokens
 	if input < 0 {
@@ -1458,9 +1467,13 @@ func mapOpenAIFinishReason(reason string) (ai.StopReason, string) {
 // ---- SSE chunk types ----
 
 type openAIChunkUsage struct {
-	PromptTokens         int `json:"prompt_tokens"`
-	CompletionTokens     int `json:"completion_tokens"`
-	PromptCacheHitTokens int `json:"prompt_cache_hit_tokens"`
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
+	// PromptCacheHitTokens and CachedTokens are pointers so an explicit 0 at
+	// either arm stops the ??-fallback chain (pi nullish semantics; upstream
+	// d3ab2af96 added the top-level cached_tokens arm for Kimi).
+	PromptCacheHitTokens *int `json:"prompt_cache_hit_tokens"`
+	CachedTokens         *int `json:"cached_tokens"`
 	PromptTokensDetails  *struct {
 		// CachedTokens is a pointer so an explicit 0 beats the
 		// prompt_cache_hit_tokens fallback (pi `??` nullish semantics).
