@@ -88,6 +88,49 @@ func TestEditPrepareArgumentsWired(t *testing.T) {
 	}
 }
 
+// pi ca21c1686: some models send a single {oldText,newText} edit object — raw
+// or JSON-stringified — instead of a one-element edits array; both normalize to
+// [that edit]. Shapes that are neither an array nor a single edit stay
+// untouched (and then fail schema validation, as upstream).
+func TestEditPrepareArgumentsSingleEditObject(t *testing.T) {
+	single := map[string]any{"oldText": "a", "newText": "b"}
+
+	got := prepareEditArguments(map[string]any{"path": "f.txt", "edits": single})
+	if arr, ok := got["edits"].([]any); !ok || len(arr) != 1 ||
+		arr[0].(map[string]any)["oldText"] != "a" || arr[0].(map[string]any)["newText"] != "b" {
+		t.Fatalf("raw single edit object not wrapped: %#v", got["edits"])
+	}
+
+	got = prepareEditArguments(map[string]any{"path": "f.txt", "edits": `{"oldText":"a","newText":"b"}`})
+	if arr, ok := got["edits"].([]any); !ok || len(arr) != 1 ||
+		arr[0].(map[string]any)["oldText"] != "a" || arr[0].(map[string]any)["newText"] != "b" {
+		t.Fatalf("stringified single edit object not wrapped: %#v", got["edits"])
+	}
+
+	// Not a single edit: oldText is not a string — passes through untouched.
+	bad := map[string]any{"oldText": 1, "newText": "b"}
+	got = prepareEditArguments(map[string]any{"path": "f.txt", "edits": bad})
+	if _, ok := got["edits"].([]any); ok {
+		t.Fatalf("non-edit object must not be wrapped: %#v", got["edits"])
+	}
+
+	// A stringified object that is not a single edit stays the string.
+	got = prepareEditArguments(map[string]any{"path": "f.txt", "edits": `{"other":true}`})
+	if _, ok := got["edits"].(string); !ok {
+		t.Fatalf("stringified non-edit must stay a string: %#v", got["edits"])
+	}
+
+	// The wrapped shape validates against the tool schema end-to-end.
+	tool := editTool(t.TempDir())
+	prepared := tool.PrepareArguments(map[string]any{"path": "f.txt", "edits": single})
+	if _, err := ai.ValidateToolArguments(
+		ai.Tool{Name: tool.Name, Parameters: tool.Parameters},
+		ai.ToolCall{ID: "id", Name: tool.Name, Arguments: prepared},
+	); err != nil {
+		t.Fatalf("prepared single edit object should validate: %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // H2: shell selection (shell.ts:66-109) — never $SHELL, never cmd
 // ---------------------------------------------------------------------------

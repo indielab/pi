@@ -650,14 +650,20 @@ func prepareEditArguments(input map[string]any) map[string]any {
 		args[k] = v
 	}
 
-	// Some models send edits as a JSON string instead of an array.
+	// Some models send edits as a JSON string instead of an array. Others send
+	// a single edit object instead of a one-element edits array (upstream
+	// ca21c1686); both forms wrap to [edit].
 	if s, ok := args["edits"].(string); ok {
 		var parsed any
 		if err := json.Unmarshal([]byte(s), &parsed); err == nil {
 			if arr, ok := parsed.([]any); ok {
 				args["edits"] = arr
+			} else if isSingleEditInput(parsed) {
+				args["edits"] = []any{parsed}
 			}
 		}
+	} else if isSingleEditInput(args["edits"]) {
+		args["edits"] = []any{args["edits"]}
 	}
 
 	oldText, oldOK := args["oldText"].(string)
@@ -675,6 +681,19 @@ func prepareEditArguments(input map[string]any) map[string]any {
 	delete(args, "oldText")
 	delete(args, "newText")
 	return args
+}
+
+// isSingleEditInput reports whether value is a bare {oldText, newText} edit
+// object (pi edit.ts isSingleEditInput): a non-array object whose oldText and
+// newText are both strings.
+func isSingleEditInput(value any) bool {
+	m, ok := value.(map[string]any)
+	if !ok {
+		return false
+	}
+	_, oldOK := m["oldText"].(string)
+	_, newOK := m["newText"].(string)
+	return oldOK && newOK
 }
 
 func normalizeToLF(s string) string {
