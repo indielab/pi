@@ -315,13 +315,12 @@ func TestDefaultModelsExistInCatalog(t *testing.T) {
 	}
 }
 
-// pi a01baaae trims the xai model list and re-points defaultModelPerProvider's
-// xai entry to grok-4.5 (the old grok-4.20-0309-reasoning id is removed from
-// the catalog at 0.80.10). Pin the constant through the custom-id fallback:
-// the synthetic model must be templated from grok-4.5.
+// pi a01baaae re-pointed defaultModelPerProvider's xai entry to grok-4.5 at
+// 0.80.10; pi 70e878d4c advances it to grok-4.6. Pin the constant through the
+// custom-id fallback: the synthetic model must be templated from grok-4.6.
 func TestResolveModelXaiFallbackDefault(t *testing.T) {
-	if defaultModelPerProvider["xai"] != "grok-4.5" {
-		t.Fatalf("xai default = %q, want grok-4.5", defaultModelPerProvider["xai"])
+	if defaultModelPerProvider["xai"] != "grok-4.6" {
+		t.Fatalf("xai default = %q, want grok-4.6", defaultModelPerProvider["xai"])
 	}
 	r, err := ResolveModelPattern("xai/my-custom-grok")
 	if err != nil {
@@ -330,13 +329,13 @@ func TestResolveModelXaiFallbackDefault(t *testing.T) {
 	if string(r.Model.Provider) != "xai" || r.Model.ID != "my-custom-grok" {
 		t.Fatalf("xai fallback wrong: %s/%s", r.Model.Provider, r.Model.ID)
 	}
-	// The template is the grok-4.5 catalog entry (clone carries its limits).
-	tmpl, err := ResolveModel("xai/grok-4.5")
+	// The template is the grok-4.6 catalog entry (clone carries its limits).
+	tmpl, err := ResolveModel("xai/grok-4.6")
 	if err != nil {
-		t.Fatalf("grok-4.5 must exist in the catalog: %v", err)
+		t.Fatalf("grok-4.6 must exist in the catalog: %v", err)
 	}
 	if r.Model.ContextWindow != tmpl.ContextWindow || r.Model.MaxTokens != tmpl.MaxTokens {
-		t.Fatalf("fallback not templated from grok-4.5: cw=%d/%d mt=%d/%d",
+		t.Fatalf("fallback not templated from grok-4.6: cw=%d/%d mt=%d/%d",
 			r.Model.ContextWindow, tmpl.ContextWindow, r.Model.MaxTokens, tmpl.MaxTokens)
 	}
 }
