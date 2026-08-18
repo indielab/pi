@@ -599,6 +599,8 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 		CacheRetention: ai.CacheNone,
 		SessionID:      sessionID,
 	}}
+	// A summary is text, never a tool call (pi 90305d90a).
+	opts.ToolChoice = ai.ToolChoiceNone
 	if fallbacks := anthropicSummarizationFallback(requestModel); fallbacks != nil {
 		opts.RefusalFallbacks = fallbacks
 	}
@@ -615,6 +617,17 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	msg := stream.Result()
 	if msg == nil || msg.StopReason == ai.StopError {
 		return "", false
+	}
+	// A model that called a tool anyway did not produce a summary, so the
+	// compaction fails rather than checkpointing whatever text came with it. pi
+	// puts this guard in each of completeSummarization's callers, differing only
+	// in the message it throws; the port has one place to put it and no channel
+	// for those strings — a failed summarization surfaces as "keep the current
+	// view" either way.
+	for _, c := range msg.Content {
+		if _, isToolCall := c.(ai.ToolCall); isToolCall {
+			return "", false
+		}
 	}
 	var texts []string
 	for _, c := range msg.Content {

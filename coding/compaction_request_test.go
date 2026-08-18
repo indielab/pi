@@ -340,3 +340,47 @@ func TestAnthropicSummarizationFallback(t *testing.T) {
 		})
 	}
 }
+
+// TestSummarizationDisablesTools pins pi 90305d90a: summarization requests ask
+// for no tools, and a response that called one anyway is treated as a failed
+// summarization rather than checkpointed.
+func TestSummarizationDisablesTools(t *testing.T) {
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+		Models: []providers.FauxModelDefinition{{ID: "faux-1", ContextWindow: 200000}},
+	})
+	defer reg.Unregister()
+	model := reg.GetModel()
+
+	var capturedChoice ai.ToolChoice
+	reg.SetResponses([]providers.FauxResponseStep{
+		func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+			if opts != nil {
+				capturedChoice = opts.ToolChoice
+			}
+			return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "## Goal\nsummary"}}, ai.StopStop)
+		},
+	})
+
+	sess := NewSession(SessionOptions{Model: model, Cwd: t.TempDir(), NoTools: NoToolsAll})
+	older := []agent.AgentMessage{ai.NewUserText("do the thing", 1)}
+
+	if got := sess.summarize(context.Background(), older, 16384); got == "" {
+		t.Fatal("expected a summary from a text-only response")
+	}
+	if capturedChoice != ai.ToolChoiceNone {
+		t.Fatalf("summarization must request toolChoice=none, got %q", capturedChoice)
+	}
+
+	// Same request, but the model calls a tool: no summary survives.
+	reg.SetResponses([]providers.FauxResponseStep{
+		func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+			return providers.FauxAssistantMessage(ai.ContentList{
+				ai.TextContent{Text: "## Goal\nsummary"},
+				ai.ToolCall{ID: "t1", Name: "read", Arguments: map[string]any{"path": "/a"}},
+			}, ai.StopToolUse)
+		},
+	})
+	if got := sess.summarize(context.Background(), older, 16384); got != "" {
+		t.Fatalf("a tool call must fail the summarization, got %q", got)
+	}
+}
