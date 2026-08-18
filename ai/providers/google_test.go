@@ -913,13 +913,19 @@ func TestGoogleGenerationConfigAlwaysSent(t *testing.T) {
 	}
 }
 
-// --- F4c: xhigh passes through with no level and no budget ---
+// --- F4c: an xhigh that maps to nothing Google understands is an error ---
+//
+// This used to assert the opposite: xhigh fell through both getThinkingLevel and
+// getGoogleBudget, producing thinkingConfig:{includeThoughts:true} with neither
+// key. Upstream af2c35223 resolves the level through the map first and rejects
+// anything that lands outside Google's four standard levels, so a
+// self-referential entry like xhigh -> "xhigh" now fails the request instead of
+// silently sending an under-specified thinkingConfig.
 
-func TestGoogleXHighNoLevelNoBudget(t *testing.T) {
-	var gotBody map[string]any
+func TestGoogleXHighUnmappedIsRejected(t *testing.T) {
+	requested := false
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		b, _ := io.ReadAll(r.Body)
-		_ = json.Unmarshal(b, &gotBody)
+		requested = true
 		w.Header().Set("content-type", "text/event-stream")
 		io.WriteString(w, "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}]},\"finishReason\":\"STOP\"}]}\n\n")
 	}))
@@ -933,23 +939,18 @@ func TestGoogleXHighNoLevelNoBudget(t *testing.T) {
 		ThinkingLevelMap: ai.ThinkingLevelMap{"xhigh": &xhigh},
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	StreamSimpleGoogle(context.Background(), model, req, &ai.SimpleStreamOptions{
+	msg := StreamSimpleGoogle(context.Background(), model, req, &ai.SimpleStreamOptions{
 		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}, Reasoning: ai.ThinkingXHigh,
 	}).Result()
-	gen, _ := gotBody["generationConfig"].(map[string]any)
-	tc, _ := gen["thinkingConfig"].(map[string]any)
-	if tc == nil {
-		t.Fatalf("thinkingConfig missing: %v", gen)
+	if msg.StopReason != ai.StopError {
+		t.Fatalf("want stopReason error, got %q", msg.StopReason)
 	}
-	if tc["includeThoughts"] != true {
-		t.Fatalf("includeThoughts must be set: %v", tc)
+	want := "Unsupported Google thinking level mapping for google/gemini-3-pro-preview: xhigh -> xhigh"
+	if msg.ErrorMessage != want {
+		t.Fatalf("want %q, got %q", want, msg.ErrorMessage)
 	}
-	// pi: xhigh falls through getThinkingLevel/getGoogleBudget -> neither key.
-	if _, has := tc["thinkingLevel"]; has {
-		t.Fatalf("xhigh must not map to a thinkingLevel: %v", tc)
-	}
-	if _, has := tc["thinkingBudget"]; has {
-		t.Fatalf("xhigh must not map to a thinkingBudget: %v", tc)
+	if requested {
+		t.Fatal("no request may be sent for an unresolvable level")
 	}
 }
 
