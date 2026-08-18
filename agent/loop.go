@@ -232,12 +232,18 @@ func filterToolCalls(m *ai.AssistantMessage) []ai.ToolCall {
 	return out
 }
 
-func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config AgentLoopConfig, emit EventSink, streamFn StreamFn) *ai.AssistantMessage {
+// BuildProviderContext builds the provider context through the same transform
+// and conversion pipeline an agent request uses (pi buildProviderContext,
+// upstream 2509b5c03). Only ConvertToLlm and TransformContext are read, so a
+// caller that just wants the context can leave the rest of the config zero.
+func BuildProviderContext(ctx context.Context, agentCtx *AgentContext, config AgentLoopConfig) ai.Context {
+	// Apply context transform if configured (AgentMessage → AgentMessage).
 	messages := agentCtx.Messages
 	if config.TransformContext != nil {
 		messages = config.TransformContext(ctx, messages)
 	}
 
+	// Convert to LLM-compatible messages (AgentMessage → ai.Message).
 	var llmMessages []ai.Message
 	if config.ConvertToLlm != nil {
 		llmMessages = config.ConvertToLlm(messages)
@@ -245,11 +251,15 @@ func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config
 		llmMessages = defaultConvertToLlm(messages)
 	}
 
-	llmCtx := ai.Context{
+	return ai.Context{
 		SystemPrompt: agentCtx.SystemPrompt,
 		Messages:     llmMessages,
 		Tools:        toAITools(agentCtx.Tools),
 	}
+}
+
+func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config AgentLoopConfig, emit EventSink, streamFn StreamFn) *ai.AssistantMessage {
+	llmCtx := BuildProviderContext(ctx, agentCtx, config)
 
 	fn := streamFn
 	if fn == nil {

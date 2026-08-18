@@ -1652,3 +1652,93 @@ func TestAgentForwardsShouldStopAfterTurn(t *testing.T) {
 		}
 	}
 }
+
+// TestAgentBuildProviderContext mirrors pi's agent.test.ts case for
+// buildProviderContext (upstream 2509b5c03): transform runs first and sees the
+// source messages, convert runs second and sees the transformed ones, the
+// cancellable context reaches the transform, and the result carries the
+// system prompt and tools verbatim.
+func TestAgentBuildProviderContext(t *testing.T) {
+	source := []AgentMessage{
+		ai.NewUserText("discard", 1),
+		ai.NewUserText("keep", 2),
+	}
+	transformed := []AgentMessage{source[1]}
+
+	var callOrder []string
+	var transformInput, convertInput []AgentMessage
+	var transformCtx context.Context
+
+	a := NewAgent(AgentOptions{
+		TransformContext: func(ctx context.Context, messages []AgentMessage) []AgentMessage {
+			callOrder = append(callOrder, "transform")
+			transformCtx = ctx
+			transformInput = messages
+			return transformed
+		},
+		ConvertToLlm: func(messages []AgentMessage) []ai.Message {
+			callOrder = append(callOrder, "convert")
+			convertInput = messages
+			out := make([]ai.Message, 0, len(messages))
+			for _, m := range messages {
+				switch m.MessageRole() {
+				case ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult:
+					out = append(out, m)
+				}
+			}
+			return out
+		},
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	got := a.BuildProviderContext(ctx, &AgentContext{
+		SystemPrompt: "System prompt",
+		Messages:     source,
+		Tools:        nil,
+	})
+
+	if len(callOrder) != 2 || callOrder[0] != "transform" || callOrder[1] != "convert" {
+		t.Fatalf("want transform then convert, got %v", callOrder)
+	}
+	if transformCtx != ctx {
+		t.Fatal("transform must receive the caller's context")
+	}
+	// AgentMessage values hold slices, so identity is compared through the one
+	// field that distinguishes these fixtures.
+	if len(transformInput) != len(source) || agentMessageText(transformInput[0]) != "discard" ||
+		agentMessageText(transformInput[1]) != "keep" {
+		t.Fatalf("transform must see the source messages, got %v", transformInput)
+	}
+	if len(convertInput) != 1 || agentMessageText(convertInput[0]) != "keep" {
+		t.Fatalf("convert must see the transformed messages, got %v", convertInput)
+	}
+	if got.SystemPrompt != "System prompt" {
+		t.Fatalf("system prompt not carried through: %q", got.SystemPrompt)
+	}
+	if len(got.Messages) != 1 {
+		t.Fatalf("want the transformed message only, got %v", got.Messages)
+	}
+	if um, ok := got.Messages[0].(ai.UserMessage); !ok || textOfContent(um.Content) != "keep" {
+		t.Fatalf("want the kept user message, got %#v", got.Messages[0])
+	}
+	if got.Tools != nil {
+		t.Fatalf("no tools configured, want nil, got %v", got.Tools)
+	}
+}
+
+func agentMessageText(m AgentMessage) string {
+	if um, ok := m.(ai.UserMessage); ok {
+		return textOfContent(um.Content)
+	}
+	return ""
+}
+
+func textOfContent(content ai.ContentList) string {
+	for _, c := range content {
+		if tc, ok := c.(ai.TextContent); ok {
+			return tc.Text
+		}
+	}
+	return ""
+}
