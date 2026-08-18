@@ -273,7 +273,7 @@ func TestDefaultModelPerProviderZaiCohort(t *testing.T) {
 		"zai-coding-cn": "glm-5.3",
 		"minimax":       "MiniMax-M2.7",
 		"minimax-cn":    "MiniMax-M2.7",
-		"cerebras":      "zai-glm-4.7",
+		"cerebras":      "gpt-oss-120b",
 		"ant-ling":      "Ring-2.6-1T",
 	}
 	for provider, want := range cases {
