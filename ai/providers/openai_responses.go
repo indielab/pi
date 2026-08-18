@@ -267,6 +267,9 @@ func StreamSimpleOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Co
 	o := &OpenAIResponsesOptions{}
 	if opts != nil {
 		o.StreamOptions = opts.StreamOptions
+		if opts.ToolChoice != "" {
+			o.ToolChoice = string(opts.ToolChoice)
+		}
 		if opts.Reasoning != "" {
 			clamped := ai.ClampThinkingLevel(model, ai.ModelThinkingLevel(opts.Reasoning))
 			if clamped != "off" {

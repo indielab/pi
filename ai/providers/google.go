@@ -50,6 +50,7 @@ func StreamSimpleGoogle(ctx context.Context, model *ai.Model, req ai.Context, op
 	g := &GoogleOptions{}
 	if opts != nil {
 		g.StreamOptions = opts.StreamOptions
+		g.ToolChoice = string(opts.ToolChoice)
 	}
 	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens),
 	// samplingParams = model defaults with the request's merged over them. Google

@@ -33,6 +33,9 @@ func StreamSimpleOpenAICompletions(ctx context.Context, model *ai.Model, req ai.
 	if opts != nil {
 		o.StreamOptions = opts.StreamOptions
 		o.ThinkingBudgets = opts.ThinkingBudgets
+		if opts.ToolChoice != "" {
+			o.ToolChoice = string(opts.ToolChoice)
+		}
 		if opts.Reasoning != "" {
 			clamped := ai.ClampThinkingLevel(model, ai.ModelThinkingLevel(opts.Reasoning))
 			if clamped != "off" {

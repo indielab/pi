@@ -218,6 +218,11 @@ func StreamSimpleAnthropic(ctx context.Context, model *ai.Model, req ai.Context,
 	// calls; the single options value here covers all three return paths.
 	if opts != nil {
 		aopts.RefusalFallbacks = opts.RefusalFallbacks
+		// The unified option carries only pi's "auto"/"none"; buildParams wraps a
+		// bare string as {type: ...}, which is the shape those two need.
+		if opts.ToolChoice != "" {
+			aopts.ToolChoice = string(opts.ToolChoice)
+		}
 	}
 
 	reasoning := ai.ThinkingLevel("")

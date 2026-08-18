@@ -583,13 +583,17 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.Context, opts
 }
 
 // StreamSimplePiMessages maps SimpleStreamOptions → the full stream, forwarding
-// reasoning (and toolChoice/debug when the caller passed a *PiMessagesOptions).
-// Port of the `streamSimple` export.
+// reasoning and the unified toolChoice. Port of the `streamSimple` export;
+// upstream e5dde9a76 moved toolChoice off the provider-extra object onto the
+// unified options, so it no longer depends on the caller passing native options.
 func StreamSimplePiMessages(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 	p := &PiMessagesOptions{}
 	if opts != nil {
 		p.StreamOptions = opts.StreamOptions
 		p.Reasoning = opts.Reasoning
+		if opts.ToolChoice != "" {
+			p.ToolChoice = string(opts.ToolChoice)
+		}
 	}
 	return StreamPiMessages(ctx, model, req, p)
 }
