@@ -360,7 +360,7 @@ func (p *providerImpl) streamsFor(model *Model) (ProviderStreams, bool) {
 func (p *providerImpl) Stream(ctx context.Context, model *Model, req Context, opts *StreamOptions) *AssistantMessageEventStream {
 	s, ok := p.streamsFor(model)
 	if !ok || s.Stream == nil {
-		return errorStream(model, newModelsError(ErrStream, "Provider "+p.id+" has no API implementation for \""+model.Api+"\"", nil))
+		return ErrorStream(model, newModelsError(ErrStream, "Provider "+p.id+" has no API implementation for \""+model.Api+"\"", nil))
 	}
 	return s.Stream(ctx, model, req, opts)
 }
@@ -368,7 +368,7 @@ func (p *providerImpl) Stream(ctx context.Context, model *Model, req Context, op
 func (p *providerImpl) StreamSimple(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream {
 	s, ok := p.streamsFor(model)
 	if !ok || s.StreamSimple == nil {
-		return errorStream(model, newModelsError(ErrStream, "Provider "+p.id+" has no API implementation for \""+model.Api+"\"", nil))
+		return ErrorStream(model, newModelsError(ErrStream, "Provider "+p.id+" has no API implementation for \""+model.Api+"\"", nil))
 	}
 	return s.StreamSimple(ctx, model, req, opts)
 }
@@ -378,7 +378,7 @@ func (p *providerImpl) StreamSimple(ctx context.Context, model *Model, req Conte
 func (p *providerImpl) fetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredFetchOptions) *AssistantMessageEventStream {
 	s, ok := p.streamsFor(model)
 	if !ok || s.FetchDeferred == nil {
-		return errorStream(model, newModelsError(ErrProvider,
+		return ErrorStream(model, newModelsError(ErrProvider,
 			"Provider "+p.id+" does not support deferred responses for \""+model.Api+"\""+
 				deferredUnsupportedHint, nil))
 	}
@@ -1270,7 +1270,7 @@ func (m *modelsImpl) applyAuth(
 func (m *modelsImpl) Stream(ctx context.Context, model *Model, req Context, opts *ModelsStreamOptions) *AssistantMessageEventStream {
 	p := m.GetProvider(model.Provider)
 	if p == nil {
-		return errorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
+		return ErrorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
 	}
 	var base *ProviderRequestOptions
 	var transforms ModelsRequestTransforms
@@ -1280,7 +1280,7 @@ func (m *modelsImpl) Stream(ctx context.Context, model *Model, req Context, opts
 	}
 	requestModel, requestOptions, err := m.applyAuth(ctx, model, base, transforms)
 	if err != nil {
-		return errorStream(model, err)
+		return ErrorStream(model, err)
 	}
 	stream := StreamOptions{}
 	if opts != nil {
@@ -1297,7 +1297,7 @@ func (m *modelsImpl) Complete(ctx context.Context, model *Model, req Context, op
 func (m *modelsImpl) StreamSimple(ctx context.Context, model *Model, req Context, opts *ModelsSimpleStreamOptions) *AssistantMessageEventStream {
 	p := m.GetProvider(model.Provider)
 	if p == nil {
-		return errorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
+		return ErrorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
 	}
 	var base *ProviderRequestOptions
 	var transforms ModelsRequestTransforms
@@ -1307,7 +1307,7 @@ func (m *modelsImpl) StreamSimple(ctx context.Context, model *Model, req Context
 	}
 	requestModel, requestOptions, err := m.applyAuth(ctx, model, base, transforms)
 	if err != nil {
-		return errorStream(model, err)
+		return ErrorStream(model, err)
 	}
 	simple := SimpleStreamOptions{}
 	if opts != nil {
@@ -1325,7 +1325,7 @@ func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle Def
 	p := m.GetProvider(model.Provider)
 	fetcher, ok := p.(DeferredFetcher)
 	if !ok {
-		return errorStream(model, deferredUnsupported(p, model.Provider)).Result()
+		return ErrorStream(model, deferredUnsupported(p, model.Provider)).Result()
 	}
 	var base *ProviderRequestOptions
 	var transforms ModelsRequestTransforms
@@ -1335,7 +1335,7 @@ func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle Def
 	}
 	requestModel, requestOptions, err := m.applyAuth(ctx, model, base, transforms)
 	if err != nil {
-		return errorStream(model, err).Result()
+		return ErrorStream(model, err).Result()
 	}
 	deferredOptions := DeferredFetchOptions{}
 	if opts != nil {

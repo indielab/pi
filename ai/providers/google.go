@@ -75,7 +75,7 @@ func StreamSimpleGoogle(ctx context.Context, model *ai.Model, req ai.Context, op
 	// with neither thinkingLevel nor thinkingBudget.
 	effort, err := resolveGoogleThinkingLevel(model, clamped)
 	if err != nil {
-		return terminalErrorStream(model, err)
+		return ai.ErrorStream(model, err)
 	}
 	g.ThinkingProvided = true
 	g.ThinkingEnabled = true

@@ -396,3 +396,54 @@ func TestAssistantDeferredHandleRoundTrip(t *testing.T) {
 		t.Fatal("Clone must copy the deferred handle, not alias it")
 	}
 }
+
+// TestAnthropicRefusalFallbackJSON pins both arms of pi's
+// `"default" | readonly {model}[]` union and their round-trip. The Go type
+// collapses the union onto the chain, so an empty chain is "default" and pi's
+// empty-array arm is deliberately unrepresentable.
+func TestAnthropicRefusalFallbackJSON(t *testing.T) {
+	cases := []struct {
+		name   string
+		value  AnthropicRefusalFallback
+		want   string
+		wantRT []string
+	}{
+		{name: "empty chain is the default literal", value: AnthropicRefusalFallback{}, want: `"default"`},
+		{
+			name:   "explicit chain keeps order",
+			value:  AnthropicRefusalFallback{Models: []string{"claude-opus-4-8", "claude-opus-5"}},
+			want:   `[{"model":"claude-opus-4-8"},{"model":"claude-opus-5"}]`,
+			wantRT: []string{"claude-opus-4-8", "claude-opus-5"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(tc.value)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			if string(raw) != tc.want {
+				t.Fatalf("want %s, got %s", tc.want, raw)
+			}
+			var back AnthropicRefusalFallback
+			if err := json.Unmarshal(raw, &back); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if len(back.Models) != len(tc.wantRT) {
+				t.Fatalf("round-trip: want %v, got %v", tc.wantRT, back.Models)
+			}
+			for i, id := range tc.wantRT {
+				if back.Models[i] != id {
+					t.Fatalf("round-trip: want %v, got %v", tc.wantRT, back.Models)
+				}
+			}
+		})
+	}
+
+	for _, bad := range []string{`"defualt"`, `42`, `[{"name":"x"}]`, `[1]`} {
+		var f AnthropicRefusalFallback
+		if err := json.Unmarshal([]byte(bad), &f); err == nil {
+			t.Fatalf("%s must not decode, got %+v", bad, f)
+		}
+	}
+}

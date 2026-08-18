@@ -1496,14 +1496,7 @@ func TestAgentFailsToolCallsFromLengthTruncatedMessage(t *testing.T) {
 	}
 }
 
-func textOf(m *ai.AssistantMessage) string {
-	for _, c := range m.Content {
-		if t, ok := c.(ai.TextContent); ok {
-			return t.Text
-		}
-	}
-	return ""
-}
+func textOf(m *ai.AssistantMessage) string { return textOfContent(m.Content) }
 
 func assertContains(t *testing.T, events []EventType, want EventType) {
 	t.Helper()
@@ -1692,7 +1685,7 @@ func TestAgentBuildProviderContext(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	got := a.BuildProviderContext(ctx, &AgentContext{
+	got := a.BuildProviderContext(ctx, AgentContext{
 		SystemPrompt: "System prompt",
 		Messages:     source,
 		Tools:        nil,
@@ -1734,6 +1727,7 @@ func agentMessageText(m AgentMessage) string {
 	return ""
 }
 
+// textOfContent returns the first text block, the shared half of textOf.
 func textOfContent(content ai.ContentList) string {
 	for _, c := range content {
 		if tc, ok := c.(ai.TextContent); ok {

@@ -105,7 +105,8 @@ func TestAnthropicNoRefusalFallbacksByDefault(t *testing.T) {
 }
 
 // The "default" arm is the other half of pi's union: the literal string, not an
-// array. The beta rides on the option being set at all, either way.
+// array. An empty chain is how the Go type spells it. The beta rides on the
+// option being set at all, either way.
 func TestAnthropicRefusalFallbackDefaultArm(t *testing.T) {
 	var gotHeaders http.Header
 	gotBody := map[string]any{}
@@ -117,7 +118,7 @@ func TestAnthropicRefusalFallbackDefaultArm(t *testing.T) {
 		Input: []string{"text"}, MaxTokens: 4096, BaseURL: server.URL,
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &ai.SimpleStreamOptions{RefusalFallbacks: &ai.AnthropicRefusalFallback{Default: true}}
+	opts := &ai.SimpleStreamOptions{RefusalFallbacks: &ai.AnthropicRefusalFallback{}}
 	opts.APIKey = "k"
 	StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
 

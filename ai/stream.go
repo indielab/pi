@@ -96,7 +96,7 @@ func resolveProvider(api Api) (ApiProvider, error) {
 func Stream(ctx context.Context, model *Model, req Context, opts *StreamOptions) *AssistantMessageEventStream {
 	p, err := resolveProvider(model.Api)
 	if err != nil {
-		return errorStream(model, err)
+		return ErrorStream(model, err)
 	}
 	return p.Stream(ctx, model, req, withEnvAPIKey(model, opts))
 }
@@ -112,7 +112,7 @@ func Complete(ctx context.Context, model *Model, req Context, opts *StreamOption
 func StreamSimple(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream {
 	p, err := resolveProvider(model.Api)
 	if err != nil {
-		return errorStream(model, err)
+		return ErrorStream(model, err)
 	}
 	return p.StreamSimple(ctx, model, req, withEnvAPIKeySimple(model, opts))
 }
@@ -122,9 +122,11 @@ func CompleteSimple(ctx context.Context, model *Model, req Context, opts *Simple
 	return StreamSimple(ctx, model, req, opts).Result()
 }
 
-// errorStream returns a closed stream carrying a terminal error event. Per the
-// stream contract, provider-resolution failures are encoded in the stream.
-func errorStream(model *Model, err error) *AssistantMessageEventStream {
+// ErrorStream returns a closed stream carrying a terminal error event. Per the
+// stream contract, a failure that pi raises by throwing out of stream setup —
+// provider resolution here, an unusable option in a provider's StreamSimple —
+// is encoded in the stream rather than returned alongside it.
+func ErrorStream(model *Model, err error) *AssistantMessageEventStream {
 	s := NewAssistantMessageEventStream()
 	msg := &AssistantMessage{
 		Api:          model.Api,

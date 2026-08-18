@@ -910,31 +910,57 @@ type StreamOptions struct {
 // another model server-side before returning a final response (pi
 // AnthropicRefusalFallback, upstream eb1f87fa9). Anthropic providers only.
 //
-// pi writes this as `"default" | readonly { model: string }[]`. Go keeps both
-// arms rather than collapsing them, because they are not interchangeable on the
-// wire: Default is pi's "default" literal, and Models is an explicit chain sent
-// in order. A model's permitted targets come from its catalog compat
-// (`allowedFallbackModels`); Anthropic rejects `fallbacks` for models that
-// permit none, so callers must omit the option entirely for those.
+// pi writes this as `"default" | readonly { model: string }[]`; Go collapses the
+// union the way DeferredRequest does, onto the value that carries the extra
+// information: an empty chain IS pi's "default" literal. pi's empty-array arm is
+// deliberately unrepresentable — no pi code path produces it, and a model whose
+// catalog compat lists no permitted targets must omit `fallbacks` entirely
+// rather than send it empty, which Anthropic rejects.
 type AnthropicRefusalFallback struct {
-	// Default selects Anthropic's own fallback chain. Takes precedence over Models.
-	Default bool
-	// Models is the explicit fallback chain, in order.
+	// Models is the explicit fallback chain, in order. Empty selects Anthropic's
+	// own chain.
 	Models []string
+}
+
+// anthropicFallbackEntry is one element of pi's array arm.
+type anthropicFallbackEntry struct {
+	Model string `json:"model"`
 }
 
 // MarshalJSON emits whichever arm of pi's union this value carries.
 func (f AnthropicRefusalFallback) MarshalJSON() ([]byte, error) {
-	if f.Default {
+	if len(f.Models) == 0 {
 		return json.Marshal("default")
 	}
-	entries := make([]struct {
-		Model string `json:"model"`
-	}, len(f.Models))
+	entries := make([]anthropicFallbackEntry, len(f.Models))
 	for i, id := range f.Models {
 		entries[i].Model = id
 	}
 	return json.Marshal(entries)
+}
+
+// UnmarshalJSON accepts either arm, so the option round-trips.
+func (f *AnthropicRefusalFallback) UnmarshalJSON(data []byte) error {
+	var literal string
+	if json.Unmarshal(data, &literal) == nil {
+		if literal != "default" {
+			return fmt.Errorf("anthropic refusal fallback: want \"default\" or a chain of {model}, got %q", literal)
+		}
+		f.Models = nil
+		return nil
+	}
+	var entries []anthropicFallbackEntry
+	if err := json.Unmarshal(data, &entries); err != nil {
+		return fmt.Errorf("anthropic refusal fallback: want \"default\" or a chain of {model}: %w", err)
+	}
+	f.Models = make([]string, len(entries))
+	for i, e := range entries {
+		if e.Model == "" {
+			return fmt.Errorf("anthropic refusal fallback: entry %d has no model id", i)
+		}
+		f.Models[i] = e.Model
+	}
+	return nil
 }
 
 // SimpleStreamOptions extends StreamOptions with unified reasoning controls.

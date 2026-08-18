@@ -567,7 +567,7 @@ func anthropicSummarizationFallback(model *ai.Model) *ai.AnthropicRefusalFallbac
 	// Use the primary permitted fallback for now. If future Anthropic models
 	// expose broader fallback behavior, this can become a user/config pick or a
 	// full chain.
-	return &ai.AnthropicRefusalFallback{Models: compat.AllowedFallbackModels[:1]}
+	return &ai.AnthropicRefusalFallback{Models: []string{compat.AllowedFallbackModels[0]}}
 }
 
 // completeSummarization sends one summarization request (pi completeSummarization
@@ -624,15 +624,13 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	// in the message it throws; the port has one place to put it and no channel
 	// for those strings — a failed summarization surfaces as "keep the current
 	// view" either way.
-	for _, c := range msg.Content {
-		if _, isToolCall := c.(ai.ToolCall); isToolCall {
-			return "", false
-		}
-	}
 	var texts []string
 	for _, c := range msg.Content {
-		if tc, ok := c.(ai.TextContent); ok {
-			texts = append(texts, tc.Text)
+		switch v := c.(type) {
+		case ai.ToolCall:
+			return "", false
+		case ai.TextContent:
+			texts = append(texts, v.Text)
 		}
 	}
 	return strings.Join(texts, "\n"), true

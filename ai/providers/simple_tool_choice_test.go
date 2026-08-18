@@ -44,6 +44,11 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 		// want reports the provider-native tool selection found in the payload,
 		// or nil when the payload carries none.
 		want func(body map[string]any) any
+		// wantNone is what this provider puts on the wire for "none".
+		wantNone any
+		// derivesUnsetMode marks a provider that picks a mode from the tools alone
+		// when the option is absent, so "unset" cannot assert a bare nil.
+		derivesUnsetMode bool
 	}{
 		{
 			name: "anthropic-messages",
@@ -62,6 +67,7 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 				}
 				return tc["type"]
 			},
+			wantNone: "none",
 		},
 		{
 			name: "openai-completions",
@@ -72,7 +78,8 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 			stream: func(m *ai.Model, r ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 				return StreamSimpleOpenAICompletions(t.Context(), m, r, o)
 			},
-			want: func(body map[string]any) any { return body["tool_choice"] },
+			want:     func(body map[string]any) any { return body["tool_choice"] },
+			wantNone: "none",
 		},
 		{
 			name: "openai-responses",
@@ -83,7 +90,8 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 			stream: func(m *ai.Model, r ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 				return StreamSimpleOpenAIResponses(t.Context(), m, r, o)
 			},
-			want: func(body map[string]any) any { return body["tool_choice"] },
+			want:     func(body map[string]any) any { return body["tool_choice"] },
+			wantNone: "none",
 		},
 		{
 			name: "google-generative-ai",
@@ -106,6 +114,8 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 				}
 				return fcc["mode"]
 			},
+			wantNone:         "NONE",
+			derivesUnsetMode: true,
 		},
 		{
 			name: "pi-messages",
@@ -123,33 +133,24 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 				}
 				return opts["toolChoice"]
 			},
+			wantNone: "none",
 		},
-	}
-
-	// The value each provider is expected to put on the wire for "none". Google
-	// upper-cases; everyone else passes the literal through.
-	noneOnWire := map[string]any{
-		"anthropic-messages":   "none",
-		"openai-completions":   "none",
-		"openai-responses":     "none",
-		"google-generative-ai": "NONE",
-		"pi-messages":          "none",
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name+"/none", func(t *testing.T) {
 			got := tc.want(captureSimplePayload(t, tc.stream, tc.model, req, ai.ToolChoiceNone))
-			if got != noneOnWire[tc.name] {
-				t.Fatalf("want %v, got %v", noneOnWire[tc.name], got)
+			if got != tc.wantNone {
+				t.Fatalf("want %v, got %v", tc.wantNone, got)
 			}
 		})
 		t.Run(tc.name+"/unset", func(t *testing.T) {
 			// Absent option: providers must not invent a selection. Google is the
 			// exception pi shares — it derives AUTO/VALIDATED from the tools alone.
 			got := tc.want(captureSimplePayload(t, tc.stream, tc.model, req, ""))
-			if tc.name == "google-generative-ai" {
-				if got == "NONE" {
-					t.Fatalf("unset must not become NONE, got %v", got)
+			if tc.derivesUnsetMode {
+				if got == tc.wantNone {
+					t.Fatalf("unset must not become %v, got %v", tc.wantNone, got)
 				}
 				return
 			}

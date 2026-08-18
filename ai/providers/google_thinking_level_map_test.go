@@ -46,13 +46,15 @@ func TestResolveGoogleThinkingLevel(t *testing.T) {
 		"high":    "high",
 	}
 	for level, want := range defaults {
-		got, err := resolveGoogleThinkingLevel(googleLevelMapModel("gemini-3.7-flash", nil), level)
-		if err != nil {
-			t.Fatalf("%s: unexpected error: %v", level, err)
-		}
-		if got != want {
-			t.Fatalf("%s: want %q, got %q", level, want, got)
-		}
+		t.Run(string(level), func(t *testing.T) {
+			got, err := resolveGoogleThinkingLevel(googleLevelMapModel("gemini-3.7-flash", nil), level)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got != want {
+				t.Fatalf("want %q, got %q", want, got)
+			}
+		})
 	}
 
 	// A mapping value wins over the requested level, case-insensitively.

@@ -331,9 +331,6 @@ func TestAnthropicSummarizationFallback(t *testing.T) {
 			if got == nil {
 				t.Fatal("want a fallback, got nil")
 			}
-			if got.Default {
-				t.Fatalf("want the explicit-models arm, got the default arm: %+v", got)
-			}
 			if len(got.Models) != len(tc.want) || got.Models[0] != tc.want[0] {
 				t.Fatalf("want %v, got %v", tc.want, got.Models)
 			}
