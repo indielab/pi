@@ -244,3 +244,76 @@ func TestValidateNameAccepts(t *testing.T) {
 		t.Fatalf("over-long name should error")
 	}
 }
+
+// TestLoadSkillsAgentsModeIsTheMirrorOfPiMode pins pi's SkillDiscoveryMode
+// (upstream 5e11f6586): the AGENTS-convention directories load NESTED markdown
+// files and ignore root-level ones, exactly inverting pi-mode discovery.
+// SKILL.md keeps stopping recursion in both.
+func TestLoadSkillsAgentsModeIsTheMirrorOfPiMode(t *testing.T) {
+	build := func(t *testing.T) string {
+		t.Helper()
+		root := t.TempDir()
+		writeSkillFile(t, filepath.Join(root, "root-note.md"), "root-note", "A root-level markdown file")
+		writeSkillFile(t, filepath.Join(root, "nested", "helper.md"), "nested-helper", "A nested markdown file")
+		writeSkillFile(t, filepath.Join(root, "declared", "SKILL.md"), "declared-skill", "A declared skill")
+		writeSkillFile(t, filepath.Join(root, "declared", "extra.md"), "declared-extra", "Must not load")
+		return root
+	}
+
+	piSkills, _ := loadSkillsFromDirMode(build(t), skillModePi)
+	if findSkill(piSkills, "root-note") == nil {
+		t.Fatalf("pi mode must load root-level .md: %+v", piSkills)
+	}
+	if findSkill(piSkills, "nested-helper") != nil {
+		t.Fatalf("pi mode must not load nested .md: %+v", piSkills)
+	}
+
+	agentsSkills, _ := loadSkillsFromDirMode(build(t), skillModeAgents)
+	if findSkill(agentsSkills, "root-note") != nil {
+		t.Fatalf("agents mode must not load root-level .md: %+v", agentsSkills)
+	}
+	if findSkill(agentsSkills, "nested-helper") == nil {
+		t.Fatalf("agents mode must load nested .md: %+v", agentsSkills)
+	}
+
+	// Shared in both modes: SKILL.md declares a root and stops recursion there.
+	for name, skills := range map[string][]Skill{"pi": piSkills, "agents": agentsSkills} {
+		if findSkill(skills, "declared-skill") == nil {
+			t.Fatalf("%s mode must load a declared SKILL.md: %+v", name, skills)
+		}
+		if findSkill(skills, "declared-extra") != nil {
+			t.Fatalf("%s mode must not recurse past a SKILL.md root: %+v", name, skills)
+		}
+	}
+}
+
+// TestLoadSkillsDiscoversUserAgentsDir verifies ~/.agents/skills participates in
+// discovery, in agents mode, and that it cannot displace a name an existing pi
+// directory already resolved (names dedup first-wins, and it is scanned last).
+func TestLoadSkillsDiscoversUserAgentsDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home) // windows home lookup
+
+	agentsRoot := filepath.Join(home, ".agents", "skills")
+	writeSkillFile(t, filepath.Join(agentsRoot, "nested", "from-agents.md"), "from-agents", "Nested agents-dir skill")
+	writeSkillFile(t, filepath.Join(agentsRoot, "top-level.md"), "agents-root-note", "Root-level, must not load")
+	writeSkillFile(t, filepath.Join(agentsRoot, "shared", "SKILL.md"), "shared-name", "The agents-dir one")
+
+	// The pi user directory defines the same name and is scanned first.
+	writeSkillFile(t, filepath.Join(AgentDir(), "skills", "shared", "SKILL.md"), "shared-name", "The pi one")
+
+	cwd := t.TempDir()
+	skills, _ := LoadSkillsWithDiagnostics(cwd)
+
+	if findSkill(skills, "from-agents") == nil {
+		t.Fatalf("~/.agents/skills nested skill not discovered: %+v", skills)
+	}
+	if findSkill(skills, "agents-root-note") != nil {
+		t.Fatalf("~/.agents/skills root-level .md must not load: %+v", skills)
+	}
+	shared := findSkill(skills, "shared-name")
+	if shared == nil || shared.Description != "The pi one" {
+		t.Fatalf("the pi directory must keep the name it resolved first: %+v", shared)
+	}
+}

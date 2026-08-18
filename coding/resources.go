@@ -255,9 +255,30 @@ const (
 
 var skillIgnoreFileNames = []string{".gitignore", ".ignore", ".fdignore"}
 
-// LoadSkills discovers skills under the user (~/.pi/agent/skills) and project
-// (<cwd>/.pi/skills) skill directories. Diagnostics are discarded; see
-// LoadSkillsWithDiagnostics.
+// skillDiscoveryMode selects which markdown files count as skills alongside the
+// SKILL.md roots (pi SkillDiscoveryMode). The two modes are mirror images: pi's
+// own directories load ROOT-level .md files, and the AGENTS-convention
+// directories load NESTED ones instead.
+type skillDiscoveryMode int
+
+const (
+	skillModePi skillDiscoveryMode = iota
+	skillModeAgents
+)
+
+// AgentsSkillsDir returns the user's AGENTS-convention skills directory
+// (~/.agents/skills), the sibling of pi's own ~/.pi/agent/skills.
+func AgentsSkillsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".agents", "skills")
+	}
+	return filepath.Join(home, ".agents", "skills")
+}
+
+// LoadSkills discovers skills under the user (~/.pi/agent/skills and
+// ~/.agents/skills) and project (<cwd>/.pi/skills) skill directories.
+// Diagnostics are discarded; see LoadSkillsWithDiagnostics.
 func LoadSkills(cwd string) []Skill {
 	skills, _ := LoadSkillsWithDiagnostics(cwd)
 	return skills
@@ -285,10 +306,18 @@ func LoadSkillsWithDiagnostics(cwd string) ([]Skill, []SkillDiagnostic) {
 	add(s1, d1)
 	s2, d2 := loadSkillsFromDir(filepath.Join(cwd, ConfigDirName, "skills"))
 	add(s2, d2)
+	// The AGENTS-convention user directory comes last, where upstream also puts
+	// it among its four discovery calls. Since names dedup first-wins, appending
+	// can only ADD skills that no pi directory already defines — it cannot change
+	// how an existing name resolves. pi's ancestor <project>/.agents/skills dirs
+	// are NOT discovered here: they are gated on project trust, which is not
+	// ported (2026-06-12 ruling; see the 2026-08-18 ruling for this split).
+	s3, d3 := loadSkillsFromDirMode(AgentsSkillsDir(), skillModeAgents)
+	add(s3, d3)
 	return skills, diags
 }
 
-// loadSkillsFromDir scans a directory for skills (port of loadSkillsFromDir).
+// loadSkillsFromDir scans a pi skills directory (port of loadSkillsFromDir).
 // Discovery rules:
 //   - a directory containing SKILL.md is a skill root (no further recursion);
 //   - otherwise load direct .md children of the root, and recurse into
@@ -296,10 +325,17 @@ func LoadSkillsWithDiagnostics(cwd string) ([]Skill, []SkillDiagnostic) {
 //   - honor .gitignore/.ignore/.fdignore, skip node_modules, follow symlinks but
 //     realpath-dedup so a symlink loop or duplicate target is visited once.
 func loadSkillsFromDir(dir string) ([]Skill, []SkillDiagnostic) {
-	return loadSkillsFromDirInternal(dir, dir, true, newSkillIgnore(), map[string]bool{})
+	return loadSkillsFromDirMode(dir, skillModePi)
 }
 
-func loadSkillsFromDirInternal(dir, root string, includeRootFiles bool, ig *skillIgnore, visited map[string]bool) ([]Skill, []SkillDiagnostic) {
+// loadSkillsFromDirMode is loadSkillsFromDir with the discovery mode chosen:
+// agents mode loads NESTED .md files and ignores root-level ones, the mirror of
+// pi mode (upstream 5e11f6586).
+func loadSkillsFromDirMode(dir string, mode skillDiscoveryMode) ([]Skill, []SkillDiagnostic) {
+	return loadSkillsFromDirInternal(dir, dir, mode, newSkillIgnore(), map[string]bool{})
+}
+
+func loadSkillsFromDirInternal(dir, root string, mode skillDiscoveryMode, ig *skillIgnore, visited map[string]bool) ([]Skill, []SkillDiagnostic) {
 	var skills []Skill
 	var diags []SkillDiagnostic
 
@@ -363,13 +399,16 @@ func loadSkillsFromDirInternal(dir, root string, includeRootFiles bool, ig *skil
 		}
 
 		if isDir {
-			s, d := loadSkillsFromDirInternal(full, root, false, ig, visited)
+			s, d := loadSkillsFromDirInternal(full, root, mode, ig, visited)
 			skills = append(skills, s...)
 			diags = append(diags, d...)
 			continue
 		}
 
-		if !isFile || !includeRootFiles || !strings.HasSuffix(name, ".md") {
+		// pi: (mode === "pi" && dir === root) || (mode === "agents" && dir !== root).
+		atRoot := dir == root
+		includeMarkdown := (mode == skillModePi && atRoot) || (mode == skillModeAgents && !atRoot)
+		if !isFile || !includeMarkdown || !strings.HasSuffix(name, ".md") {
 			continue
 		}
 		s, d := loadSkillFromFile(full)
