@@ -20,6 +20,7 @@ const (
 	anthropicVersion          = "2023-06-01"
 	fineGrainedToolStreamBeta = "fine-grained-tool-streaming-2025-05-14"
 	interleavedThinkingBeta   = "interleaved-thinking-2025-05-14"
+	serverSideFallbackBeta    = "server-side-fallback-2026-07-01"
 	claudeCodeVersion         = "2.1.75"
 	anthropicDefaultBaseURL   = "https://api.anthropic.com"
 )
@@ -71,6 +72,9 @@ type AnthropicOptions struct {
 	ThinkingDisplay      string // summarized|omitted
 	InterleavedThinking  *bool
 	ToolChoice           any
+	// RefusalFallbacks asks Anthropic to retry an eligible refusal on another
+	// model server-side. Non-nil also opts the request into the fallback beta.
+	RefusalFallbacks *ai.AnthropicRefusalFallback
 }
 
 // AnthropicCompat holds resolved Anthropic-messages compatibility flags.
@@ -210,6 +214,11 @@ func StreamSimpleAnthropic(ctx context.Context, model *ai.Model, req ai.Context,
 	base.MaxTokens = &baseMaxTokens
 	base.SamplingParams = ai.MergeSamplingParams(model, opts)
 	aopts := AnthropicOptions{StreamOptions: base}
+	// pi threads refusalFallbacks into each of streamSimple's three stream()
+	// calls; the single options value here covers all three return paths.
+	if opts != nil {
+		aopts.RefusalFallbacks = opts.RefusalFallbacks
+	}
 
 	reasoning := ai.ThinkingLevel("")
 	if opts != nil {
@@ -463,6 +472,9 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 				sawStart = true
 				if ev.Message != nil {
 					output.ResponseID = ev.Message.ID
+					// pi eb1f87fa9: the served model replaces the requested one, so a
+					// server-side refusal fallback is visible on the message.
+					output.Model = ev.Message.Model
 					applyUsage(&output.Usage, ev.Message.Usage, true)
 					ai.CalculateCost(model, &output.Usage)
 				}
@@ -778,6 +790,12 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 		default:
 			params["tool_choice"] = tc
 		}
+	}
+
+	// Server-side refusal fallback. pi appends this last, after every other key
+	// (anthropic-messages.ts buildParams).
+	if opts != nil && opts.RefusalFallbacks != nil {
+		params["fallbacks"] = *opts.RefusalFallbacks
 	}
 
 	return params, nil
@@ -1098,6 +1116,11 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	if interleaved && !compat.forceAdaptiveThinking {
 		betas = append(betas, interleavedThinkingBeta)
 	}
+	// pi appends the fallback beta third, and every auth branch below carries the
+	// same list — copilot and OAuth included.
+	if opts.RefusalFallbacks != nil {
+		betas = append(betas, serverSideFallbackBeta)
+	}
 
 	// Cloudflare AI Gateway auth is header-owned: pi's resolver returns
 	// cf-aig-authorization plus markers suppressing x-api-key/Authorization, and
@@ -1226,7 +1249,10 @@ type anthropicStreamEvent struct {
 	Type    string `json:"type"`
 	Index   int    `json:"index"`
 	Message *struct {
-		ID    string         `json:"id"`
+		ID string `json:"id"`
+		// Model is the model Anthropic actually served, which differs from the
+		// requested one when a server-side refusal fallback fired.
+		Model string         `json:"model"`
 		Usage anthropicUsage `json:"usage"`
 	} `json:"message"`
 	ContentBlock *struct {

@@ -278,3 +278,65 @@ func TestSummarizationUsesAuthResolvedBaseURL(t *testing.T) {
 		t.Fatalf("compaction request base URL = %q, want %q", requestBaseURL, enterpriseBaseURL)
 	}
 }
+
+// TestAnthropicSummarizationFallback pins pi getAnthropicSummarizationFallback
+// (upstream eb1f87fa9): only first-party Anthropic models that declare permitted
+// fallback targets get one, and only the first target is used.
+func TestAnthropicSummarizationFallback(t *testing.T) {
+	anthropic := func(compat string) *ai.Model {
+		m := &ai.Model{ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "anthropic"}
+		if compat != "" {
+			m.Compat = []byte(compat)
+		}
+		return m
+	}
+	cases := []struct {
+		name  string
+		model *ai.Model
+		want  []string
+	}{
+		{
+			name:  "first permitted target only",
+			model: anthropic(`{"allowedFallbackModels":["claude-opus-4-8","claude-opus-5"]}`),
+			want:  []string{"claude-opus-4-8"},
+		},
+		{name: "no compat", model: anthropic("")},
+		{name: "compat without the key", model: anthropic(`{"supportsTemperature":true}`)},
+		{name: "empty target list", model: anthropic(`{"allowedFallbackModels":[]}`)},
+		{
+			name: "third-party provider on the anthropic api",
+			model: &ai.Model{
+				ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "github-copilot",
+				Compat: []byte(`{"allowedFallbackModels":["claude-opus-4-8"]}`),
+			},
+		},
+		{
+			name: "anthropic provider on another api",
+			model: &ai.Model{
+				ID: "claude-opus-5", Api: ai.APIOpenAICompletions, Provider: "anthropic",
+				Compat: []byte(`{"allowedFallbackModels":["claude-opus-4-8"]}`),
+			},
+		},
+		{name: "nil model"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := anthropicSummarizationFallback(tc.model)
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("want no fallback, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatal("want a fallback, got nil")
+			}
+			if got.Default {
+				t.Fatalf("want the explicit-models arm, got the default arm: %+v", got)
+			}
+			if len(got.Models) != len(tc.want) || got.Models[0] != tc.want[0] {
+				t.Fatalf("want %v, got %v", tc.want, got.Models)
+			}
+		})
+	}
+}

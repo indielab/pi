@@ -896,6 +896,37 @@ type StreamOptions struct {
 	Metadata                  map[string]any
 }
 
+// AnthropicRefusalFallback asks Anthropic to retry an eligible refusal on
+// another model server-side before returning a final response (pi
+// AnthropicRefusalFallback, upstream eb1f87fa9). Anthropic providers only.
+//
+// pi writes this as `"default" | readonly { model: string }[]`. Go keeps both
+// arms rather than collapsing them, because they are not interchangeable on the
+// wire: Default is pi's "default" literal, and Models is an explicit chain sent
+// in order. A model's permitted targets come from its catalog compat
+// (`allowedFallbackModels`); Anthropic rejects `fallbacks` for models that
+// permit none, so callers must omit the option entirely for those.
+type AnthropicRefusalFallback struct {
+	// Default selects Anthropic's own fallback chain. Takes precedence over Models.
+	Default bool
+	// Models is the explicit fallback chain, in order.
+	Models []string
+}
+
+// MarshalJSON emits whichever arm of pi's union this value carries.
+func (f AnthropicRefusalFallback) MarshalJSON() ([]byte, error) {
+	if f.Default {
+		return json.Marshal("default")
+	}
+	entries := make([]struct {
+		Model string `json:"model"`
+	}, len(f.Models))
+	for i, id := range f.Models {
+		entries[i].Model = id
+	}
+	return json.Marshal(entries)
+}
+
 // SimpleStreamOptions extends StreamOptions with unified reasoning controls.
 type SimpleStreamOptions struct {
 	StreamOptions
@@ -903,6 +934,10 @@ type SimpleStreamOptions struct {
 	// Deferred asks a capable provider to return a DeferredHandle and continue
 	// the request asynchronously; nil is pi's absent `deferred`. Providers that
 	// do not support deferral ignore it.
-	Deferred        *DeferredRequest
-	ThinkingBudgets *ThinkingBudgets
+	Deferred *DeferredRequest
+	// RefusalFallbacks is Anthropic's server-side fallback for eligible refusal
+	// stop reasons; nil is pi's absent `refusalFallbacks`. Anthropic providers
+	// only — every other provider ignores it.
+	RefusalFallbacks *AnthropicRefusalFallback
+	ThinkingBudgets  *ThinkingBudgets
 }

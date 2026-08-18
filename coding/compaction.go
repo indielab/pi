@@ -543,6 +543,33 @@ func (s *Session) summarizationRequestModel(ctx context.Context) *ai.Model {
 	return &requestModel
 }
 
+// anthropicSummarizationFallback ports pi getAnthropicSummarizationFallback
+// (compaction.ts, upstream eb1f87fa9): first-party Anthropic models that declare
+// permitted fallback targets get the first one, so a refusal during
+// summarization is retried server-side instead of failing the compaction.
+//
+// The compat blob is raw JSON in Go, so the read that TS gets from a typed
+// `compat?.allowedFallbackModels` happens here, local to the one consumer —
+// which is where pi keeps it too.
+func anthropicSummarizationFallback(model *ai.Model) *ai.AnthropicRefusalFallback {
+	if model == nil || model.Provider != "anthropic" || model.Api != ai.APIAnthropicMessages {
+		return nil
+	}
+	var compat struct {
+		AllowedFallbackModels []string `json:"allowedFallbackModels"`
+	}
+	if len(model.Compat) == 0 || json.Unmarshal(model.Compat, &compat) != nil {
+		return nil
+	}
+	if len(compat.AllowedFallbackModels) == 0 {
+		return nil
+	}
+	// Use the primary permitted fallback for now. If future Anthropic models
+	// expose broader fallback behavior, this can become a user/config pick or a
+	// full chain.
+	return &ai.AnthropicRefusalFallback{Models: compat.AllowedFallbackModels[:1]}
+}
+
 // completeSummarization sends one summarization request (pi completeSummarization
 // + createSummarizationOptions, compaction.ts:526-552): the session's API key,
 // headers, and — when the model supports reasoning and the session's thinking
@@ -559,6 +586,10 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	if sessionID == "" {
 		sessionID = uuidv7()
 	}
+	// pi hands the same model to createSummarizationOptions and to
+	// completeSummarization, so the fallback decision is made on the model the
+	// request will actually use.
+	requestModel := s.summarizationRequestModel(ctx)
 	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{
 		ProviderRequestOptions: ai.ProviderRequestOptions{
 			APIKey:  s.apiKey,
@@ -568,6 +599,9 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 		CacheRetention: ai.CacheNone,
 		SessionID:      sessionID,
 	}}
+	if fallbacks := anthropicSummarizationFallback(requestModel); fallbacks != nil {
+		opts.RefusalFallbacks = fallbacks
+	}
 	level := s.Agent.State().ThinkingLevel
 	if s.Model != nil && s.Model.Reasoning && level != "" && level != agent.ThinkOff {
 		opts.Reasoning = ai.ThinkingLevel(level)
@@ -577,7 +611,6 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	if streamFn == nil {
 		streamFn = ai.StreamSimple
 	}
-	requestModel := s.summarizationRequestModel(ctx)
 	stream := streamFn(ctx, requestModel, ai.Context{SystemPrompt: summarizationSystemPrompt, Messages: summarizationMessages}, opts)
 	msg := stream.Result()
 	if msg == nil || msg.StopReason == ai.StopError {
