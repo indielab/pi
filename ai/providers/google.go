@@ -67,13 +67,14 @@ func StreamSimpleGoogle(ctx context.Context, model *ai.Model, req ai.Context, op
 		return StreamGoogle(ctx, model, req, g)
 	}
 	clamped := ai.ClampThinkingLevel(model, ai.ModelThinkingLevel(reasoning))
-	// pi google.ts:296 only coerces "off" → "high". An "xhigh" that survives
-	// clamping falls through both getThinkingLevel and getGoogleBudget's
-	// per-family tables, yielding thinkingConfig:{includeThoughts:true} with
-	// neither thinkingLevel nor thinkingBudget.
-	effort := string(clamped)
-	if effort == "off" {
-		effort = "high"
+	// pi resolves the clamped level through the model's thinkingLevelMap before
+	// picking a level or a budget (upstream af2c35223). A level that resolves to
+	// something outside Google's four standard levels is an error now, where it
+	// used to fall through both tables into thinkingConfig:{includeThoughts:true}
+	// with neither thinkingLevel nor thinkingBudget.
+	effort, err := resolveGoogleThinkingLevel(model, clamped)
+	if err != nil {
+		return terminalErrorStream(model, err)
 	}
 	g.ThinkingProvided = true
 	g.ThinkingEnabled = true
@@ -123,6 +124,41 @@ func getDisabledThinkingConfig(modelID string) map[string]any {
 	default:
 		return map[string]any{"thinkingBudget": 0}
 	}
+}
+
+// resolveGoogleThinkingLevel ports pi resolveGoogleThinkingLevel (google-shared.ts,
+// upstream af2c35223): map a clamped pi level onto one of Google's four standard
+// levels. "off" becomes "high"; anything else consults the model's
+// thinkingLevelMap, which only participates when it holds a string for that level
+// — pi guards with `typeof mapped === "string"`, so an explicit null (the map's
+// "unsupported" marker) falls back to the level itself, exactly like an absent key.
+//
+// The error text is model-visible and byte-exact against pi's template, including
+// JS `String(mapped)` rendering an absent key as "undefined" and a null entry as
+// "null".
+func resolveGoogleThinkingLevel(model *ai.Model, level ai.ModelThinkingLevel) (string, error) {
+	if level == "off" {
+		return "high", nil
+	}
+	mapped, present := model.ThinkingLevelMap[level]
+	resolved := string(level)
+	if mapped != nil {
+		resolved = strings.ToLower(*mapped)
+	}
+	switch resolved {
+	case "minimal", "low", "medium", "high":
+		return resolved, nil
+	}
+	rendered := "undefined"
+	if present {
+		if mapped == nil {
+			rendered = "null"
+		} else {
+			rendered = *mapped
+		}
+	}
+	return "", fmt.Errorf("Unsupported Google thinking level mapping for %s/%s: %s -> %s",
+		model.Provider, model.ID, level, rendered)
 }
 
 // googleThinkingLevel mirrors pi getThinkingLevel (google.ts:430-461). The empty

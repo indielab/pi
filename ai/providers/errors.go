@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf16"
+
+	"github.com/sky-valley/pi/ai"
 )
 
 // maxProviderErrorBodyChars caps the surfaced HTTP error body, matching pi's
@@ -169,4 +171,24 @@ func jsTruthy(v any) bool {
 	default:
 		return true // objects and arrays are always truthy
 	}
+}
+
+// terminalErrorStream returns a closed stream carrying a single terminal error
+// event. pi raises these setup failures by throwing synchronously out of
+// streamSimple; the Go seam returns a stream rather than an error, so — per the
+// stream contract documented on ai.Stream — the failure is encoded in the stream
+// instead. Mirrors the shape the providers' own in-flight fail() paths produce.
+func terminalErrorStream(model *ai.Model, err error) *ai.AssistantMessageEventStream {
+	s := ai.NewAssistantMessageEventStream()
+	msg := &ai.AssistantMessage{
+		Api:          model.Api,
+		Provider:     model.Provider,
+		Model:        model.ID,
+		StopReason:   ai.StopError,
+		ErrorMessage: err.Error(),
+		Timestamp:    nowMillis(),
+	}
+	s.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: ai.StopError, Error: msg})
+	s.End()
+	return s
 }
