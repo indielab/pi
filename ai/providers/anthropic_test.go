@@ -1536,3 +1536,43 @@ func TestAnthropicNonKimiKeepsConsumerUserAgent(t *testing.T) {
 		t.Fatalf("anthropic user-agent = %q, want the consumer value untouched", got)
 	}
 }
+
+// allowedFallbackModels is decoded on its own so a shape it cannot read cannot
+// take the boolean compat flags down with it: encoding/json populates the
+// siblings but still returns an error for the whole blob, and getAnthropicCompat
+// applies the booleans only when the decode succeeded.
+func TestAnthropicCompatSurvivesMalformedFallbackTargets(t *testing.T) {
+	model := func(compat string) *ai.Model {
+		return &ai.Model{
+			ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "anthropic",
+			Compat: []byte(compat),
+		}
+	}
+
+	t.Run("legacy string targets", func(t *testing.T) {
+		c := getAnthropicCompat(model(`{"supportsTemperature":false,"allowedFallbackModels":["claude-opus-4-8"]}`))
+		if c.supportsTemperature {
+			t.Fatalf("supportsTemperature = true, want false")
+		}
+		if len(c.allowedFallbackModels) != 0 {
+			t.Fatalf("want the unreadable field to yield nothing, got %+v", c.allowedFallbackModels)
+		}
+	})
+
+	t.Run("object targets with pricing", func(t *testing.T) {
+		c := getAnthropicCompat(model(`{"supportsTemperature":false,"allowedFallbackModels":[{"model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}]}`))
+		if c.supportsTemperature {
+			t.Fatalf("supportsTemperature = true, want false")
+		}
+		if len(c.allowedFallbackModels) != 1 || c.allowedFallbackModels[0].Model != "claude-opus-4-8" {
+			t.Fatalf("want one target for claude-opus-4-8, got %+v", c.allowedFallbackModels)
+		}
+		cost := c.allowedFallbackModels[0].Cost
+		if cost == nil {
+			t.Fatal("want the target's local pricing, got nil")
+		}
+		if cost.Input != 5 || cost.Output != 25 || cost.CacheRead != 0.5 || cost.CacheWrite != 6.25 {
+			t.Fatalf("want cost {5 25 0.5 6.25}, got %+v", *cost)
+		}
+	})
+}

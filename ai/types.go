@@ -906,60 +906,87 @@ type StreamOptions struct {
 	Metadata                  map[string]any
 }
 
-// AnthropicRefusalFallback asks Anthropic to retry an eligible refusal on
-// another model server-side before returning a final response (pi
-// AnthropicRefusalFallback, upstream eb1f87fa9). Anthropic providers only.
+// AnthropicRefusalFallbackTarget is one permitted fallback model, optionally
+// carrying the local pricing used to cost a response that target actually served
+// (pi AnthropicRefusalFallbackTarget, upstream 4809c2abc). pi marks `cost`
+// @internal and strips it before the provider request.
 //
-// pi writes this as `"default" | readonly { model: string }[]`; Go collapses the
-// union the way DeferredRequest does, onto the value that carries the extra
-// information: an empty chain IS pi's "default" literal. pi's empty-array arm is
-// deliberately unrepresentable — no pi code path produces it, and a model whose
-// catalog compat lists no permitted targets must omit `fallbacks` entirely
-// rather than send it empty, which Anthropic rejects.
-type AnthropicRefusalFallback struct {
-	// Models is the explicit fallback chain, in order. Empty selects Anthropic's
-	// own chain.
-	Models []string
+// The pointer is load-bearing: pi gates the pricing swap on the field being
+// present, and a target priced at zero must still swap — which a value-typed
+// ModelCost read as "zero means absent" would get wrong.
+type AnthropicRefusalFallbackTarget struct {
+	Model string     `json:"model"`
+	Cost  *ModelCost `json:"cost,omitempty"`
 }
 
-// anthropicFallbackEntry is one element of pi's array arm.
-type anthropicFallbackEntry struct {
+// AnthropicRefusalFallback asks Anthropic to retry an eligible refusal on
+// another model server-side before returning a final response (pi
+// AnthropicRefusalFallback, upstream eb1f87fa9, 4809c2abc). Anthropic providers
+// only.
+//
+// pi writes this as `"default" | readonly AnthropicRefusalFallbackTarget[]`; Go
+// collapses the union the way DeferredRequest does, onto the value that carries
+// the extra information: an empty chain IS pi's "default" literal. pi's
+// empty-array arm is deliberately unrepresentable — no pi code path produces it,
+// and a model whose catalog compat lists no permitted targets must omit
+// `fallbacks` entirely rather than send it empty, which Anthropic rejects.
+//
+// Targets may carry local pricing that never reaches Anthropic: MarshalJSON
+// projects every target down to `{model}`, mirroring pi's explicit
+// `.map(f => ({ model: f.model }))` in buildParams. The marshal/unmarshal
+// round-trip is therefore lossy in that one field by design — cost is read from
+// the caller or the catalog, used to price the response the fallback served, and
+// dropped on the way out.
+type AnthropicRefusalFallback struct {
+	// Targets is the explicit fallback chain, in order. Empty selects Anthropic's
+	// own chain.
+	Targets []AnthropicRefusalFallbackTarget
+}
+
+// anthropicFallbackWire is the provider-facing form of one target: pi maps every
+// target down to `{ model }` before the request so local pricing never reaches
+// Anthropic (anthropic-messages.ts buildParams, upstream 4809c2abc).
+type anthropicFallbackWire struct {
 	Model string `json:"model"`
 }
 
 // MarshalJSON emits whichever arm of pi's union this value carries.
 func (f AnthropicRefusalFallback) MarshalJSON() ([]byte, error) {
-	if len(f.Models) == 0 {
+	if len(f.Targets) == 0 {
 		return json.Marshal("default")
 	}
-	entries := make([]anthropicFallbackEntry, len(f.Models))
-	for i, id := range f.Models {
-		entries[i].Model = id
+	// Projecting onto anthropicFallbackWire drops Cost on purpose: pi strips it
+	// with an explicit .map in buildParams, documenting it as "Stripped before
+	// sending the provider request".
+	wire := make([]anthropicFallbackWire, len(f.Targets))
+	for i, t := range f.Targets {
+		wire[i].Model = t.Model
 	}
-	return json.Marshal(entries)
+	return json.Marshal(wire)
 }
 
-// UnmarshalJSON accepts either arm, so the option round-trips.
+// UnmarshalJSON accepts either arm, so the option round-trips. A target's `cost`
+// is accepted on the way in but never emitted on the way out, so the round-trip
+// is intentionally lossy in that field only.
 func (f *AnthropicRefusalFallback) UnmarshalJSON(data []byte) error {
 	var literal string
 	if json.Unmarshal(data, &literal) == nil {
 		if literal != "default" {
 			return fmt.Errorf("anthropic refusal fallback: want \"default\" or a chain of {model}, got %q", literal)
 		}
-		f.Models = nil
+		f.Targets = nil
 		return nil
 	}
-	var entries []anthropicFallbackEntry
-	if err := json.Unmarshal(data, &entries); err != nil {
+	var targets []AnthropicRefusalFallbackTarget
+	if err := json.Unmarshal(data, &targets); err != nil {
 		return fmt.Errorf("anthropic refusal fallback: want \"default\" or a chain of {model}: %w", err)
 	}
-	f.Models = make([]string, len(entries))
-	for i, e := range entries {
-		if e.Model == "" {
+	for i, t := range targets {
+		if t.Model == "" {
 			return fmt.Errorf("anthropic refusal fallback: entry %d has no model id", i)
 		}
-		f.Models[i] = e.Model
 	}
+	f.Targets = targets
 	return nil
 }
 

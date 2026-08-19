@@ -544,19 +544,23 @@ func (s *Session) summarizationRequestModel(ctx context.Context) *ai.Model {
 }
 
 // anthropicSummarizationFallback ports pi getAnthropicSummarizationFallback
-// (compaction.ts, upstream eb1f87fa9): first-party Anthropic models that declare
-// permitted fallback targets get the first one, so a refusal during
+// (compaction.ts, upstream eb1f87fa9, 4809c2abc): first-party Anthropic models
+// that declare permitted fallback targets get the first one, so a refusal during
 // summarization is retried server-side instead of failing the compaction.
 //
 // The compat blob is raw JSON in Go, so the read that TS gets from a typed
 // `compat?.allowedFallbackModels` happens here, local to the one consumer —
 // which is where pi keeps it too.
+//
+// The target is passed through whole so it carries the catalog's local pricing
+// for that fallback: the provider strips the pricing before the request but uses
+// it to cost a summary a fallback actually served (upstream 4809c2abc).
 func anthropicSummarizationFallback(model *ai.Model) *ai.AnthropicRefusalFallback {
 	if model == nil || model.Provider != "anthropic" || model.Api != ai.APIAnthropicMessages {
 		return nil
 	}
 	var compat struct {
-		AllowedFallbackModels []string `json:"allowedFallbackModels"`
+		AllowedFallbackModels []ai.AnthropicRefusalFallbackTarget `json:"allowedFallbackModels"`
 	}
 	if len(model.Compat) == 0 || json.Unmarshal(model.Compat, &compat) != nil {
 		return nil
@@ -567,7 +571,7 @@ func anthropicSummarizationFallback(model *ai.Model) *ai.AnthropicRefusalFallbac
 	// Use the primary permitted fallback for now. If future Anthropic models
 	// expose broader fallback behavior, this can become a user/config pick or a
 	// full chain.
-	return &ai.AnthropicRefusalFallback{Models: []string{compat.AllowedFallbackModels[0]}}
+	return &ai.AnthropicRefusalFallback{Targets: []ai.AnthropicRefusalFallbackTarget{compat.AllowedFallbackModels[0]}}
 }
 
 // completeSummarization sends one summarization request (pi completeSummarization

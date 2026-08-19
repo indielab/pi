@@ -290,15 +290,16 @@ func TestAnthropicSummarizationFallback(t *testing.T) {
 		}
 		return m
 	}
+	fallbackCost := &ai.ModelCost{Input: 5, Output: 25, CacheRead: 0.5, CacheWrite: 6.25}
 	cases := []struct {
 		name  string
 		model *ai.Model
-		want  []string
+		want  []ai.AnthropicRefusalFallbackTarget
 	}{
 		{
 			name:  "first permitted target only",
-			model: anthropic(`{"allowedFallbackModels":["claude-opus-4-8","claude-opus-5"]}`),
-			want:  []string{"claude-opus-4-8"},
+			model: anthropic(`{"allowedFallbackModels":[{"model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}},{"model":"claude-opus-5"}]}`),
+			want:  []ai.AnthropicRefusalFallbackTarget{{Model: "claude-opus-4-8", Cost: fallbackCost}},
 		},
 		{name: "no compat", model: anthropic("")},
 		{name: "compat without the key", model: anthropic(`{"supportsTemperature":true}`)},
@@ -307,14 +308,14 @@ func TestAnthropicSummarizationFallback(t *testing.T) {
 			name: "third-party provider on the anthropic api",
 			model: &ai.Model{
 				ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "github-copilot",
-				Compat: []byte(`{"allowedFallbackModels":["claude-opus-4-8"]}`),
+				Compat: []byte(`{"allowedFallbackModels":[{"model":"claude-opus-4-8"}]}`),
 			},
 		},
 		{
 			name: "anthropic provider on another api",
 			model: &ai.Model{
 				ID: "claude-opus-5", Api: ai.APIOpenAICompletions, Provider: "anthropic",
-				Compat: []byte(`{"allowedFallbackModels":["claude-opus-4-8"]}`),
+				Compat: []byte(`{"allowedFallbackModels":[{"model":"claude-opus-4-8"}]}`),
 			},
 		},
 		{name: "nil model"},
@@ -331,10 +332,46 @@ func TestAnthropicSummarizationFallback(t *testing.T) {
 			if got == nil {
 				t.Fatal("want a fallback, got nil")
 			}
-			if len(got.Models) != len(tc.want) || got.Models[0] != tc.want[0] {
-				t.Fatalf("want %v, got %v", tc.want, got.Models)
+			if len(got.Targets) != len(tc.want) || got.Targets[0].Model != tc.want[0].Model {
+				t.Fatalf("want %v, got %v", tc.want, got.Targets)
+			}
+			// The whole target travels, pricing included (upstream 4809c2abc).
+			c := got.Targets[0].Cost
+			if c == nil {
+				t.Fatalf("want cost %+v, got nil", *tc.want[0].Cost)
+			}
+			if w := *tc.want[0].Cost; c.Input != w.Input || c.Output != w.Output || c.CacheRead != w.CacheRead || c.CacheWrite != w.CacheWrite {
+				t.Fatalf("want cost %+v, got %+v", w, *c)
 			}
 		})
+	}
+}
+
+// TestAnthropicSummarizationFallbackDecodesObjectCompat is the tripwire for the
+// queued catalog regen (upstream 4809c2abc): the generator now emits
+// `compat.allowedFallbackModels` as objects carrying each target's cost. A
+// decoder still expecting bare strings errors on this blob, leaves the slice
+// empty, and the guard above turns that into a nil fallback — summarization
+// refusal fallbacks would vanish silently, with no error anywhere. The sibling
+// boolean key is here so the test also proves the whole blob decodes.
+func TestAnthropicSummarizationFallbackDecodesObjectCompat(t *testing.T) {
+	model := &ai.Model{
+		ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "anthropic",
+		Compat: []byte(`{"supportsTemperature":true,"allowedFallbackModels":[{"model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}},{"model":"claude-opus-5"}]}`),
+	}
+	got := anthropicSummarizationFallback(model)
+	if got == nil {
+		t.Fatal("want a fallback for the object-shaped compat, got nil")
+	}
+	if len(got.Targets) != 1 || got.Targets[0].Model != "claude-opus-4-8" {
+		t.Fatalf("want one target for claude-opus-4-8, got %+v", got.Targets)
+	}
+	c := got.Targets[0].Cost
+	if c == nil {
+		t.Fatal("want cost {input:5 output:25 cacheRead:0.5 cacheWrite:6.25}, got nil")
+	}
+	if c.Input != 5 || c.Output != 25 || c.CacheRead != 0.5 || c.CacheWrite != 6.25 {
+		t.Fatalf("want cost {input:5 output:25 cacheRead:0.5 cacheWrite:6.25}, got %+v", *c)
 	}
 }
 
