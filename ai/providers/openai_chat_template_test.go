@@ -35,6 +35,8 @@ func ctkParam(t *testing.T, body map[string]any) string {
 // TestOpenAIChatTemplateKwargs pins pi's chat-template thinking compat
 // (upstream 8b97e75c): $var resolution, omitWhenOff, scalar pass-through
 // (including null), thinkingLevelMap mapping, and insertion-order preservation.
+// The {"$var":"thinking.budget"} case lives in openai_thinking_token_budget_test.go,
+// where upstream b23741269 put its tests.
 func TestOpenAIChatTemplateKwargs(t *testing.T) {
 	// Ordered: enabled var, effort var (omitWhenOff), literal scalar, null scalar.
 	kwargs := `{"thinking":{"$var":"thinking.enabled"},"reasoning_effort":{"$var":"thinking.effort","omitWhenOff":true},"literal":"x","nullable":null}`

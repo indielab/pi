@@ -22,8 +22,10 @@ type OpenAIOptions struct {
 	// ToolChoice mirrors pi's OpenAICompletionsOptions.toolChoice: a string
 	// ("auto"|"none"|"required") or an object {type:"function",function:{name}}.
 	ToolChoice any
-	// ThinkingBudgets are token budgets per thinking level, only read when
-	// compat.SupportsThinkingTokenBudget is set (pi d07889da0).
+	// ThinkingBudgets are token budgets per thinking level. Used when
+	// compat.ThinkingTokenBudgetField or compat.SupportsThinkingTokenBudget is
+	// set, or by a {"$var": "thinking.budget"} chat-template value
+	// (pi b23741269).
 	ThinkingBudgets *ai.ThinkingBudgets
 }
 
@@ -946,29 +948,20 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 		params["tool_choice"] = opts.ToolChoice
 	}
 
-	applyReasoningFormat(params, model, compat, opts.ReasoningEffort)
+	// pi computes both once here, before the thinking-format dispatch: the
+	// chat-template/baseten branches read the budget for {"$var":"thinking.budget"}
+	// and the top-level field write below reads both (upstream b23741269).
+	budgetField := resolveThinkingTokenBudgetField(compat)
+	thinkingBudget := resolveClampedThinkingBudget(model, opts, params)
 
-	// vLLM caps reasoning with a top-level thinking_token_budget. Independent of
-	// thinkingFormat: the same server can serve zai, qwen or chat-template models.
-	// Reasoning and the answer share max_tokens here, so an uncapped reasoning
-	// phase can consume the whole response and leave no answer and no tool call
-	// (pi d07889da0).
-	if compat.SupportsThinkingTokenBudget && opts.ReasoningEffort != "" && model.Reasoning {
-		level := clampReasoning(ai.ThinkingLevel(opts.ReasoningEffort))
-		budgets := resolveThinkingBudgets(opts.ThinkingBudgets)
-		// pi: `params.max_tokens ?? params.max_completion_tokens ?? model.maxTokens`
-		// — presence in params is pi's non-undefined (sampling params merge later
-		// there too, so only the field set above can be present here).
-		ceiling := model.MaxTokens
-		if v, ok := params["max_tokens"].(int); ok {
-			ceiling = v
-		} else if v, ok := params["max_completion_tokens"].(int); ok {
-			ceiling = v
-		}
-		// Always leave room for the answer, otherwise the budget recreates the bug it prevents.
-		if budget := min(budgets[level], max(0, ceiling-minAnswerTokens)); budget > 0 {
-			params["thinking_token_budget"] = budget
-		}
+	applyReasoningFormat(params, model, compat, opts.ReasoningEffort, thinkingBudget)
+
+	// Cap reasoning with a top-level budget field. Independent of thinkingFormat:
+	// the same server can serve zai, qwen or chat-template models. Reasoning and
+	// the answer share max_tokens here, so an uncapped reasoning phase can consume
+	// the whole response and leave no answer and no tool call (pi b23741269).
+	if budgetField != "" && thinkingBudget != nil {
+		params[budgetField] = *thinkingBudget
 	}
 
 	// OpenRouter provider routing preferences. pi checks
@@ -1189,12 +1182,54 @@ func addCacheControlToTextContent(m map[string]any, cc map[string]any) bool {
 	return false
 }
 
+// resolveThinkingTokenBudgetField ports pi's resolveThinkingTokenBudgetField
+// (openai-completions.ts:891, upstream b23741269). "" is pi's undefined. The
+// boolean alias only fires when no explicit field name is set — and an explicit
+// empty field name is falsy in JS, so it falls through here the same way.
+func resolveThinkingTokenBudgetField(compat openAICompletionsCompat) string {
+	if compat.ThinkingTokenBudgetField != "" {
+		return compat.ThinkingTokenBudgetField
+	}
+	if compat.SupportsThinkingTokenBudget {
+		return "thinking_token_budget"
+	}
+	return ""
+}
+
+// resolveClampedThinkingBudget ports pi's resolveClampedThinkingBudget
+// (openai-completions.ts:899, upstream b23741269). nil is pi's undefined: no
+// requested effort, a non-reasoning model, or nothing left after reserving
+// answer room. The ceiling reads whichever max-token field buildOpenAIParams
+// already set, so this must run after that assignment and before the
+// samplingParams merge.
+func resolveClampedThinkingBudget(model *ai.Model, opts *OpenAIOptions, params map[string]any) *int {
+	if opts.ReasoningEffort == "" || !model.Reasoning {
+		return nil
+	}
+	// pi: `params.max_tokens ?? params.max_completion_tokens ?? model.maxTokens`
+	// — presence in params is pi's non-undefined (sampling params merge later
+	// there too, so only the field set above can be present here).
+	ceiling := model.MaxTokens
+	if v, ok := params["max_tokens"].(int); ok {
+		ceiling = v
+	} else if v, ok := params["max_completion_tokens"].(int); ok {
+		ceiling = v
+	}
+	// Always leave room for the answer, otherwise the budget recreates the bug it prevents.
+	budget := clampThinkingBudgetToAnswerRoom(
+		thinkingBudgetForLevel(ai.ThinkingLevel(opts.ReasoningEffort), opts.ThinkingBudgets), ceiling)
+	if budget <= 0 {
+		return nil
+	}
+	return &budget
+}
+
 // applyReasoningFormat sets reasoning fields per the provider's thinking format,
 // mirroring pi's openai-completions reasoning dispatch (:556-610). The switch
 // replicates pi's else-if chain exactly: note that "ant-ling" only matches when
 // an effort was requested, so ant-ling with no effort falls through to the
 // generic reasoning_effort branches at the bottom.
-func applyReasoningFormat(params map[string]any, model *ai.Model, compat openAICompletionsCompat, level string) {
+func applyReasoningFormat(params map[string]any, model *ai.Model, compat openAICompletionsCompat, level string, thinkingBudget *int) {
 	enabled := level != ""
 	switch {
 	case compat.ThinkingFormat == "zai" && model.Reasoning:
@@ -1234,13 +1269,13 @@ func applyReasoningFormat(params map[string]any, model *ai.Model, compat openAIC
 		// pi (8b97e75c): configurable chat_template_kwargs resolved from the
 		// model's compat.chatTemplateKwargs ($var/omitWhenOff/scalar). Emitted
 		// only when at least one kwarg survives resolution.
-		if kw := buildChatTemplateValues(model, compat.ChatTemplateKwargs, level); kw != nil {
+		if kw := buildChatTemplateValues(model, compat.ChatTemplateKwargs, level, thinkingBudget); kw != nil {
 			params["chat_template_kwargs"] = kw
 		}
 	case compat.ThinkingFormat == "baseten" && model.Reasoning:
 		// pi (c1019d92): Baseten takes configurable chat_template_args plus, when
 		// the model opts in, a native reasoning_effort.
-		if args := buildChatTemplateValues(model, compat.ChatTemplateArgs, level); args != nil {
+		if args := buildChatTemplateValues(model, compat.ChatTemplateArgs, level, thinkingBudget); args != nil {
 			params["chat_template_args"] = args
 		}
 		if compat.SupportsReasoningEffort {

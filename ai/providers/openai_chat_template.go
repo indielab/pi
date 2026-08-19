@@ -9,7 +9,8 @@ import (
 
 // chatTemplateKwargValue ports pi's ChatTemplateKwargValue (ai/types.ts): either
 // a scalar (string | number | boolean | null) or a pi-controlled variable object
-// {$var: "thinking.enabled" | "thinking.effort", omitWhenOff?: boolean}.
+// {$var: "thinking.enabled" | "thinking.effort" | "thinking.budget",
+// omitWhenOff?: boolean} (thinking.budget from upstream b23741269).
 type chatTemplateKwargValue struct {
 	isVar       bool
 	scalar      any // string, float64, bool, or nil (only when !isVar)
@@ -94,10 +95,10 @@ func parseChatTemplateKwargValue(raw json.RawMessage) chatTemplateKwargValue {
 // and return nil when nothing remains (pi returns undefined → no param emitted).
 // It serves both `chat_template_kwargs` (thinkingFormat "chat-template") and
 // `chat_template_args` (thinkingFormat "baseten").
-func buildChatTemplateValues(model *ai.Model, values []chatTemplateKwarg, level string) ai.OrderedObject {
+func buildChatTemplateValues(model *ai.Model, values []chatTemplateKwarg, level string, thinkingBudget *int) ai.OrderedObject {
 	var out ai.OrderedObject
 	for _, kw := range values {
-		if resolved, include := resolveChatTemplateKwargValue(model, level, kw.value); include {
+		if resolved, include := resolveChatTemplateKwargValue(model, level, kw.value, thinkingBudget); include {
 			out = append(out, ai.OrderedField{Key: kw.key, Value: resolved})
 		}
 	}
@@ -109,7 +110,7 @@ func buildChatTemplateValues(model *ai.Model, values []chatTemplateKwarg, level 
 
 // resolveChatTemplateKwargValue ports pi's resolveChatTemplateKwargValue. The
 // bool return is pi's undefined sentinel (false = omit the key).
-func resolveChatTemplateKwargValue(model *ai.Model, level string, v chatTemplateKwargValue) (any, bool) {
+func resolveChatTemplateKwargValue(model *ai.Model, level string, v chatTemplateKwargValue, thinkingBudget *int) (any, bool) {
 	if !v.isVar {
 		// Scalar (incl. JSON null) is carried through as-is.
 		return v.scalar, true
@@ -120,6 +121,15 @@ func resolveChatTemplateKwargValue(model *ai.Model, level string, v chatTemplate
 	}
 	if v.varName == "thinking.enabled" {
 		return enabled, true
+	}
+	if v.varName == "thinking.budget" {
+		// pi returns the possibly-undefined budget here; undefined drops the key
+		// in buildChatTemplateValues, which is what omits it when thinking is off
+		// (upstream b23741269).
+		if thinkingBudget == nil {
+			return nil, false
+		}
+		return *thinkingBudget, true
 	}
 	// "thinking.effort": mappedValue = reasoningEffort ? tlm[effort] : tlm.off.
 	mapKey := ai.ModelThinkingLevel(level)

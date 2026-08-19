@@ -595,6 +595,26 @@ func TestAnthropicStreamSimpleClampsMaxTokensAndBudget(t *testing.T) {
 	}
 }
 
+// clampThinkingBudgetToAnswerRoom is pi's extracted clamp (simple-options.ts:75,
+// upstream b23741269). The table covers the max(0,...) floor, which no wire test
+// reaches: on the openai path a negative budget is swallowed by the budget<=0
+// omit, and no anthropic test uses a ceiling below minAnswerTokens.
+func TestClampThinkingBudgetToAnswerRoom(t *testing.T) {
+	for _, tc := range []struct {
+		budget, ceiling, want int
+	}{
+		{16384, 16384, 15360}, // budget meets the ceiling: answer room wins
+		{8192, 4096, 3072},    // ceiling below the budget
+		{1024, 100000, 1024},  // roomy ceiling: the budget wins
+		{8192, 512, 0},        // ceiling under minAnswerTokens: floored, never negative
+		{8192, 1024, 0},       // ceiling exactly minAnswerTokens
+	} {
+		if got := clampThinkingBudgetToAnswerRoom(tc.budget, tc.ceiling); got != tc.want {
+			t.Errorf("clampThinkingBudgetToAnswerRoom(%d, %d) = %d, want %d", tc.budget, tc.ceiling, got, tc.want)
+		}
+	}
+}
+
 // streamSimpleAnthropic collapses xhigh AND max to high before reading the
 // budget table (pi clampReasoning, simple-options.ts): the table has no
 // xhigh/max rows, so an unclamped level would read a zero budget and fall to

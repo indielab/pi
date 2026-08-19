@@ -1,8 +1,9 @@
 package providers
 
 // Mirrors pi's packages/ai/test/openai-completions-thinking-token-budget.test.ts
-// (upstream d07889da0): behind the opt-in supportsThinkingTokenBudget compat
-// flag, a vLLM-served reasoning model gets a top-level thinking_token_budget,
+// (upstream d07889da0, generalized in b23741269): a reasoning model gets its
+// thinking budget on the compat-selected top-level field, or inside
+// chat_template_kwargs / chat_template_args via {"$var": "thinking.budget"},
 // clamped so at least minAnswerTokens remain for the answer.
 
 import (
@@ -44,14 +45,16 @@ func TestOpenAIThinkingTokenBudgetConfiguredLevel(t *testing.T) {
 	}
 }
 
-// "omits the budget when the compat flag is not set"
+// "omits the budget when neither the field nor the alias is set"
 func TestOpenAIThinkingTokenBudgetFlagOff(t *testing.T) {
 	model := budgetModel(func(m *ai.Model) {
 		m.Compat = json.RawMessage(`{"thinkingFormat":"zai"}`)
 	})
 	body := captureBudgetBody(t, model, ai.ThinkingMedium, &ai.ThinkingBudgets{Medium: intp(4096)}, nil)
-	if has(body, "thinking_token_budget") {
-		t.Fatalf("compat flag off must omit thinking_token_budget, got %v", body["thinking_token_budget"])
+	for _, field := range []string{"thinking_token_budget", "thinking_budget", "thinking_budget_tokens"} {
+		if has(body, field) {
+			t.Fatalf("neither field nor alias set must omit %s, got %v", field, body[field])
+		}
 	}
 }
 
@@ -150,5 +153,86 @@ func TestOpenAIThinkingTokenBudgetNonReasoningModel(t *testing.T) {
 	body := mustBuildOpenAIParams(t, model, baseReq(), &OpenAIOptions{ReasoningEffort: "high"})
 	if has(body, "thinking_token_budget") {
 		t.Fatalf("non-reasoning model must omit thinking_token_budget, got %v", body["thinking_token_budget"])
+	}
+}
+
+// ---- Upstream b23741269: compat-selected budget field + thinking.budget $var ----
+
+// "sends %s when thinkingTokenBudgetField is set"
+func TestOpenAIThinkingTokenBudgetFieldNames(t *testing.T) {
+	for _, field := range []string{"thinking_budget", "thinking_budget_tokens"} {
+		t.Run(field, func(t *testing.T) {
+			model := budgetModel(func(m *ai.Model) {
+				m.Compat = json.RawMessage(`{"thinkingFormat":"qwen","thinkingTokenBudgetField":"` + field + `"}`)
+			})
+			body := captureBudgetBody(t, model, ai.ThinkingMedium, &ai.ThinkingBudgets{Medium: intp(4096)}, nil)
+			if body[field] != 4096 {
+				t.Fatalf("%s = %v, want 4096", field, body[field])
+			}
+			if has(body, "thinking_token_budget") {
+				t.Fatalf("vLLM field must stay absent, got thinking_token_budget = %v", body["thinking_token_budget"])
+			}
+		})
+	}
+}
+
+// "lets thinkingTokenBudgetField win over the boolean alias"
+func TestOpenAIThinkingTokenBudgetFieldWinsOverAlias(t *testing.T) {
+	model := budgetModel(func(m *ai.Model) {
+		m.Compat = json.RawMessage(
+			`{"thinkingFormat":"zai","supportsThinkingTokenBudget":true,"thinkingTokenBudgetField":"thinking_budget"}`)
+	})
+	body := captureBudgetBody(t, model, ai.ThinkingMedium, &ai.ThinkingBudgets{Medium: intp(4096)}, nil)
+	if body["thinking_budget"] != 4096 {
+		t.Fatalf("thinking_budget = %v, want 4096", body["thinking_budget"])
+	}
+	if has(body, "thinking_token_budget") {
+		t.Fatalf("alias must not win: thinking_token_budget = %v", body["thinking_token_budget"])
+	}
+}
+
+// chatTemplateBudgetModel is the upstream test's chat-template variant: the
+// budget rides inside chat_template_kwargs, with no budget field configured.
+func chatTemplateBudgetModel() *ai.Model {
+	return budgetModel(func(m *ai.Model) {
+		m.Compat = json.RawMessage(`{"thinkingFormat":"chat-template","chatTemplateKwargs":` +
+			`{"enable_thinking":{"$var":"thinking.enabled"},"thinking_budget":{"$var":"thinking.budget"}}}`)
+	})
+}
+
+// "puts the clamped budget in chat_template_kwargs when $var is thinking.budget".
+// streamSimple sends the model cap (16384) as the max-token field, so the
+// default high budget clamps to 16384-1024. The absent thinking_token_budget is
+// what proves the $var path needs no configured budget field.
+func TestOpenAIThinkingBudgetVarInChatTemplateKwargs(t *testing.T) {
+	body := captureBudgetBody(t, chatTemplateBudgetModel(), ai.ThinkingHigh, nil, nil)
+	if got, want := ctkParam(t, body), `{"enable_thinking":true,"thinking_budget":15360}`; got != want {
+		t.Fatalf("chat_template_kwargs = %s, want %s", got, want)
+	}
+	if has(body, "thinking_token_budget") {
+		t.Fatalf("$var budget must not imply a top-level field, got %v", body["thinking_token_budget"])
+	}
+}
+
+// "omits thinking.budget from chat_template_kwargs when thinking is off": pi
+// returns undefined, which drops the key entirely rather than sending 0.
+func TestOpenAIThinkingBudgetVarOmittedWhenThinkingOff(t *testing.T) {
+	body := captureBudgetBody(t, chatTemplateBudgetModel(), "", nil, nil)
+	if got, want := ctkParam(t, body), `{"enable_thinking":false}`; got != want {
+		t.Fatalf("chat_template_kwargs = %s, want %s", got, want)
+	}
+}
+
+// No upstream twin: pi threads the budget into both buildChatTemplateValues call
+// sites but only tests the chat-template one. The Go dispatch has the same two
+// sites, so the baseten one needs its own lock.
+func TestOpenAIThinkingBudgetVarInChatTemplateArgs(t *testing.T) {
+	model := budgetModel(func(m *ai.Model) {
+		m.Compat = json.RawMessage(
+			`{"thinkingFormat":"baseten","chatTemplateArgs":{"thinking_budget":{"$var":"thinking.budget"}}}`)
+	})
+	body := captureBudgetBody(t, model, ai.ThinkingHigh, nil, nil)
+	if got, want := basetenArgs(t, body), `{"thinking_budget":15360}`; got != want {
+		t.Fatalf("chat_template_args = %s, want %s", got, want)
 	}
 }

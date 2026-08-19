@@ -278,7 +278,8 @@ func mapThinkingLevelToEffort(model *ai.Model, level ai.ThinkingLevel) string {
 
 // minAnswerTokens is pi's MIN_ANSWER_TOKENS (simple-options.ts, d07889da0):
 // tokens always left for the answer when a thinking budget shares the response
-// ceiling. Shared with the openai-completions thinking_token_budget clamp.
+// ceiling. Shared with the openai-completions top-level thinking budget field
+// and with clampThinkingBudgetToAnswerRoom (pi b23741269).
 const minAnswerTokens = 1024
 
 // resolveThinkingBudgets merges the caller's per-level overrides over pi's
@@ -313,9 +314,22 @@ func clampReasoning(level ai.ThinkingLevel) ai.ThinkingLevel {
 	return level
 }
 
+// thinkingBudgetForLevel is pi's thinkingBudgetForLevel (simple-options.ts:68,
+// upstream b23741269): the per-level budget after xhigh/max collapse to high,
+// read from pi's defaults with the caller's overrides merged over.
+func thinkingBudgetForLevel(level ai.ThinkingLevel, custom *ai.ThinkingBudgets) int {
+	return resolveThinkingBudgets(custom)[clampReasoning(level)]
+}
+
+// clampThinkingBudgetToAnswerRoom is pi's clampThinkingBudgetToAnswerRoom
+// (simple-options.ts:75, upstream b23741269): cap a thinking budget so at least
+// minAnswerTokens remain when it shares a response ceiling with the answer.
+func clampThinkingBudgetToAnswerRoom(thinkingBudget, ceiling int) int {
+	return min(thinkingBudget, max(0, ceiling-minAnswerTokens))
+}
+
 func adjustMaxTokensForThinking(baseMaxTokens *int, modelMaxTokens int, level ai.ThinkingLevel, custom *ai.ThinkingBudgets) (int, int) {
-	budgets := resolveThinkingBudgets(custom)
-	thinkingBudget := budgets[clampReasoning(level)]
+	thinkingBudget := thinkingBudgetForLevel(level, custom)
 	var maxTokens int
 	if baseMaxTokens == nil {
 		maxTokens = modelMaxTokens
@@ -326,10 +340,7 @@ func adjustMaxTokensForThinking(baseMaxTokens *int, modelMaxTokens int, level ai
 		}
 	}
 	if maxTokens <= thinkingBudget {
-		thinkingBudget = maxTokens - minAnswerTokens
-		if thinkingBudget < 0 {
-			thinkingBudget = 0
-		}
+		thinkingBudget = clampThinkingBudgetToAnswerRoom(thinkingBudget, maxTokens)
 	}
 	return maxTokens, thinkingBudget
 }

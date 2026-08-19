@@ -55,11 +55,17 @@ type openAICompletionsCompat struct {
 	RequiresAssistantAfterToolResult            bool
 	RequiresThinkingAsText                      bool
 	ZaiToolStream                               bool
-	// SupportsThinkingTokenBudget reports whether the provider accepts a
-	// top-level thinking_token_budget to cap reasoning tokens (vLLM). Reasoning
-	// and the answer share max_tokens on these endpoints, so without a budget a
-	// reasoning-heavy turn can consume the whole response and emit no answer
-	// (pi d07889da0). Default: false.
+	// ThinkingTokenBudgetField is the top-level request field used to cap
+	// reasoning tokens from the caller's ThinkingBudgets (pi types.ts:596-606,
+	// upstream b23741269). Reasoning and the answer share max_tokens on these
+	// endpoints, so without a budget a reasoning-heavy turn can consume the
+	// whole response and emit no answer. "thinking_token_budget" is vLLM,
+	// "thinking_budget" is Qwen/DashScope/SGLang, "thinking_budget_tokens" is
+	// llama.cpp. "" is pi's undefined (off); the generated catalog never sets it.
+	ThinkingTokenBudgetField string
+	// SupportsThinkingTokenBudget is pi's retained alias for
+	// ThinkingTokenBudgetField: "thinking_token_budget" (vLLM). Prefer the field
+	// name (pi types.ts:607-608, upstream b23741269). Default: false.
 	SupportsThinkingTokenBudget bool
 	SendSessionAffinityHeaders  bool
 	// DeferredToolsMode selects a provider-specific deferred-tool serialization
@@ -156,6 +162,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		RequiresAssistantAfterToolResult:            false,
 		RequiresThinkingAsText:                      false,
 		ZaiToolStream:                               false,
+		ThinkingTokenBudgetField:                    "",
 		SupportsThinkingTokenBudget:                 false,
 		SendSessionAffinityHeaders:                  false,
 		DeferredToolsMode:                           "",
@@ -189,6 +196,7 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		RequiresAssistantAfterToolResult            *bool                 `json:"requiresAssistantAfterToolResult"`
 		RequiresThinkingAsText                      *bool                 `json:"requiresThinkingAsText"`
 		ZaiToolStream                               *bool                 `json:"zaiToolStream"`
+		ThinkingTokenBudgetField                    *string               `json:"thinkingTokenBudgetField"`
 		SupportsThinkingTokenBudget                 *bool                 `json:"supportsThinkingTokenBudget"`
 		SendSessionAffinityHeaders                  *bool                 `json:"sendSessionAffinityHeaders"`
 		DeferredToolsMode                           *string               `json:"deferredToolsMode"`
@@ -246,6 +254,9 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	}
 	if raw.ZaiToolStream != nil {
 		c.ZaiToolStream = *raw.ZaiToolStream
+	}
+	if raw.ThinkingTokenBudgetField != nil {
+		c.ThinkingTokenBudgetField = *raw.ThinkingTokenBudgetField
 	}
 	if raw.SupportsThinkingTokenBudget != nil {
 		c.SupportsThinkingTokenBudget = *raw.SupportsThinkingTokenBudget
