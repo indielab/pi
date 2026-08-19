@@ -293,16 +293,6 @@ func (a *Agent) Abort() {
 	}
 }
 
-// BuildProviderContext builds a provider context through the same transform and
-// conversion pipeline this agent's requests use (pi Agent.buildProviderContext,
-// upstream 2509b5c03), so a caller can see or reuse exactly what would be sent.
-func (a *Agent) BuildProviderContext(ctx context.Context, agentCtx AgentContext) ai.Context {
-	return BuildProviderContext(ctx, agentCtx, ContextPipeline{
-		ConvertToLlm:     a.ConvertToLlm,
-		TransformContext: a.TransformContext,
-	})
-}
-
 // WaitForIdle blocks until the current run and its listeners finish.
 func (a *Agent) WaitForIdle() {
 	a.mu.Lock()

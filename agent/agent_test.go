@@ -1496,7 +1496,14 @@ func TestAgentFailsToolCallsFromLengthTruncatedMessage(t *testing.T) {
 	}
 }
 
-func textOf(m *ai.AssistantMessage) string { return textOfContent(m.Content) }
+func textOf(m *ai.AssistantMessage) string {
+	for _, c := range m.Content {
+		if t, ok := c.(ai.TextContent); ok {
+			return t.Text
+		}
+	}
+	return ""
+}
 
 func assertContains(t *testing.T, events []EventType, want EventType) {
 	t.Helper()
@@ -1646,90 +1653,101 @@ func TestAgentForwardsShouldStopAfterTurn(t *testing.T) {
 	}
 }
 
-// TestAgentBuildProviderContext mirrors pi's agent.test.ts case for
-// buildProviderContext (upstream 2509b5c03): transform runs first and sees the
-// source messages, convert runs second and sees the transformed ones, the
-// cancellable context reaches the transform, and the result carries the
-// system prompt and tools verbatim.
-func TestAgentBuildProviderContext(t *testing.T) {
-	source := []AgentMessage{
-		ai.NewUserText("discard", 1),
-		ai.NewUserText("keep", 2),
+// TestStreamAssistantResponseBuildsProviderContext pins the transform → convert
+// → Context pipeline every request runs through (agent-loop.ts:288-302, upstream
+// 3a0b9a3ee). The ordering is what lets a TransformContext — compaction, in the
+// coding agent — reach the provider at all: convert must be fed the transform's
+// output, not the raw transcript. System prompt and tools ride through untouched.
+func TestStreamAssistantResponseBuildsProviderContext(t *testing.T) {
+	tool := AgentTool{
+		Name:       "echo",
+		Parameters: ai.Object(),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			return AgentToolResult{}, nil
+		},
 	}
-	transformed := []AgentMessage{source[1]}
+	kept := ai.NewUserText("kept", 7)
 
 	var callOrder []string
-	var transformInput, convertInput []AgentMessage
-	var transformCtx context.Context
+	var convertInput []AgentMessage
+	var got ai.Context
 
 	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{SystemPrompt: "System prompt", Model: testModel, Tools: []AgentTool{tool}},
 		TransformContext: func(ctx context.Context, messages []AgentMessage) []AgentMessage {
 			callOrder = append(callOrder, "transform")
-			transformCtx = ctx
-			transformInput = messages
-			return transformed
+			return []AgentMessage{kept}
 		},
 		ConvertToLlm: func(messages []AgentMessage) []ai.Message {
 			callOrder = append(callOrder, "convert")
 			convertInput = messages
-			out := make([]ai.Message, 0, len(messages))
-			for _, m := range messages {
-				switch m.MessageRole() {
-				case ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult:
-					out = append(out, m)
-				}
-			}
-			return out
+			return defaultConvertToLlm(messages)
+		},
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			got = req
+			return scriptedStream(&ai.AssistantMessage{
+				Content: ai.ContentList{ai.TextContent{Text: "ok"}}, StopReason: ai.StopStop,
+			})(ctx, model, req, opts)
 		},
 	})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	got := a.BuildProviderContext(ctx, AgentContext{
-		SystemPrompt: "System prompt",
-		Messages:     source,
-		Tools:        nil,
-	})
+	if err := a.Prompt(context.Background(), "discard"); err != nil {
+		t.Fatal(err)
+	}
 
 	if len(callOrder) != 2 || callOrder[0] != "transform" || callOrder[1] != "convert" {
 		t.Fatalf("want transform then convert, got %v", callOrder)
 	}
-	if transformCtx != ctx {
-		t.Fatal("transform must receive the caller's context")
-	}
-	// AgentMessage values hold slices, so identity is compared through the one
-	// field that distinguishes these fixtures.
-	if len(transformInput) != len(source) || agentMessageText(transformInput[0]) != "discard" ||
-		agentMessageText(transformInput[1]) != "keep" {
-		t.Fatalf("transform must see the source messages, got %v", transformInput)
-	}
-	if len(convertInput) != 1 || agentMessageText(convertInput[0]) != "keep" {
-		t.Fatalf("convert must see the transformed messages, got %v", convertInput)
+	if len(convertInput) != 1 || userText(convertInput[0]) != "kept" {
+		t.Fatalf("convert must see the transform's output, got %v", convertInput)
 	}
 	if got.SystemPrompt != "System prompt" {
-		t.Fatalf("system prompt not carried through: %q", got.SystemPrompt)
+		t.Fatalf("system prompt must reach the provider verbatim, got %q", got.SystemPrompt)
 	}
-	if len(got.Messages) != 1 {
-		t.Fatalf("want the transformed message only, got %v", got.Messages)
+	if len(got.Messages) != 1 || userText(got.Messages[0]) != "kept" {
+		t.Fatalf("want the transformed transcript on the wire, got %v", got.Messages)
 	}
-	if um, ok := got.Messages[0].(ai.UserMessage); !ok || textOfContent(um.Content) != "keep" {
-		t.Fatalf("want the kept user message, got %#v", got.Messages[0])
-	}
-	if got.Tools != nil {
-		t.Fatalf("no tools configured, want nil, got %v", got.Tools)
+	if len(got.Tools) != 1 || got.Tools[0].Name != "echo" {
+		t.Fatalf("context tools must carry the agent's tools, got %v", got.Tools)
 	}
 }
 
-func agentMessageText(m AgentMessage) string {
-	if um, ok := m.(ai.UserMessage); ok {
-		return textOfContent(um.Content)
+// TestAgentLoopDefaultConvertToLlm covers the Go-only arm of the same block: pi
+// requires convertToLlm on AgentLoopConfig (types.ts:178), while the Go loop
+// falls back to defaultConvertToLlm — and the fallback must still be fed the
+// transformed messages. Only reachable through AgentLoop; NewAgent fills the
+// hook in.
+func TestAgentLoopDefaultConvertToLlm(t *testing.T) {
+	var got ai.Context
+	stream := AgentLoop(context.Background(),
+		[]AgentMessage{ai.NewUserText("discard", 1)},
+		AgentContext{SystemPrompt: "sp"},
+		AgentLoopConfig{
+			Model: testModel,
+			TransformContext: func(ctx context.Context, messages []AgentMessage) []AgentMessage {
+				return []AgentMessage{ai.NewUserText("kept", 7)}
+			},
+		},
+		func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			got = req
+			return scriptedStream(&ai.AssistantMessage{
+				Content: ai.ContentList{ai.TextContent{Text: "ok"}}, StopReason: ai.StopStop,
+			})(ctx, model, req, opts)
+		})
+	stream.Result()
+
+	if len(got.Messages) != 1 || userText(got.Messages[0]) != "kept" {
+		t.Fatalf("default conversion must run on the transformed messages, got %v", got.Messages)
 	}
-	return ""
 }
 
-// textOfContent returns the first text block, the shared half of textOf.
-func textOfContent(content ai.ContentList) string {
-	for _, c := range content {
+// userText returns the first text block of a user message, or "".
+func userText(m ai.Message) string {
+	um, ok := m.(ai.UserMessage)
+	if !ok {
+		return ""
+	}
+	for _, c := range um.Content {
 		if tc, ok := c.(ai.TextContent); ok {
 			return tc.Text
 		}

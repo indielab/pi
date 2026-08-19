@@ -232,44 +232,24 @@ func filterToolCalls(m *ai.AssistantMessage) []ai.ToolCall {
 	return out
 }
 
-// ContextPipeline is the transcript → provider-context pipeline: the subset of
-// AgentLoopConfig that BuildProviderContext reads, naming in the type what pi
-// writes as Pick<AgentLoopConfig, "convertToLlm" | "transformContext">.
-type ContextPipeline struct {
-	ConvertToLlm     func(messages []AgentMessage) []ai.Message
-	TransformContext func(ctx context.Context, messages []AgentMessage) []AgentMessage
-}
-
-// BuildProviderContext builds the provider context through the same transform
-// and conversion pipeline an agent request uses (pi buildProviderContext,
-// upstream 2509b5c03).
-func BuildProviderContext(ctx context.Context, agentCtx AgentContext, pipeline ContextPipeline) ai.Context {
-	// Apply context transform if configured (AgentMessage → AgentMessage).
+func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config AgentLoopConfig, emit EventSink, streamFn StreamFn) *ai.AssistantMessage {
 	messages := agentCtx.Messages
-	if pipeline.TransformContext != nil {
-		messages = pipeline.TransformContext(ctx, messages)
+	if config.TransformContext != nil {
+		messages = config.TransformContext(ctx, messages)
 	}
 
-	// Convert to LLM-compatible messages (AgentMessage → ai.Message).
 	var llmMessages []ai.Message
-	if pipeline.ConvertToLlm != nil {
-		llmMessages = pipeline.ConvertToLlm(messages)
+	if config.ConvertToLlm != nil {
+		llmMessages = config.ConvertToLlm(messages)
 	} else {
 		llmMessages = defaultConvertToLlm(messages)
 	}
 
-	return ai.Context{
+	llmCtx := ai.Context{
 		SystemPrompt: agentCtx.SystemPrompt,
 		Messages:     llmMessages,
 		Tools:        toAITools(agentCtx.Tools),
 	}
-}
-
-func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config AgentLoopConfig, emit EventSink, streamFn StreamFn) *ai.AssistantMessage {
-	llmCtx := BuildProviderContext(ctx, *agentCtx, ContextPipeline{
-		ConvertToLlm:     config.ConvertToLlm,
-		TransformContext: config.TransformContext,
-	})
 
 	fn := streamFn
 	if fn == nil {
