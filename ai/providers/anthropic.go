@@ -164,6 +164,40 @@ func anthropicFallbackTargetCost(targets []ai.AnthropicRefusalFallbackTarget, mo
 	return nil
 }
 
+// anthropicUsageModel is the model a response is COSTED against: the requested
+// model, or — when a server-side refusal fallback served it and local pricing for
+// the serving model is known — that model repriced (pi's
+// `fallbackCost ? { ...model, id: output.model, cost: fallbackCost } : model`,
+// anthropic-messages.ts:606-613, upstream 4809c2abc). Request-supplied pricing
+// wins over the catalog, but pi joins the two with `??`, so a target listed
+// WITHOUT pricing falls through to the catalog rather than pinning the requested
+// model's rates. The swap needs a pricing to have been found, not merely a
+// different served model: an unknown one keeps the requested rates rather than
+// blanking them.
+func anthropicUsageModel(model *ai.Model, servedID string, fallbacks *ai.AnthropicRefusalFallback) *ai.Model {
+	if servedID == model.ID {
+		return model
+	}
+	var cost *ai.ModelCost
+	if fallbacks != nil {
+		cost = anthropicFallbackTargetCost(fallbacks.Targets, servedID)
+	}
+	if cost == nil {
+		// Only reached for a served model that differs, so a response no fallback
+		// stood in for re-parses no compat blob.
+		cost = anthropicFallbackTargetCost(getAnthropicCompat(model).allowedFallbackModels, servedID)
+	}
+	if cost == nil {
+		return model
+	}
+	// pi's spread is a shallow copy: Input, ThinkingLevelMap, SamplingParams,
+	// Headers and Compat alias the catalog entry, so nothing beyond ID and Cost may
+	// be mutated here.
+	priced := *model
+	priced.ID, priced.Cost = servedID, *cost
+	return &priced
+}
+
 // toolReferenceVersionRe matches first-party Claude model ids to extract the
 // major/optional-minor version (port of the regex in defaultSupportsToolReferences).
 var toolReferenceVersionRe = regexp.MustCompile(`^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)`)
@@ -512,11 +546,9 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 			output.Content = content
 		}
 
-		// usageModel is the model the response is COSTED against. It stays the
-		// requested model until message_start names a different served model with
-		// known local pricing, so a stream that never delivers message_start prices
-		// at the requested model, as pi does. Declared out here because both cost
-		// sites below close over it.
+		// The model to cost against, recomputed on every message_start and read by
+		// both cost sites below. A stream that never delivers one prices at the
+		// requested model, as pi does (anthropic-messages.ts:543).
 		usageModel := model
 
 		sawStart, sawStop := false, false
@@ -529,33 +561,11 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 					// pi eb1f87fa9: the served model replaces the requested one, so a
 					// server-side refusal fallback is visible on the message.
 					output.Model = ev.Message.Model
-					// pi 4809c2abc: a server-side refusal fallback is billed at the
-					// SERVING model's rates. Request-supplied pricing wins over the
-					// catalog, but pi joins the two with `??`, so a target listed without
-					// local pricing falls through to the catalog rather than pinning the
-					// requested model's rates. Reset unconditionally first: pi's ternary
-					// assigns in both arms, so a second message_start reprices rather than
+					// pi 4809c2abc: a response a server-side refusal fallback served is
+					// billed at the SERVING model's rates. Assigned unconditionally, as
+					// pi's ternary is, so a second message_start reprices rather than
 					// sticking to the first.
-					usageModel = model
-					if output.Model != model.ID {
-						var cost *ai.ModelCost
-						if opts.RefusalFallbacks != nil {
-							cost = anthropicFallbackTargetCost(opts.RefusalFallbacks.Targets, output.Model)
-						}
-						if cost == nil {
-							// Inside the guard so a non-fallback response re-parses nothing.
-							cost = anthropicFallbackTargetCost(getAnthropicCompat(model).allowedFallbackModels, output.Model)
-						}
-						if cost != nil {
-							// pi's `{...model, id, cost}` spread: a shallow copy, so Input,
-							// ThinkingLevelMap, SamplingParams, Headers and Compat alias the
-							// catalog entry and must never be mutated beyond ID and Cost.
-							priced := *model
-							priced.ID = output.Model
-							priced.Cost = *cost
-							usageModel = &priced
-						}
-					}
+					usageModel = anthropicUsageModel(model, output.Model, opts.RefusalFallbacks)
 					applyUsage(&output.Usage, ev.Message.Usage, true)
 					ai.CalculateCost(usageModel, &output.Usage)
 				}

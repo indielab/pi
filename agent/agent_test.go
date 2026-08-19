@@ -1496,14 +1496,7 @@ func TestAgentFailsToolCallsFromLengthTruncatedMessage(t *testing.T) {
 	}
 }
 
-func textOf(m *ai.AssistantMessage) string {
-	for _, c := range m.Content {
-		if t, ok := c.(ai.TextContent); ok {
-			return t.Text
-		}
-	}
-	return ""
-}
+func textOf(m *ai.AssistantMessage) string { return textOfContent(m.Content) }
 
 func assertContains(t *testing.T, events []EventType, want EventType) {
 	t.Helper()
@@ -1653,12 +1646,20 @@ func TestAgentForwardsShouldStopAfterTurn(t *testing.T) {
 	}
 }
 
-// TestStreamAssistantResponseBuildsProviderContext pins the transform → convert
-// → Context pipeline every request runs through (agent-loop.ts:288-302, upstream
-// 3a0b9a3ee). The ordering is what lets a TransformContext — compaction, in the
-// coding agent — reach the provider at all: convert must be fed the transform's
-// output, not the raw transcript. System prompt and tools ride through untouched.
-func TestStreamAssistantResponseBuildsProviderContext(t *testing.T) {
+// promptCtxKey tags the context a caller hands Agent.Prompt. Identity does not
+// survive the trip — runWithLifecycle gives the loop a derived, abort-cancellable
+// child — so the tag is what lets an assertion tell that child apart from a
+// context substituted somewhere along the way.
+type promptCtxKey struct{}
+
+// TestAgentBuildsProviderContext pins the transform → convert → Context pipeline
+// every request runs through (agent-loop.ts:288-302, upstream 3a0b9a3ee). The
+// transform is the seam compaction hangs off in the coding agent, so all three
+// of its inputs and its position matter: it runs first, on the live transcript,
+// under the run's context — which is what carries an abort into a transform that
+// calls the provider itself — and convert is then fed its output rather than the
+// raw transcript. System prompt and tools ride through untouched.
+func TestAgentBuildsProviderContext(t *testing.T) {
 	tool := AgentTool{
 		Name:       "echo",
 		Parameters: ai.Object(),
@@ -1667,15 +1668,21 @@ func TestStreamAssistantResponseBuildsProviderContext(t *testing.T) {
 		},
 	}
 	kept := ai.NewUserText("kept", 7)
+	reply := scriptedStream(&ai.AssistantMessage{
+		Content: ai.ContentList{ai.TextContent{Text: "ok"}}, StopReason: ai.StopStop,
+	})
 
 	var callOrder []string
-	var convertInput []AgentMessage
+	var transformInput, convertInput []AgentMessage
+	var transformCtx context.Context
 	var got ai.Context
 
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{SystemPrompt: "System prompt", Model: testModel, Tools: []AgentTool{tool}},
 		TransformContext: func(ctx context.Context, messages []AgentMessage) []AgentMessage {
 			callOrder = append(callOrder, "transform")
+			transformCtx = ctx
+			transformInput = messages
 			return []AgentMessage{kept}
 		},
 		ConvertToLlm: func(messages []AgentMessage) []ai.Message {
@@ -1685,18 +1692,32 @@ func TestStreamAssistantResponseBuildsProviderContext(t *testing.T) {
 		},
 		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			got = req
-			return scriptedStream(&ai.AssistantMessage{
-				Content: ai.ContentList{ai.TextContent{Text: "ok"}}, StopReason: ai.StopStop,
-			})(ctx, model, req, opts)
+			return reply(ctx, model, req, opts)
 		},
 	})
 
-	if err := a.Prompt(context.Background(), "discard"); err != nil {
+	ctx, cancel := context.WithCancel(context.WithValue(context.Background(), promptCtxKey{}, "caller"))
+	defer cancel()
+	if err := a.Prompt(ctx, "discard"); err != nil {
 		t.Fatal(err)
+	}
+
+	// The transform's context must still carry the run's cancellation, not just
+	// its values: compaction calls the provider from inside the transform, so an
+	// abort has to reach it.
+	cancel()
+	if transformCtx.Err() == nil {
+		t.Fatal("transform context must cancel with the run")
 	}
 
 	if len(callOrder) != 2 || callOrder[0] != "transform" || callOrder[1] != "convert" {
 		t.Fatalf("want transform then convert, got %v", callOrder)
+	}
+	if len(transformInput) != 1 || userText(transformInput[0]) != "discard" {
+		t.Fatalf("transform must see the current transcript, got %v", transformInput)
+	}
+	if transformCtx == nil || transformCtx.Value(promptCtxKey{}) != "caller" {
+		t.Fatal("transform must run under a context derived from the caller's")
 	}
 	if len(convertInput) != 1 || userText(convertInput[0]) != "kept" {
 		t.Fatalf("convert must see the transform's output, got %v", convertInput)
@@ -1718,6 +1739,10 @@ func TestStreamAssistantResponseBuildsProviderContext(t *testing.T) {
 // transformed messages. Only reachable through AgentLoop; NewAgent fills the
 // hook in.
 func TestAgentLoopDefaultConvertToLlm(t *testing.T) {
+	reply := scriptedStream(&ai.AssistantMessage{
+		Content: ai.ContentList{ai.TextContent{Text: "ok"}}, StopReason: ai.StopStop,
+	})
+
 	var got ai.Context
 	stream := AgentLoop(context.Background(),
 		[]AgentMessage{ai.NewUserText("discard", 1)},
@@ -1730,9 +1755,7 @@ func TestAgentLoopDefaultConvertToLlm(t *testing.T) {
 		},
 		func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			got = req
-			return scriptedStream(&ai.AssistantMessage{
-				Content: ai.ContentList{ai.TextContent{Text: "ok"}}, StopReason: ai.StopStop,
-			})(ctx, model, req, opts)
+			return reply(ctx, model, req, opts)
 		})
 	stream.Result()
 
@@ -1743,11 +1766,15 @@ func TestAgentLoopDefaultConvertToLlm(t *testing.T) {
 
 // userText returns the first text block of a user message, or "".
 func userText(m ai.Message) string {
-	um, ok := m.(ai.UserMessage)
-	if !ok {
-		return ""
+	if um, ok := m.(ai.UserMessage); ok {
+		return textOfContent(um.Content)
 	}
-	for _, c := range um.Content {
+	return ""
+}
+
+// textOfContent returns the first text block, the shared half of textOf.
+func textOfContent(content ai.ContentList) string {
+	for _, c := range content {
 		if tc, ok := c.(ai.TextContent); ok {
 			return tc.Text
 		}
