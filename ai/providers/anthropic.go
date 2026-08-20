@@ -72,9 +72,6 @@ type AnthropicOptions struct {
 	ThinkingDisplay      string // summarized|omitted
 	InterleavedThinking  *bool
 	ToolChoice           any
-	// RefusalFallbacks asks Anthropic to retry an eligible refusal on another
-	// model server-side. Non-nil also opts the request into the fallback beta.
-	RefusalFallbacks *ai.AnthropicRefusalFallback
 }
 
 // AnthropicCompat holds resolved Anthropic-messages compatibility flags.
@@ -91,9 +88,40 @@ type anthropicCompat struct {
 	supportsStrictTools    bool
 	supportsToolReferences bool
 	// allowedFallbackModels are the catalog's permitted server-side fallback
-	// targets, each carrying the local pricing used to cost a response that target
-	// actually served (pi AnthropicMessagesCompat.allowedFallbackModels).
-	allowedFallbackModels []ai.AnthropicRefusalFallbackTarget
+	// models: what the request's `fallbacks` field lists, what turns the fallback
+	// beta on, and where the local pricing used to cost a response one of them
+	// actually served comes from (pi
+	// AnthropicMessagesCompat.allowedFallbackModels).
+	allowedFallbackModels []anthropicAllowedFallbackModel
+}
+
+// anthropicAllowedFallbackModel is one entry of the catalog's
+// `compat.allowedFallbackModels` (pi AnthropicAllowedFallbackModel, upstream
+// ed867e909). Go models the compat blob as raw JSON, so the shape lives next to
+// the decoder that consumes it rather than in the ai package.
+//
+// Cost is a pointer even though pi now types it as required, because pi's
+// requirement is a TypeScript contract over a value the catalog delivers as
+// untyped JSON, and the runtime read is still `find(...)?.cost` under a
+// truthiness gate. A pointer reproduces that read on every blob a generator
+// could emit: an entry with pricing swaps (a zero-priced one included — an
+// object is truthy in JS), while a missing or null `cost` yields no swap, the
+// same as `undefined`. Reading it as a value would invent free pricing for both.
+type anthropicAllowedFallbackModel struct {
+	Provider string        `json:"provider"`
+	Model    string        `json:"model"`
+	Cost     *ai.ModelCost `json:"cost"`
+}
+
+// anthropicFallbackWire is the provider-facing form of one permitted fallback:
+// pi projects every entry down to `{ model }` before the request, so neither the
+// provider id nor the local pricing reaches Anthropic (pi's explicit
+// `.map(fallback => ({ model: fallback.model }))` in buildParams, upstream
+// ed867e909). Keeping the projection in a type rather than in a literal makes
+// the stripping structural — there is no field here for a provider or a cost to
+// travel in.
+type anthropicFallbackWire struct {
+	Model string `json:"model"`
 }
 
 func getAnthropicCompat(model *ai.Model) anthropicCompat {
@@ -140,7 +168,7 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 		// shape change in this non-bool field would silently revert every
 		// compatibility flag.
 		var fb struct {
-			AllowedFallbackModels []ai.AnthropicRefusalFallbackTarget `json:"allowedFallbackModels"`
+			AllowedFallbackModels []anthropicAllowedFallbackModel `json:"allowedFallbackModels"`
 		}
 		if json.Unmarshal(model.Compat, &fb) == nil {
 			c.allowedFallbackModels = fb.AllowedFallbackModels
@@ -149,50 +177,56 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 	return c
 }
 
-// anthropicFallbackTargetCost ports pi's
-// `list.find(f => f.model === id)?.cost` (anthropic-messages.ts, upstream
-// 4809c2abc): the FIRST matching target decides, so a match carrying no local
-// pricing yields nothing rather than scanning on to a later duplicate — in TS
-// `find` returns the first hit and `?.cost` on it is `undefined`, which is what
-// the `??` chain then falls through on.
-func anthropicFallbackTargetCost(targets []ai.AnthropicRefusalFallbackTarget, modelID string) *ai.ModelCost {
-	for _, t := range targets {
-		if t.Model == modelID {
-			return t.Cost
+// usesServerSideFallbackBeta ports pi's shouldUseServerSideFallbackBeta,
+// `(model.compat?.allowedFallbackModels?.length ?? 0) > 0` (upstream ed867e909):
+// the fallback beta rides on the catalog listing permitted fallback models, not
+// on a caller-supplied option. It hangs off the decoded compat rather than off
+// *ai.Model so the one call site can reuse the compat it already has instead of
+// decoding the blob a second time; pi reads a plain property there and pays
+// nothing for it.
+func (c anthropicCompat) usesServerSideFallbackBeta() bool {
+	return len(c.allowedFallbackModels) > 0
+}
+
+// anthropicFallbackModelCost ports pi's
+// `allowedFallbackModels?.find(f => f.provider === model.provider && f.model === served)?.cost`
+// (anthropic-messages.ts, upstream ed867e909). Both halves of the match matter:
+// a catalog entry for another provider's same-named model must not price this
+// response. The FIRST match decides, so an entry carrying no pricing yields
+// nothing rather than scanning on to a later duplicate — in TS `find` returns the
+// first hit and `?.cost` on it is `undefined`.
+func anthropicFallbackModelCost(models []anthropicAllowedFallbackModel, provider, modelID string) *ai.ModelCost {
+	for _, f := range models {
+		if f.Provider == provider && f.Model == modelID {
+			return f.Cost
 		}
 	}
 	return nil
 }
 
 // anthropicUsageModel is the model a response is COSTED against: the requested
-// model, or — when a server-side refusal fallback served it and local pricing for
-// the serving model is known — that model repriced (pi's
+// model, or — when a server-side refusal fallback served it and the catalog
+// prices the serving model — that model repriced (pi's
 // `fallbackCost ? { ...model, id: output.model, cost: fallbackCost } : model`,
-// anthropic-messages.ts:606-613, upstream 4809c2abc). Request-supplied pricing
-// wins over the catalog, but pi joins the two with `??`, so a target listed
-// WITHOUT pricing falls through to the catalog rather than pinning the requested
-// model's rates. The swap needs a pricing to have been found, not merely a
-// different served model: an unknown one keeps the requested rates rather than
-// blanking them.
-func anthropicUsageModel(model *ai.Model, servedID string, fallbacks *ai.AnthropicRefusalFallback) *ai.Model {
+// upstream ed867e909).
+//
+// The swap needs a pricing to have been FOUND, not merely a different served
+// model: one the catalog does not list, or lists for another provider, keeps the
+// requested model's rates rather than blanking them. The no-swap arm returns the
+// caller's own *ai.Model, as pi's `: model` does.
+func anthropicUsageModel(model *ai.Model, servedID string) *ai.Model {
 	if servedID == model.ID {
 		return model
 	}
-	var cost *ai.ModelCost
-	if fallbacks != nil {
-		cost = anthropicFallbackTargetCost(fallbacks.Targets, servedID)
-	}
-	if cost == nil {
-		// Only reached for a served model that differs, so a response no fallback
-		// stood in for re-parses no compat blob.
-		cost = anthropicFallbackTargetCost(getAnthropicCompat(model).allowedFallbackModels, servedID)
-	}
+	// Only reached for a served model that differs, so a response no fallback
+	// stood in for re-parses no compat blob.
+	cost := anthropicFallbackModelCost(getAnthropicCompat(model).allowedFallbackModels, model.Provider, servedID)
 	if cost == nil {
 		return model
 	}
 	// pi's spread is a shallow copy: Input, ThinkingLevelMap, SamplingParams,
 	// Headers and Compat alias the catalog entry, so nothing beyond ID and Cost may
-	// be mutated here.
+	// be mutated here — the shared catalog model itself is never written to.
 	priced := *model
 	priced.ID, priced.Cost = servedID, *cost
 	return &priced
@@ -279,10 +313,7 @@ func StreamSimpleAnthropic(ctx context.Context, model *ai.Model, req ai.Context,
 	base.MaxTokens = &baseMaxTokens
 	base.SamplingParams = ai.MergeSamplingParams(model, opts)
 	aopts := AnthropicOptions{StreamOptions: base}
-	// pi threads refusalFallbacks into each of streamSimple's three stream()
-	// calls; the single options value here covers all three return paths.
 	if opts != nil {
-		aopts.RefusalFallbacks = opts.RefusalFallbacks
 		// The unified option carries only pi's "auto"/"none"; buildParams wraps a
 		// bare string as {type: ...}, which is the shape those two need.
 		if opts.ToolChoice != "" {
@@ -561,11 +592,11 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 					// pi eb1f87fa9: the served model replaces the requested one, so a
 					// server-side refusal fallback is visible on the message.
 					output.Model = ev.Message.Model
-					// pi 4809c2abc: a response a server-side refusal fallback served is
-					// billed at the SERVING model's rates. Assigned unconditionally, as
-					// pi's ternary is, so a second message_start reprices rather than
-					// sticking to the first.
-					usageModel = anthropicUsageModel(model, output.Model, opts.RefusalFallbacks)
+					// pi ed867e909: a response a server-side refusal fallback served is
+					// billed at the SERVING model's rates, taken from the catalog.
+					// Assigned unconditionally, as pi's ternary is, so a second
+					// message_start reprices rather than sticking to the first.
+					usageModel = anthropicUsageModel(model, output.Model)
 					applyUsage(&output.Usage, ev.Message.Usage, true)
 					ai.CalculateCost(usageModel, &output.Usage)
 				}
@@ -883,14 +914,22 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 		}
 	}
 
-	// Server-side refusal fallback. pi appends this last, after every other key
-	// (anthropic-messages.ts buildParams). The value serializes to "default" or
-	// [{model}] only: local pricing on a target is stripped by the union's
-	// MarshalJSON, which is where pi's explicit `.map(f => ({ model: f.model }))`
-	// lands — one projection there covers every serialization path of the
-	// collapsed Go union (upstream 4809c2abc).
-	if opts != nil && opts.RefusalFallbacks != nil {
-		params["fallbacks"] = *opts.RefusalFallbacks
+	// Server-side refusal fallback. pi appends this last, after every other key,
+	// and derives it from the catalog alone — there is no caller-facing option
+	// (upstream ed867e909). Every permitted model is projected onto
+	// anthropicFallbackWire, so neither the provider id nor the local pricing
+	// reaches Anthropic. An empty list omits the key: a model with no permitted
+	// targets must not send `fallbacks` at all, which Anthropic rejects.
+	//
+	// The list comes off the compat decoded once at the top of this function —
+	// pi reads a plain property here, so a second decode would be pure duplicated
+	// work and a second place for the two reads to drift.
+	if allowed := compat.allowedFallbackModels; len(allowed) > 0 {
+		wire := make([]anthropicFallbackWire, len(allowed))
+		for i, f := range allowed {
+			wire[i].Model = f.Model
+		}
+		params["fallbacks"] = wire
 	}
 
 	return params, nil
@@ -1213,7 +1252,7 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	}
 	// pi appends the fallback beta third, and every auth branch below carries the
 	// same list — copilot and OAuth included.
-	if opts.RefusalFallbacks != nil {
+	if compat.usesServerSideFallbackBeta() {
 		betas = append(betas, serverSideFallbackBeta)
 	}
 

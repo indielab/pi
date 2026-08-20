@@ -543,37 +543,6 @@ func (s *Session) summarizationRequestModel(ctx context.Context) *ai.Model {
 	return &requestModel
 }
 
-// anthropicSummarizationFallback ports pi getAnthropicSummarizationFallback
-// (compaction.ts, upstream eb1f87fa9, 4809c2abc): first-party Anthropic models
-// that declare permitted fallback targets get the first one, so a refusal during
-// summarization is retried server-side instead of failing the compaction.
-//
-// The compat blob is raw JSON in Go, so the read that TS gets from a typed
-// `compat?.allowedFallbackModels` happens here, local to the one consumer —
-// which is where pi keeps it too.
-//
-// The target is passed through whole so it carries the catalog's local pricing
-// for that fallback: the provider strips the pricing before the request but uses
-// it to cost a summary a fallback actually served (upstream 4809c2abc).
-func anthropicSummarizationFallback(model *ai.Model) *ai.AnthropicRefusalFallback {
-	if model == nil || model.Provider != "anthropic" || model.Api != ai.APIAnthropicMessages {
-		return nil
-	}
-	var compat struct {
-		AllowedFallbackModels []ai.AnthropicRefusalFallbackTarget `json:"allowedFallbackModels"`
-	}
-	if len(model.Compat) == 0 || json.Unmarshal(model.Compat, &compat) != nil {
-		return nil
-	}
-	if len(compat.AllowedFallbackModels) == 0 {
-		return nil
-	}
-	// Use the primary permitted fallback for now. If future Anthropic models
-	// expose broader fallback behavior, this can become a user/config pick or a
-	// full chain.
-	return &ai.AnthropicRefusalFallback{Targets: []ai.AnthropicRefusalFallbackTarget{compat.AllowedFallbackModels[0]}}
-}
-
 // completeSummarization sends one summarization request (pi completeSummarization
 // + createSummarizationOptions, compaction.ts:526-552): the session's API key,
 // headers, and — when the model supports reasoning and the session's thinking
@@ -590,9 +559,6 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	if sessionID == "" {
 		sessionID = uuidv7()
 	}
-	// pi hands the same model to createSummarizationOptions and to
-	// completeSummarization, so the fallback decision is made on the model the
-	// request will actually use.
 	requestModel := s.summarizationRequestModel(ctx)
 	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{
 		ProviderRequestOptions: ai.ProviderRequestOptions{
@@ -605,9 +571,10 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	}}
 	// A summary is text, never a tool call (pi 90305d90a).
 	opts.ToolChoice = ai.ToolChoiceNone
-	if fallbacks := anthropicSummarizationFallback(requestModel); fallbacks != nil {
-		opts.RefusalFallbacks = fallbacks
-	}
+	// pi ed867e909 withdrew getAnthropicSummarizationFallback: server-side refusal
+	// fallback is no longer requested per call site. The Anthropic provider derives
+	// it from the model's catalog compat, so a summarization request gets it on the
+	// same terms as every other request.
 	level := s.Agent.State().ThinkingLevel
 	if s.Model != nil && s.Model.Reasoning && level != "" && level != agent.ThinkOff {
 		opts.Reasoning = ai.ThinkingLevel(level)

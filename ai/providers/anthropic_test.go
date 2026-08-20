@@ -1541,6 +1541,14 @@ func TestAnthropicNonKimiKeepsConsumerUserAgent(t *testing.T) {
 // take the boolean compat flags down with it: encoding/json populates the
 // siblings but still returns an error for the whole blob, and getAnthropicCompat
 // applies the booleans only when the decode succeeded.
+//
+// The "generated shape" case is also the regen tripwire for the queued catalog
+// update (upstream ed867e909): the generator now emits each permitted fallback as
+// `{provider, model, cost}`. A decoder still expecting either bare strings or the
+// older `{model, cost}` objects would leave the slice empty, which silently turns
+// the whole feature off — no `fallbacks` field, no beta header, no fallback
+// pricing — with no error anywhere. The sibling boolean key is here so the test
+// also proves the whole blob decodes.
 func TestAnthropicCompatSurvivesMalformedFallbackTargets(t *testing.T) {
 	model := func(compat string) *ai.Model {
 		return &ai.Model{
@@ -1559,20 +1567,23 @@ func TestAnthropicCompatSurvivesMalformedFallbackTargets(t *testing.T) {
 		}
 	})
 
-	t.Run("object targets with pricing", func(t *testing.T) {
-		c := getAnthropicCompat(model(`{"supportsTemperature":false,"allowedFallbackModels":[{"model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}]}`))
+	t.Run("generated shape decodes whole", func(t *testing.T) {
+		c := getAnthropicCompat(model(`{"supportsTemperature":false,"allowedFallbackModels":[{"provider":"anthropic","model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}]}`))
 		if c.supportsTemperature {
 			t.Fatalf("supportsTemperature = true, want false")
 		}
-		if len(c.allowedFallbackModels) != 1 || c.allowedFallbackModels[0].Model != "claude-opus-4-8" {
-			t.Fatalf("want one target for claude-opus-4-8, got %+v", c.allowedFallbackModels)
+		if len(c.allowedFallbackModels) != 1 {
+			t.Fatalf("want one permitted fallback model, got %+v", c.allowedFallbackModels)
 		}
-		cost := c.allowedFallbackModels[0].Cost
-		if cost == nil {
-			t.Fatal("want the target's local pricing, got nil")
+		fb := c.allowedFallbackModels[0]
+		if fb.Provider != "anthropic" || fb.Model != "claude-opus-4-8" {
+			t.Fatalf("want {anthropic claude-opus-4-8}, got {%s %s}", fb.Provider, fb.Model)
 		}
-		if cost.Input != 5 || cost.Output != 25 || cost.CacheRead != 0.5 || cost.CacheWrite != 6.25 {
-			t.Fatalf("want cost {5 25 0.5 6.25}, got %+v", *cost)
+		if fb.Cost == nil {
+			t.Fatal("want the fallback's local pricing, got nil")
+		}
+		if c := *fb.Cost; c.Input != 5 || c.Output != 25 || c.CacheRead != 0.5 || c.CacheWrite != 6.25 {
+			t.Fatalf("want cost {5 25 0.5 6.25}, got %+v", c)
 		}
 	})
 }

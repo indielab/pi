@@ -7,13 +7,23 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
 )
 
-// Ported from pi's anthropic refusal-fallback change (upstream eb1f87fa9).
+// Server-side refusal fallback (upstream eb1f87fa9, 4809c2abc, ed867e909).
+//
+// ed867e909 withdrew the caller-facing option entirely: there is no
+// `refusalFallbacks` on SimpleStreamOptions or AnthropicOptions any more, and no
+// "default" literal. Everything below is driven by the model's catalog compat —
+// `allowedFallbackModels` decides the request's `fallbacks` field, the beta
+// header, and the pricing a response a fallback served is billed at.
+//
+// The embedded catalog carries no allowedFallbackModels yet, so every test here
+// builds a model with explicit compat.
 
 // anthropicSSEWithModel is the shared fixture plus the `model` field real
 // Anthropic responses always carry on message_start.
@@ -112,91 +122,134 @@ func startAnthropicFallbackStub(t *testing.T, sse string) *anthropicFallbackStub
 	return stub
 }
 
-func TestAnthropicRefusalFallbacksOnWire(t *testing.T) {
-	stub := startAnthropicFallbackStub(t, anthropicSSEWithModel)
-
-	model := &ai.Model{
+// anthropicFallbackModel is a claude-opus-5 pointed at the stub, priced at
+// 100/200 per Mtok, carrying whatever compat blob the case needs.
+func anthropicFallbackModel(url, compat string) *ai.Model {
+	m := &ai.Model{
 		ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "anthropic",
-		Input: []string{"text"}, MaxTokens: 4096, BaseURL: stub.url,
+		Input: []string{"text"}, MaxTokens: 4096, BaseURL: url,
+		Cost: ai.ModelCost{Input: 100, Output: 200},
 	}
+	if compat != "" {
+		m.Compat = json.RawMessage(compat)
+	}
+	return m
+}
+
+// runAnthropicFallbackRequest sends one plain request through the stub.
+func runAnthropicFallbackRequest(t *testing.T, model *ai.Model) {
+	t.Helper()
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &ai.SimpleStreamOptions{
-		RefusalFallbacks: &ai.AnthropicRefusalFallback{Targets: []ai.AnthropicRefusalFallbackTarget{
-			// Priced, to pin that local pricing never reaches Anthropic.
-			{Model: "claude-opus-4-8", Cost: &ai.ModelCost{Input: 5, Output: 25}},
-		}},
-	}
+	opts := &ai.SimpleStreamOptions{}
 	opts.APIKey = "k"
 	StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
+}
+
+// TestAnthropicFallbacksOnWire pins the request half: the `fallbacks` field is
+// projected from the catalog's allowedFallbackModels down to `{model}` only —
+// pi's explicit `.map(f => ({ model: f.model }))` — so neither the provider id
+// nor the local pricing reaches Anthropic, and the order the catalog lists is
+// the order Anthropic receives.
+//
+// The third entry names ANOTHER provider, which pins the asymmetry ed867e909
+// introduced: the provider match it added guards the COST lookup only
+// (TestAnthropicFallbackCosting's "another provider" case), while buildParams
+// still maps every permitted entry onto the wire regardless of provider. Reusing
+// the new provider match here — the natural tidy-up now that the field exists —
+// must fail this test.
+func TestAnthropicFallbacksOnWire(t *testing.T) {
+	stub := startAnthropicFallbackStub(t, anthropicSSEWithModel)
+	model := anthropicFallbackModel(stub.url, `{"allowedFallbackModels":[
+		{"provider":"anthropic","model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}},
+		{"provider":"anthropic","model":"claude-sonnet-9","cost":{"input":1,"output":2,"cacheRead":0.1,"cacheWrite":1.25}},
+		{"provider":"vertex","model":"claude-haiku-9","cost":{"input":0.8,"output":4,"cacheRead":0.08,"cacheWrite":1}}
+	]}`)
+	runAnthropicFallbackRequest(t, model)
 
 	fallbacks, ok := stub.body["fallbacks"].([]any)
 	if !ok {
 		t.Fatalf("fallbacks missing or not an array: %#v", stub.body["fallbacks"])
 	}
-	if len(fallbacks) != 1 {
-		t.Fatalf("want 1 fallback entry, got %v", fallbacks)
+	want := []string{"claude-opus-4-8", "claude-sonnet-9", "claude-haiku-9"}
+	if len(fallbacks) != len(want) {
+		t.Fatalf("want %d fallback entries in catalog order, got %v", len(want), fallbacks)
 	}
-	entry, _ := fallbacks[0].(map[string]any)
-	if len(entry) != 1 || entry["model"] != "claude-opus-4-8" {
-		t.Fatalf("fallbacks entry must carry only {model: claude-opus-4-8}, got %v", entry)
+	for i, id := range want {
+		entry, _ := fallbacks[i].(map[string]any)
+		if len(entry) != 1 || entry["model"] != id {
+			t.Fatalf("fallbacks[%d] must carry only {model: %s}, got %v", i, id, entry)
+		}
 	}
-	if !strings.Contains(stub.headers.Get("anthropic-beta"), serverSideFallbackBeta) {
-		t.Fatalf("fallback beta missing: %q", stub.headers.Get("anthropic-beta"))
+
+	// The beta rides on the same catalog list, and pi appends it third — after
+	// interleaved thinking, which this model also gets. This request carries no
+	// tools, so the fine-grained beta is out of play; TestAnthropicFallbackBetaOrder
+	// pins the full three-beta string.
+	wantBeta := interleavedThinkingBeta + "," + serverSideFallbackBeta
+	if got := stub.headers.Get("anthropic-beta"); got != wantBeta {
+		t.Fatalf("anthropic-beta = %q, want %q", got, wantBeta)
 	}
 }
 
-func TestAnthropicNoRefusalFallbacksByDefault(t *testing.T) {
+// TestAnthropicFallbackBetaOrder pins the fallback beta's position in the FULL
+// beta list, which no other test reaches: pi pushes fine-grained tool streaming,
+// then interleaved thinking, then the server-side fallback (createClient,
+// upstream ed867e909). The first of those needs both a tool in the context and a
+// model that declares no eager tool-input streaming, so every other fallback test
+// — none of which sends tools — can only pin two of the three.
+func TestAnthropicFallbackBetaOrder(t *testing.T) {
 	stub := startAnthropicFallbackStub(t, anthropicSSEWithModel)
-
-	model := &ai.Model{
-		ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "anthropic",
-		Input: []string{"text"}, MaxTokens: 4096, BaseURL: stub.url,
+	model := anthropicFallbackModel(stub.url, `{"supportsEagerToolInputStreaming":false,"allowedFallbackModels":[
+		{"provider":"anthropic","model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}
+	]}`)
+	req := ai.Context{
+		Messages: []ai.Message{ai.NewUserText("hi", 1)},
+		Tools:    []ai.Tool{{Name: "read", Description: "read a file", Parameters: ai.Object(ai.Prop("p", ai.String()))}},
 	}
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	opts := &ai.SimpleStreamOptions{}
 	opts.APIKey = "k"
 	StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
 
-	if _, has := stub.body["fallbacks"]; has {
-		t.Fatalf("fallbacks must be omitted when unset: %v", stub.body["fallbacks"])
-	}
-	if strings.Contains(stub.headers.Get("anthropic-beta"), serverSideFallbackBeta) {
-		t.Fatalf("fallback beta must not be sent when unset: %q", stub.headers.Get("anthropic-beta"))
+	wantBeta := strings.Join([]string{fineGrainedToolStreamBeta, interleavedThinkingBeta, serverSideFallbackBeta}, ",")
+	if got := stub.headers.Get("anthropic-beta"); got != wantBeta {
+		t.Fatalf("anthropic-beta = %q, want %q", got, wantBeta)
 	}
 }
 
-// The "default" arm is the other half of pi's union: the literal string, not an
-// array. An empty chain is how the Go type spells it. The beta rides on the
-// option being set at all, either way.
-func TestAnthropicRefusalFallbackDefaultArm(t *testing.T) {
-	stub := startAnthropicFallbackStub(t, anthropicSSEWithModel)
-
-	model := &ai.Model{
-		ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "anthropic",
-		Input: []string{"text"}, MaxTokens: 4096, BaseURL: stub.url,
+// TestAnthropicNoFallbacksWithoutCatalogTargets pins the other side of the gate:
+// a model whose compat lists no permitted targets must omit `fallbacks` entirely
+// — Anthropic rejects the field for such models — and must not ask for the beta.
+// Since ed867e909 there is no option that could turn either on.
+func TestAnthropicNoFallbacksWithoutCatalogTargets(t *testing.T) {
+	cases := []struct {
+		name   string
+		compat string
+	}{
+		{name: "no compat at all"},
+		{name: "compat without the key", compat: `{"supportsTemperature":true}`},
+		{name: "empty target list", compat: `{"allowedFallbackModels":[]}`},
 	}
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &ai.SimpleStreamOptions{RefusalFallbacks: &ai.AnthropicRefusalFallback{}}
-	opts.APIKey = "k"
-	StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stub := startAnthropicFallbackStub(t, anthropicSSEWithModel)
+			runAnthropicFallbackRequest(t, anthropicFallbackModel(stub.url, tc.compat))
 
-	if stub.body["fallbacks"] != "default" {
-		t.Fatalf("want fallbacks=\"default\", got %#v", stub.body["fallbacks"])
-	}
-	if !strings.Contains(stub.headers.Get("anthropic-beta"), serverSideFallbackBeta) {
-		t.Fatalf("fallback beta missing: %q", stub.headers.Get("anthropic-beta"))
+			if _, has := stub.body["fallbacks"]; has {
+				t.Fatalf("fallbacks must be omitted with no permitted targets: %v", stub.body["fallbacks"])
+			}
+			if got := stub.headers.Get("anthropic-beta"); strings.Contains(got, serverSideFallbackBeta) {
+				t.Fatalf("fallback beta must not be sent with no permitted targets: %q", got)
+			}
+		})
 	}
 }
 
 // message_start reports the model Anthropic actually served, which is how a
-// server-side fallback becomes visible on the returned message.
+// server-side fallback becomes visible on the returned message. This is
+// independent of the catalog: pi assigns output.model unconditionally.
 func TestAnthropicCapturesServedModel(t *testing.T) {
 	stub := startAnthropicFallbackStub(t, anthropicSSEWithModel)
-
-	model := &ai.Model{
-		ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "anthropic",
-		Input: []string{"text"}, MaxTokens: 4096, BaseURL: stub.url,
-	}
+	model := anthropicFallbackModel(stub.url, "")
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	opts := &ai.SimpleStreamOptions{}
 	opts.APIKey = "k"
@@ -207,15 +260,18 @@ func TestAnthropicCapturesServedModel(t *testing.T) {
 	}
 }
 
-// Cost accounting for server-side refusal fallbacks (upstream 4809c2abc).
+// Cost accounting for server-side refusal fallbacks (upstream 4809c2abc,
+// ed867e909).
 
 // anthropicFallbackCosts runs one stream and reports the cost recorded at
 // message_start (carried on the first text_start event's partial) alongside the
 // final cost. Both are needed: the closing message_delta recomputes the figure,
 // so a message_start-only regression is invisible in the final message.
-func anthropicFallbackCosts(t *testing.T, model *ai.Model, opts *ai.SimpleStreamOptions) (start, final ai.CostBreakdown) {
+func anthropicFallbackCosts(t *testing.T, model *ai.Model) (start, final ai.CostBreakdown) {
 	t.Helper()
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	opts := &ai.SimpleStreamOptions{}
+	opts.APIKey = "k"
 	stream := StreamSimpleAnthropic(context.Background(), model, req, opts)
 	for ev := range stream.Events() {
 		if ev.Type == ai.EventTextStart && ev.Partial != nil {
@@ -243,10 +299,9 @@ func assertCost(t *testing.T, label string, got, want ai.CostBreakdown) {
 // served a stream reporting 10 input tokens and 1 output token on message_start,
 // then 2 output tokens on the closing message_delta.
 func TestAnthropicFallbackCosting(t *testing.T) {
-	// The pricing a fallback target carries, in the request option and in the
-	// catalog, and the two rate cards a stream can end up billed at.
-	fallbackPrice := &ai.ModelCost{Input: 5, Output: 25, CacheRead: 0.5, CacheWrite: 6.25}
-	catalogCompat := json.RawMessage(`{"allowedFallbackModels":[{"model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}]}`)
+	// The catalog pricing for the fallback, and the two rate cards a stream can
+	// end up billed at.
+	const pricedCompat = `{"allowedFallbackModels":[{"provider":"anthropic","model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}]}`
 	requestedStart := ai.CostBreakdown{Input: 1e-3, Output: 2e-4, Total: 1.2e-3}
 	requestedFinal := ai.CostBreakdown{Input: 1e-3, Output: 4e-4, Total: 1.4e-3}
 	fallbackStart := ai.CostBreakdown{Input: 5e-5, Output: 2.5e-5, Total: 7.5e-5}
@@ -255,42 +310,16 @@ func TestAnthropicFallbackCosting(t *testing.T) {
 	tests := []struct {
 		name         string
 		sse          string
-		compat       json.RawMessage
-		fallbacks    *ai.AnthropicRefusalFallback
+		compat       string
 		start, final ai.CostBreakdown
 	}{
 		{
 			// A response a fallback served is costed at the fallback's rates, taken
-			// from the request option, at both cost sites.
-			name: "request option prices the served model",
-			sse:  anthropicSSEWithModel,
-			fallbacks: &ai.AnthropicRefusalFallback{Targets: []ai.AnthropicRefusalFallbackTarget{
-				{Model: "claude-opus-4-8", Cost: fallbackPrice},
-			}},
+			// from the catalog, at both cost sites.
+			name:  "the catalog prices the served model",
+			sse:   anthropicSSEWithModel,
 			start: fallbackStart, final: fallbackFinal,
-		},
-		{
-			// pi joins the request option and the catalog with `??`, so a target
-			// listed without local pricing falls through to the catalog rather than
-			// claiming the lookup and pinning the requested model's rates.
-			name:   "an unpriced target falls through to the catalog",
-			sse:    anthropicSSEWithModel,
-			compat: catalogCompat,
-			fallbacks: &ai.AnthropicRefusalFallback{Targets: []ai.AnthropicRefusalFallbackTarget{
-				{Model: "claude-opus-4-8"},
-			}},
-			start: fallbackStart, final: fallbackFinal,
-		},
-		{
-			// ...and the request option is the LEFT side of that `??`, so it decides
-			// whenever it carries pricing of its own.
-			name:   "the request option outranks the catalog",
-			sse:    anthropicSSEWithModel,
-			compat: json.RawMessage(`{"allowedFallbackModels":[{"model":"claude-opus-4-8","cost":{"input":1,"output":1}}]}`),
-			fallbacks: &ai.AnthropicRefusalFallback{Targets: []ai.AnthropicRefusalFallbackTarget{
-				{Model: "claude-opus-4-8", Cost: fallbackPrice},
-			}},
-			start: fallbackStart, final: fallbackFinal,
+			compat: pricedCompat,
 		},
 		{
 			// pi guards the whole lookup on the served model differing from the
@@ -298,54 +327,143 @@ func TestAnthropicFallbackCosting(t *testing.T) {
 			// ordinary traffic.
 			name:   "a served model equal to the requested one keeps its own pricing",
 			sse:    anthropicSSESameModel,
-			compat: json.RawMessage(`{"allowedFallbackModels":[{"model":"claude-opus-5","cost":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0}}]}`),
+			compat: `{"allowedFallbackModels":[{"provider":"anthropic","model":"claude-opus-5","cost":{"input":1,"output":1,"cacheRead":0,"cacheWrite":0}}]}`,
 			start:  requestedStart, final: requestedFinal,
 		},
 		{
 			// pi gates the swap on a pricing being FOUND, not on the served model
-			// differing: an unknown one leaves the requested model's rates in place
+			// differing: an unlisted one leaves the requested model's rates in place
 			// rather than blanking them.
-			name:  "a served model unknown to both lookups keeps the requested pricing",
+			name:  "a served model the catalog does not list keeps the requested pricing",
 			sse:   anthropicSSEWithModel,
 			start: requestedStart, final: requestedFinal,
 		},
 		{
+			// ed867e909 added `fallback.provider === model.provider` to the find, so
+			// another provider's entry for the same model id must not price this
+			// response.
+			name:   "a catalog entry for another provider does not price the response",
+			sse:    anthropicSSEWithModel,
+			compat: `{"allowedFallbackModels":[{"provider":"vertex","model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}]}`,
+			start:  requestedStart, final: requestedFinal,
+		},
+		{
 			// A fallback priced at all zeroes IS a found pricing though — every JS
 			// object is truthy — so it swaps, to a zero-cost response.
-			name: "a fallback priced at zero still swaps",
-			sse:  anthropicSSEWithModel,
-			fallbacks: &ai.AnthropicRefusalFallback{Targets: []ai.AnthropicRefusalFallbackTarget{
-				{Model: "claude-opus-4-8", Cost: &ai.ModelCost{}},
-			}},
-			start: ai.CostBreakdown{}, final: ai.CostBreakdown{},
+			name:   "a fallback priced at zero still swaps",
+			sse:    anthropicSSEWithModel,
+			compat: `{"allowedFallbackModels":[{"provider":"anthropic","model":"claude-opus-4-8","cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}`,
+			start:  ai.CostBreakdown{}, final: ai.CostBreakdown{},
 		},
 		{
 			// pi's ternary assigns usageModel in both arms, so a message_start naming
 			// the requested model again drops the fallback's rates.
-			name: "a second message_start reprices back to the requested model",
-			sse:  anthropicSSERepricedBack,
-			fallbacks: &ai.AnthropicRefusalFallback{Targets: []ai.AnthropicRefusalFallbackTarget{
-				{Model: "claude-opus-4-8", Cost: fallbackPrice},
-			}},
-			start: requestedStart, final: requestedFinal,
+			name:   "a second message_start reprices back to the requested model",
+			sse:    anthropicSSERepricedBack,
+			compat: pricedCompat,
+			start:  requestedStart, final: requestedFinal,
 		},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			stub := startAnthropicFallbackStub(t, tc.sse)
-			model := &ai.Model{
-				ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "anthropic",
-				Input: []string{"text"}, MaxTokens: 4096, BaseURL: stub.url,
-				Cost:   ai.ModelCost{Input: 100, Output: 200},
-				Compat: tc.compat,
-			}
-			opts := &ai.SimpleStreamOptions{RefusalFallbacks: tc.fallbacks}
-			opts.APIKey = "k"
-
-			start, final := anthropicFallbackCosts(t, model, opts)
+			start, final := anthropicFallbackCosts(t, anthropicFallbackModel(stub.url, tc.compat))
 			assertCost(t, "message_start", start, tc.start)
 			assertCost(t, "final", final, tc.final)
 		})
+	}
+}
+
+// TestAnthropicUsageModelLookup pins the edges of pi's
+// `find(f => f.provider === model.provider && f.model === served)?.cost` that a
+// full stream cannot reach cheaply: both halves of the match, and the fact that
+// `find` stops at the FIRST hit — an entry carrying no usable pricing yields
+// `undefined` rather than scanning on to a later duplicate that has some.
+func TestAnthropicUsageModelLookup(t *testing.T) {
+	priced := `{"provider":"anthropic","model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}`
+	cases := []struct {
+		name     string
+		provider string
+		compat   string
+		wantCost *ai.ModelCost
+	}{
+		{
+			name: "priced entry swaps", provider: "anthropic",
+			compat:   `{"allowedFallbackModels":[` + priced + `]}`,
+			wantCost: &ai.ModelCost{Input: 5, Output: 25, CacheRead: 0.5, CacheWrite: 6.25},
+		},
+		{
+			name: "provider must match too", provider: "github-copilot",
+			compat: `{"allowedFallbackModels":[` + priced + `]}`,
+		},
+		{
+			// pi's `cost` is required by the type, but the catalog reaches Go as
+			// untyped JSON and the runtime read is still `?.cost`: an entry without
+			// it is `undefined`, which fails the truthiness gate.
+			name: "an entry with no cost does not swap", provider: "anthropic",
+			compat: `{"allowedFallbackModels":[{"provider":"anthropic","model":"claude-opus-4-8"}]}`,
+		},
+		{
+			name: "an entry with a null cost does not swap", provider: "anthropic",
+			compat: `{"allowedFallbackModels":[{"provider":"anthropic","model":"claude-opus-4-8","cost":null}]}`,
+		},
+		{
+			// find returns the first hit; `?.cost` on it is undefined and the search
+			// is over, so the priced duplicate behind it is never consulted.
+			name: "the first match decides", provider: "anthropic",
+			compat: `{"allowedFallbackModels":[{"provider":"anthropic","model":"claude-opus-4-8"},` + priced + `]}`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &ai.Model{
+				ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: tc.provider,
+				Cost: ai.ModelCost{Input: 100, Output: 200}, Compat: json.RawMessage(tc.compat),
+			}
+			got := anthropicUsageModel(model, "claude-opus-4-8")
+			if tc.wantCost == nil {
+				if got != model {
+					t.Fatalf("want the requested model kept (same pointer), got %+v", *got)
+				}
+				return
+			}
+			if got == model {
+				t.Fatal("want a repriced copy, got the caller's model back")
+			}
+			if got.ID != "claude-opus-4-8" || !reflect.DeepEqual(got.Cost, *tc.wantCost) {
+				t.Fatalf("want id claude-opus-4-8 priced %+v, got id %q priced %+v", *tc.wantCost, got.ID, got.Cost)
+			}
+		})
+	}
+}
+
+// TestAnthropicUsageModelLeavesCatalogModelAlone pins the two structural
+// properties of pi's `fallbackCost ? { ...model, id, cost } : model`: the no-swap
+// arm hands back the caller's own *ai.Model (pi's `: model`), and the swap arm is
+// a copy — the shared catalog entry is never written to, whatever a stream
+// reports.
+func TestAnthropicUsageModelLeavesCatalogModelAlone(t *testing.T) {
+	model := &ai.Model{
+		ID: "claude-opus-5", Api: ai.APIAnthropicMessages, Provider: "anthropic",
+		Cost:   ai.ModelCost{Input: 100, Output: 200},
+		Compat: json.RawMessage(`{"allowedFallbackModels":[{"provider":"anthropic","model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}]}`),
+	}
+	before := *model
+
+	if got := anthropicUsageModel(model, "claude-opus-5"); got != model {
+		t.Fatal("a response served by the requested model must reuse the caller's *ai.Model")
+	}
+	if got := anthropicUsageModel(model, "claude-haiku-9"); got != model {
+		t.Fatal("a served model the catalog does not price must reuse the caller's *ai.Model")
+	}
+
+	priced := anthropicUsageModel(model, "claude-opus-4-8")
+	if priced == model {
+		t.Fatal("a repriced response must not alias the shared catalog model")
+	}
+	priced.ID, priced.Cost = "mutated", ai.ModelCost{Input: -1}
+	if model.ID != before.ID || !reflect.DeepEqual(model.Cost, before.Cost) {
+		t.Fatalf("the shared catalog model was mutated: id %q cost %+v", model.ID, model.Cost)
 	}
 }
