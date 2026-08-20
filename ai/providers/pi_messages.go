@@ -524,9 +524,11 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.Context, opts
 		// conversion drops deletion markers instead of deleting: pi spreads it
 		// into an object literal that already holds the fixed headers, so a
 		// marker cannot unset the authorization this adapter just wrote.
-		for k, v := range providerHeadersToRecord(opts.Headers) {
-			httpReq.Header.Set(k, v)
-		}
+		// headerObject carries the merge order so a consumer map holding two
+		// spellings of one name cannot let Go's map iteration pick the winner.
+		o := &headerObject{}
+		o.merge(opts.Headers)
+		o.applyAsRecord(httpReq.Header)
 
 		// pi: `(options?.fetch ?? globalThis.fetch)(url, …)` — this provider calls
 		// fetch directly rather than through an SDK, so the default stays

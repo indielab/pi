@@ -383,21 +383,31 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 			// pi builds one merged object — mergeProviderAttributionHeaders puts
 			// the attribution bundle at the bottom, then model.headers, then the
 			// consumer's options.headers — and hands it to the SDK as
-			// providerHeadersToRecord({...model.headers, ...optionsHeaders}).
+			// providerHeadersToRecord({"User-Agent": getPiUserAgent(),
+			// ...model.headers, ...optionsHeaders}) (upstream 87af49dec added
+			// the leading user agent; google sent none before).
 			// Merging before converting is what lets a deletion marker cancel a
 			// value an earlier source supplied; the conversion then drops the
 			// markers rather than deleting, because this adapter builds the
 			// request itself and cannot unset a header the SDK owns
-			// (x-goog-api-key, content-type).
-			merged := mergeProviderHeaders(
-				stringHeaders(getSessionAttributionHeaders(model, opts.SessionID)),
-				stringHeaders(getDefaultAttributionHeaders(model)),
-				model.Headers,
-				opts.Headers,
-			)
-			for k, v := range providerHeadersToRecord(merged) {
-				r.Header.Set(k, v)
-			}
+			// (x-goog-api-key, content-type). That is also why a marker on the
+			// user agent behaves differently here than on the SDK adapters: it
+			// cancels pi's default only when it collides with it by name, and
+			// never removes a header this adapter set literally.
+			//
+			// This is the one adapter where the merged object's slot order does
+			// NOT fully decide the wire value: @google/genai builds its request
+			// headers with Headers.append, so two case-variant names arrive
+			// comma-joined there and as the last slot's value alone here. That
+			// gap is recorded in docs/UPSTREAM.md; the slot order at least
+			// picks the same winner pi puts last in the join.
+			o := &headerObject{}
+			o.merge(piUserAgentHeaders())
+			o.mergeStrings(getSessionAttributionHeaders(model, opts.SessionID))
+			o.mergeStrings(getDefaultAttributionHeaders(model))
+			o.merge(model.Headers)
+			o.merge(opts.Headers)
+			o.applyAsRecord(r.Header)
 			return r, nil
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, nil))

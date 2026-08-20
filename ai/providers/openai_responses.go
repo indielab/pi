@@ -363,31 +363,37 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			if err != nil {
 				return nil, err
 			}
-			r.Header.Set("content-type", "application/json")
-			r.Header.Set("accept", "text/event-stream")
+			// pi createClient (openai-responses.ts, upstream 87af49dec)
+			// builds ONE header object and hands it to the SDK as
+			// `defaultHeaders`; headerObject is that object, slots and all.
+			// It opens with pi's runtime user agent —
+			// `{"User-Agent": getPiUserAgent(), ...model.headers}` — so it is a
+			// default every later source outranks, xai included.
+			o := &headerObject{}
+			o.merge(piUserAgentHeaders())
+			o.set("content-type", "application/json")
+			o.set("accept", "text/event-stream")
 			// The SDK auth header sits below every merged source, so a deletion
 			// marker in them can suppress it (pi passes the merged headers as
 			// `defaultHeaders`, which the OpenAI SDK applies over its own auth).
-			r.Header.Set("authorization", "Bearer "+apiKey)
+			o.set("authorization", "Bearer "+apiKey)
 			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
 			// bundle at the bottom of the precedence stack: emit session +
 			// default attribution first so model.headers and options.headers
 			// override them.
-			applyAttributionDefaults(r.Header.Set, model, opts.SessionID)
+			applyAttributionDefaults(o.set, model, opts.SessionID)
 			// Header-owned provider auth (pi resolves it in the auth layer and
 			// delivers it as options.headers, above attribution and below
 			// model/consumer headers).
 			if model.Provider == "cloudflare-ai-gateway" {
-				applyProviderHeaders(r.Header, cloudflareAIGatewayAuthHeaders(apiKey))
+				o.merge(cloudflareAIGatewayAuthHeaders(apiKey))
 			}
 			// pi createClient header precedence (openai-responses.ts:189-219):
 			// model.headers, copilot dynamic headers, session cache headers,
 			// then options.headers merged last so they can override defaults.
-			applyProviderHeaders(r.Header, model.Headers)
+			o.merge(model.Headers)
 			if model.Provider == "github-copilot" {
-				for k, v := range buildCopilotDynamicHeaders(req.Messages, hasCopilotVisionInput(req.Messages)) {
-					r.Header.Set(k, v)
-				}
+				o.mergeStrings(buildCopilotDynamicHeaders(req.Messages, hasCopilotVisionInput(req.Messages)))
 			}
 			// Session cache headers (pi openai-responses.ts:207-217); the
 			// sessionId is zeroed when cacheRetention is "none" (:115). Format
@@ -395,25 +401,20 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			if compat := getResponsesCompat(model); opts.SessionID != "" &&
 				resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone {
 				if compat.SessionAffinityFormat == sessionAffinityOpenRouter {
-					r.Header.Set("x-session-id", opts.SessionID)
+					o.set("x-session-id", opts.SessionID)
 				} else {
 					if compat.SessionAffinityFormat == sessionAffinityOpenAI {
-						r.Header.Set("session_id", opts.SessionID)
+						o.set("session_id", opts.SessionID)
 					}
-					r.Header.Set("x-client-request-id", opts.SessionID)
+					o.set("x-client-request-id", opts.SessionID)
 				}
 			}
 			// pi options.headers (consumer) are spread last and win over
 			// everything above, including model.headers and the attribution
 			// defaults — a deletion marker here suppresses any of them.
-			applyProviderHeaders(r.Header, opts.Headers)
-			// pi createClient (openai-responses.ts, upstream 70e878d4c): xAI
-			// requests carry pi's runtime user agent for provider-side
-			// attribution, forced after the options merge so it outranks
-			// consumer headers.
-			if model.Provider == "xai" {
-				forcePiUserAgent(r.Header)
-			}
+			o.merge(opts.Headers)
+
+			o.applyAsDefaultHeaders(r.Header)
 			return r, nil
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, openaiSDKErrorMessage))

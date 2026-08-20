@@ -96,7 +96,7 @@ const (
 // absent key.
 //
 // Values are SHARED, not copied: merging headers (mergeHeaders here,
-// mergeProviderHeaders in ai/providers) copies the *string pointers, so a
+// headerObject.merge in ai/providers) copies the *string pointers, so a
 // merged map — including the one handed to a TransformHeaders hook — aliases
 // the *string values inside a Model.Headers catalog entry that other requests
 // read concurrently. Treat a *string value as immutable: to change a header,

@@ -1494,48 +1494,9 @@ data: {"type":"message_stop"}
 	}
 }
 
-// --- pi 9d2ec7ffa: Kimi Coding requests enforce pi's runtime user agent ---
-
-func TestAnthropicKimiCodingPiUserAgent(t *testing.T) {
-	// Catalog kimi-coding models carry a static User-Agent (KimiCLI/1.5 at npm
-	// 0.84.1) and here the consumer supplies another; both must lose to the pi
-	// runtime user agent, which appears exactly once on the wire (pi
-	// anthropic-messages.ts mergeClientHeaders deletes every case variant
-	// before setting its own).
-	model := &ai.Model{
-		ID: "kimi-for-coding", Api: ai.APIAnthropicMessages, Provider: "kimi-coding",
-		Input: []string{"text"}, MaxTokens: 4096,
-		Headers: ai.ProviderHeaders{"User-Agent": strPtr("KimiCLI/1.5")},
-	}
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
-		APIKey:  "kimi-key",
-		Headers: ai.ProviderHeaders{"user-agent": strPtr("custom-client")},
-	}}}
-	headers, _ := anthropicCapture(t, model, req, opts, anthropicSSE)
-	if got := headers.Values("User-Agent"); len(got) != 1 || got[0] != piUserAgent() {
-		t.Fatalf("kimi-coding user-agent = %v, want exactly [%q]", got, piUserAgent())
-	}
-}
-
-func TestAnthropicNonKimiKeepsConsumerUserAgent(t *testing.T) {
-	// The override is scoped to provider "kimi-coding" (pi mergeClientHeaders
-	// checks model.provider); other anthropic-messages providers keep whatever
-	// the merge produced — here the consumer's user-agent.
-	model := &ai.Model{
-		ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic",
-		Input: []string{"text"}, MaxTokens: 4096,
-	}
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	opts := &AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
-		APIKey:  "k",
-		Headers: ai.ProviderHeaders{"user-agent": strPtr("custom-client")},
-	}}}
-	headers, _ := anthropicCapture(t, model, req, opts, anthropicSSE)
-	if got := headers.Get("user-agent"); got != "custom-client" {
-		t.Fatalf("anthropic user-agent = %q, want the consumer value untouched", got)
-	}
-}
+// The anthropic-messages user-agent surface (pi 9d2ec7ffa's kimi-coding force,
+// reversed into a plain default by 87af49dec) is pinned in
+// pi_user_agent_wire_test.go alongside the other adapters.
 
 // allowedFallbackModels is decoded on its own so a shape it cannot read cannot
 // take the boolean compat flags down with it: encoding/json populates the

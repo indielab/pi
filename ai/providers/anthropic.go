@@ -1227,16 +1227,30 @@ func convertContentBlocks(content ai.ContentList) any {
 }
 
 func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey, authToken string, hasTools bool, messages []ai.Message) {
-	r.Header.Set("content-type", "application/json")
-	r.Header.Set("accept", "application/json")
-	r.Header.Set("anthropic-version", anthropicVersion)
-	r.Header.Set("anthropic-dangerous-direct-browser-access", "true")
+	// pi builds ONE header object per request (mergeClientHeaders,
+	// anthropic-messages.ts at upstream 87af49dec) and hands it to the SDK as
+	// `defaultHeaders`; headerObject is that object, slots and all, so a case
+	// collision resolves by insertion slot rather than by which Set ran last.
+	//
+	// The merge is seeded with pi's runtime user agent FIRST, so every later
+	// source outranks it: the attribution bundle, model.Headers (the catalog's
+	// GitHubCopilotChat agent on github-copilot models) and the consumer's
+	// opts.Headers — and a deletion marker in any of them suppresses it. The
+	// OAuth branch below is the one place where the SPELLING matters: it holds
+	// its claude-cli identity under the lowercase name, at a later slot, so a
+	// later source spelled "User-Agent" updates slot 0 and still loses to it.
+	o := &headerObject{}
+	o.merge(piUserAgentHeaders())
+	o.set("content-type", "application/json")
+	o.set("accept", "application/json")
+	o.set("anthropic-version", anthropicVersion)
+	o.set("anthropic-dangerous-direct-browser-access", "true")
 
 	// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution bundle at
 	// the bottom of the precedence stack: emit session + default attribution
 	// first so the provider auth headers, model.Headers, and opts.Headers all
 	// override them.
-	applyAttributionDefaults(r.Header.Set, model, opts.SessionID)
+	applyAttributionDefaults(o.set, model, opts.SessionID)
 
 	compat := getAnthropicCompat(model)
 	var betas []string
@@ -1278,56 +1292,49 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// with the normal (non-OAuth) betas.
 	switch {
 	case authToken != "":
-		r.Header.Set("authorization", "Bearer "+authToken)
+		o.set("authorization", "Bearer "+authToken)
 		if len(betas) > 0 {
-			r.Header.Set("anthropic-beta", strings.Join(betas, ","))
+			o.set("anthropic-beta", strings.Join(betas, ","))
 		}
 	case model.Provider == "github-copilot":
-		r.Header.Set("authorization", "Bearer "+branchKey)
+		o.set("authorization", "Bearer "+branchKey)
 		if len(betas) > 0 {
-			r.Header.Set("anthropic-beta", strings.Join(betas, ","))
+			o.set("anthropic-beta", strings.Join(betas, ","))
 		}
 	case oauth:
-		r.Header.Set("authorization", "Bearer "+branchKey)
-		r.Header.Set("user-agent", "claude-cli/"+claudeCodeVersion)
-		r.Header.Set("x-app", "cli")
+		o.set("authorization", "Bearer "+branchKey)
+		o.set("user-agent", "claude-cli/"+claudeCodeVersion)
+		o.set("x-app", "cli")
 		oauthBetas := append([]string{"claude-code-20250219", "oauth-2025-04-20"}, betas...)
-		r.Header.Set("anthropic-beta", strings.Join(oauthBetas, ","))
+		o.set("anthropic-beta", strings.Join(oauthBetas, ","))
 	default:
-		r.Header.Set("x-api-key", branchKey)
+		o.set("x-api-key", branchKey)
 		if len(betas) > 0 {
-			r.Header.Set("anthropic-beta", strings.Join(betas, ","))
+			o.set("anthropic-beta", strings.Join(betas, ","))
 		}
 		// pi anthropic.ts:496-497: cacheSessionId is dropped when the effective
 		// cacheRetention is "none", so no session-affinity header is sent.
 		if opts.SessionID != "" && compat.sendSessionAffinityHeaders &&
 			resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone {
-			r.Header.Set("x-session-affinity", opts.SessionID)
+			o.set("x-session-affinity", opts.SessionID)
 		}
 	}
 
 	// Header-owned provider auth sits above attribution and below the
 	// model/consumer headers, where pi's auth.headers enter the merge.
-	applyProviderHeaders(r.Header, providerAuthHeaders)
-	applyProviderHeaders(r.Header, model.Headers)
+	o.merge(providerAuthHeaders)
+	o.merge(model.Headers)
 	// pi merges copilotDynamicHeaders after model.headers, before options
 	// headers (anthropic-messages.ts createClient).
 	if model.Provider == "github-copilot" {
-		for k, v := range buildCopilotDynamicHeaders(messages, hasCopilotVisionInput(messages)) {
-			r.Header.Set(k, v)
-		}
+		o.mergeStrings(buildCopilotDynamicHeaders(messages, hasCopilotVisionInput(messages)))
 	}
 	// pi options.headers (consumer) are spread last and win over everything
 	// above, including model.Headers and the attribution defaults — a deletion
 	// marker here suppresses any of them.
-	applyProviderHeaders(r.Header, opts.Headers)
-	// pi mergeClientHeaders (anthropic-messages.ts, upstream 9d2ec7ffa): Kimi
-	// For Coding requests always carry pi's runtime user agent, so the
-	// override outranks the catalog's static header (KimiCLI/1.5 at npm
-	// 0.84.1), the OAuth claude-cli identity, and consumer opts.Headers.
-	if model.Provider == "kimi-coding" {
-		forcePiUserAgent(r.Header)
-	}
+	o.merge(opts.Headers)
+
+	o.applyAsDefaultHeaders(r.Header)
 }
 
 // mapAnthropicStopReason maps an Anthropic stop_reason to the unified

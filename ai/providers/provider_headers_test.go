@@ -270,13 +270,16 @@ func TestPiMessagesHeaderStates(t *testing.T) {
 	}
 }
 
-// applyProviderHeaders must not depend on Go map iteration order. Two names
-// that differ only by case are distinct ProviderHeaders keys but canonicalize
-// to one http.Header key, so a marker and a value can collide on it; sorted
-// name order is the tie-break (see applyProviderHeaders), matching mergeHeaders.
-// Only raw Model.Headers can carry such a pair — the merged path is
-// case-deduped before it reaches here.
-func TestApplyProviderHeadersCaseCollisionIsDeterministic(t *testing.T) {
+// Merging one ProviderHeaders source must not depend on Go map iteration order.
+// Two names that differ only by case are distinct ProviderHeaders keys but
+// canonicalize to one http.Header key, so a marker and a value can collide on
+// it; sorted name order is the tie-break (see headerObject.merge), matching
+// mergeHeaders in ai/models_runtime.go.
+//
+// Across sources the winner is decided by slot order and needs no tie-break, so
+// this is now the whole remaining reach of the sorted rule: two spellings
+// inside ONE ai.ProviderHeaders literal — a catalog entry, or a consumer map.
+func TestHeaderObjectCaseCollisionIsDeterministic(t *testing.T) {
 	headers := ai.ProviderHeaders{
 		// "Authorization" sorts before "authorization" (ASCII), so the Del runs
 		// first and the value wins.
@@ -295,7 +298,9 @@ func TestApplyProviderHeadersCaseCollisionIsDeterministic(t *testing.T) {
 	// itself at least once.
 	for i := range 200 {
 		h := http.Header{}
-		applyProviderHeaders(h, headers)
+		o := &headerObject{}
+		o.merge(headers)
+		o.applyAsDefaultHeaders(h)
 		if got := h.Get("authorization"); got != "Bearer x" {
 			t.Fatalf("run %d: authorization = %q, want %q — the name sorting last must win", i, got, "Bearer x")
 		}
