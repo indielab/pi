@@ -10,10 +10,10 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `3a0b9a3ee` — "Revert: expose provider context construction" (2026-08-19; **3 port, 1 catalog-queued, 9 n/a, 0 decide** — delta `2509b5c03..3a0b9a3ee`, **12** first-parent changes, no merges. **A revert-heavy delta: four of the twelve are reverts or the commits they undo, and one of them reverts the sha the previous pin sat on.** Two pairs net to zero and were verified byte-restored rather than assumed — `cff1cf52c` + `8dab70281` (cache-friendly compaction primitives) and `a6c6f8018` + `59a71b235` (the first anthropic fallback-usage attempt, superseded by the `4809c2abc` re-land). Ports: the **generalized openai-completions thinking-budget field** (`b23741269` → `f0311e3`; `ThinkingTokenBudgetField` selects `thinking_token_budget`/`thinking_budget`/`thinking_budget_tokens`, the old boolean stays a documented alias, and the clamped budget now also reaches chat-template and baseten values through a new `{"$var":"thinking.budget"}`), **anthropic fallback usage** (`4809c2abc` → `bc7964e`; a response served by a refusal fallback is COSTED against the model that served it — the union collapse grows to carry per-target `cost`, the wire projection strips it deliberately, and `message_start` re-prices every time so a second one naming the requested model bills at the original rates), and the **un-port of provider-context construction** (`3a0b9a3ee` → `0cfa63f`; upstream withdrew `2509b5c03` the day after the port shipped it, so `BuildProviderContext`, `Agent.BuildProviderContext` and `ContextPipeline` are removed — safe silently because that API landed after `v0.84.18` and this cycle cuts no tag; see the **2026-08-19 ruling**). Review findings (3 MED, 12 LOW) applied in `527c11f`. **No release crossed — npm stays 0.84.2, no tag cut.** Both gates ran per commit (6 reviews) plus an independent fourth verification pass, which found the third MED — a `context.WithoutCancel` substitution escaping the whole suite — while probing past the review's scope. **The catalog-only queue goes 6 → 7, and `4809c2abc` REPLACES `eb1f87fa9`'s shape: `allowedFallbackModels` now emits `[{model, cost}]`, not `[string]` — regenerating to the old shape silently disables summarization fallbacks (see the regen tripwire).** The **harness backlog stays 11** — nothing in this delta touches `agent/src/harness`. The pin still means *"everything in scope is reviewed and ported **except the harness tree**"* — see the 2026-08-07 ruling. The `defaultTools` tripwire (2026-08-13) was not hit. Three **pre-existing** parity divergences were surfaced by the reviewers' differential scenarios and deliberately recorded rather than folded into a sync commit. Prior pin: `2509b5c03` (2026-08-18). |
-| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.84.2** (installed at `~/.cache/pi-npm/0.84.2`; package-lock integrity == registry `dist.integrity`, re-verified by the parity reviewer and by every harness run). **No release crossed this cycle — the reference build is unchanged.** **Caveat recorded 2026-08-19: the dist cannot cross-check this cycle's anthropic slice at all** — `grep -rc fallback` over its `dist/*.js` is **0 in every file**, so the refusal-fallback feature postdates 0.84.2 entirely and TS-at-the-sha is the only reference for `bc7964e`. Nothing in that slice is "npm-verified". The 19 post-0.84.2 `backend:"src"` scenarios (13 toolChoice/refusalFallbacks promoted 2026-08-18, plus 6 thinking-budget added 2026-08-19) stay `src` for the same reason; they flip to `dist` at the release that ships them (README rule). The catalog-only queue holds **7** generator deltas: `4809c2abc` (`applyAnthropicFallbackCostMetadata` + `allowedFallbackModels` emitted as `[{model, cost}]`, superseding `eb1f87fa9`'s string shape); from 2026-08-18 `eb1f87fa9` (the `ANTHROPIC_ALLOWED_FALLBACK_MODELS` table itself), `0e4d49541` (drop deprecated Xiaomi models), `87205484b` (Chinese ZAI Coding Plan catalog), `6db110e6f` (Qwen Token Plan DS4 Pro 0813); and from 2026-08-17 the `70e878d4c` xai half and `86d001d36` (DS4-Flash low on opencode/opencode-go). All await the next release regen. The catalog itself is UNCHANGED this cycle: 536,642 B, 1267 models / 39 providers, and it carries **zero** `allowedFallbackModels` — confirmed equal to upstream at `4809c2abc`, so the refusal-fallback feature stays dormant on both sides until the regen. No goldens were recaptured — nothing in the delta touches a captured golden. |
-| Parity proofs at the pin | **2026-08-19 (3 ports, no release):** the anthropic fallback-costing extract verified against an **oracle transliterated from `4809c2abc:packages/ai/src/api/anthropic-messages.ts` lines 606-613** — modelling `?.cost`, `??` and the truthiness gate with an explicit present/absent type rather than paraphrasing them — run over a **10 compat × 7 fallback-set × 5 served-id matrix (350 cases), zero divergences**, covering unpriced targets, `"cost": null`, zero-priced targets, duplicate-first-unpriced, self-referential catalog entries, `served == ""`, malformed compat and the `"default"` arm, and additionally asserting that the shared catalog `*ai.Model` is never mutated and that the no-swap arm returns the SAME pointer (pi's `: model`); `cost` proven stripped from the `fallbacks` wire value on a real request body (pi's explicit `.map(f => ({model: f.model}))`), mutation-locked; the compaction prompt constants **executed and byte-compared pin vs HEAD** to clear `ef8dc7385`'s prompt-shaped refactor — composed UPDATE prompt **1257 chars, identical**, `SUMMARIZATION_PROMPT` and `SUMMARIZATION_SYSTEM_PROMPT` identical; the un-port proven **exactly** the revert by byte-comparing `agent/loop.go` and `agent/agent.go` against `b79c9e6` (the pre-port parent — identical) and by a `go doc -all` delta showing exactly the three identifiers upstream removed, with no remaining callers including `examples/` and `cmd/`; the two revert PAIRS proven net-zero by `git rev-parse` blob comparison rather than by reading the subjects; **19 mutations each verified red for the right reason**, with one planned mutation accepted as correctly GREEN (the `min` inside `clampThinkingBudgetToAnswerRoom` is algebraically inert — the anthropic test's value comes from a second, separate clamp in `StreamSimpleAnthropic`). Harness: **40 PASS / 0 KNOWN / 0 FAIL** (34 → 40, six new `src` scenarios), verified cold after `rm -rf pisrc/3a0b9a3ee`. **2026-08-18 (6 ports, no release):** `resolveGoogleThinkingLevel` **executed from sha-extracted TS** (`google-shared.ts` at `af2c35223`, blob `a49c6689`) against Go over 18 inputs — **18/18 byte-identical**, covering every `String(mapped)` case (absent → `undefined`, explicit null → `null`, self-referential `"xhigh"`, uppercase, empty-string entry with its trailing space, non-ASCII provider/id) and confirming Go renders the ORIGINAL mapped string, not the lower-cased one; the anthropic fallback beta driven through **all four** Go auth branches against a live server (third in `betaFeatures` every time, absent when unset, and the OAuth branch keeping pi's `claude-code-20250219,oauth-2025-04-20` prefix); `fallbacks` differential-verified on the wire for **both arms** of pi's union (order-preserving 2-entry chain; the `"default"` literal); the served-model capture verified live (`served-model` overriding a requested `claude-x`); the catalog confirmed to carry zero `allowedFallbackModels` at the sha AND in the Go embed, so the feature is dormant both sides; tool choice wire-verified for all five ported providers with google's precedence probed separately **8/8** (strict+auto → `VALIDATED`, i.e. auto does NOT short-circuit; strict+none → `NONE`); the summarization guard proven a strict cover (pi has exactly three `completeSummarization` callers at the sha, all guarded; Go has exactly two, both routed through the single site). Harness: **21 PASS / 0 KNOWN / 0 FAIL** on the 0.84.2 dist, plus **13 new scenarios** built for this cycle's surface (`toolChoice`/`refusalFallbacks` threaded through `SimpleStreamOptions`, re-pinned to `2509b5c03` with `backend:"src"`) — **13 PASS**, payloads inspected to confirm the keys are present rather than passing by mutual absence — those 13 were **promoted into the shipped harness the same day**, taking it to **34 PASS / 0 KNOWN / 0 FAIL**. **2026-08-17 (5 ports, no release):** the single-`Set` rendering of pi's delete-then-set proven by auditing every header write path in `ai/providers` (all `Set`/`Del`, no raw map writes) with exactly-once wire asserts, and the UA string **byte-compared against `getPiUserAgent()` executed from the authentic 0.84.2 dist**; the kimi cache-read chain byte-checked at `d3ab2af96` with per-arm nullish semantics locked by tests; the compaction SessionID threading checked call-site-for-call-site (agent-session passes `undefined` upstream ⇒ behavior unchanged; branch-summary shape stays fresh); `isSingleEditInput`'s domain identical over JSON values; the skills `isString` screen verified against **yaml@2.9.0** (the exact version pinned at the sha and in the build) via a 74-literal adversarial probe, **74/74** agreement; **7 mutations in a scratch worktree each red for the right reason**; catalog untouched and independently re-derived `cmp`-identical (536,642 B); harness **21/21 PASS** on the 0.84.2 dist exercising both changed builders. **2026-08-15 (4 ports, release):** the 0.84.2 catalog **independently re-derived and `cmp`-byte-identical** (536,642 B), endpoint-pinned at both ends (old embed ≡ a fresh 0.84.1 derivation ⇒ ported diff ≡ upstream release diff); schema drift enumerated against consuming types (one new key, decoded); the Google guard proven same-value/same-point against `5093641a5` with `mapGoogleStopReason` entry-for-entry ≡ upstream and mutation-verified on a scratch copy (guard removed → "got toolUse"); the APP_NAME no-op proven against the **shipped package** (`piConfig` carries no `name` ⇒ every changed string byte-identical for stock pi); the zai table compared whole (41 entries, delta exactly the two upstream lines) and mutation-verified via the new guard test; the harness flip justified by ancestry (all 13 scenario-note shas first-parent ancestors of `914cf1472`) and by the reviewer's own re-run: **21 PASS / 0 KNOWN / 0 FAIL on the 0.84.2 dist**. **2026-08-14 (1 port):** the kimi UA override proven **sha-anchored + mutation-verified** (headers are outside the bodies-only harness): all three upstream `createClient` branches confirmed to route through `mergeClientHeaders` after `optionsHeaders` with no per-request header bypass; the Go single-`Set` equivalence established by reading every write path (all canonicalize — no raw map writes); Node token fidelity checked down to the `RTL_OSVERSIONINFOW` layout and libuv's `uv_os_uname` release format; the authentic 0.84.1 dist (integrity-matched) shown to carry `KimiCLI/1.5` and no pi-user-agent module, making TS-at-`9d2ec7ffa` the reference; and both tests mutation-verified in a throwaway worktree (override removed → wire shows `[custom-client]`; made unconditional → non-kimi test fails). Harness re-run anyway for the body surface: **21/21 PASS**. **2026-08-12 (1 port):** the strict conversion was proven against **executed upstream TS at `7915cdac6`** three ways: a 28-case conversion probe (`makeStrictJsonSchema` run via node from sha-extracted source vs Go) byte-identical on 24/28 including every error string and the unsupported-key precedence order — the 4 mismatches are the recorded decode-boundary drift class, not wire-reachable through pi's own tools; a 10-case `validateToolArguments` probe vs **real TypeBox** (npm 0.84.1's) 10/10 including the nested-`$ref` compile-path constructed to break the `Check(nil)` mapping; and 3 new differential-harness scenarios asserting full request bodies on the anthropic/openai-completions/openai-responses wires (required ordering with deliberately non-alphabetical properties, anyOf-null widening, no-rewrap of already-nullable shapes, nested object closing, zero-property object, inconvertible-tool fallback carrying the ORIGINAL parameters). The harness is what caught the one real divergence (`required: []` dropped on zero-property strict objects) — fixed, then re-verified **21/21 PASS**. **2026-08-11 (3 ports):** cwd-footer byte-proven via `cmp` on both prompt branches; DeepSeek fold faithful on membership and order (15 terms) and on `strings.Contains(ToLower)` ≡ `.toLowerCase().includes` for the ASCII needle; gateway binding proven by running real upstream TS against real Go `Do()` over a shared case table (7 divergences found and pinned). |
-| Reviewed via | 2026-08-19 cycle (3 ports, no release) — per-commit diff triage of all 12 changes plus the whole-range reconciliation sweep over `packages/{ai,agent}/src` + `coding-agent/src` (14 files, every hunk attributed, including the two revert pairs and the OAuth-only `55b0db4d3`); full gates ran: **six independent reviews** (go-review + parity-review on each of the three ports) followed by an **independent fourth verification pass** that re-ran the previously-escaping mutations, re-derived the fallback-costing oracle, and re-checked the un-port's exported-surface delta — **3 MED + 12 LOW**, MEDs and non-pre-existing LOWs applied in `527c11f`, three pre-existing divergences recorded rather than fixed; every ported behavior mutation-verified red-for-the-right-reason before shipping (19 mutations); full `-race` suite green (10 packages) before and after the review fixes; differential harness re-pinned `2509b5c03` → `3a0b9a3ee` and green at 40/40. |
+| TS source fully reviewed/ported | `b7bb00b93` — "fix(ai): retain reasoning details in thinking signature" (2026-08-20; **6 port — 5 needing Go code, landing as 4 commits, plus 1 catalog-queued — 14 n/a, 0 decide** — delta `3a0b9a3ee..b7bb00b93`, **20** first-parent changes, **no merges**: the first-parent count and the total commit count are both 20, so nothing rode in under a merge. Ports: the **un-port of the caller-facing refusal-fallback option** (`ed867e909` → `a20597b`; `AnthropicRefusalFallback`, `AnthropicRefusalFallbackTarget`, `SimpleStreamOptions.RefusalFallbacks` and `AnthropicOptions.RefusalFallbacks` all removed, and the request's `fallbacks` field, the `server-side-fallback-2026-07-01` beta and the pricing a fallback-served response is billed at now derive from `compat.allowedFallbackModels` alone, whose entries gain `provider` — sanctioned by the 2026-08-19 ruling, since `v0.84.18` never published the surface. **Its provenance is written as AMENDED/SUPERSEDED blockquotes inside the 2026-08-19 sections**, because it rewrites rows that already existed there); **UTF-8 BOM stripping in skill frontmatter and context files** (`1355cd36e` → `1308a5a`; a BOM-prefixed `SKILL.md` used to fail the `"---"` test and lose its entire frontmatter — name and description silently swallowed into the body — and a BOM-prefixed `AGENTS.md` injected a stray U+FEFF into the system prompt); **the pi user-agent as an overridable default** (`87af49dec` → `dc2befa`; upstream stopped FORCING it for kimi-coding and xai, so four ported adapters that sent no user agent now send one and every later header source beats it — which forced the port's header merge to become an insertion-ordered object, because a JS object updates an existing key *in place* while `net/http` canonicalizes on write); and **openai-completions reasoning details** (`4ca636c5e` + `b7bb00b93` → `41171de`, ported as the net state rather than as two commits; the detail sequence lives in the thinking block's signature, is replayed through `jsStringify` rather than byte compaction, and the signature-as-field-name path is narrowed to an allowlist so an opaque signature no longer becomes a bogus request key). **Review findings were folded into each port commit rather than into a separate review commit** — the two prior cycles used one (`527c11f` 2026-08-19, `b548506` 2026-08-18), so there is none to look for here. Both gates ran per slice — **8 independent reviews**, **1 HIGH + 12 MED + 24 LOW**; the HIGH was the anthropic OAuth precedence case, caught because the porter's test asserted the PORT's value instead of pi's and fixed at the root cause rather than in the assertion. **No release crossed — `pi-ai` and `pi-coding-agent` are 0.84.2 at BOTH ends, no `package.json` appears in the range diff and no tag contains `3a0b9a3ee`, so npm stays 0.84.2, no port tag is cut and no release tweet is drafted.** **The catalog-only queue goes 7 → 8**: `3de00332f` derives Z.AI reasoning-effort metadata from models.dev `reasoning_options` (GLM-5.2 GAINS `off:"none"` and `xhigh:null` while `low`/`medium` flip from `"high"` to `null`, the `isGlm52` gate widens to take `glm-5.2-highspeed` too, and GLM-5.3 gains low/high/max). The differential harness began the cycle **DARK** — the `RefusalFallbacks` removal broke the Go driver's compile, so `run.sh` aborted up front, before any scenario was compared, and all 40 went uncompared (a new tripwire is recorded in the harness section) — was repaired inside slice 1, and ends at **47 PASS / 0 KNOWN / 0 FAIL** re-pinned to `b7bb00b93`. The **harness backlog stays 11** — `packages/agent` does not appear in the range diff at all. The pin still means *"everything in scope is reviewed and ported **except the harness tree**"* — see the 2026-08-07 ruling. The `defaultTools` tripwire (2026-08-13) was not hit. Two **pre-existing** divergences were surfaced and deliberately recorded rather than fixed, and three **new deliberate** ones were added (two pinned by a test, the surrogate one recorded UNPINNED); two items are carried as **follow-ups** — the `(*Client).Close` re-entrancy race and the missing surrogate pin. Prior pin: `3a0b9a3ee` (2026-08-19). |
+| npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.84.2** (installed at `~/.cache/pi-npm/0.84.2`; package-lock integrity == registry `dist.integrity`, re-verified by the parity reviewer and by every harness run). **No release crossed this cycle — the reference build is unchanged.** **Caveat carried, corrected and widened 2026-08-20: the dist cannot cross-check EITHER of this cycle's `ai` slices, but for two different reasons.** *Refusal fallbacks:* the 2026-08-19 measurement re-verified — `grep -rc fallback` over the **19** top-level `dist/*.js` files is 0 in every file — and the stronger check now on record is that `allowedFallbackModels` and `refusalFallbacks` appear **0 times across all 175 `dist/**/*.js`**, subdirectories included. (Eight dist `*.js` files do contain the word `fallback`, all unrelated: comments in `auth/resolve`, `auth/oauth/github-copilot`, `utils/overflow` and `utils/provider-env`, and in four adapters mostly real identifiers rather than comments — `fallbackRequestId` in `api/bedrock-converse-stream.js:297,305`, `fallbackMessageId` in `api/openai-responses-shared.js:146,151`, `fallbackTransport` in `api/openai-codex-responses.js:231`, and one comment in `api/openai-completions.js:256`. The refusal-fallback feature itself postdates 0.84.2 entirely.) *Reasoning details:* **the earlier phrasing "the dist predates the feature" would be wrong here** — `dist/api/openai-completions.js` already carries the pre-`4ca636c5e` legacy path that hangs one encrypted detail off a matching tool call's `thoughtSignature`. What the dist predates is `b7bb00b93`'s reshape: there is no thinking-signature-carried sequence, and `assistantMsg[signature] = …` is still gated only on `signature && signature.length > 0` (dist `api/openai-completions.js:918-923`) where `b7bb00b93` gates it on `isOpenAICompletionsReasoningField(signature)`. So TS-at-the-sha is the only reference for **both** slices, and nothing in `a20597b` or `41171de` is "npm-verified". That narrowing is also why **`reasoning.json` flipped from `dist` to `src` this cycle**: released 0.84.2 really does send an opaque signature as a literal request key and `b7bb00b93` stops, so captured against the dist the scenario would be comparing Go against a pi that still has the bug. Scenario backends are now **27 `src` / 20 `dist`**; every `src` scenario flips back at the release that ships its surface (README rule). The catalog-only queue holds **8** generator deltas: **new this cycle** `3de00332f` (Z.AI reasoning-effort metadata derived from models.dev `reasoning_options` via a new `processZaiModels`; `off:"none"` is NEW for the zai/zai-coding-cn GLM-5.2 entries and the `isGlm52` gate widens to include `glm-5.2-highspeed`, `glm-5.3` gains `low`/`high`/`max`, and `low`/`medium` on GLM-5.2 flip from `"high"` to `null` — the derived map is not a superset of the hand-written one); `4809c2abc` **as amended by `ed867e909`** (`applyAnthropicAllowedFallbackModelMetadata` emitting `[{provider, model, cost}]` — **regenerate to THAT shape**, see the 2026-08-19 queue row and its rewritten regen tripwire, which `ed867e909` made load-bearing by deleting the option that used to override the catalog); from 2026-08-18 `eb1f87fa9` (the `ANTHROPIC_ALLOWED_FALLBACK_MODELS` table itself), `0e4d49541` (drop deprecated Xiaomi models), `87205484b` (Chinese ZAI Coding Plan catalog), `6db110e6f` (Qwen Token Plan DS4 Pro 0813); and from 2026-08-17 the `70e878d4c` xai half and `86d001d36` (DS4-Flash low on opencode/opencode-go). All eight await the next release regen. The catalog itself is UNCHANGED this cycle — `packages/ai/src/models.generated.ts` does not appear in the range diff at all — and `ai/models_catalog.json` is still the 0.84.2 derivation: 536,642 B, 1267 models / 39 providers, **zero** `allowedFallbackModels`, last touched by `69bcdf1`. The refusal-fallback feature therefore stays dormant on both sides until the regen. No goldens were recaptured — nothing in the delta touches a captured golden. |
+| Parity proofs at the pin | **2026-08-20 (5 ports, no release):** header precedence established by **executing the pinned vendor SDKs**, not by reasoning about them — @anthropic-ai/sdk **0.91.1** and @google/genai **1.52.0**, both taken from `~/.cache/pi-npm/0.84.2` (versions re-confirmed off their own `package.json`s) and driven against a local server with the exact header object `mergeClientHeaders` builds at the sha: an **8-case matrix** — oauth and api-key branches x four spellings and both null markers — which the port now matches **8/8**, alongside the PRE-commit `mergeClientHeaders` run through the same SDK returning the opposite answer, which is what proves the seed rather than the merge order is what changes it; the two SDK behaviours the port cannot reproduce (@google/genai comma-joining case-variant names, `net/http` dropping an empty-string user agent) were established the same way and recorded as deliberate divergences rather than asserted away. `getPiUserAgent()` executed from the 0.84.2 dist and `cmp`-compared against Go's `piUserAgent()` — **25 bytes, identical**. `jsStringify` verified against node over **1,863 generated cases plus a 47-case hand-written table, zero divergences** — random float64 bit patterns rendered several ways, exponents from `1e-330` to `1e330`, integer literals 1-29 digits long, 300 random key sets mixing index-like and ordinary keys, 100 duplicate-key objects, and 400 random Unicode strings emitted both `ensure_ascii=True` and `False`. The reasoning-details pair's net-zero halves were proven by **BLOB IDENTITY**, not by reading the diff: `git rev-parse 4ca636c5e^1:packages/server/src/protocol.ts` and `git rev-parse b7bb00b93:packages/server/src/protocol.ts` return the same object (`069828e5`), and on `packages/ai/src/types.ts` the `reasoningDetails` field occurs exactly once at `4ca636c5e` and zero times at BOTH ends, the entire cross-pair diff of that file being one **comment** line — so the session format is byte-untouched. **The differential harness earned its keep**: two reviewer probe scenarios FAILED against ground-truth pi before the fix — value at `$.messages[2].reasoning_details[0].conf` (`pi: 1` vs `go: 1.0`) and key order at `$.messages[2].reasoning_details[1]` (`pi: 0,type,data,id,custom_flag,nothing` vs `go: type,data,id,custom_flag,nothing,0`) — which is what turned byte compaction into `jsStringify`. Mutations: **8** recorded for `a20597b` and **22** for `41171de`; `1308a5a` and `dc2befa` record theirs individually rather than as counts (the `splitBOM` call site, observationally inert under the first fixture and leaving the whole `coding` suite green when removed; and the headers slice's four families — seed deleted -> 5 subtests red, seed moved back to the old force position -> 23 subtests across 10 tests red, re-assigned key promoted to the end -> the OAuth subtest red, sorted order instead of slot order -> 4 tests red). Every one verified red for a **behavioral** reason. Harness **47 PASS / 0 KNOWN / 0 FAIL**, exit 0, re-verified for this ledger entry. **2026-08-19 (3 ports, no release):** the anthropic fallback-costing extract verified against an **oracle transliterated from `4809c2abc:packages/ai/src/api/anthropic-messages.ts` lines 606-613** — modelling `?.cost`, `??` and the truthiness gate with an explicit present/absent type rather than paraphrasing them — run over a **10 compat × 7 fallback-set × 5 served-id matrix (350 cases), zero divergences**, covering unpriced targets, `"cost": null`, zero-priced targets, duplicate-first-unpriced, self-referential catalog entries, `served == ""`, malformed compat and the `"default"` arm, and additionally asserting that the shared catalog `*ai.Model` is never mutated and that the no-swap arm returns the SAME pointer (pi's `: model`); `cost` proven stripped from the `fallbacks` wire value on a real request body (pi's explicit `.map(f => ({model: f.model}))`), mutation-locked; the compaction prompt constants **executed and byte-compared pin vs HEAD** to clear `ef8dc7385`'s prompt-shaped refactor — composed UPDATE prompt **1257 chars, identical**, `SUMMARIZATION_PROMPT` and `SUMMARIZATION_SYSTEM_PROMPT` identical; the un-port proven **exactly** the revert by byte-comparing `agent/loop.go` and `agent/agent.go` against `b79c9e6` (the pre-port parent — identical) and by a `go doc -all` delta showing exactly the three identifiers upstream removed, with no remaining callers including `examples/` and `cmd/`; the two revert PAIRS proven net-zero by `git rev-parse` blob comparison rather than by reading the subjects; **19 mutations each verified red for the right reason**, with one planned mutation accepted as correctly GREEN (the `min` inside `clampThinkingBudgetToAnswerRoom` is algebraically inert — the anthropic test's value comes from a second, separate clamp in `StreamSimpleAnthropic`). Harness: **40 PASS / 0 KNOWN / 0 FAIL** (34 → 40, six new `src` scenarios), verified cold after `rm -rf pisrc/3a0b9a3ee`. **2026-08-18 (6 ports, no release):** `resolveGoogleThinkingLevel` **executed from sha-extracted TS** (`google-shared.ts` at `af2c35223`, blob `a49c6689`) against Go over 18 inputs — **18/18 byte-identical**, covering every `String(mapped)` case (absent → `undefined`, explicit null → `null`, self-referential `"xhigh"`, uppercase, empty-string entry with its trailing space, non-ASCII provider/id) and confirming Go renders the ORIGINAL mapped string, not the lower-cased one; the anthropic fallback beta driven through **all four** Go auth branches against a live server (third in `betaFeatures` every time, absent when unset, and the OAuth branch keeping pi's `claude-code-20250219,oauth-2025-04-20` prefix); `fallbacks` differential-verified on the wire for **both arms** of pi's union (order-preserving 2-entry chain; the `"default"` literal); the served-model capture verified live (`served-model` overriding a requested `claude-x`); the catalog confirmed to carry zero `allowedFallbackModels` at the sha AND in the Go embed, so the feature is dormant both sides; tool choice wire-verified for all five ported providers with google's precedence probed separately **8/8** (strict+auto → `VALIDATED`, i.e. auto does NOT short-circuit; strict+none → `NONE`); the summarization guard proven a strict cover (pi has exactly three `completeSummarization` callers at the sha, all guarded; Go has exactly two, both routed through the single site). Harness: **21 PASS / 0 KNOWN / 0 FAIL** on the 0.84.2 dist, plus **13 new scenarios** built for this cycle's surface (`toolChoice`/`refusalFallbacks` threaded through `SimpleStreamOptions`, re-pinned to `2509b5c03` with `backend:"src"`) — **13 PASS**, payloads inspected to confirm the keys are present rather than passing by mutual absence — those 13 were **promoted into the shipped harness the same day**, taking it to **34 PASS / 0 KNOWN / 0 FAIL**. **2026-08-17 (5 ports, no release):** the single-`Set` rendering of pi's delete-then-set proven by auditing every header write path in `ai/providers` (all `Set`/`Del`, no raw map writes) with exactly-once wire asserts, and the UA string **byte-compared against `getPiUserAgent()` executed from the authentic 0.84.2 dist**; the kimi cache-read chain byte-checked at `d3ab2af96` with per-arm nullish semantics locked by tests; the compaction SessionID threading checked call-site-for-call-site (agent-session passes `undefined` upstream ⇒ behavior unchanged; branch-summary shape stays fresh); `isSingleEditInput`'s domain identical over JSON values; the skills `isString` screen verified against **yaml@2.9.0** (the exact version pinned at the sha and in the build) via a 74-literal adversarial probe, **74/74** agreement; **7 mutations in a scratch worktree each red for the right reason**; catalog untouched and independently re-derived `cmp`-identical (536,642 B); harness **21/21 PASS** on the 0.84.2 dist exercising both changed builders. **2026-08-15 (4 ports, release):** the 0.84.2 catalog **independently re-derived and `cmp`-byte-identical** (536,642 B), endpoint-pinned at both ends (old embed ≡ a fresh 0.84.1 derivation ⇒ ported diff ≡ upstream release diff); schema drift enumerated against consuming types (one new key, decoded); the Google guard proven same-value/same-point against `5093641a5` with `mapGoogleStopReason` entry-for-entry ≡ upstream and mutation-verified on a scratch copy (guard removed → "got toolUse"); the APP_NAME no-op proven against the **shipped package** (`piConfig` carries no `name` ⇒ every changed string byte-identical for stock pi); the zai table compared whole (41 entries, delta exactly the two upstream lines) and mutation-verified via the new guard test; the harness flip justified by ancestry (all 13 scenario-note shas first-parent ancestors of `914cf1472`) and by the reviewer's own re-run: **21 PASS / 0 KNOWN / 0 FAIL on the 0.84.2 dist**. **2026-08-14 (1 port):** the kimi UA override proven **sha-anchored + mutation-verified** (headers are outside the bodies-only harness): all three upstream `createClient` branches confirmed to route through `mergeClientHeaders` after `optionsHeaders` with no per-request header bypass; the Go single-`Set` equivalence established by reading every write path (all canonicalize — no raw map writes); Node token fidelity checked down to the `RTL_OSVERSIONINFOW` layout and libuv's `uv_os_uname` release format; the authentic 0.84.1 dist (integrity-matched) shown to carry `KimiCLI/1.5` and no pi-user-agent module, making TS-at-`9d2ec7ffa` the reference; and both tests mutation-verified in a throwaway worktree (override removed → wire shows `[custom-client]`; made unconditional → non-kimi test fails). Harness re-run anyway for the body surface: **21/21 PASS**. **2026-08-12 (1 port):** the strict conversion was proven against **executed upstream TS at `7915cdac6`** three ways: a 28-case conversion probe (`makeStrictJsonSchema` run via node from sha-extracted source vs Go) byte-identical on 24/28 including every error string and the unsupported-key precedence order — the 4 mismatches are the recorded decode-boundary drift class, not wire-reachable through pi's own tools; a 10-case `validateToolArguments` probe vs **real TypeBox** (npm 0.84.1's) 10/10 including the nested-`$ref` compile-path constructed to break the `Check(nil)` mapping; and 3 new differential-harness scenarios asserting full request bodies on the anthropic/openai-completions/openai-responses wires (required ordering with deliberately non-alphabetical properties, anyOf-null widening, no-rewrap of already-nullable shapes, nested object closing, zero-property object, inconvertible-tool fallback carrying the ORIGINAL parameters). The harness is what caught the one real divergence (`required: []` dropped on zero-property strict objects) — fixed, then re-verified **21/21 PASS**. **2026-08-11 (3 ports):** cwd-footer byte-proven via `cmp` on both prompt branches; DeepSeek fold faithful on membership and order (15 terms) and on `strings.Contains(ToLower)` ≡ `.toLowerCase().includes` for the ASCII needle; gateway binding proven by running real upstream TS against real Go `Do()` over a shared case table (7 divergences found and pinned). |
+| Reviewed via | 2026-08-20 cycle (5 ports landing as 4 commits, no release) — per-commit diff triage of **all 20** changes plus the whole-range reconciliation sweep over `packages/{ai,agent}/src` + `coding-agent/src` (**44** files, every hunk attributed, including the `98767a25d` + `f0a2880f2` revert pair — proven net-zero by **patch inversion**, NOT by blob identity, because `ee29aa118` and `a669db3c3` touched the same file in between — and `packages/server/src/protocol.ts`, touched twice inside the range and unchanged across it). Full gates ran: **8 independent reviews** (pi-go-review + pi-parity-review on each of the four slices, never the porter) — **1 HIGH + 12 MED + 24 LOW**, with the findings folded into the port commits themselves rather than into a trailing review commit, two pre-existing divergences recorded rather than fixed, and two follow-ups recorded with owners' next steps. Every ported behavior mutation-verified red for a behavioral reason before shipping (8 recorded for `a20597b`, 22 for `41171de`, the others recorded individually). `gofmt -l` clean, `go build ./...` and `go vet ./...` clean, `go test -race ./... -count=1` green across all **10** test-carrying packages (13 listed, 3 with no test files). Differential harness recovered from DARK, re-pinned `3a0b9a3ee` -> `ed867e909` -> `b7bb00b93`, and green at **47/47**. |
 
 Deliberately not ported (out of scope for the ledger unless a commit changes
 that decision): TUI, extensions runtime, OAuth token acquisition, project-trust
@@ -541,6 +541,698 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   subsystem to serve no ported consumer. Future `resource-loader.ts` commits are
   `n/a` UNLESS the port grows a resource-loader analog.
 
+## Drift at last sync check (2026-08-20) — pin advanced to b7bb00b93
+
+Delta `3a0b9a3ee..b7bb00b93`, **20** first-parent changes, **no merges** — the
+first-parent count and the total commit count are both 20, so nothing rode in
+under a merge. **No release crossed** — `packages/ai` and
+`packages/coding-agent` are on 0.84.2 at BOTH ends (no `package.json` appears in
+the range diff at all, and no tag in the upstream repo contains `3a0b9a3ee`), so
+the npm reference build stays **0.84.2**, no port tag is cut, and no release
+tweet is drafted. Verdicts: **6 port — 5 needing Go code, landing as 4 commits,
+plus 1 catalog-only (queued); 14 n/a; 0 decide**.
+
+**Review findings were folded into each port commit this cycle rather than into
+a separate review commit.** The two previous cycles landed them as one trailing
+commit (`527c11f` on 2026-08-19, `b548506` on 2026-08-18); here each slice was
+gated and fixed before the next slice started, so `a20597b`, `1308a5a`,
+`dc2befa` and `41171de` each already carry their own reviews' findings and there
+is no review-fix commit to look for. Recorded because a reader diffing the
+cycle's commits will otherwise go looking for one.
+
+Whole-range reconciliation (the merge-smuggling guard) found in-scope deltas in
+exactly **44** files, all attributed: `ai/scripts/generate-models.ts`
+(`ed867e909` metadata rename + `3de00332f` Z.AI, both catalog-only);
+`ai/src/api/anthropic-messages.ts` (`ed867e909` + `87af49dec`);
+`ai/src/api/openai-completions.ts` (`87af49dec` + `4ca636c5e` + `b7bb00b93`);
+`ai/src/api/{openai-responses,google-generative-ai}.ts` (`87af49dec`);
+`ai/src/api/{azure-openai-responses,google-vertex,mistral-conversations}.ts`
+(`87af49dec`, all unported providers); `ai/src/api/bedrock-converse-stream.ts`
+(`d57e531f5`, unported provider); `ai/src/utils/pi-user-agent.ts`
+(`87af49dec`); `ai/src/types.ts` (`ed867e909` + `4ca636c5e` + `b7bb00b93`, the
+last two netting to a **comment-only** delta — see below);
+`core/compaction/compaction.ts` (`ed867e909`); the seventeen `1355cd36e` BOM
+files — `cli/file-processor.ts`, `config.ts`, `migrations.ts`,
+`core/{auth-storage,keybindings,model-config,models-store,package-manager,pi-manifest,resource-loader,settings-manager,trust-manager}.ts`,
+`core/tools/{edit,edit-diff}.ts`, `modes/interactive/external-editor.ts`,
+`modes/interactive/theme/theme.ts`, `utils/frontmatter.ts` — plus the new
+`utils/text.ts` they all import; `core/agent-session.ts` (`2ff8ba622` +
+`4495469a5`); `core/{defaults,model-resolver,sdk}.ts` (`2ff8ba622`);
+`core/settings-manager.ts` (`2ff8ba622` + `1355cd36e` + `1e1a6e27b`);
+`core/settings-diagnostics.ts` (`913bcf339`); `core/session-manager.ts`
+(`d711bd5f0`); `core/slash-commands.ts` (`496185f6e` + `2ff8ba622`);
+`src/main.ts` (`678f0af30` + `913bcf339`); `modes/json-event.ts` (`830a0a59e`);
+and the five `modes/interactive` files —
+`components/{model-selector,settings-selector,settings-submenu,thinking-selector}.ts`
+and `interactive-mode.ts` (`2ff8ba622`, `98767a25d`, `ee29aa118`, `a669db3c3`,
+`f0a2880f2`, `9c8070fbe`, `496185f6e`, `678f0af30`).
+
+Two files outside that set are worth naming rather than leaving silent.
+`packages/server/src/protocol.ts` is touched TWICE inside the range and is
+**unchanged across it**: `4ca636c5e` adds a `reasoningDetails` accounting entry
+and `b7bb00b93` removes it again, and the range diff carries no delta for the
+file at all — blob `069828e5` at `4ca636c5e^1` and blob `069828e5` at
+`b7bb00b93`. `packages/tui/src/components/settings-list.ts` (`2ff8ba622`) is
+TUI, out of scope.
+
+The deferred harness backlog is unchanged at **11** — `git diff --name-only
+3a0b9a3ee..b7bb00b93 -- packages/agent` is EMPTY, so this delta does not touch
+`agent/src` at all, harness tree included. The catalog-only queue goes
+**7 → 8**. The `defaultTools` tripwire (2026-08-13) was not hit: neither
+`defaultTools` nor `createAgentSessionOptions` appears anywhere in the range
+diff.
+
+### Port worklist (5 → 4 Go commits)
+
+| upstream | subject | Go | notes |
+|---|---|---|---|
+| `ed867e909` | fix(ai): fallback cost not via stream options (#8352) | `a20597b` | **Provenance lives in the 2026-08-19 sections, as AMENDED/SUPERSEDED blockquotes**, because this commit rewrites rows that already existed there rather than adding new surface: it withdraws the caller-facing refusal-fallback option one commit after the port shipped it. `AnthropicRefusalFallback`, `AnthropicRefusalFallbackTarget`, `SimpleStreamOptions.RefusalFallbacks` and `AnthropicOptions.RefusalFallbacks` are all removed; the request's `fallbacks` field, the `server-side-fallback-2026-07-01` beta and the pricing a fallback-served response is billed at now derive from `compat.allowedFallbackModels` alone. Catalog entries gain `provider`, and the cost lookup requires it to equal the model's provider while the wire list stays provider-blind — pi's asymmetry, mirrored exactly. `cost` stays a pointer so a missing or null cost reads as "no swap" the way pi's `?.cost` does, and first-match-wins survives an unpriced first hit. `coding/compaction.go` drops the summarization-fallback wiring; the provider derives it. Removing exported surface was sanctioned by the **2026-08-19 ruling** — `v0.84.18` does not contain it, so no cut tag published it. See: the `4809c2abc` and `eb1f87fa9` **SUPERSEDED** notes and the rewritten regen tripwire in the 2026-08-19 queue section; the **RETIRED** blockquotes under 2026-08-19's and 2026-08-18's divergence sections; and the 2026-08-19 harness amendment. |
+| `1355cd36e` | fix(coding-agent): normalize UTF-8 BOMs in text inputs (closes #8337) | `1308a5a` | Upstream extracts `splitBom`/`stripBom` into a new `utils/text.ts` and routes **26 call sites across 17 source files** through it (verified: 17 consumer files carry one import line each plus 26 remaining occurrences; `utils/text.ts` holds the 3 definition/export occurrences). Two of those readers have Go counterparts, and both are ported: **`loadContextFileFromDir`** (`coding/resources.go`) — a BOM-prefixed `AGENTS.md`/`CLAUDE.md` otherwise injects a stray U+FEFF into the first bytes of the system prompt, which emits context-file content verbatim; and **`parseFrontmatter`** (`coding/resources.go`) — the strip lands before the `"---"` test, so a BOM-prefixed `SKILL.md` keeps its frontmatter instead of having name and description silently swallowed into the body. The helper itself lands as `coding/text.go` (`splitBOM`/`stripBOM`), moved out of `coding/editmatch.go` to mirror upstream's own relocation out of `core/tools/edit-diff.ts`. The edit-tool hunk (`coding/tools.go`) is a **pure rename** — `stripBOM` → `splitBOM` at the one call site — matching upstream's `edit.ts`/`edit-diff.ts` rename; no behavior moves. Exactly one BOM is removed, matching pi's `content.slice(1)` over a single UTF-16 code unit, so a doubled BOM keeps the second (pinned). |
+| `87af49dec` | Add pi user-agent to most api adapters (closes #8305) | `dc2befa` | Upstream seeds seven adapters' header merge with `{"User-Agent": getPiUserAgent()}` — the commit body names all seven — and **deletes `forcePiUserAgent`** (2 occurrences in `openai-completions.ts`, 2 in `openai-responses.ts` and its definition in `utils/pi-user-agent.ts` at the parent; 0 at the sha). Four of the seven have Go counterparts and all four are ported: `anthropic-messages`, `openai-completions`, `openai-responses`, `google-generative-ai`. **This is a REVERSAL, not an addition.** The same string used to be re-set AFTER the whole merge for two providers — kimi-coding on anthropic-messages (`9d2ec7ffa`) and xai on both openai adapters (`70e878d4c`) — deleting every case variant first, so it outranked the catalog's `KimiCLI/1.5` and any consumer header. Spread first, it is a plain default that **every** later source beats, and a deletion marker in any of them suppresses. Four adapters that previously sent no user agent at all now send one. `pi-messages` is untouched upstream and correctly gains no seed. |
+| `4ca636c5e` | feat(ai): opeani completions reasoning details (#8246) | `41171de` | **Did not introduce `reasoning_details`** — corrected after review. At `4ca636c5e^1` (= `87af49dec`) `openai-completions.ts` already carries the streaming read of `choice.delta.reasoning_details` (555-562), `isEncryptedReasoningDetail` (131), the pending-by-id map (283/374-381) and the legacy path that hangs one encrypted detail off the matching tool call's `thoughtSignature` (562) plus its replay out of the tool calls (1231-1242) — `reasoning_details`/`reasoningDetails` appear on six lines (nine occurrences) at the parent, which is also why the 0.84.2 dist carries them (see the npm row at the top of this file). What this commit actually adds: the generalized **`isOpenAIReasoningDetail`** validator over the three shapes (`reasoning.summary`, `reasoning.encrypted`, `reasoning.text`, over a shared `id`/`format`/`index` check), the **`AssistantMessage.reasoningDetails`** array — accumulated from the stream in order and replayed verbatim when `provider`+`api`+`model` all match — and the **`OPENAI_COMPLETIONS_REASONING_FIELDS` / `isOpenAICompletionsReasoningField` allowlist**, which narrows the signature-as-field-name path from `signature && signature.length > 0`. The legacy attachment path is deliberately **kept** (its new comment: "Keep the legacy encrypted tool-call attachment path"), demoted behind the new array and with its replay parse tightened through the same validator. |
+| `b7bb00b93` | fix(ai): retain reasoning details in thinking signature | `41171de` | Replaced most of it the same day. `reasoningDetails` is **deleted from the message type**; the sequence now lives in the THINKING block's `thinkingSignature`, serialized as a JSON array. `pendingReasoningDetailsByToolCallId` and `applyPendingReasoningDetail` are gone (4 occurrences at `4ca636c5e`, 0 at `b7bb00b93`), `id` is dropped from the encrypted shape's required fields, and on replay a stored sequence **suppresses** the raw `reasoning`/`reasoning_content`/`reasoning_text` field instead of accompanying it. The tool-call `thoughtSignature` slot survives only as a read-only legacy source, narrowed to `reasoning.encrypted` with non-empty `id` AND `data`. |
+
+The three slices that needed prose beyond a table cell follow. `ed867e909`'s
+detail is not repeated here — it is in the 2026-08-19 sections, where the rows
+it rewrites already live.
+
+#### `1355cd36e` — the BOM slice
+
+**n/a — the other 14 changed files, each confirmed against the port's own
+reader inventory rather than by category:** `core/settings-manager.ts`,
+`migrations.ts` (settings manager and config migrations are both on the
+non-port list); `core/auth-storage.ts` (no file-backed auth storage in the port
+— `ai/auth_types.go` models the credential union only); `core/models-store.ts`
+(the port ships the `ModelsStore` *interface* plus `InMemoryModelsStore`; there
+is no `FileModelsStore` and nothing reads a models JSON off disk);
+`core/model-config.ts` (no `ModelConfig` analog — no percentile-cutoff config
+reader exists in the port); `core/package-manager.ts` and `core/pi-manifest.ts`
+(extensions runtime / packaging, non-port list); `core/trust-manager.ts`
+(project-trust gating, non-port list 2026-06-12); `core/keybindings.ts`,
+`modes/interactive/theme/theme.ts`, `modes/interactive/external-editor.ts`
+(TUI, non-port list); `cli/file-processor.ts` (bun/CLI packaging, non-port
+list); `config.ts` (reads pi's own `package.json` for version metadata — a Go
+binary has no counterpart); `CHANGELOG.md`. The `resource-loader.ts` file is
+ported only for `loadContextFileFromDir`: its other changed site,
+**`resolvePromptInput`**, stays `n/a` under the standing resource-loader ruling
+above. Its two call sites at `1355cd36e:resource-loader.ts:527,538` are both
+inside `DefaultResourceLoader.reload()` (line 388), and what they feed is
+`this.systemPrompt` / `this.appendSystemPrompt`, surfaced by `getSystemPrompt()`
+(324) and `getAppendSystemPrompt()` (332) — **not** the `getSystemPromptSource()`
+/ `getAppendSystemPromptSources()` accessors (328/336) that the 2026-07-30
+ruling names, which return the stored *paths* and call nothing. The `n/a`
+therefore rests on the broader half of that ruling, which is what actually
+covers this: the port has no `ResourceLoader` object, no `SYSTEM.md` /
+`APPEND_SYSTEM.md` discovery and no path-or-inline prompt source at all —
+`BuildSystemPromptOptions.AppendSystemPrompt` is a plain literal string, so
+there is nothing for a resolver to resolve.
+
+**Half of upstream's regression test is unportable.**
+`test/suite/regressions/8337-utf8-bom-parsing.test.ts` asserts three things: the
+`splitBom` shape, `parseFrontmatter` over a BOM'd document, and a
+`SettingsManager` round-trip that reads BOM'd global + project `settings.json`
+and re-writes them without a BOM. The first two are ported byte-for-byte as
+`TestSplitAndStripBOM` and `TestParseFrontmatterStripsLeadingBOM` (`{name:
+"demo", description: "Test"}`, body `"Body"` — upstream's exact expectation).
+The third has no Go counterpart at all: the port has no settings manager. Not a
+gap to schedule — a consequence of the non-port list.
+
+**Review note — the `splitBOM` call site is now mutation-locked.** The first
+version of `TestEditToolPreservesLeadingBOM` used the fixture
+`"﻿hello world\n"`, which is the one shape where the split is
+observationally inert: the BOM shares line 1 with the match, the exact-match
+path is taken, and the unsplit BOM rides through at offset 0 either way.
+Mutating the call site to `bom, raw := "", string(data)` left the whole `coding`
+suite green. The test now also carries the fuzzy case — file `"﻿\nA\n"`,
+`oldText "\nA "` (the trailing space defeats the exact match), `newText "\nB"` —
+where `normalizeForFuzzyMatch` trims U+FEFF as JS whitespace, a BOM-only line
+normalizes to empty, and the touched line is rewritten from that fuzzy view, so
+only the BOM held aside by `splitBOM` survives. Want value `"﻿\nB\n"` taken
+from pi, not from Go: `utils/text.ts` + `core/tools/edit-diff.ts` extracted at
+`1355cd36e` and executed in node through `edit.ts`'s exact sequence. Verified
+red-for-the-right-reason under the mutation (mutant writes `"\nB\n"`), green
+without it.
+
+**Also recorded: the BOM-before-newline-normalization ordering is a parity note,
+not an invariant.** Source and test both used to claim the ordering was
+load-bearing. It is not: newline normalization can neither touch a leading
+U+FEFF nor produce one, so the two transforms commute for every input.
+Rewriting `parseFrontmatter` as `stripBOM(normalizeNewlines(content))` leaves
+the entire `coding` suite green, the BOM+CRLF case included. Comments in both
+places now say what is actually pinned; the nesting still mirrors upstream.
+
+#### `87af49dec` — the user-agent seed
+
+**n/a — the three unported adapters, confirmed by inventory rather than by
+category.** Upstream files touching `getPiUserAgent` at the sha are
+`anthropic-messages`, `azure-openai-responses`, `google-generative-ai`,
+`google-vertex`, `mistral-conversations`, `openai-codex-responses`,
+`openai-completions`, `openai-responses` (eight consumers at the sha; the commit
+itself seeds seven, `openai-codex-responses` having carried it already).
+`ai/providers` contains no azure/vertex/mistral/bedrock/codex Go file, so those
+hunks have no site to land on.
+
+**The port's header merge is now an ORDERED object.** The seed is what forced
+this. pi builds **one** header object per request and hands it to the SDK; a JS
+object keeps its string keys in insertion order and assigning to a key it
+already holds updates that key **in place** rather than moving it to the end.
+Two names differing only by case are two keys there and one header on the wire,
+so the surviving value is the one whose key sits in the **later slot** — and
+`net/http`'s `Header` canonicalizes on write, so the port's sequential
+`applyProviderHeaders(r.Header, source)` calls made the later WRITE win
+regardless of spelling. Before this commit nothing seeded a `User-Agent`, so no
+cross-source collision existed and the two agreed. The seed creates one.
+
+`ai/providers/headers.go` now models the object itself (`headerObject`: an
+insertion-ordered name list plus values, `applyAsDefaultHeaders` for the SDK
+path where a marker deletes, `applyAsRecord` for the self-built-request path
+where a marker is dropped), and `anthropic.go`, `openai.go`,
+`openai_responses.go`, `google.go` and `pi_messages.go` all fold their sources
+into it and apply once at the end. `applyProviderHeaders`,
+`mergeProviderHeaders`, `providerHeadersToRecord` and `stringHeaders` are gone,
+folded into methods.
+
+Consequences worth having in writing:
+
+- **The anthropic OAuth branch keeps `claude-cli/<v>` against a `User-Agent`-spelled
+  caller header.** pi's object holds the seed at slot 0 and the Claude Code
+  identity under the lowercase name at a later slot, so `options.headers`
+  spelled `"User-Agent"` writes back into slot 0 and loses; spelled
+  `"user-agent"`, `"USER-AGENT"` or `"User-agent"` it takes a new slot and wins.
+  Executed against **@anthropic-ai/sdk 0.91.1** from `~/.cache/pi-npm/0.84.2`
+  (version re-confirmed this cycle), driving the real client with the exact
+  object `mergeClientHeaders` builds at the sha: `{"User-Agent":
+  "custom-agent"}` → wire `user-agent: claude-cli/2.1.75`; `{"user-agent":
+  "custom-agent"}` → `custom-agent`; `{"User-Agent": null}` →
+  `claude-cli/2.1.75` (the marker empties slot 0 only). The pre-commit
+  `mergeClientHeaders` through the same SDK sends `custom-agent`, confirming the
+  seed is what changes the answer. An **8-case matrix** was run on both sides —
+  oauth and api-key branches × four spellings and both markers — and the port
+  now matches pi on 8/8, the one residual difference being the base UA below.
+- **Cross-source precedence no longer depends on spelling anywhere.** With
+  `model.Headers{"user-agent": "model-agent"}` + `opts.Headers{"User-Agent":
+  "opts-agent"}`, pi keeps the model's (slot 1 beats slot 0) and so does the
+  port; the mirror case gives `opts-agent` on both. Not reachable from the
+  shipped catalog — all 32 `user-agent` entries in `ai/models_catalog.json` are
+  spelled exactly `User-Agent` — but reachable for any user-configured model and
+  through `ai.StreamOptions.Headers`.
+- **The sorted-name tie-break survives only INSIDE one source.** The 2026-08-04
+  ruling (sorted order, chosen over markers-first, for a single map holding two
+  spellings) still applies to one `ai.ProviderHeaders` literal, where a Go map
+  genuinely has no order to reproduce. It no longer decides anything between
+  sources. `TestHeaderObjectCaseCollisionIsDeterministic` and
+  `TestHeaderObjectRecordCaseCollisionIsDeterministic` pin both halves.
+- **`pi_messages.go` lost its map-order `range` + `Set` loop** in the same pass.
+  It predates this commit and was queued rather than fixed; the ordered object
+  made it a one-liner, and the wire value for `{"User-Agent": "a", "user-agent":
+  "b"}` no longer flips between runs in one process.
+
+**Proof set for the rest of the slice — verified CLEAN.**
+
+- **UA string byte-identical.** `piUserAgent()` dumped from Go and
+  `getPiUserAgent()` executed from
+  `~/.cache/pi-npm/0.84.2/…/pi-ai/dist/utils/pi-user-agent.js` are `cmp`-identical:
+  25 bytes, `pi (darwin 25.5.0; arm64)`.
+- **All FOUR Go anthropic auth branches carry the default**, the seed being the
+  first statement of `applyAnthropicHeaders`, ahead of the switch. Upstream's
+  three `createClient` branches at the sha all route through
+  `mergeClientHeaders`; Go's extra `ANTHROPIC_AUTH_TOKEN` branch (`24e5cc04`)
+  inherits it. Mutation-verified: deleting the seed turns **five** subtests red
+  — the api-key, auth-token and github-copilot defaults, plus the two OAuth slot
+  subtests, which need the seed sitting in slot 0 to have anything to lose from.
+- **The reversal is genuinely pinned**: moving the seed back to the old force
+  position (after `opts.Headers`) on all four adapters turns **23 subtests
+  across 10 tests** red — kimi-coding, both xai adapters, the live
+  `github-copilot/claude-haiku-4.5` catalog model, the marker-suppression cases,
+  the cloudflare attribution agent and the empty-string pin among them.
+- **Slot order is pinned in both directions.** Making a re-assigned key move to
+  the end turns the OAuth subtest red (`[custom-client]` for
+  `claude-cli/2.1.75`); applying in sorted order instead of slot order turns four
+  tests red, including the three pre-existing cloudflare-ai-gateway
+  auth-suppression tests that were never part of this commit.
+- **Exactly one user-agent value on the wire** in every positive case
+  (`Values()` length-1 asserts), and pi's null-suppression semantics matched
+  arm-for-arm against the real SDKs, including google's split behaviour: a
+  colliding `{"User-Agent": null}` drops the seed, a non-colliding
+  `{"user-agent": null}` leaves pi's default on the wire.
+- **Catalog reachability bound**: every `user-agent` entry in
+  `ai/models_catalog.json` is spelled exactly `User-Agent` — 32 of 32,
+  re-counted this cycle — so the spelling-sensitive cases above are reachable
+  only through user-configured models and `ai.StreamOptions.Headers`, never from
+  the shipped catalog.
+
+Not new, restated because the seed now touches it: once a marker deletes the
+user agent, Go's transport substitutes `Go-http-client/1.1` where undici
+substitutes `node` and @google/genai substitutes `google-genai-sdk/1.52.0 …`.
+That is the pre-existing base-UA class the 2026-08-14 review already scoped out
+(and the reason the marker tests assert "not pi's agent" rather than a literal).
+The port also sends no `x-goog-api-client` at all, same class.
+
+#### `4ca636c5e` + `b7bb00b93` — openai-completions reasoning details
+
+Ported as the **net state**, not as two commits: `4ca636c5e` is about seven
+hours old at `b7bb00b93` — same day, `2026-08-19 16:44:17 +0200` to `23:35:43
++0200`, author and committer dates agreeing at both ends — and nothing in
+between depends on the shape it introduced, so
+porting the intermediate `AssistantMessage.ReasoningDetails` field and then
+deleting it would have added a field to the session format for the length of one
+commit. `ai/types.go` therefore never grows the field — its only change in
+`41171de` is the doc comment on `ThinkingSignature`, mirroring upstream's own —
+and the new `ai/providers/openai_reasoning_details.go` holds the codec both
+commits share.
+
+**Two of `4ca636c5e`'s changes are net-zero across the pair, and were confirmed
+as such rather than read off the diff.** `packages/server/src/protocol.ts` is
+**blob-identical** at `4ca636c5e^1` and `b7bb00b93` (`git rev-parse` → `069828e5`
+at both ends). `packages/ai/src/types.ts` is not blob-identical, but the
+`reasoningDetails` field is: it appears exactly once at `4ca636c5e` and zero
+times at `4ca636c5e^1` and at `b7bb00b93`, and the whole `4ca636c5e^1..b7bb00b93`
+diff of that file is a one-line **comment** change on `thinkingSignature`
+("e.g., for OpenAI responses, the reasoning item ID" → "Provider-specific opaque
+or serialized reasoning replay data"). So the session format is byte-untouched
+on both sides.
+
+**Serialization: a detail is replayed as pi's OBJECT, not as the provider's
+bytes.** The first draft compacted the provider's original JSON (`json.Compact`)
+on the theory that "OpenRouter requires the sequence back unmodified" meant the
+bytes. It does not — and pi could not honour that reading even if it wanted to.
+pi reads the detail out of a `JSON.parse`'d SSE line, pushes the resulting
+**object** onto the array, and `JSON.stringify`s it; the SDK stringifies it again
+on the way out. Everything `JSON.parse` → `JSON.stringify` normalizes is
+therefore part of pi's wire format, and compaction diverged from it on four
+counts. The differential harness caught two of them against ground-truth pi:
+
+```
+FAIL  value     @ $.messages[2].reasoning_details[0].conf   pi: 1        go: 1.0
+FAIL  key-order @ $.messages[2].reasoning_details[1]        pi: 0,type,data,id,custom_flag,nothing
+                                                            go: type,data,id,custom_flag,nothing,0
+```
+
+Details now go through `jsStringify` (`ai/providers/json.go`), which already
+existed for provider error bodies, extended here to stop approximating the two
+object rules it had documented as out of reach:
+
+- **A repeated key is one property** — created at its first occurrence, holding
+  its last value. `{"text":"a","text":"b"}` → `{"text":"b"}`, where compaction
+  emitted a request body with a duplicated object key.
+- **Own-property order is not insertion order.** `OrdinaryOwnPropertyKeys` lists
+  array-index keys first, ascending, then the rest in creation order, so
+  `{"type":"x","0":"y"}` re-serializes as `{"0":"y","type":"x"}`.
+
+and two rules it already had, which now reach this slice:
+
+- **Numbers are renormalized**: `1.0` → `1`, `1e2` → `100`, `-0` → `0`,
+  `12345678901234567890` → `12345678901234567000`.
+- **Escapes are minimized**: `\u00e9` → `é`, `\/` → `/`. This is the reachable
+  half of the class — Python-stack providers reached through OpenRouter (Qwen,
+  GLM, DeepSeek, Kimi) serialize with `ensure_ascii=True`, so their
+  `reasoning.text` details arrive fully escaped.
+
+**`jsStringify` verified against node over 1,863 generated cases, zero
+divergences** — random float64 bit patterns rendered several ways, exponents
+from `1e-330` to `1e330`, integer literals 1–29 digits long, 300 random key sets
+mixing index-like and ordinary keys, 100 duplicate-key objects, and 400 random
+Unicode strings emitted both `ensure_ascii=True` and `False` — plus a 47-case
+hand-written table. (Both are the cycle's out-of-tree differential probe against
+node, the same shape as previous cycles' oracles; the in-repo residue is the
+`TestJSStringify*` tables in `ai/providers/errors_anthropic_test.go`.)
+`jsNumber` gained the range-error arm the corpus demanded: `ParseFloat` reports
+±Inf or a signed zero *alongside* `ErrRange`, and `JSON.stringify(Infinity)` is
+`null`, so `1e400` → `null` and `1e-400` → `0` where the old code passed the
+literal through. Only a genuinely malformed literal still passes through.
+
+`isJSONNumber` had to be widened to match: pi's guard is `typeof index ===
+"number"` and `JSON.parse` saturates `1e400` to `Infinity`, which passes it.
+Decoding into a `float64` returned "number out of range" and **dropped the whole
+detail** — and, in the stored-signature path, the whole sequence. It decodes
+into a `json.Number` now, which keeps the literal; the leading-byte screen is
+what still rejects non-numbers, because `encoding/json` would otherwise accept a
+*quoted* number (`"1"`) there.
+
+**A non-array `reasoning_details` no longer truncates the turn.** `openAIChunk`
+typed the field `[]json.RawMessage`, so a provider sending anything else failed
+the **whole chunk unmarshal** — and `iterateOpenAISSE`'s deliberate junk-line
+leniency then skipped the entire `data:` line. Demonstrated end to end before the
+fix: the delta
+
+```
+{"choices":[{"delta":{"content":"hello","tool_calls":[…],"reasoning_details":{}}}]}
+```
+
+produced a final assistant message with **0 content blocks**, stop reason
+`stop`, no error — text and tool call both gone. pi's `Array.isArray` ignores
+exactly that one field. The chunk field is `json.RawMessage` now and the array
+is decoded at the use site, which contains the failure where pi contains it.
+Pre-existing (`4ca636c5e` shipped the typed field), but this slice is what put a
+provider-controlled, loosely-specified field on OpenRouter's hot path, so the
+blast radius is new. Locked by
+`TestOpenAIStreamReasoningDetailsNonArrayIgnored` over six non-array values.
+
+**The accumulate loop was quadratic with a very large constant.** Each arriving
+detail re-parsed the entire accumulated signature, re-validated every earlier
+entry and re-serialized all of them. Measured on the real stream path: n=100 →
+18 ms, n=400 → 254 ms, n=1600 → 3.72 s, n=3200 → 14.68 s — 4× per doubling,
+burned on the goroutine reading the SSE body, and reached whenever a provider
+streams `reasoning.text` fragments one detail per chunk (which is what the
+`index` field exists for). pi is structurally quadratic too, but its
+per-arrival validation is O(1) property reads on already-parsed objects.
+
+The sequence is now held next to `thinkBuilder` in the closure and only the
+arriving entry is validated and rendered. One stream opens at most one thinking
+block, so the parse pi does could only ever return what the last delta wrote.
+The "a non-sequence signature does not survive" property is unchanged — the
+slice starts empty and overwrites the field-name signature wholesale.
+
+**`materialize()` is now pinned.** Deleting it left the whole suite green: the
+final message is unaffected because finalization materializes again, and every
+`stream.Push` is already preceded by a `materialize()`. The one thing that is
+not is `fail(err)`, which pushes the live `output`.
+`TestOpenAIStreamReasoningDetailsSurviveATruncatedStream` hijacks the connection
+and hangs up mid-body right after a details-only delta; without the call the
+aborted message reports `reasoning` — the field-name signature — instead of the
+accumulated sequence.
+
+### Port-but-CATALOG-ONLY — queue 7 → 8 (parked for the next release regen)
+
+| sha | generator delta | lands as |
+|---|---|---|
+| `3de00332f` | **NEW this cycle.** `fix(ai): derive Z.AI reasoning effort metadata` (#8336) replaces the hand-written `ZAI_GLM52_THINKING_LEVEL_MAP` with `getEffortThinkingLevelMap(m.reasoning_options ?? [])`, derived from models.dev, and hoists the whole zai/zhipuai loop out of `loadModelsDevData` into a new `processZaiModels`. `supportsReasoningEffort` is now set for every zai model that HAS an effort map, not just GLM-5.2. **`off: "none"` is NEW here, not "kept"** — corrected after review: the deleted `ZAI_GLM52_THINKING_LEVEL_MAP` at `3de00332f^` is `{minimal:null, low:"high", medium:"high", high:"high", max:"max"}` with no `off` key at all, and the pre-change test asserted exactly that with `toEqual`; no other generator post-processing branch reaches zai (the parent's `off:"none"` sites are `OPENAI_RESPONSES_NONE_REASONING_MODELS`, fireworks `glm-5p2`, and baseten's provider-local `glm52ThinkingLevelMap`). What widens is the **`isGlm52` gate**, from `modelId === "glm-5.2"` to `"glm-5.2" \|\| "glm-5.2-highspeed"`, and the new code then sets `thinkingLevelMap.off = "none"` on the derived map | next regen. Upstream's own test pins the target shapes for both `zai` and `zai-coding-cn`: `glm-5.2` and `glm-5.2-highspeed` → `{off:"none", minimal:null, low:null, medium:null, high:"high", xhigh:null, max:"max"}`; `glm-5.3` → `{off:null, minimal:null, low:"low", medium:null, high:"high", xhigh:null, max:"max"}`. Note `low`/`medium` on GLM-5.2 flip from `"high"` to `null` — the derived map is not a superset of the old one. **Catalog-only, verified rather than assumed:** the change touches exactly two files, `packages/ai/scripts/generate-models.ts` and `packages/ai/test/openai-completions-tool-choice.test.ts`; no request-body path, no `src/api` reach |
+
+Carried: `4809c2abc` **as amended by `ed867e909`**
+(`applyAnthropicAllowedFallbackModelMetadata` emitting `[{provider, model,
+cost}]` — see the 2026-08-19 queue row and its rewritten regen tripwire, which
+`ed867e909` made load-bearing this cycle by removing the option that used to
+override it); `eb1f87fa9` (the `ANTHROPIC_ALLOWED_FALLBACK_MODELS` table
+itself), `0e4d49541`, `87205484b`, `6db110e6f` from 2026-08-18; `70e878d4c` and
+`86d001d36` from 2026-08-17. All eight await the next release regen.
+
+The catalog itself is **UNCHANGED this cycle**, and the range confirms it:
+`packages/ai/src/models.generated.ts` does not appear in the range diff at all.
+`ai/models_catalog.json` is still the 0.84.2 derivation at 536,642 B, last
+touched by `69bcdf1`, and still carries **zero** `allowedFallbackModels`, so the
+refusal-fallback feature stays dormant on both sides until the regen. No goldens
+were recaptured — nothing in the delta touches a captured golden.
+
+### n/a (14)
+
+| sha | subject | reason |
+|---|---|---|
+| `d711bd5f0` | fix(coding-agent): preserve branch summary source leaf | the whole in-scope hunk is `SessionManager.addBranchSummary` hoisting `fromId` off `this.leafId` *before* the navigation instead of taking the destination's `branchFromId`. **The port has no branch_summary WRITER at all**: `coding/session_tree.go` READS the entry (`FromID`, `Summary`) when replaying a transcript, and `SessionRecorder` writes only `session`, `model_change`, `thinking_level_change` and `message` entries (`coding/session_store.go`, four `"type":` literals). Named explicitly rather than left implicit: the absence is already on record from 2026-08-18, where `90305d90a`'s `branch-summarization.ts` guard was logged **NO Go home** because "the port consumes stored branch summaries and never generates one". So this is `n/a` against a recorded absence, not a silent one — and the day the port grows a branch-summarization writer, this fix has to ride with it |
+| `830a0a59e` | fix(coding-agent): expose tool metadata at stream start (#7953) | `src/modes/json-event.ts` (plus `docs/` and a regression test) — coding-agent `--mode json` stdout shaping. There is no `modes/` tree in the Go port; its wire surface is the pi-messages protocol. Precedent `c93ea6ccf` (2026-08-13) |
+| `d57e531f5` | fix(ai): round-trip Bedrock redacted reasoning (#8314) | `bedrock-converse-stream.ts` + its test only. Bedrock is an unported provider (non-port list) |
+| `1e1a6e27b` | feat(coding-agent): include paths in settings errors | `core/settings-manager.ts` + its test. The settings manager is on the non-port list; the port has no settings-file reader to attach paths to |
+| `913bcf339` | fix(coding-agent): report settings diagnostic paths | `core/settings-diagnostics.ts` + `src/main.ts` + a test — the CLI reporting half of the same feature. Same non-ported surface |
+| `678f0af30` | fix(coding-agent): show startup diagnostics in TUI | `src/main.ts` + `modes/interactive/interactive-mode.ts` — the TUI half of the same feature. TUI, non-port list |
+| `4495469a5` | fix(coding-agent): compact without provider usage | agent-session's auto-compaction guard. Upstream deletes the early `if (estimate.lastUsageIndex === null) return false` so a context with NO provider usage falls through to the pure message-size estimate, and narrows the stale-pre-compaction check to usage-backed estimates only. **Go already behaves this way**: `estimateContextTokensUsageAware` (`coding/compaction.go:220`) does `if lastIdx == -1 { return EstimateContextTokens(messages) }`. pi is converging on the Go behavior, so no Go change is warranted and none was made |
+| `2ff8ba622` | fix(coding-agent): keep model and thinking level changes session scoped (#8356) | settings persistence + TUI selectors (18 files, 12 of them selector/TUI/tests). The core intent — a `/model` or thinking-level change stays in the session unless `--default` is passed — is **already the Go behavior**: `Session.SetModel` and `Session.SetThinkingLevel` (`coding/session.go:325,336`) update the agent and call `RecordModelChange`/`RecordThinkingLevel` on the recorder, and never write a default anywhere. pi converging on Go again. `THINKING_LEVEL_OPTIONS`, the one new `core/defaults.ts` export, has exactly two consumers at the sha — `agent-session.ts:1762` (`if (!this.model) return [...THINKING_LEVEL_OPTIONS]`) and `interactive-mode.ts:4568` (TUI) — and the port handles the no-model case by clamping to `agent.ThinkOff` (`coding/session.go:400`), which is what pi's own `sdk.ts` does |
+| `98767a25d` | fix(settings-selector): remove token estimates | settings-selector TUI. Also the first half of a **revert pair** — see `f0a2880f2` |
+| `ee29aa118` | feat(settings-selector): make default model and thinking level searchable | settings-selector + settings-submenu TUI |
+| `a669db3c3` | fix(settings-selector): show modelid [provider] like /model | settings-selector + settings-submenu TUI |
+| `f0a2880f2` | fix(settings-selector): revert token estimate removal | the revert half of the `98767a25d` pair. **Net zero, verified rather than assumed** — the two patches are exact inverses on the same `THINKING_DESCRIPTIONS` map (`minimal/low/medium/high` gain and lose their `(~Nk tokens)` suffixes; `xhigh` goes `"Extra-high"` → `"Extra-deep"` → `"Extra-high"`). Blob identity does NOT hold here, because `ee29aa118` and `a669db3c3` landed on the same file in between — the inversion is the proof, not the blob |
+| `9c8070fbe` | feat(settings-selector): ctrl + s persists /model | model-selector + settings-selector + interactive-mode TUI |
+| `496185f6e` | feat(coding-agent): /thinking command | the only core-path hunk is **one row** appended to `BUILTIN_SLASH_COMMANDS` in `core/slash-commands.ts` (`{name:"thinking", description:"Set thinking level", argumentHint:"[--default] <level>"}`); the rest is `modes/interactive/components/thinking-selector.ts` + `interactive-mode.ts`. Go has no slash-command table — precedent `312bc713` (2026-07-08), whose only core hunk was likewise a `BUILTIN_SLASH_COMMANDS` edit |
+
+### Review gates
+
+Both gates ran independently per slice — **8 independent reviews** (pi-go-review
++ pi-parity-review on each of the four slices), never the porter. Totals across
+the cycle: **1 HIGH + 12 MED + 24 LOW**. Per slice, as recorded in each port
+commit's own message:
+
+- `ed867e909` → `a20597b`: **4 MED + 6 LOW**, all valid and applied. Eight
+  mutations verified behaviorally red.
+- `1355cd36e` → `1308a5a`: **1 MED + 5 LOW**, all valid. The MED is the one
+  above — the edit-tool test did not exercise `splitBOM` at all, and the suite
+  stayed green with the call removed. Its replacement's expected values were
+  produced by executing upstream's TS at the sha in node, not read off Go.
+- `87af49dec` → `dc2befa`: **1 HIGH + 3 MED + 6 LOW**. **The HIGH is the OAuth
+  precedence case**: the port would have let a caller's `User-Agent` beat pi's
+  `claude-cli/<v>` identity. It was caught because the porter's test asserted the
+  PORT's value instead of pi's — the reviewer went to the real SDK instead of the
+  assertion — and it was fixed at the root cause (the ordered header object),
+  not in the assertion. This is the house rule working: *a parity divergence
+  "fixed" by editing the assertion to match our output does not ship.*
+- `4ca636c5e` + `b7bb00b93` → `41171de`: **4 MED + 7 LOW**, one MED and one LOW
+  filed twice from different angles. 22 mutations verified red. **Applied (7):**
+  the compaction → `jsStringify` change (MED — the only finding the harness could
+  see, and it saw it as a port bug); the non-array chunk field (MED, filed
+  twice); the quadratic accumulate loop (MED); unknown-key survival now
+  *asserted* rather than merely permitted (MED — an order-preserving "drop every
+  key outside the eight known ones" mutation left `go test ./ai/...` entirely
+  green against the pre-review `rdSummary`; with the constant carrying a
+  `provider_specific` member the same mutation turns **9** reasoning-details
+  tests red); the `1e400` accept divergence (LOW); `materialize()` pinned (LOW);
+  the missing `orderSensitivePaths` (LOW). **Recorded, not fixed (2 LOW):** the
+  repo-wide `json.Marshal` HTML-escaping row and the unpaired-surrogate row, in
+  the two divergence sections below. **Superseded (1 LOW):** a finding proposing
+  that compaction be kept and its three divergences merely documented — the fix
+  removes them instead. **Redirected (1 LOW):** the harness-pin
+  reproducibility gap — the harness result was recorded without naming the
+  `PI_UPSTREAM_SHA` that produced it, while `~/.cache/pi-diff/config.env` moved
+  twice inside the cycle (`3a0b9a3ee` → `ed867e909` → `b7bb00b93`) and every
+  `src` scenario's ground truth is that pin, so the PASS count could not be
+  re-derived from the ledger alone. It was written into the working harness
+  notes rather than into a pin row that could not yet advance; the full chain is
+  now carried by the "Reviewed via" row at the top of this file and by the
+  harness section below. The same finding's second half, `3de00332f` as an
+  unrecorded catalog-queue item, is confirmed and taken **7 → 8** above.
+
+Two reviewer suggestions on the reasoning-details slice were **not** taken:
+
+- **Recording the number/key-order divergence as a permanent
+  `known-divergences.json` entry.** pi is ground truth, the harness classified it
+  as a port bug, and the machinery to match pi already existed one file away.
+- **The suggested test for `materialize()`** — "assert the Partial of the event
+  following a details-only delta already carries the signature" — would have
+  stayed green under the mutation. Every `stream.Push` in this stream is already
+  preceded by a `materialize()`, so every Partial is fresh by construction; the
+  only consumer of a *stale* `output` is `fail()`, which is why the test aborts
+  the stream instead.
+
+Mutation accounting: the two slices that record a total record **8**
+(`a20597b`) and **22** (`41171de`). `1308a5a` and `dc2befa` record theirs
+individually rather than as a count — the `splitBOM` call-site mutation above,
+and for the headers slice the four families named in that section (seed deleted
+→ 5 subtests red; seed moved back to the force position → 23 subtests across 10
+tests red; re-assigned key promoted to the end → the OAuth subtest red; sorted
+order instead of slot order → 4 tests red). Every fix was verified red for a
+**behavioral** reason before shipping; a compile-fail red was not accepted as a
+red — where neutralizing a mutation would only have broken the build, the
+production change was kept compiling so the test could be observed failing for
+the behavior it asserts. (The rule is stated here rather than cross-referenced:
+the `2026-08-XX red/green note` pointer that stood in this sentence, and still
+stands in the 2026-08-19 section, resolves to nothing — there is no dated
+red/green note anywhere in this ledger.)
+
+Final gate: `gofmt -l` clean, `go build ./...` and `go vet ./...` clean, and
+`go test -race ./... -count=1` green across all **10** test-carrying packages
+(13 listed, 3 with no test files).
+
+### Pre-existing divergences surfaced this cycle (recorded, NOT fixed)
+
+Two items **older than this delta** were surfaced this cycle by the reviewers'
+differential execution against pi. Neither is a regression from these ports, so
+neither was folded into a sync commit; each is recorded here with its executed
+evidence and with the fix to schedule. A third finding of this cycle — the
+`(*Client).Close` re-entrancy race — was first written into this table and has
+been **moved out** in review: it is a Go-side concurrency defect, not a
+pi-vs-Go divergence, and it belongs in **"Follow-ups recorded, NOT fixed this
+cycle"** below, which is where the house pattern (2026-08-10, 2026-08-08) puts
+an item that needs an owner and a next step.
+
+| site | divergence | executed evidence | reachable? |
+|---|---|---|---|
+| `coding/resources.go` `parseFrontmatter` body trim | uses `strings.TrimSpace`, where pi uses JS `.trim()`. Go's `unicode.IsSpace` and ECMAScript's trim set are mirror images on exactly two characters: JS strips **U+FEFF** and Go does not; Go strips **U+0085 (NEL)** and JS does not | `utils/frontmatter.ts` extracted at `1355cd36e` and executed in node against Go over a 15-case table: **6 divergences, all on those two characters.** `---\nname: demo\n---\n﻿Body` → pi `"Body"`, Go `"﻿Body"`; `…\nBody﻿` → pi `"Body"`, Go `"Body﻿"`; `…\n﻿ Body ﻿` → pi `"Body"`, Go `"﻿ Body ﻿"`; `…\n﻿` → pi `""`, Go `"﻿"`; and the reverse on NEL — `…\nBody` and `…\nBody` → pi keeps the NEL, Go strips it. U+00A0, U+2028, U+1680 and ordinary whitespace all agree | **latent.** The sole production caller (`coding/resources.go:441`, `fm, _ := parseFrontmatter(...)`) discards the body, so no value reaches a model today. It goes live the moment any consumer takes the second return value |
+| every `json.Marshal(body)` request-body site (`ai/providers/openai.go:129` and its four peers) | **Go HTML-escapes `<`, `>`, `&`, U+2028 and U+2029 on the wire; `JSON.stringify` emits them literally.** `encoding/json` marshals with `escapeHTML=true` and re-compacts embedded `json.RawMessage` through the same path, so the escaping applies to replayed reasoning details exactly as it does to every other string in every body | driven through the real `StreamOpenAICompletions` against a local server: a detail whose text is `if (a < b) && c > d then é ok` arrives as `"if (a \u003c b) \u0026\u0026 c \u003e d then é ok"` (re-executed for this ledger entry: `json.Marshal` of that exact string, and of a `json.RawMessage` carrying it, both produce those bytes). `é` survives — that half is this cycle's fix — and `<`/`>`/`&` do not | **reachable and realistic.** Reasoning text about code is where `<` and `&` live. Value-preserving on both sides (identical after parse), which is why nothing has caught it |
+
+The first predates this delta — `TrimSpace` has been there since the function
+was written, and the *class* of divergence is unchanged by the port. What the
+port does change is **reach**: before `1355cd36e`, a document whose BOM preceded
+the `---` failed the prefix test on **both** sides and returned untrimmed, so the
+trim was never entered for BOM'd input at all. It is entered now. Not folded into
+this cycle's commits per the standing practice — the fix is one token (the
+package already ships `trimJS` over the `jsWhitespace` cutset at
+`coding/remotesession.go:1218`, ECMAScript WhiteSpace ∪ LineTerminator, exactly
+right) and should be scheduled deliberately, alongside an audit of the port's
+other JS-`.trim()`-modelling `TrimSpace` calls, rather than smuggled in behind a
+BOM commit.
+
+The second is repo-wide and older than the reasoning-details slice; **invisible
+to the differential harness**, whose Go side captures bodies through its own
+`marshalWire` with `SetEscapeHTML(false)` (`~/.cache/pi-diff/go/canon.go:227`)
+rather than through the real client. Recorded because the reasoning-details
+slice's premise is "replay what pi replays", and because the first draft's
+rationale for choosing compaction over decode+re-encode claimed compaction
+preserved these characters — it does not, the outer marshal escapes them either
+way. The fix is one shared `json.Encoder` + `SetEscapeHTML(false)` request-body
+helper across the five adapters; it needs its own golden pass and should be
+scheduled deliberately rather than folded in behind a reasoning-details commit.
+No golden or test in the repo asserts the escaped spelling today — `grep -r
+'\\u003c'` over the whole repo finds nothing outside this ledger's own sentence
+(re-checked this cycle) — so no golden is holding it in place.
+
+### Deliberate divergences added this cycle
+
+Three, all accepted rather than fixed. **Two are pinned by a test; the third is
+recorded UNPINNED** — corrected after review, which found the blanket
+"all pinned" claim false for the surrogate row. Every row below now either names
+its pinning test or says explicitly that it has none.
+
+| site | divergence | executed evidence | reachable? |
+|---|---|---|---|
+| `ai/providers/google.go` header record | **@google/genai comma-JOINS case-variant names; the port sends the last slot's value alone.** `getHeadersInternal` fills a `Headers` with `append`, not `set`, so two spellings of one name both survive | **@google/genai 1.52.0** from `~/.cache/pi-npm/0.84.2` (version re-confirmed this cycle) driven against a local server with the exact record the ported code produces: `{"User-Agent": "pi (darwin 25.5.0; arm64)", "user-agent": "custom-agent"}` → wire `user-agent: pi (darwin 25.5.0; arm64), custom-agent`. Same join for `"USER-AGENT"`, and `{"User-Agent": "opts-agent", "user-agent": "model-agent"}` → `opts-agent, model-agent` | **live, and the seed is what made it reachable from ONE spelling.** Before `87af49dec` the record carried no user agent, so a join needed two colliding names from the consumer or catalog. Reproducing it would need `Header.Add` plus a model of `patchHttpOptions`' slot behaviour (the SDK's own `{"User-Agent": "google-genai-sdk/…", "x-goog-api-client", "Content-Type"}` defaults hold slot 0 for the exact spelling `User-Agent`) — SDK emulation the port does not do. The port picks the value pi puts **last** in the join. **Pinned** on the port's half by `TestGoogleCaseCollidingModelUserAgentWins` (`ai/providers/pi_user_agent_wire_test.go:469`), which asserts across three spellings that exactly one value — the winner — reaches the wire; pi's joined value is recorded here rather than asserted there, and that test's own comment points back at this ledger for it |
+| `ai/providers/headers.go` → `net/http` | **an empty-string user agent vanishes; pi sends the header present-and-empty.** `net/http.Request.write` special-cases exactly this one header: an empty value means "omit", not "send blank" | Go side: `model.Headers{"User-Agent": ""}` reaches the server with no `User-Agent` key at all on anthropic and google, while `X-Empty: ""` arrives present-and-empty. pi side: the same `{"User-Agent": ""}` through @anthropic-ai/sdk 0.91.1 delivers `user-agent:` with an empty value | **live on four adapters that never carried the header before `87af49dec`.** Not fixable through `http.Header` — the skip is unconditional in the transport. Pinned by `TestEmptyUserAgentIsDroppedEntirely` (both arms plus the `X-Empty` control) so it cannot drift silently |
+| `ai/providers/json.go` `jsStringify` ← reasoning details | **an unpaired UTF-16 surrogate in a detail's string does not survive the round trip.** `encoding/json` replaces `\ud800` with U+FFFD while decoding, before `jsEscape` — which does understand WTF-8 — can see it, so Go re-emits `�` where JS keeps the code unit and re-emits `\ud800` | node vs Go on the same inputs: `{"text":"\ud800"}` → pi `{"text":"\ud800"}`, Go `{"text":"�"}`; same for `"\udfff"` and `"a\ud83d b"`. A well-formed pair (`😀`) agrees | **adversarial only.** A lone surrogate is not producible by a conformant JSON serializer; the previous `json.Compact` passed those bytes through unchanged, so this is the one case where compaction was closer. **UNPINNED — nothing in the repo asserts it.** The three `TestJSStringify*` tables (`ai/providers/errors_anthropic_test.go:85,102,126`) carry key-order, own-property-order and malformed-rejection cases and no surrogate case; `TestSanitizeSurrogatesDeletesUnpaired` (`ai/providers/json_test.go:35`) exercises a different function (`sanitizeSurrogates`, the streaming-error path); and the WTF-8 rows in the `jsQuote` table (`ai/providers/constrained_sampling_test.go:425`) sit **upstream** of the `encoding/json` decode that causes the loss, so they cannot catch this drift. The candidate pin is recorded as a follow-up below |
+
+The surrogate loss was accepted rather than fixed because recovering it means
+replacing the `json.Decoder` token stream with a raw scanner that decodes strings
+into WTF-8 itself. It is the one `jsEscape`'s own doc comment already calls
+unrecoverable at this layer; this cycle only widens who reaches it.
+
+### Follow-ups recorded, NOT fixed this cycle
+
+- **`client/client.go:592` `(*Client).Close` lets an unrelated goroutine return
+  before teardown finishes** (Go-side race, **pre-existing**, not introduced by
+  this delta — nothing in `3a0b9a3ee..b7bb00b93` touches the client or the
+  protocol layer). `reentrant := c.notifying` is true for *any* goroutine that
+  arrives while teardown is inside one of its own callbacks, not just for the
+  callback that is itself part of the teardown, so an unrelated second caller
+  skips the `<-c.closed` wait and sees a client that is not yet disposed. The
+  code comment states the cost deliberately ("An unrelated goroutine that
+  happens to land in the same window returns early too… never correctness"),
+  which is the part review disputes: for a caller that is not part of the
+  teardown it *is* a correctness gap, because `Close` returning is documented to
+  mean fully disposed.
+  - **Where it is filed: nowhere but here.** "Filed separately" in the first
+    draft named no destination and there is no issue id — this bullet is the
+    record.
+  - **Reproduction recipe** (re-run this before assuming it is gone): observed
+    **once** under full-suite load this cycle, then not reproduced in 20
+    isolated runs, 10 package runs, 5 `-race` runs or 3 full-suite runs, and the
+    full `-race` suite for this ledger update was green. The failing assertion
+    is `client/disposal_test.go:215`, "Close returned while a child handle was
+    still attached", from the 8-goroutine concurrent-`Close` test — i.e. the
+    same symptom the **2026-08-10 follow-up** already recorded as load-flaky and
+    spun off to its own session. Treat the two as one item; what this cycle adds
+    is the cause, not a new bug.
+  - **Candidate fix:** scope the early return to the goroutine actually
+    performing teardown (record that goroutine, or pass re-entrancy through the
+    notification call path) instead of to any goroutine in the `c.notifying`
+    window, so an unrelated caller still waits on `<-c.closed`.
+
+- **The `jsStringify` unpaired-surrogate divergence has no pinning test.**
+  Recorded UNPINNED in the deliberate-divergence table above. Candidate pin:
+  feed a detail whose string carries a lone surrogate (WTF-8 `\xed\xa0\x80`,
+  i.e. pi's `{"text":"\ud800"}`) through `jsStringify` and assert Go emits
+  U+FFFD where node emits `\ud800` — a characterization test, green from the
+  first run, so it cannot be red/green-verified and must be labelled as such
+  (see the red/green rule under Review gates). Cheap, but it needs the
+  node-executed want value captured alongside it, so it is scheduled rather than
+  folded in behind a reasoning-details commit.
+
+### Differential harness — DARK (40 uncompared) → 47 PASS / 0 KNOWN / 0 FAIL
+
+**The harness started this cycle dark, and that is the finding worth recording.**
+`ed867e909`'s port deleted `ai.AnthropicRefusalFallback` and
+`SimpleStreamOptions.RefusalFallbacks`, which broke the Go driver's **compile**.
+`run.sh` runs the whole Go side in one shot — `(cd go && go run .)` at
+`run.sh:114-117` — before it reaches the scenario list (131) and `classify.py`
+(143), so the compile error aborted the run up front and ALL 40 shipped
+scenarios went uncompared: every provider, not just the fallback ones. The abort
+is loud (a red "go side failed"), but it exits **1** — the same status
+`classify.py` returns for "any FAIL" — and prints no scenario tally, so a caller
+reading only the exit code cannot tell DARK from FAIL.
+
+**Tripwire, new this cycle** (same register as the `defaultTools` tripwire of
+2026-08-13 and the regen tripwire in the 2026-08-19 queue section): **a port
+slice that deletes or renames exported `ai` surface must build
+`~/.cache/pi-diff/go` before any harness result from that slice is trusted, and
+a run that stops at "go side failed" is DARK — not FAIL, and never PASS. Zero
+compared scenarios is not a result.** The trigger is structural and will recur:
+the driver calls the port's exported API directly, so every future un-port
+breaks it the same way. The durable guard, whenever the harness is next edited,
+is for `run.sh` to compile the driver as its own step and exit with a status
+distinct from `1`.
+
+Repaired inside slice 1 (see the 2026-08-19 harness amendment blockquote, which
+records the repair against the row it amends): `~/.cache/pi-diff/go/main.go`
+dropped the `refusalFallbacks` field and its assignment, and the four
+`refusal-fallbacks-anthropic-*` scenarios were re-pointed at
+`model.compat.allowedFallbackModels` in the `{provider, model, cost}` shape,
+which is now the only way to drive the feature. That took it **40 → 42**
+(`-default` RETIRED, `-empty-list` and `-no-compat` added, plus a
+`-cross-provider` pinning `ed867e909`'s asymmetry).
+
+The reasoning-details slice took it **42 → 45 → 47** — three scenarios shipped
+with the port, two added by the review:
+
+- `reasoning-details-replay-sequence` — the three detail shapes replayed in
+  order out of the thinking signature, winning over a legacy encrypted detail
+  still sitting on the tool call. Declares `orderSensitivePaths` for each
+  detail: without it the harness sorts keys before diffing, so the `order.txt`
+  lines were written and compared against nothing. Verified to assert something
+  — rendering objects in alphabetical order instead turns it red on all three
+  paths.
+- `reasoning-details-replay-suppresses-raw-reasoning` — the stored sequence is
+  the structured **alternative** to a raw reasoning field, not a companion. Turn
+  1 carries visible thinking plus a sequence in the thinking signature, so
+  `reasoning_details` is emitted and no `reasoning` / `reasoning_content` /
+  `reasoning_text` key is written at all; turn 2 carries the same visible
+  thinking with an ordinary `reasoning_text` field-name signature and no
+  sequence, so the raw field IS written there. Both sides must differ between
+  the two turns in exactly that way.
+- `reasoning-details-replay-legacy-encrypted` — with no thinking block carrying
+  a sequence, the tool calls' `thoughtSignature` slots are the source, narrowed
+  to well-formed `reasoning.encrypted` details with non-empty `id` AND `data`,
+  replayed in tool-call order. The three other signatures in the fixture — a
+  `reasoning.text` detail, an encrypted one with `id: ""`, and the bare JSON
+  number `123` — all parsed before `b7bb00b93` and were replayed as entries;
+  they must now be dropped. Together with the one above it, this pair was
+  shipped as the porter wrote it and the review changed nothing in either —
+  which is all the first draft's "unchanged" meant; both are new this cycle, so
+  there was nothing for them to be unchanged *from*.
+- `reasoning-details-replay-unknown-keys` **(new)** — members pi has no name for
+  (`Record<string, JsonValue>`), with nested object and array values, `id:null`,
+  and an integer-like `"0"` key that JS hoists; order-sensitive at each detail.
+- `reasoning-details-replay-number-forms` **(new)** — `1.0`, `1e0`, `1e2`, `-0`
+  and `1e400` in a stored sequence. Both sides emit
+  `"conf":1 … "scale":100,"neg":0 … "index":null`, byte-identical.
+
+All five are `backend: "src"` and require `PI_UPSTREAM_SHA >= b7bb00b93`: at an
+older pin pi still replays the pre-`b7bb00b93` shape and they FAIL.
+
+`~/.cache/pi-diff/config.env` `PI_UPSTREAM_SHA` is now **`b7bb00b93`** (via
+`ed867e909` mid-cycle), and `reasoning.json` **moved from `dist` to `src`**.
+That flip is not bookkeeping: released 0.84.2 really does turn an opaque
+thinking signature into a literal request key —
+`assistantMsg[signature] = …` under `if (signature && signature.length > 0)` in
+`dist/api/openai-completions.js:918-923` — and `b7bb00b93` gates the same
+assignment on `isOpenAICompletionsReasoningField(signature)`. The scenario's
+`sig-abc` signature is captured against the sha for exactly that reason; it
+flips back to `dist` at the release that ships the narrowing (README rule).
+
+Reach audit of the 19-commit span between the harness's mid-cycle pin
+(`ed867e909`) and `b7bb00b93`, so the advance could not silently move an
+unrelated scenario's ground truth: exactly **four** commits touch
+`packages/ai/src`, and only the reasoning-details pair touches a captured body.
+`87af49dec` is `createClient` headers (already ported, outside the bodies-only
+harness) and `d57e531f5` is `bedrock-converse-stream.ts` (no Go file). The other
+15 are coding-agent, settings-selector, TUI and generator changes.
+
+**Re-run for this ledger update: `47 PASS, 0 KNOWN (tracked debt), 0 FAIL [47
+scenario(s)]`, exit 0.** Scenario backends are 27 `src` / 20 `dist`.
+`known-divergences.json` still holds an empty `divergences` array — the port
+carries no accepted-wrong baseline entry.
+
+Known drift left alone: `~/.cache/pi-diff/README.md`'s `## Scenarios` table
+still lists **11** rows against 47 actual scenarios, and its `reasoning` row
+still says `backend: dist` (stale as of this cycle's flip). Its "order-sensitive
+paths" list is **not** drift and was corrected in review: it already carries
+three entries, `$.chat_template_args` (Baseten — genuinely declared by
+`baseten-thinking`, `-thinking-off`, `baseten-catalog-kimi` and
+`thinking-budget-baseten-args-var`), `functionCall.args` on the google
+scenarios, and the `$.messages[i].reasoning_details[j]` entry added this cycle.
+
 ## Drift at last sync check (2026-08-19) — pin advanced to 3a0b9a3ee
 
 Delta `2509b5c03..3a0b9a3ee`, **12** first-parent changes, no merges. **No
@@ -587,7 +1279,7 @@ nothing in this delta touches `agent/src/harness`. The catalog-only queue goes
 | upstream | subject | Go | notes |
 |---|---|---|---|
 | `b23741269` | feat(ai): generalize openai-completions thinking token budget fields | `f0311e3` | The vLLM-only `thinking_token_budget` becomes a compat-selected field name: new `ThinkingTokenBudgetField` (`thinking_token_budget` vLLM / `thinking_budget` Qwen-DashScope-SGLang / `thinking_budget_tokens` llama.cpp), with the old `supportsThinkingTokenBudget` boolean retained as a documented alias resolving to the vLLM name. The clamped budget is computed once and now also reaches chat-template values through a new `{"$var":"thinking.budget"}`, on BOTH the `chat-template` and `baseten` call sites. pi's `simple-options.ts` extraction (`thinkingBudgetForLevel`, `clampThinkingBudgetToAnswerRoom`) lands beside the existing budget helpers in `ai/providers/anthropic.go`. Ordering preserved: the ceiling still reads whichever max-tokens field `buildParams` set (pi assigns at openai-completions.ts:725-728, resolves at :758, so the value is identical to the old late block). The generator hunk is type-only and upstream documents the field as "not set on the generated catalog" — **no catalog change and no queue item**. |
-| `4809c2abc` | fix(ai): anthropic fallback usage | `bc7964e` | A response served by a refusal fallback is now COSTED against the model that served it. `AnthropicRefusalFallback`'s union collapse grows from `Models []string` to targets carrying an optional `cost`; the wire projection strips `cost` deliberately (pi's explicit `.map(f => ({model: f.model}))`) rather than by construction, and that stripping is test-locked on a real request body. `message_start` resolves pricing through pi's `??` chain — request option first, then `compat.allowedFallbackModels` — under pi's truthiness gate, and re-prices on every `message_start`, so a second one naming the requested model bills at the original rates again. **Reshaping the type broke no released API: it landed in `13c801e`, after `v0.84.18`, and this cycle cuts no tag.** Generator half → catalog queue. |
+| `4809c2abc` | fix(ai): anthropic fallback usage | `bc7964e` | A response served by a refusal fallback is now COSTED against the model that served it. `AnthropicRefusalFallback`'s union collapse grows from `Models []string` to targets carrying an optional `cost`; the wire projection strips `cost` deliberately (pi's explicit `.map(f => ({model: f.model}))`) rather than by construction, and that stripping is test-locked on a real request body. `message_start` resolves pricing through pi's `??` chain — request option first, then `compat.allowedFallbackModels` — under pi's truthiness gate, and re-prices on every `message_start`, so a second one naming the requested model bills at the original rates again. **Reshaping the type broke no released API: it landed in `13c801e`, after `v0.84.18`, and this cycle cuts no tag.** Generator half → catalog queue. **SUPERSEDED by `ed867e909`: upstream withdrew the caller-facing option one commit later, so `AnthropicRefusalFallback`, its targets type and both `RefusalFallbacks` fields are removed and the `??` chain collapses to a single catalog lookup that also matches on `provider`. The costing behavior described here survives; the surface it was reached through does not — do not treat this row as live API.** |
 | `3a0b9a3ee` | Revert "feat(agent): expose provider context construction" | `0cfa63f` | **Un-port.** Upstream withdrew `2509b5c03` the day after the port shipped it, so `BuildProviderContext` (agent/loop.go), `Agent.BuildProviderContext` (agent/agent.go) and the `ContextPipeline` type `b548506` had introduced to express pi's `Pick<AgentLoopConfig, …>` are all removed, folding the transform→convert pipeline back inline. Verified to be exactly the revert and no more: `agent/loop.go` and `agent/agent.go` are byte-identical to `b79c9e6` (the pre-port parent), the `go doc -all` delta is exactly the three identifiers upstream removed, and no caller remains anywhere including `examples/` and `cmd/`. See the 2026-08-19 ruling. |
 
 Review fixes for all three landed in `527c11f`.
@@ -596,22 +1288,43 @@ Review fixes for all three landed in `527c11f`.
 
 | sha | generator delta | lands as |
 |---|---|---|
-| `4809c2abc` | `applyAnthropicFallbackCostMetadata` + `compat.allowedFallbackModels = ids.map(m => ({model: m}))` — each target's `cost` copied from that model's own catalog entry | next regen. **This REPLACES `eb1f87fa9`'s shape: the emitted value is `[{model, cost}]`, not `[string]`.** |
+| `4809c2abc` → **amended by `ed867e909`** | `applyAnthropicAllowedFallbackModelMetadata` (renamed from `applyAnthropicFallbackCostMetadata`) builds the whole list in one pass and merges it through `mergeAnthropicMessagesCompat`; `getAnthropicMessagesCompat` no longer seeds it. Each entry is `{provider: fallbackModel.provider, model: fallbackModel.id, cost: fallbackModel.cost}` | next regen. **The emitted value is `[{provider, model, cost}]` — not `[{model, cost}]` (`4809c2abc`) and not `[string]` (`eb1f87fa9`). Regenerate to THIS shape.** A regen that drops `provider` decodes in Go as `Provider: ""`, which never equals the model's provider, so `anthropicFallbackModelCost` matches nothing and every fallback-served response is billed at the REQUESTED model's rates — while `fallbacks` still goes out on the wire and the beta header is still sent, because both gate on length alone. Silent in every direction; see the regen tripwire. |
 
 Carried: `eb1f87fa9` (the `ANTHROPIC_ALLOWED_FALLBACK_MODELS` table itself —
 `claude-fable-5` → `[claude-opus-4-8, claude-opus-5]`, `claude-opus-5` →
 `[claude-opus-4-8]`), `0e4d49541`, `87205484b`, `6db110e6f` from 2026-08-18;
 `70e878d4c` and `86d001d36` from 2026-08-17.
 
-**Regen tripwire — read before the next catalog regen.** Both Go consumers now
-hard-require the object shape. `coding/compaction.go`'s
-`anthropicSummarizationFallback` decodes `allowedFallbackModels` off the raw
-compat blob; handed the OLD string shape it fails `json.Unmarshal` on the whole
-blob, returns nil, and **silently** sends no `fallbacks` key and no
-`server-side-fallback-2026-07-01` beta — no error, no failing test, because the
-catalog carries zero `allowedFallbackModels` today (verified: 0 occurrences in
-`ai/models_catalog.json`, and 0 in `4809c2abc:packages/ai/src/models.generated.ts`).
-A decode test over the object shape now guards it.
+**Regen tripwire — read before the next catalog regen.** *(Rewritten for
+`ed867e909`, which deleted one of the two consumers this paragraph used to name
+and made `provider` load-bearing.)* There is now exactly ONE Go consumer:
+`getAnthropicCompat` in `ai/providers/anthropic.go` decodes
+`allowedFallbackModels` off the raw compat blob, and everything else — the
+request's `fallbacks` field, the `server-side-fallback-2026-07-01` beta, and the
+pricing a fallback-served response is billed at — reads that one slice.
+`coding/compaction.go`'s `anthropicSummarizationFallback` is **gone**: pi
+withdrew `getAnthropicSummarizationFallback` at `ed867e909`, so compaction no
+longer picks a fallback per call site.
+
+Two regen shapes fail silently, in different ways:
+
+- **The old `[string]` shape** fails `json.Unmarshal` into the fallback struct,
+  leaves the slice empty, and sends no `fallbacks` key and no beta.
+- **A shape missing `provider`** (i.e. `4809c2abc`'s `[{model, cost}]`) decodes
+  fine — so `fallbacks` and the beta still go out — but every entry carries
+  `Provider: ""`, `anthropicFallbackModelCost` requires
+  `f.Provider == model.Provider`, and no entry ever matches. The feature looks
+  live on the wire while every fallback-served response is billed at the
+  requested model's rates.
+
+Neither produces an error or a failing test on its own, because the catalog
+carries zero `allowedFallbackModels` today (verified: 0 occurrences in
+`ai/models_catalog.json`, and 0 in `ed867e909:packages/ai/src/models.generated.ts`).
+The in-repo guard is `TestAnthropicCompatSurvivesMalformedFallbackTargets`
+("generated shape decodes whole", `ai/providers/anthropic_test.go`), which
+decodes a hand-written `{provider, model, cost}` blob — it proves the DECODER,
+not the regen, so the shape above still has to be checked by eye against the
+generator at the sync sha.
 
 ### n/a (9)
 
@@ -709,6 +1422,16 @@ the Go collapsed union serializes it to `"fallbacks": "default"`. Deliberate per
 guarded on `length > 0`), and **not widened** by `4809c2abc` — the cost half
 falls through to the catalog on both sides.
 
+> **RETIRED by `ed867e909` — do not carry this entry forward again.** That
+> commit withdrew the caller-facing option, the union and the `"default"`
+> literal outright: both sides now derive `fallbacks` from
+> `model.compat.allowedFallbackModels` alone and both omit the key when the list
+> is empty (`length > 0` in pi, `len(...) > 0` in Go). There is no value on
+> either side that can produce `"fallbacks": []` or `"fallbacks": "default"`, so
+> the divergence has no reachable input left. A recorded divergence that can no
+> longer fire is the doc analogue of the harness's FIXED state — retired here
+> rather than re-confirmed.
+
 ### Differential harness — 34 → 40 scenarios, 40 PASS / 0 KNOWN / 0 FAIL
 
 Six new `backend:"src"` scenarios for this cycle's openai surface
@@ -745,6 +1468,28 @@ Known drift left alone: `~/.cache/pi-diff/README.md`'s `## Scenarios` table
 still lists 11 rows against 40 actual scenarios, and its "order-sensitive paths"
 list may need a third entry for `$.chat_template_args`.
 
+> **AMENDED before the next pin — harness repaired for `ed867e909`, now 42 PASS
+> / 0 KNOWN / 0 FAIL.** Deleting `ai.AnthropicRefusalFallback` and
+> `SimpleStreamOptions.RefusalFallbacks` broke the Go driver's **compile**, so
+> `run.sh` aborted at "go side failed" for ALL scenarios — the harness was dark
+> for every provider, not just the fallback ones. Repaired:
+> `~/.cache/pi-diff/go/main.go` drops the `refusalFallbacks` field and its
+> assignment (the driver's `DisallowUnknownFields` now makes a scenario still
+> carrying the retired option a hard error rather than a silent no-op);
+> `config.env` `PI_UPSTREAM_SHA` advanced `3a0b9a3ee` → `ed867e909` (exactly one
+> first-parent commit, so no other `src` scenario's ground truth moves); and the
+> four `refusal-fallbacks-anthropic-*` scenarios were re-pointed at
+> `model.compat.allowedFallbackModels` in the `{provider, model, cost}` shape,
+> which is now the only way to drive the feature. **40 → 42:**
+> `-default` is RETIRED (upstream deleted the `"default"` arm) and is replaced by
+> `-empty-list` and `-no-compat` (both must OMIT the key), plus a new
+> `-cross-provider` pinning the asymmetry `ed867e909` introduced — the provider
+> match guards the cost lookup only, so an entry for another provider must still
+> reach the wire. Non-vacuity checked by reading the captures rather than
+> trusting the PASS: the `fallbacks` arrays are present and byte-identical on
+> both sides (including the `vertex` entry on an `anthropic` model), and
+> genuinely absent on both sides for the empty-list and no-compat controls.
+
 ## Drift at last sync check (2026-08-18) — pin advanced to 2509b5c03
 
 Delta `d3e3bbc01..2509b5c03`, **21** first-parent changes, no merges. **No
@@ -780,7 +1525,7 @@ queue goes **2 → 6**. The `defaultTools` tripwire (2026-08-13) was not hit.
 |---|---|---|---|
 | `af2c35223` | fix(ai): honor Google thinking level maps | `156749d` + test re-pin `86caf32` | New `resolveGoogleThinkingLevel` (ai/providers/google.go) resolves the clamped level through `model.ThinkingLevelMap` before either the Gemini-3 `thinkingLevel` table or the 2.5-family budget table, and the custom-`thinkingBudgets` lookup keys off the RESOLVED level. A level landing outside Google's four standard levels is now an **error**, retiring the F4c divergence (xhigh used to fall through both tables into `thinkingConfig:{includeThoughts:true}` with neither key) — that test now asserts the rejection and that no request is sent. pi throws synchronously out of `streamSimple`; the Go seam returns a stream, so the failure is a terminal error event via a new unexported `terminalErrorStream` (ai/providers/errors.go), the same shape the in-flight `fail()` paths produce. Error text byte-exact against pi's template including JS `String(mapped)` rendering (absent key → `undefined`, explicit null → `null`). NO Go home: the `google-vertex.ts` half and the `GoogleThinkingLevel` → `GoogleApiThinkingLevel` type-export rename. |
 | `1c28f3032` | fix(ai): update cloudflare gateway sonnet test id | `416917c` | Subject lies: the only in-scope hunk flips `defaultModelPerProvider.cerebras` from `zai-glm-4.7` to `gpt-oss-120b` (coding/resolve.go). The 0.84.2 catalog carries `cerebras/gpt-oss-120b`, so the new default is not dangling. |
-| `eb1f87fa9` | fix(coding-agent/ai): anthropic refusal error and fallbacks | `13c801e` | `SimpleStreamOptions.RefusalFallbacks` (ai/types.go) carries pi's `"default" \| readonly {model}[]` union; Go keeps BOTH arms rather than collapsing them (they are different values on the wire) as `AnthropicRefusalFallback{Default bool, Models []string}` with a `MarshalJSON` emitting whichever is set — nil pointer is pi's absent option. Threaded through all three `StreamSimpleAnthropic` paths; adds `server-side-fallback-2026-07-01` **third** in pi's beta order, on every auth branch; lands as the request's last key. `message_start` now overwrites `output.Model` with the served model (pi assigns unconditionally, so the port does too) — that is how a fallback becomes visible on the message. Compaction asks for a fallback when the summarization model is a first-party Anthropic model whose catalog compat lists permitted targets, using the FIRST only; Go reads `allowedFallbackModels` off the raw compat blob inside that one helper, which is where pi keeps the equivalent typed read. Generator half → catalog queue. |
+| `eb1f87fa9` | fix(coding-agent/ai): anthropic refusal error and fallbacks | `13c801e` | `SimpleStreamOptions.RefusalFallbacks` (ai/types.go) carries pi's `"default" \| readonly {model}[]` union; Go keeps BOTH arms rather than collapsing them (they are different values on the wire) as `AnthropicRefusalFallback{Default bool, Models []string}` with a `MarshalJSON` emitting whichever is set — nil pointer is pi's absent option. Threaded through all three `StreamSimpleAnthropic` paths; adds `server-side-fallback-2026-07-01` **third** in pi's beta order, on every auth branch; lands as the request's last key. `message_start` now overwrites `output.Model` with the served model (pi assigns unconditionally, so the port does too) — that is how a fallback becomes visible on the message. Compaction asks for a fallback when the summarization model is a first-party Anthropic model whose catalog compat lists permitted targets, using the FIRST only; Go reads `allowedFallbackModels` off the raw compat blob inside that one helper, which is where pi keeps the equivalent typed read. Generator half → catalog queue. **SUPERSEDED by `ed867e909`: `SimpleStreamOptions.RefusalFallbacks`, the union and its `"default"` arm are gone, and `getAnthropicSummarizationFallback` was deleted upstream — compaction no longer picks a fallback per call site. The beta ordering and the `output.Model` overwrite both survive. Not live API.** |
 | `e5dde9a76` | feat(ai): add simple tool choice option | `ee68701` | `ai.ToolChoice` (`"auto"`/`"none"`) on `SimpleStreamOptions`, mapped onto each ported provider's native shape: anthropic wraps the bare string as `{type}`, openai-completions/openai-responses pass it through, google upper-cases into a `functionCallingConfig` mode, pi-messages puts it in `requestOptions`. Empty stays pi's absent option — no provider invents a selection, and google keeps deriving AUTO/VALIDATED from the tools alone. Also closes pi's own asymmetry: pi-messages read `toolChoice` off the provider-extra object, so it was unreachable through the unified entry point (the Go doc comment had claimed the forwarding that only now exists). NO Go home: the bedrock/azure/mistral/codex/vertex halves. |
 | `90305d90a` | fix(coding-agent): disable tools during summarization | `b79c9e6` | Summarization requests carry `toolChoice: "none"`, and a response containing a `toolCall` fails the summarization instead of checkpointing whatever text rode with it. pi puts the guard in each of `completeSummarization`'s three callers, differing only in the thrown message; the port has two of those callers and no channel for those strings (a failed summarization is "keep the current view" either way), so the guard sits in `completeSummarization` itself, covering exactly the same call sites. NO Go home: the `branch-summarization.ts` guard — the port consumes stored branch summaries and never generates one. |
 | `2509b5c03` | feat(agent): expose provider context construction | `0f0b461` | The transform-then-convert pipeline `streamAssistantResponse` ran inline is now exported `BuildProviderContext` (agent/loop.go), with `Agent.BuildProviderContext` (agent/agent.go) delegating using the agent's own hooks. pi's `Pick<AgentLoopConfig, "convertToLlm" \| "transformContext">` is expressed against the whole config; pi's optional `AbortSignal` is the Go hook's existing `context.Context`. Pure refactor plus new public surface — no wire change. **SUPERSEDED 2026-08-19: upstream reverted `2509b5c03` in `3a0b9a3ee` the next day, and the port un-ported it in `0cfa63f`. `BuildProviderContext`, `Agent.BuildProviderContext` and `ContextPipeline` no longer exist — do not treat this row as live surface.** |
@@ -792,7 +1537,7 @@ queue goes **2 → 6**. The `defaultTools` tripwire (2026-08-13) was not hit.
 | `0e4d49541` | remove deprecated Xiaomi models | next `models.generated.ts` regen |
 | `87205484b` | Chinese ZAI Coding Plan catalog (77 generator lines) | next regen |
 | `6db110e6f` | Qwen Token Plan Individual DeepSeek V4 Pro 0813 | next regen |
-| `eb1f87fa9` | `ANTHROPIC_ALLOWED_FALLBACK_MODELS` + `applyAnthropicMessagesCompatMetadata`: `claude-fable-5` → `[claude-opus-4-8, claude-opus-5]`, `claude-opus-5` → `[claude-opus-4-8]`, anthropic provider only | next regen — until then the ported consumer finds no `allowedFallbackModels` and asks for no fallback, which is the 0.84.2 dist's behavior. **SHAPE AMENDED 2026-08-19 by `4809c2abc` — these are no longer bare strings. See the 2026-08-19 queue table; regenerating to the shape written here would silently disable summarization fallbacks.** |
+| `eb1f87fa9` | `ANTHROPIC_ALLOWED_FALLBACK_MODELS` + `applyAnthropicMessagesCompatMetadata`: `claude-fable-5` → `[claude-opus-4-8, claude-opus-5]`, `claude-opus-5` → `[claude-opus-4-8]`, anthropic provider only | next regen — until then the ported consumer finds no `allowedFallbackModels` and asks for no fallback, which is the 0.84.2 dist's behavior. **SHAPE AMENDED TWICE — by `4809c2abc` (2026-08-19) and again by `ed867e909`. These are no longer bare strings, and no longer `{model, cost}` either: the generator emits `{provider, model, cost}`. See the 2026-08-19 queue table and its regen tripwire; regenerating to the shape written in THIS row leaves the slice empty, so no `fallbacks` field and no beta go out at all.** |
 
 Carried from 2026-08-17: `70e878d4c` (xai routing/thinking-map) and `86d001d36`
 (DS4-Flash low on opencode/opencode-go).
@@ -853,6 +1598,14 @@ empty, which Anthropic rejects. The first shape kept both arms as a
 `{Default, Models}` both-set representable and made the zero value marshal to
 `[]`, i.e. exactly the shape the doc warned against.
 
+> **RETIRED by `ed867e909`.** `ai.AnthropicRefusalFallback`,
+> `ai.AnthropicRefusalFallbackTarget`, `SimpleStreamOptions.RefusalFallbacks`
+> and `AnthropicOptions.RefusalFallbacks` are all gone: upstream deleted the
+> union and the option, and both sides now derive `fallbacks` from
+> `model.compat.allowedFallbackModels`. There is no Go type left to be unable to
+> express `[]`, and pi has no `[]` producer either. Kept for the record of why
+> the collapse was shaped the way it was; **not a live divergence.**
+
 ### Review fixes (`b548506`)
 
 MED: the union reshape above (plus the missing `UnmarshalJSON`, with errors that
@@ -890,6 +1643,10 @@ runs **34 PASS / 0 KNOWN / 0 FAIL** (was 21).
   Non-vacuity checked by reading the captures rather than trusting the PASS:
   `tool_choice:{"type":"none"}` and the two-entry `fallbacks` array are present
   and identical on both sides, and genuinely absent on both sides when unset.
+  **`refusalFallbacks` half SUPERSEDED by `ed867e909`** — the option, the union
+  and its `UnmarshalJSON` are gone, and the four scenarios now drive
+  `model.compat.allowedFallbackModels`; see the 2026-08-19 harness amendment
+  above. The `toolChoice` half is unaffected.
 
 ## Drift at last sync check (2026-08-17) — pin advanced to d3e3bbc01
 
