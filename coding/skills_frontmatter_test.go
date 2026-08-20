@@ -126,3 +126,62 @@ func TestSkillValidationLengthsUTF16(t *testing.T) {
 		t.Fatalf("1024 UTF-16 units should be valid: %v", errs)
 	}
 }
+
+// pi 1355cd36e: a leading UTF-8 BOM comes off BEFORE the "---" test, so a
+// BOM-prefixed document still yields its frontmatter, and the returned body no
+// longer carries the BOM either. Without the strip, `\ufeff---` fails
+// HasPrefix("---") and the whole header is silently returned as body.
+func TestParseFrontmatterStripsLeadingBOM(t *testing.T) {
+	fm, body := parseFrontmatter("\ufeff---\nname: demo\ndescription: Test\n---\nBody")
+	if got := fm["name"].value; got != "demo" {
+		t.Fatalf("name = %q, want %q (BOM must not hide the frontmatter)", got, "demo")
+	}
+	if got := fm["description"].value; got != "Test" {
+		t.Fatalf("description = %q, want %q", got, "Test")
+	}
+	if body != "Body" {
+		t.Fatalf("body = %q, want %q", body, "Body")
+	}
+
+	// A BOM'd CRLF document \u2014 the shape a Windows editor actually writes \u2014
+	// parses. This pins the combination, NOT the order of the two transforms:
+	// the strip and the newline normalization commute for every input, so an
+	// implementation that nests them the other way is byte-identical here.
+	crlfFM, crlfBody := parseFrontmatter("\ufeff---\r\nname: demo\r\ndescription: Test\r\n---\r\nBody")
+	if crlfFM["name"].value != "demo" || crlfFM["description"].value != "Test" || crlfBody != "Body" {
+		t.Fatalf("BOM+CRLF parsed differently: fm=%v body=%q", crlfFM, crlfBody)
+	}
+
+	// A document with no frontmatter still loses its BOM from the body.
+	if _, plain := parseFrontmatter("\ufeffjust text"); plain != "just text" {
+		t.Fatalf("body = %q, want %q", plain, "just text")
+	}
+}
+
+// End-to-end: a BOM-prefixed SKILL.md loads with its name and description, so
+// the skill reaches the system prompt instead of being dropped for a missing
+// description.
+func TestSkillWithLeadingBOMLoads(t *testing.T) {
+	isolatedHome(t) // HOME *and* USERPROFILE — os.UserHomeDir reads the latter on Windows
+	cwd := t.TempDir()
+	writeSkill(t, filepath.Join(cwd, ".pi", "skills", "bom-skill"),
+		"\ufeff---\nname: bom-skill\ndescription: Loads despite the byte order mark\n---\nbody\n")
+
+	skills := LoadSkills(cwd)
+	if len(skills) != 1 {
+		t.Fatalf("BOM-prefixed skill did not load: %+v", skills)
+	}
+	if skills[0].Name != "bom-skill" {
+		t.Fatalf("name = %q, want %q", skills[0].Name, "bom-skill")
+	}
+	if want := "Loads despite the byte order mark"; skills[0].Description != want {
+		t.Fatalf("description = %q, want %q", skills[0].Description, want)
+	}
+	prompt := FormatSkillsForPrompt(skills)
+	if !strings.Contains(prompt, "<name>bom-skill</name>") {
+		t.Fatalf("skill missing from prompt: %q", prompt)
+	}
+	if strings.Contains(prompt, "\ufeff") {
+		t.Fatalf("skills prompt block carries a BOM: %q", prompt)
+	}
+}

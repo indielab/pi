@@ -141,3 +141,37 @@ func TestSkillsExcludedWithoutReadTool(t *testing.T) {
 		t.Fatalf("skills should be excluded without read tool: %q", p)
 	}
 }
+
+// pi 1355cd36e: a context file's leading UTF-8 BOM is stripped at load, so it
+// never reaches the <project_instructions> block — the system prompt emits the
+// content verbatim, and a stray U+FEFF would land in the model's first bytes.
+func TestContextFileStripsLeadingBOM(t *testing.T) {
+	isolatedHome(t)
+	cwd := t.TempDir()
+	writeFile(t, filepath.Join(cwd, "AGENTS.md"), "\ufefffollow the rules")
+
+	files := LoadProjectContextFiles(cwd)
+	assertContents(t, contextContents(files), "follow the rules")
+
+	prompt := BuildSystemPrompt(BuildSystemPromptOptions{
+		SelectedTools: []string{"read", "bash"},
+		ToolSnippets:  ToolSnippets,
+		Cwd:           cwd,
+		ContextFiles:  files,
+	})
+	if strings.Contains(prompt, "\ufeff") {
+		t.Fatalf("system prompt carries a BOM: %q", prompt)
+	}
+	// Byte-identical to the same file without a BOM.
+	plainCwd := t.TempDir()
+	writeFile(t, filepath.Join(plainCwd, "AGENTS.md"), "follow the rules")
+	plain := BuildSystemPrompt(BuildSystemPromptOptions{
+		SelectedTools: []string{"read", "bash"},
+		ToolSnippets:  ToolSnippets,
+		Cwd:           plainCwd,
+		ContextFiles:  LoadProjectContextFiles(plainCwd),
+	})
+	if strings.ReplaceAll(prompt, cwd, "CWD") != strings.ReplaceAll(plain, plainCwd, "CWD") {
+		t.Fatalf("BOM changed the assembled prompt:\n got: %q\nwant: %q", prompt, plain)
+	}
+}

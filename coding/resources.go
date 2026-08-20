@@ -65,7 +65,10 @@ func loadContextFileFromDir(dir string) (ContextFile, bool) {
 	for _, name := range contextFileCandidates {
 		p := filepath.Join(dir, name)
 		if data, err := os.ReadFile(p); err == nil {
-			return ContextFile{Path: p, Content: string(data)}, true
+			// A BOM-prefixed AGENTS.md/CLAUDE.md would otherwise inject a stray
+			// U+FEFF into the system prompt, which is emitted verbatim
+			// (pi 1355cd36e resource-loader.ts loadContextFileFromDir).
+			return ContextFile{Path: p, Content: stripBOM(string(data))}, true
 		}
 	}
 	return ContextFile{}, false
@@ -630,7 +633,15 @@ func (v fmValue) isString() bool {
 // block-scalar indentation indicators, and more-indented literal lines inside
 // folded scalars (folded with spaces like regular lines).
 func parseFrontmatter(content string) (map[string]fmValue, string) {
-	normalized := strings.ReplaceAll(strings.ReplaceAll(content, "\r\n", "\n"), "\r", "\n")
+	// Strip the BOM before the "---" test below: without it a BOM-prefixed
+	// SKILL.md fails HasPrefix and silently loses its whole frontmatter — name
+	// and description included (pi 1355cd36e).
+	//
+	// The nesting mirrors upstream's normalizeNewlines(stripBom(content)), but
+	// only as a parity note — it is observationally inert. The two transforms
+	// commute for every input: newline normalization cannot touch a leading
+	// U+FEFF and cannot produce one, so no test can (or does) pin the order.
+	normalized := strings.ReplaceAll(strings.ReplaceAll(stripBOM(content), "\r\n", "\n"), "\r", "\n")
 	fm := map[string]fmValue{}
 	if !strings.HasPrefix(normalized, "---") {
 		return fm, normalized

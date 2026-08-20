@@ -605,7 +605,7 @@ func editTool(cwd string) agent.AgentTool {
 					return agent.AgentToolResult{}, fmt.Errorf("Could not edit file: %s. %s.", path, fsErrorCode(err))
 				}
 				// Strip a leading BOM before matching (the model won't include it).
-				bom, raw := stripBOM(string(data))
+				bom, raw := splitBOM(string(data))
 				ending := detectLineEnding(raw)
 				normalized := normalizeToLF(raw)
 

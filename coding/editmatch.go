@@ -80,13 +80,6 @@ func countFuzzyOccurrences(content, oldText string) int {
 	return strings.Count(normalizeForFuzzyMatch(content), normalizeForFuzzyMatch(oldText))
 }
 
-func stripBOM(content string) (bom, text string) {
-	if strings.HasPrefix(content, "\ufeff") {
-		return "\ufeff", content[len("\ufeff"):]
-	}
-	return "", content
-}
-
 type matchedEdit struct {
 	editIndex   int
 	matchIndex  int
