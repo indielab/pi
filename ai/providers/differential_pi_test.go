@@ -1023,13 +1023,12 @@ func TestDiffReasoningDetailsRoundTrip(t *testing.T) {
 			asst = m
 		}
 	}
-	rd, ok := asst["reasoning_details"].([]any)
-	if !ok || len(rd) != 1 {
-		t.Fatalf("expected reasoning_details with 1 entry, got %#v", asst["reasoning_details"])
+	rd, err := json.Marshal(asst["reasoning_details"])
+	if err != nil {
+		t.Fatalf("marshal reasoning_details: %v", err)
 	}
-	d, _ := rd[0].(map[string]any)
-	if d["type"] != "reasoning.encrypted" || d["id"] != "c1" {
-		t.Fatalf("reasoning_details entry not round-tripped: %v", d)
+	if want := "[" + sig + "]"; string(rd) != want {
+		t.Fatalf("reasoning_details on the wire = %s, want %s", rd, want)
 	}
 }
 

@@ -94,6 +94,35 @@ func TestJSStringifyPreservesKeyOrder(t *testing.T) {
 	}
 }
 
+// TestJSStringifyReproducesObjectOwnPropertyOrder pins the two things a parsed
+// JS object does to its keys that a streaming re-emit does not: a repeated key
+// is one property (first position, last value) and array-index keys are listed
+// first, ascending. Want values captured from node via
+// `JSON.stringify(JSON.parse(input))`.
+func TestJSStringifyReproducesObjectOwnPropertyOrder(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`{"a":1,"b":2,"a":3}`, `{"a":3,"b":2}`},
+		{`{"a":{"x":1},"a":{"y":2}}`, `{"a":{"y":2}}`},
+		{`{"type":"x","0":"y"}`, `{"0":"y","type":"x"}`},
+		{`{"2":"c","10":"j","1":"b","z":1}`, `{"1":"b","2":"c","10":"j","z":1}`},
+		// Only the canonical spelling of a uint32 below 2^32-1 is an index.
+		{`{"01":"a","-1":"b","1.0":"c","4294967295":"d","4294967294":"e"}`,
+			`{"4294967294":"e","01":"a","-1":"b","1.0":"c","4294967295":"d"}`},
+		{`{"":"empty","0":"zero"}`, `{"0":"zero","":"empty"}`},
+		{`{"a":{"1":1,"b":2,"0":0}}`, `{"a":{"0":0,"1":1,"b":2}}`},
+	}
+	for _, c := range cases {
+		got, ok := jsStringify([]byte(c.in))
+		if !ok {
+			t.Errorf("jsStringify(%s) rejected well-formed JSON", c.in)
+			continue
+		}
+		if got != c.want {
+			t.Errorf("jsStringify(%s)\n got: %s\nwant: %s", c.in, got, c.want)
+		}
+	}
+}
+
 func TestJSStringifyRejectsMalformed(t *testing.T) {
 	for _, raw := range []string{`{"a":1`, `{"a":1} trailing`, ``, `{,}`} {
 		if _, ok := jsStringify([]byte(raw)); ok {
@@ -119,6 +148,15 @@ func TestJSNumberExponentialThreshold(t *testing.T) {
 		{"-0", "0"},
 		{"1.0", "1"},
 		{"1e2", "100"},
+		// Out of float64 range is not malformed: JSON.parse saturates to
+		// ±Infinity or a signed zero, and JSON.stringify writes Infinity as
+		// `null`. A literal that is not a number at all still passes through.
+		{"1e400", "null"},
+		{"-1e400", "null"},
+		{"1e-400", "0"},
+		{"-1e-400", "0"},
+		{"12345678901234567890", "12345678901234567000"},
+		{"not-a-number", "not-a-number"},
 	}
 	for _, c := range cases {
 		if got := jsNumber(c.in); got != c.want {

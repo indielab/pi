@@ -3,9 +3,11 @@ package providers
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf16"
@@ -140,14 +142,14 @@ func jsQuote(s string) string { return `"` + jsEscape(s) + `"` }
 
 // jsStringify renders a JSON document the way JavaScript's
 // `JSON.stringify(JSON.parse(raw))` does. Go's encoding/json cannot be used:
-// marshalling a decoded map sorts its keys, whereas JS preserves the order the
-// keys were parsed in, and Go escapes strings differently (see jsEscape).
-// Returns ok=false when raw is not a single well-formed JSON value.
+// marshalling a decoded map sorts its keys, whereas JS reproduces the parsed
+// object's own-property order, and Go escapes strings differently (see
+// jsEscape). Returns ok=false when raw is not a single well-formed JSON value.
 //
-// Two JS behaviors are deliberately approximated, both unreachable for the
-// conformant provider error bodies this serves: duplicate object keys (JS keeps
-// the last, this keeps every occurrence) and exotic number formatting (see
-// jsNumber).
+// One JS behavior survives only partially: an unpaired UTF-16 surrogate escape
+// is replaced with U+FFFD by encoding/json before jsEscape can see it, where JS
+// keeps the code unit and re-emits `\udXXX`. Not recoverable at this layer —
+// see jsEscape.
 func jsStringify(raw []byte) (string, bool) {
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.UseNumber()
@@ -175,26 +177,9 @@ func jsStringifyToken(dec *json.Decoder, b *strings.Builder, tok json.Token) err
 	case json.Delim:
 		switch t {
 		case '{':
-			b.WriteByte('{')
-			for i := 0; dec.More(); i++ {
-				if i > 0 {
-					b.WriteByte(',')
-				}
-				key, err := dec.Token()
-				if err != nil {
-					return err
-				}
-				name, ok := key.(string)
-				if !ok {
-					return fmt.Errorf("object key is not a string")
-				}
-				b.WriteString(jsQuote(name))
-				b.WriteByte(':')
-				if err := jsStringifyValue(dec, b); err != nil {
-					return err
-				}
+			if err := jsStringifyObjectBody(dec, b); err != nil {
+				return err
 			}
-			b.WriteByte('}')
 		case '[':
 			b.WriteByte('[')
 			for i := 0; dec.More(); i++ {
@@ -227,15 +212,119 @@ func jsStringifyToken(dec *json.Decoder, b *strings.Builder, tok json.Token) err
 	return nil
 }
 
+// jsStringifyObjectBody renders the members of an object whose `{` has already
+// been read, reproducing the two things JSON.parse does to an object literal
+// that a streaming re-emit does not.
+//
+//   - A repeated key is ONE property: JSON.parse creates it at its first
+//     occurrence and later occurrences only overwrite the value, so the last
+//     value is kept in the first position.
+//   - Own-property order is not insertion order. OrdinaryOwnPropertyKeys lists
+//     array-index keys first, ascending numerically, and only then the rest in
+//     creation order — so `{"type":"x","0":"y"}` re-serializes as
+//     `{"0":"y","type":"x"}`.
+//
+// Members are rendered into a buffer before being emitted because both rules
+// can move a member that has already been read.
+func jsStringifyObjectBody(dec *json.Decoder, b *strings.Builder) error {
+	type member struct {
+		key     string
+		index   uint32 // array-index value of key; meaningful when isIndex
+		value   string
+		isIndex bool
+	}
+	var members []member
+	positions := map[string]int{}
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		name, ok := key.(string)
+		if !ok {
+			return fmt.Errorf("object key is not a string")
+		}
+		var value strings.Builder
+		if err := jsStringifyValue(dec, &value); err != nil {
+			return err
+		}
+		if at, seen := positions[name]; seen {
+			members[at].value = value.String()
+			continue
+		}
+		positions[name] = len(members)
+		index, isIndex := jsArrayIndexKey(name)
+		members = append(members, member{key: name, index: index, value: value.String(), isIndex: isIndex})
+	}
+
+	order := make([]int, 0, len(members))
+	for i, m := range members {
+		if m.isIndex {
+			order = append(order, i)
+		}
+	}
+	sort.Slice(order, func(x, y int) bool { return members[order[x]].index < members[order[y]].index })
+	for i, m := range members {
+		if !m.isIndex {
+			order = append(order, i)
+		}
+	}
+
+	b.WriteByte('{')
+	for i, at := range order {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		b.WriteString(jsQuote(members[at].key))
+		b.WriteByte(':')
+		b.WriteString(members[at].value)
+	}
+	b.WriteByte('}')
+	return nil
+}
+
+// jsArrayIndexKey reports whether name is an array index in the ECMAScript
+// sense — `ToString(ToUint32(name)) === name` and the value is not 2^32-1 — and
+// returns that value. Those are the keys OrdinaryOwnPropertyKeys hoists to the
+// front, so "0" and "12" qualify while "01", "-1", "1.0" and "4294967295" are
+// ordinary string keys.
+func jsArrayIndexKey(name string) (uint32, bool) {
+	if name == "" || len(name) > 10 {
+		return 0, false
+	}
+	if name[0] == '0' && len(name) > 1 {
+		return 0, false // canonical form has no leading zeros
+	}
+	for i := 0; i < len(name); i++ {
+		if name[i] < '0' || name[i] > '9' {
+			return 0, false
+		}
+	}
+	value, err := strconv.ParseUint(name, 10, 64)
+	if err != nil || value >= math.MaxUint32 {
+		return 0, false
+	}
+	return uint32(value), true
+}
+
 // jsNumber renders a JSON number the way JavaScript's Number-to-String
 // conversion does, so `1.0` becomes "1" and `1e2` becomes "100". JS switches to
 // exponential notation only outside [1e-7, 1e21); Go's %g switches on a
 // different threshold, so the ranges are selected explicitly. Values that do not
-// parse as a float are passed through unchanged.
+// parse as a float at all are passed through unchanged.
 func jsNumber(src string) string {
 	f, err := strconv.ParseFloat(src, 64)
 	if err != nil {
-		return src
+		// Out of float64 range is not a syntax error: JSON.parse yields
+		// ±Infinity (or a signed zero), and JSON.stringify writes Infinity as
+		// `null`. ParseFloat reports the same saturated value alongside
+		// ErrRange, so only a genuinely malformed literal passes through.
+		if !errors.Is(err, strconv.ErrRange) {
+			return src
+		}
+		if math.IsInf(f, 0) {
+			return "null"
+		}
 	}
 	// JS String(-0) is "0", where Go's FormatFloat keeps the sign.
 	if f == 0 {

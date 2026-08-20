@@ -222,32 +222,21 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 
 		var textBuilder *blockBuilder
 		var thinkBuilder *blockBuilder
+		// thinkingDetails is the reasoning_details sequence accumulating in
+		// thinkBuilder.thinkingSig. One stream opens at most one thinking block,
+		// so the signature can only ever hold what the last delta wrote there.
+		var thinkingDetails []json.RawMessage
 		// pi ensureToolCallBlock keeps BOTH maps (openai-completions.ts:229-265):
 		// lookup by stream index when the delta carries one, falling back to id,
 		// and registers blocks under both keys.
 		toolBuildersByIndex := map[int]*blockBuilder{}
 		toolBuildersByID := map[string]*blockBuilder{}
 		builderHasIndex := map[*blockBuilder]bool{}
-		// thoughtSignature captured from streamed reasoning_details, keyed by
-		// builder (blockBuilder itself has no thoughtSignature field).
-		toolThoughtSigs := map[*blockBuilder]string{}
-		// pi pendingReasoningDetailsByToolCallId (openai-completions.ts:200): an
-		// encrypted reasoning_detail can arrive in a delta BEFORE the tool-call
-		// block carrying its id exists. Buffer it by id and attach it when the
-		// block is registered, instead of dropping it.
-		pendingReasoningDetails := map[string]string{}
 		var order []*blockBuilder
 		materialize := func() {
 			content := make(ai.ContentList, len(order))
 			for i, b := range order {
-				c := b.toContent()
-				if tc, ok := c.(ai.ToolCall); ok {
-					if sig := toolThoughtSigs[b]; sig != "" {
-						tc.ThoughtSignature = sig
-						c = tc
-					}
-				}
-				content[i] = c
+				content[i] = b.toContent()
 			}
 			output.Content = content
 		}
@@ -258,19 +247,6 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				}
 			}
 			return -1
-		}
-		// pi applyPendingReasoningDetail (openai-completions.ts:256): once a
-		// block's id is known, drain any reasoning_detail buffered under it. Keyed
-		// on the block's id exactly like pi (an index-only block whose id has not
-		// yet arrived is skipped, matching pi).
-		applyPendingReasoningDetail := func(b *blockBuilder) {
-			if b.toolID == "" {
-				return
-			}
-			if sig, ok := pendingReasoningDetails[b.toolID]; ok {
-				toolThoughtSigs[b] = sig
-				delete(pendingReasoningDetails, b.toolID)
-			}
 		}
 		// startGrammarBuffer switches a block to the custom-tool (grammar) shape.
 		// The "input" fallback should never be taken; it only gives a made-up tool
@@ -342,7 +318,6 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			if tcDelta.isGrammarCall() && b.grammar == nil {
 				startGrammarBuffer(b)
 			}
-			applyPendingReasoningDetail(b)
 			return b
 		}
 
@@ -459,47 +434,54 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: indexOf(b), Delta: delta, Partial: output.Clone()})
 			}
 
-			// reasoning_details: OpenRouter-style encrypted reasoning attached to a
-			// tool call by id (pi :373-385). The matching tool call's
-			// thoughtSignature becomes the serialized detail object.
-			for _, rawDetail := range d.ReasoningDetails {
-				var detail struct {
-					Type string          `json:"type"`
-					ID   string          `json:"id"`
-					Data json.RawMessage `json:"data"`
-				}
-				if json.Unmarshal(rawDetail, &detail) != nil {
+			// reasoning_details: OpenRouter's structured reasoning replay channel
+			// (pi :620-632, upstream b7bb00b93). Every valid detail is appended to
+			// a JSON array kept in the THINKING block's signature — OpenRouter
+			// requires the complete sequence back unmodified and in order, so the
+			// slot holds the sequence rather than one detail per tool call.
+			//
+			// pi reads the field off the untyped delta and guards it with
+			// `Array.isArray`, which ignores ONLY this field when a provider sends
+			// something else. Decoding here rather than in openAIChunk is what
+			// contains it the same way: a typed []json.RawMessage would fail the
+			// whole chunk unmarshal, and iterateOpenAISSE's junk-line leniency
+			// would then drop the delta's content and tool calls along with it.
+			var arrivingDetails []json.RawMessage
+			if len(d.ReasoningDetails) > 0 && json.Unmarshal(d.ReasoningDetails, &arrivingDetails) != nil {
+				arrivingDetails = nil
+			}
+			appendedDetail := false
+			for _, rawDetail := range arrivingDetails {
+				if !isOpenAIReasoningDetail(rawDetail) {
 					continue
 				}
-				// pi isEncryptedReasoningDetail (7d0497fd): type must be
-				// "reasoning.encrypted" and both id and data non-empty strings.
-				// A non-string id fails the typed unmarshal above; data is checked
-				// here (a number/object/null detail.data is rejected, matching
-				// typeof data === "string").
-				if detail.Type != "reasoning.encrypted" || detail.ID == "" {
-					continue
-				}
-				var data string
-				if json.Unmarshal(detail.Data, &data) != nil || data == "" {
-					continue
-				}
-				// pi stores JSON.stringify(detail); compacting the raw entry
-				// preserves field order and unknown fields.
-				var buf bytes.Buffer
-				if json.Compact(&buf, []byte(rawDetail)) != nil {
-					continue
-				}
-				serialized := buf.String()
-				// pi looks the tool call up by id (toolCallBlocksById), not by
-				// scanning content order. When the matching block has not been
-				// created yet, buffer the detail and attach it on block creation
-				// instead of dropping it (upstream 7d0497fd).
-				if b := toolBuildersByID[detail.ID]; b != nil {
-					toolThoughtSigs[b] = serialized
+				// pi ensureThinkingBlock(""): the details alone are enough to open
+				// a thinking block, whose visible thinking stays empty.
+				if thinkBuilder == nil {
+					thinkBuilder = &blockBuilder{kind: "thinking"}
+					order = append(order, thinkBuilder)
 					materialize()
-				} else {
-					pendingReasoningDetails[detail.ID] = serialized
+					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingStart, ContentIndex: indexOf(thinkBuilder), Partial: output.Clone()})
 				}
+				thinkingDetails = append(thinkingDetails, stringifyReasoningDetail(rawDetail))
+				appendedDetail = true
+			}
+			if appendedDetail {
+				// A signature that is not already a sequence — the reasoning field
+				// name set above, say — does not survive, because thinkingDetails
+				// started empty and this overwrites the slot wholesale. pi gets
+				// there by re-parsing the signature and finding it is not an array;
+				// holding the sequence is the same answer without re-parsing,
+				// re-validating and re-serializing every earlier entry per arrival.
+				thinkBuilder.thinkingSig = marshalOpenAIReasoningDetails(thinkingDetails)
+				// Republish into output.Content. pi's `partial` IS the live output
+				// object, so its assignment above is already visible; Go rebuilds
+				// output.Content from the builders, and a details-only delta pushes
+				// no event of its own to do it. Load-bearing for a stream that ends
+				// here: fail() reports the live output, so without this an aborted
+				// turn shows the thinking block still signed with the reasoning
+				// field name.
+				materialize()
 			}
 			return nil
 		})
@@ -538,9 +520,6 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				}
 				materialize()
 				tc := b.toContent().(ai.ToolCall)
-				if sig := toolThoughtSigs[b]; sig != "" {
-					tc.ThoughtSignature = sig
-				}
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: indexOf(b), ToolCall: &tc, Partial: output.Clone()})
 			}
 		}
@@ -674,7 +653,12 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 
 			var assistantTextParts []string
 			var toolCalls []map[string]any
+			// thinkingBlocks holds EVERY thinking block, not only the ones with
+			// visible thinking: a reasoning_details-only turn parks its replay
+			// sequence on a block whose thinking is empty.
 			var thinkingBlocks []ai.ThinkingContent
+			var nonEmptyThinkingBlocks []ai.ThinkingContent
+			var toolCallBlocks []ai.ToolCall
 			for _, c := range am.Content {
 				switch v := c.(type) {
 				case ai.TextContent:
@@ -682,10 +666,12 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 						assistantTextParts = append(assistantTextParts, sanitizeSurrogates(v.Text))
 					}
 				case ai.ThinkingContent:
+					thinkingBlocks = append(thinkingBlocks, v)
 					if strings.TrimSpace(v.Thinking) != "" {
-						thinkingBlocks = append(thinkingBlocks, v)
+						nonEmptyThinkingBlocks = append(nonEmptyThinkingBlocks, v)
 					}
 				case ai.ToolCall:
+					toolCallBlocks = append(toolCallBlocks, v)
 					if property, isGrammar := grammarProps[v.Name]; isGrammar {
 						input, gerr := grammarToolInput(v.Name, v.Arguments, property)
 						if gerr != nil {
@@ -706,11 +692,31 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 			}
 			assistantText := strings.Join(assistantTextParts, "")
 
-			if len(thinkingBlocks) > 0 {
+			// The reasoning to replay, preferring the sequence a thinking block
+			// carries over the single encrypted detail older sessions stored on a
+			// tool call (pi :1233-1242, upstream b7bb00b93). The first thinking
+			// block whose signature parses as a sequence wins; the legacy details
+			// are only reached when no block carries one.
+			var preservedReasoningDetails []json.RawMessage
+			for _, b := range thinkingBlocks {
+				if details := parseOpenAIReasoningDetails(b.ThinkingSignature); details != nil {
+					preservedReasoningDetails = details
+					break
+				}
+			}
+			if len(preservedReasoningDetails) == 0 {
+				for _, tc := range toolCallBlocks {
+					if detail, ok := parseLegacyEncryptedReasoningDetail(tc.ThoughtSignature); ok {
+						preservedReasoningDetails = append(preservedReasoningDetails, detail)
+					}
+				}
+			}
+
+			if len(nonEmptyThinkingBlocks) > 0 {
 				if compat.RequiresThinkingAsText {
 					// Convert thinking blocks to plain text (no tags) prepended to text parts.
 					var tparts []string
-					for _, b := range thinkingBlocks {
+					for _, b := range nonEmptyThinkingBlocks {
 						tparts = append(tparts, sanitizeSurrogates(b.Thinking))
 					}
 					thinkingText := strings.Join(tparts, "\n\n")
@@ -723,17 +729,26 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 					if assistantText != "" {
 						msg["content"] = assistantText
 					}
-					// Use the signature from the first thinking block (llama.cpp + gpt-oss).
-					signature := thinkingBlocks[0].ThinkingSignature
-					if model.Provider == "opencode-go" && signature == "reasoning" {
-						signature = "reasoning_content"
-					}
-					if signature != "" {
-						var thoughts []string
-						for _, b := range thinkingBlocks {
-							thoughts = append(thoughts, b.Thinking)
+					// reasoning_details is the structured alternative to a raw
+					// reasoning field: when there is a sequence to replay, the raw
+					// field is not written at all.
+					if len(preservedReasoningDetails) == 0 {
+						// Use the signature from the first thinking block (llama.cpp + gpt-oss).
+						signature := nonEmptyThinkingBlocks[0].ThinkingSignature
+						if model.Provider == "opencode-go" && signature == "reasoning" {
+							signature = "reasoning_content"
 						}
-						msg[signature] = strings.Join(thoughts, "\n")
+						// Only a signature that names one of the three reasoning
+						// fields becomes a request key; any other signature (a
+						// Responses item id, an anthropic blob) is replay data that
+						// would otherwise be sent as a bogus field name.
+						if isOpenAICompletionsReasoningField(signature) {
+							var thoughts []string
+							for _, b := range nonEmptyThinkingBlocks {
+								thoughts = append(thoughts, b.Thinking)
+							}
+							msg[signature] = strings.Join(thoughts, "\n")
+						}
 					}
 				}
 			} else if assistantText != "" {
@@ -742,21 +757,9 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 
 			if len(toolCalls) > 0 {
 				msg["tool_calls"] = toolCalls
-				// reasoning_details round-trip: parse each tool call's stored signature.
-				var reasoningDetails []any
-				for _, c := range am.Content {
-					tc, ok := c.(ai.ToolCall)
-					if !ok || tc.ThoughtSignature == "" {
-						continue
-					}
-					var detail any
-					if json.Unmarshal([]byte(tc.ThoughtSignature), &detail) == nil && detail != nil {
-						reasoningDetails = append(reasoningDetails, detail)
-					}
-				}
-				if len(reasoningDetails) > 0 {
-					msg["reasoning_details"] = reasoningDetails
-				}
+			}
+			if len(preservedReasoningDetails) > 0 {
+				msg["reasoning_details"] = preservedReasoningDetails
 			}
 
 			// DeepSeek-style providers reject replayed assistant turns that omit
@@ -1574,9 +1577,14 @@ type openAIChunk struct {
 			Reasoning        string                `json:"reasoning"`
 			ReasoningText    string                `json:"reasoning_text"`
 			ToolCalls        []openAIToolCallDelta `json:"tool_calls"`
-			// ReasoningDetails entries stay raw so the stored thoughtSignature
-			// preserves the provider's field order and unknown fields.
-			ReasoningDetails []json.RawMessage `json:"reasoning_details"`
+			// ReasoningDetails stays wholly raw, array brackets included, so that
+			// a provider sending a non-array here costs only this field. pi reads
+			// it off an untyped delta behind `Array.isArray`; typing it as a slice
+			// would instead fail the chunk unmarshal, which iterateOpenAISSE
+			// treats as a junk line and skips — losing the delta's content and
+			// tool calls too. Entries stay raw for a second reason: the sequence
+			// is replayed with its unknown members intact.
+			ReasoningDetails json.RawMessage `json:"reasoning_details"`
 		} `json:"delta"`
 		FinishReason string            `json:"finish_reason"`
 		Usage        *openAIChunkUsage `json:"usage"`

@@ -234,7 +234,12 @@ func (TextContent) contentType() string { return "text" }
 
 // ThinkingContent is a reasoning/thinking block.
 type ThinkingContent struct {
-	Thinking          string `json:"thinking"`
+	Thinking string `json:"thinking"`
+	// ThinkingSignature carries provider-specific opaque or serialized reasoning
+	// replay data: an OpenAI Responses reasoning item id, the openai-completions
+	// reasoning field name, or a serialized JSON array of that API's
+	// reasoning_details. Persisted in the session, so treat it as opaque and
+	// replay it unmodified.
 	ThinkingSignature string `json:"thinkingSignature,omitempty"`
 	// Redacted marks thinking content removed by safety filters; the opaque
 	// encrypted payload is kept in ThinkingSignature for multi-turn continuity.
