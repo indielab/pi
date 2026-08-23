@@ -175,3 +175,45 @@ func TestContextFileStripsLeadingBOM(t *testing.T) {
 		t.Fatalf("BOM changed the assembled prompt:\n got: %q\nwant: %q", prompt, plain)
 	}
 }
+
+// findNodePackageDir mirrors pi's helper of the same name (config.ts). The
+// dist case is upstream 7d4c0e05d: build:binary copies binary metadata —
+// package.json included — into dist/, and asset paths must still resolve
+// against the package root or they become dist/dist/.
+//
+// The "no package.json" case necessarily walks out of t.TempDir() to the
+// filesystem root, so a stray package.json above TMPDIR would fail it. Making
+// it hermetic would mean injecting the fileExists probe, which is not worth an
+// interface for one helper.
+func TestFindNodePackageDir(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		packages []string // dirs (relative to root) that get a package.json
+		dirs     []string // dirs (relative to root) created empty
+		start    string
+		want     string
+	}{
+		{"skips binary metadata copied into dist", []string{".", "dist"}, []string{"dist/bundle"}, "dist/bundle", "."},
+		{"keeps dist when it is the only package", []string{"dist"}, nil, "dist", "dist"},
+		{"keeps a non-dist directory even when the parent is a package", []string{".", "build"}, nil, "build", "build"},
+		{"walks up to the nearest package root", []string{"."}, []string{"a/b/c"}, "a/b/c", "."},
+		{"returns the start directory when no package.json is found", nil, []string{"a/b"}, "a/b", "a/b"},
+		{"a start directory that is itself a package is its own answer", []string{"."}, nil, ".", "."},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			root := t.TempDir()
+			for _, d := range tc.dirs {
+				if err := os.MkdirAll(filepath.Join(root, d), 0o755); err != nil {
+					t.Fatalf("mkdir %s: %v", d, err)
+				}
+			}
+			for _, d := range tc.packages {
+				writeFile(t, filepath.Join(root, d, "package.json"), "{}")
+			}
+			start, want := filepath.Join(root, tc.start), filepath.Join(root, tc.want)
+			if got := findNodePackageDir(start); got != want {
+				t.Fatalf("findNodePackageDir(%q) = %q, want %q", start, got, want)
+			}
+		})
+	}
+}

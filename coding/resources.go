@@ -22,7 +22,8 @@ func AgentDir() string {
 
 // PackageDir returns the pi package root directory, mirroring pi's getPackageDir:
 // honor PI_PACKAGE_DIR, else walk up from the executable until a package.json is
-// found, else fall back to the executable's directory.
+// found, else fall back to the executable's directory. A dist/ holding only a
+// build's copied metadata resolves to the package root above it.
 func PackageDir() string {
 	if env := os.Getenv("PI_PACKAGE_DIR"); env != "" {
 		return env
@@ -31,18 +32,31 @@ func PackageDir() string {
 	if err != nil {
 		return "."
 	}
-	dir := filepath.Dir(exe)
-	for {
-		if fileExists(filepath.Join(dir, "package.json")) {
-			return dir
+	return findNodePackageDir(filepath.Dir(exe))
+}
+
+// findNodePackageDir walks up from start to the first directory holding a
+// package.json, mirroring pi's findNodePackageDir — "Node" is upstream's name
+// for the non-Bun-binary arm of getPackageDir. Builds that embed binary
+// metadata leave a package.json inside dist/ as well; asset paths resolve
+// against the package root, so a dist/ whose parent is also a package yields
+// the parent instead — otherwise dist-relative paths become dist/dist/. Like
+// pi, the filesystem root is never probed: start is the fallback. start is
+// expected absolute and cleaned; the walk is lexical, like pi's dirname, so
+// symlinks are not resolved.
+func findNodePackageDir(start string) string {
+	for dir := start; dir != filepath.Dir(dir); dir = filepath.Dir(dir) {
+		if !fileExists(filepath.Join(dir, "package.json")) {
+			continue
 		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			break
+		if filepath.Base(dir) == "dist" {
+			if parent := filepath.Dir(dir); fileExists(filepath.Join(parent, "package.json")) {
+				return parent
+			}
 		}
-		dir = parent
+		return dir
 	}
-	return filepath.Dir(exe)
+	return start
 }
 
 // ReadmePath returns the absolute path to the pi package README.md.
