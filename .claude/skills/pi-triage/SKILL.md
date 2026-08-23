@@ -76,10 +76,63 @@ Specific rulings (from pilot runs — keep appending):
   responses hunk + `97f9978f`'s force flag + the v0.80.8 release all rode in
   via merges and were missed by per-first-parent diffstats — caught only by
   the adversarial parity review). After per-commit triage, ALWAYS reconcile
-  with a whole-range sweep: `git diff <pin>..origin/main --stat -- packages/ai/src
-  packages/agent/src packages/coding-agent/src/core` and account for every
-  in-scope file's delta against the verdicts. Merge-commit diffstats must be
-  read in full, not truncated.
+  with **both** passes. They catch different things; neither replaces the other:
+  1. **Detector — never skip.** `git diff <pin>..origin/main --name-only` with
+     NO pathspec, and classify every path it prints. This is the pass that
+     surfaces a brand-new top-level package, a file moved out of `packages/`,
+     or a new repo-root directory — things no pathspec written today can
+     anticipate. It is what caught the 2026-08-22 blind spot.
+  2. **Accounting.** `git diff <pin>..origin/main --stat -- packages
+     ':(exclude)packages/tui' ':(exclude)packages/evals'
+     ':(exclude)packages/coding-agent/docs'
+     ':(exclude)packages/coding-agent/examples'` — account for every file's
+     delta against the verdicts.
+
+  Merge-commit diffstats must be read in full, not truncated.
+- **Sweep whole packages; never carve out a sub-path.** That exclusion list is
+  the ONLY place a path may be pre-judged, and each entry earns its place
+  structurally — leaf UI library, upstream's own eval harness, prose, samples —
+  never by citing a current ruling. Sub-path carve-outs fail three ways, all
+  observed here:
+  - **They hide live code.** `coding-agent/src` holds ported code well outside
+    `core/`: `src/client/{remote-session,transcript}.ts` →
+    `coding/remotesession.go` + `coding/transcript.go`, and
+    `src/utils/{text,mime,paths,frontmatter,image-resize-core,image-process,tool-result-images}.ts`
+    → `coding/{text,tools,resources,imageresize}.go`. A guard scoped to
+    `src/core` prints none of them. Note this also makes the "judge `utils/` by
+    the consumer, not the path" rule above *unexecutable*: you cannot judge a
+    path the sweep never printed.
+  - **They outlive the tree they describe.** The 2026-08-01 ruling's "minus
+    `server/src/legacy/`" is dead text — upstream deleted that directory in
+    `05bf9df65`. And `server/src/testing/**`, ruled "port only if the Go server
+    tests want the same shape", quietly became ported
+    (`server/internal/servertest/service.go` says so in its package doc). A
+    carve-out inherited from a ruling reads as coverage while giving none.
+  - **Some real exclusions are unexpressible as paths.** The 2026-08-06
+    telemetry ruling excludes the schema/type-inference half of
+    `packages/telemetry` — but `defineTelemetrySchema` and the ported runtime
+    `Span` contract share `src/index.ts`. Only a human reading the hunk can
+    separate them.
+
+  Exclusions belong in the CLASSIFICATION step, executed on a hunk, never in
+  the pathspec. The pathspec's job is to put paths on your screen.
+- **A ported path does not imply a same-named Go package** — use this map to
+  classify what the sweep prints. Upstream trees with a Go home today:
+  `packages/ai/src` → `ai/` + `ai/providers/`; `packages/ai/scripts` →
+  `ai/models_catalog.json` at the next release regen (**every** catalog-only
+  queue delta lives in `scripts/generate-models.ts`, never in `src/`);
+  `packages/agent/src` → `agent/`, with `harness/**` and `search/**` in scope
+  but DEFERRED (add to the backlog — never a silent `n/a`);
+  `packages/protocol/src` → `protocol/` + `protocol/cbor/`;
+  `packages/client/src` → `client/`; `packages/server/src` → `server/` +
+  `server/unix/` + `server/internal/servertest/`; `packages/telemetry` →
+  `telemetry/` (runtime half only); `packages/session-backends` → in scope but
+  DEFERRED; `packages/coding-agent/src/{core,client,utils}` → `coding/` — except
+  two hunks that land in `ai/providers/` instead
+  (`utils/pi-user-agent.ts` → `ai/providers/pi_user_agent.go`,
+  `core/provider-attribution.ts` → `ai/providers/attribution.go`). The Rulings
+  in `docs/UPSTREAM.md` are authoritative over this map; if they disagree,
+  re-derive and fix the map.
 - **One upstream fix can touch multiple sites that map to ONE Go file — or to a
   differently-structured Go file** (2026-07-21 lesson: `1942b260` "env section
   ignored" fixed BOTH `auth/helpers.ts` and `amazon-bedrock.ts`; the port landed

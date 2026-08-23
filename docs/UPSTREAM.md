@@ -640,8 +640,46 @@ surfaced this cycle, both benign *here* and both capable of losing a change late
 
 **Tripwire: sweep `coding-agent/src` and classify every path, rather than
 enumerating subdirectories** — the unrestricted `--name-only` pass is what caught
-this, and it is the pass that must not be skipped. Recorded rather than fixed in
-the skill, so the next cycle sees the reasoning and not just a widened glob.
+this, and it is the pass that must not be skipped.
+
+> **AMENDED (same day) — fixed in the skill, and the hole was far bigger than
+> this row said.** Rewriting the guard turned up **nine more** blind spots
+> beyond the two above, three of them **live ported code the sweep never
+> printed**: `coding-agent/src/client/{remote-session,transcript}.ts` →
+> `coding/remotesession.go` + `coding/transcript.go`; `coding-agent/src/utils/*`
+> → `coding/{text,tools,resources,imageresize}.go`; and `packages/ai/scripts/`,
+> which is the sole home of **every** catalog-only queue delta
+> (`generate-models.ts` — *not* `packages/ai/src`, which is all the guard swept).
+> Missed entirely as whole packages: `packages/{protocol,client,server}` (ported
+> to `protocol/`, `client/`, `server/` by the 2026-08-01 ruling — whose "minus
+> `server/src/legacy/`" carve-out is itself dead text, upstream having deleted
+> that directory in `05bf9df65`, while `server/src/testing/**` quietly became
+> ported as `server/internal/servertest/`), `packages/telemetry` (2026-08-06
+> ruling), and `packages/session-backends` + `coding-agent/src/server/` (in scope
+> but DEFERRED under 2026-08-07, so a hit there is backlog, never a silent
+> `n/a`). There is also a cross-package leak no path-to-package mapping would
+> predict: `coding-agent/src/utils/pi-user-agent.ts` and
+> `core/provider-attribution.ts` land in `ai/providers/`, not `coding/`.
+>
+> The guard now runs **two mandatory passes** — an unrestricted `--name-only`
+> detector plus a `packages`-wide accounting sweep minus four
+> structurally-justified exclusions (`tui`, `evals`, `coding-agent/{docs,examples}`)
+> — and **forbids sub-path carve-outs**, on the evidence that a carve-out
+> outlives the tree it describes and that some real exclusions are unexpressible
+> as paths at all (telemetry's excluded schema half shares `src/index.ts` with
+> its ported runtime half). Verified on this very range: the corrected sweep
+> reports **13** files where the old one reported 3, `src/config.ts` among them,
+> and the detector catches the remaining 5 — the four excluded `packages/tui`
+> files plus `scripts/auto-pi.sh`, which lives outside `packages/` entirely.
+>
+> **OPEN — needs an owner ruling, deliberately not decided here.** The fix was
+> scoped to the *guard*. But `pi-triage`'s `port` **definition** still reads
+> "`packages/ai/src`, `packages/agent/src`, `packages/coding-agent/src/core|main|sdk`",
+> which is narrower than the recorded rulings — it names none of protocol,
+> client, server, telemetry or session-backends, and it repeats the dead `sdk`
+> element. A triager reading only the skill would mark a `packages/protocol`
+> change `n/a`. Aligning that text with the rulings is a non-port-boundary edit
+> and belongs to the owner under the skill's own "escalate, don't ship" rule.
 
 ### Pre-existing divergence surfaced (recorded, NOT fixed) — no thinking clamp or transcript entry on model switch
 
