@@ -12,12 +12,18 @@ import (
 	"github.com/sky-valley/pi/coding"
 )
 
-// TestPublishedMimeSurface locks which image-MIME helpers the coding package
-// publishes. Upstream de82e5367 promoted detectSupportedImageMimeTypeFromFile
-// to pi's package index while deliberately leaving the buffer variant internal
-// to utils/mime.ts, so the port exports exactly that one and no more. Asserted
-// over the package source rather than by calling it, so the "and no more" half
-// is checkable too.
+// TestPublishedMimeSurface locks the "and no more" half of upstream de82e5367:
+// pi promoted detectSupportedImageMimeTypeFromFile to its package index while
+// deliberately leaving the buffer variant internal to utils/mime.ts, so the port
+// must not export the buffer variant either. Only that negative half lives here
+// — that the file variant IS exported is already asserted by
+// TestDetectSupportedImageMimeTypeFromFile below, which calls it from
+// package coding_test and so would fail to COMPILE if the export went away.
+//
+// The scan covers top-level funcs in build.ImportDir's GoFiles, which are
+// filtered by the current GOOS. A build-tagged or method-valued export on
+// another platform would slip past it; that is the price of checking a negative
+// at all, and the surface it guards is plain top-level funcs today.
 func TestPublishedMimeSurface(t *testing.T) {
 	pkg, err := build.ImportDir(".", 0)
 	if err != nil {
@@ -35,9 +41,6 @@ func TestPublishedMimeSurface(t *testing.T) {
 				funcs[fn.Name.Name] = true
 			}
 		}
-	}
-	if !funcs["DetectSupportedImageMimeTypeFromFile"] {
-		t.Error("DetectSupportedImageMimeTypeFromFile must be exported (pi index.ts publishes it)")
 	}
 	if funcs["DetectSupportedImageMimeType"] {
 		t.Error("the buffer variant must stay unexported: pi's index.ts does not publish it")

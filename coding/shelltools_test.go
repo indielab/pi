@@ -226,3 +226,18 @@ func TestSystemPromptShellGuideline(t *testing.T) {
 		}
 	}
 }
+
+// TestCreateAllToolsCoversToolNames pins the invariant that powershell broke:
+// CreateAllTools is pi's createAllTools, so it must yield exactly the built-in
+// set ToolNames names, in the same order. The two are separate literals in this
+// package, and adding a tool to one without the other is silent — a consumer
+// asking CreateAllTools for "everything" just gets less than everything.
+func TestCreateAllToolsCoversToolNames(t *testing.T) {
+	got := make([]string, 0, len(ToolNames))
+	for _, tool := range CreateAllTools(t.TempDir()) {
+		got = append(got, tool.Name)
+	}
+	if !reflect.DeepEqual(got, ToolNames) {
+		t.Fatalf("CreateAllTools must yield every name in ToolNames, in order\n got: %#v\nwant: %#v", got, ToolNames)
+	}
+}

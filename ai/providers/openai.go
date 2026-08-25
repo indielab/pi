@@ -477,6 +477,16 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				// there by re-parsing the signature and finding it is not an array;
 				// holding the sequence is the same answer without re-parsing,
 				// re-validating and re-serializing every earlier entry per arrival.
+				//
+				// Not an unconditional equivalence, though: pi's re-parse also
+				// re-validates the entries it already stored, and discards the whole
+				// sequence if one now fails. The only way a stored entry can turn
+				// invalid is an `index` big enough that JSON.parse saturates it to
+				// Infinity — still a number on arrival, but serialized as null, so
+				// pi's next re-parse rejects it. Nothing in this port drops the
+				// sequence there. It needs a provider to send `index: 1e400`, and
+				// the divergence predates c5ad7c1b0 (the old push-only code held the
+				// sequence the same way), so it is recorded, not fixed.
 				thinkBuilder.thinkingSig = marshalOpenAIReasoningDetails(thinkingDetails)
 				// Republish into output.Content. pi's `partial` IS the live output
 				// object, so its assignment above is already visible; Go rebuilds

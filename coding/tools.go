@@ -192,10 +192,13 @@ func CreateCodingTools(cwd string) []agent.AgentTool {
 	return []agent.AgentTool{readTool(cwd), bashTool(cwd, nil), editTool(cwd), writeTool(cwd)}
 }
 
-// CreateAllTools returns all seven built-in tools.
+// CreateAllTools returns all eight built-in tools, in pi's createAllTools order
+// (powershell sits after bash). powershell is included even off Windows: like
+// pi, the shell is resolved inside Execute, so constructing the tool is safe
+// everywhere and only running it reports the platform error.
 func CreateAllTools(cwd string) []agent.AgentTool {
 	return []agent.AgentTool{
-		readTool(cwd), bashTool(cwd, nil), editTool(cwd), writeTool(cwd),
+		readTool(cwd), bashTool(cwd, nil), powershellTool(cwd, nil), editTool(cwd), writeTool(cwd),
 		grepTool(cwd), findTool(cwd), lsTool(cwd),
 	}
 }
@@ -793,7 +796,10 @@ func bashCommandEnv(sessionEnv sessionEnvFn) []string {
 // upstream 80e62761f); the same split here keeps the two tools byte-identical
 // apart from these fields. pi's label always equals its name for both shells,
 // and its `prompt`/`promptSnippet` fields drive TUI rendering and the prompt
-// snippet map, neither of which lives on the tool in this port.
+// snippet map, neither of which lives on the tool in this port. pi's
+// `promptGuidelines` is likewise not a field here: both shells contribute the
+// same single guideline, so a knob with one value would only alias one backing
+// array across every tool built from these package-level configs.
 type shellToolConfig struct {
 	name           string
 	shellName      string
@@ -805,7 +811,6 @@ type shellToolConfig struct {
 	// resolveShell resolves the shell binary, its args, and whether the command
 	// must be delivered on stdin rather than appended to argv.
 	resolveShell func() (shell string, args []string, useStdin bool, err error)
-	guidelines   []string
 }
 
 // utf8OutputPrefix opts PowerShell's console into UTF-8 so non-ASCII output
@@ -822,7 +827,6 @@ var bashShellConfig = shellToolConfig{
 	shellName:      "bash",
 	tempFilePrefix: "pi-bash",
 	resolveShell:   getShellConfig,
-	guidelines:     []string{piSessionEnvGuideline},
 }
 
 var powershellShellConfig = shellToolConfig{
@@ -831,7 +835,6 @@ var powershellShellConfig = shellToolConfig{
 	tempFilePrefix: "pi-powershell",
 	commandPrefix:  utf8OutputPrefix,
 	resolveShell:   getPowerShellConfig,
-	guidelines:     []string{piSessionEnvGuideline},
 }
 
 func bashTool(cwd string, sessionEnv sessionEnvFn) agent.AgentTool {
@@ -847,7 +850,7 @@ func shellTool(cwd string, config shellToolConfig, sessionEnv sessionEnvFn) agen
 		Name:             config.name,
 		Label:            config.name,
 		Description:      fmt.Sprintf("Execute a %s command in the current working directory. Returns stdout and stderr. Output is truncated to last %d lines or %dKB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.", config.shellName, DefaultMaxLines, DefaultMaxBytes/1024),
-		PromptGuidelines: config.guidelines,
+		PromptGuidelines: []string{piSessionEnvGuideline},
 		Parameters: ai.Object(
 			ai.Prop("command", ai.String("Shell command to execute")),
 			ai.Opt("timeout", ai.Number("Timeout in seconds (optional, no default timeout)")),
