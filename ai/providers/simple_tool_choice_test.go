@@ -160,3 +160,26 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 		})
 	}
 }
+
+// openai-completions drops tool_choice when the request carries no tools
+// (upstream fe37e9f9b): gateways reject the pair, and a compaction request —
+// "summarize the conversation", no tools, toolChoice "none" — is exactly it.
+// Asserted on the captured payload, so it is the wire body and not just the
+// option plumbing.
+func TestSimpleToolChoiceOmittedWithoutTools(t *testing.T) {
+	model := &ai.Model{
+		ID: "gpt-5.5", Api: ai.APIOpenAICompletions, Provider: "openai",
+		Input: []string{"text"}, MaxTokens: 4096,
+	}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("Summarize the conversation", 1)}}
+	body := captureSimplePayload(t, func(m *ai.Model, r ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		return StreamSimpleOpenAICompletions(t.Context(), m, r, o)
+	}, model, req, ai.ToolChoiceNone)
+
+	if _, ok := body["tool_choice"]; ok {
+		t.Fatalf("tool_choice must not be sent without tools: %v", body["tool_choice"])
+	}
+	if _, ok := body["tools"]; ok {
+		t.Fatalf("tools must not be sent either: %v", body["tools"])
+	}
+}

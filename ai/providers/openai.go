@@ -952,7 +952,11 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 		applyAnthropicCacheControl(messages, params["tools"], cc)
 	}
 
-	if opts.ToolChoice != nil {
+	// A tool_choice with no tools to choose from is what gateways reject during
+	// compaction (upstream fe37e9f9b). pi guards on `params.tools?.length`, so
+	// the EMPTY tools array sent above for a conversation with tool history
+	// suppresses it just as an absent one does.
+	if tools, _ := params["tools"].([]map[string]any); opts.ToolChoice != nil && len(tools) > 0 {
 		params["tool_choice"] = opts.ToolChoice
 	}
 

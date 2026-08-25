@@ -919,6 +919,45 @@ func TestDiffToolChoice(t *testing.T) {
 	}
 }
 
+// Mirrors pi's "omits toolChoice when no tools are provided"
+// (openai-completions-tool-choice.test.ts, upstream fe37e9f9b). Gateways reject
+// tool_choice sent without tools, and compaction is the request shape that hits
+// it: a choice with nothing to choose from. pi guards on `params.tools?.length`,
+// so an EMPTY tools array suppresses it too — not only an absent one.
+func TestDiffOmitsToolChoiceWithoutTools(t *testing.T) {
+	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(), &OpenAIOptions{ToolChoice: "none"})
+	if has(body, "tools") || has(body, "tool_choice") {
+		t.Fatalf("no tools must omit tools and tool_choice alike: %v", body)
+	}
+
+	// Tool history with no tools: `tools` is the empty array a proxied Anthropic
+	// model needs, and its length is 0, so tool_choice still goes.
+	req := baseReq()
+	req.Messages = append(req.Messages,
+		ai.AssistantMessage{
+			Content:    ai.ContentList{ai.ToolCall{ID: "c1", Name: "f", Arguments: map[string]any{}}},
+			Provider:   "openai",
+			Api:        ai.APIOpenAICompletions,
+			StopReason: ai.StopToolUse,
+		},
+		ai.ToolResultMessage{ToolCallID: "c1", ToolName: "f", Content: ai.ContentList{ai.TextContent{Text: "ok"}}},
+	)
+	body2 := mustBuildOpenAIParams(t, openAIModel(nil), req, &OpenAIOptions{ToolChoice: "none"})
+	tools, ok := body2["tools"].([]map[string]any)
+	if !ok || len(tools) != 0 {
+		t.Fatalf("tools should still be the empty array, got %T %v", body2["tools"], body2["tools"])
+	}
+	if has(body2, "tool_choice") {
+		t.Fatalf("an empty tools array must suppress tool_choice too: %v", body2["tool_choice"])
+	}
+
+	// With tools, nothing changes.
+	body3 := mustBuildOpenAIParams(t, openAIModel(nil), reqWithTool(), &OpenAIOptions{ToolChoice: "none"})
+	if body3["tool_choice"] != "none" {
+		t.Fatalf("tool_choice = %v, want none when tools are present", body3["tool_choice"])
+	}
+}
+
 func TestDiffRequiresToolResultName(t *testing.T) {
 	model := openAIModel(func(m *ai.Model) {
 		m.Compat = json.RawMessage(`{"requiresToolResultName":true}`)
