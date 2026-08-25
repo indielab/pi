@@ -137,18 +137,19 @@ func textResult(text string) agent.AgentToolResult {
 }
 
 // ToolNames are the built-in coding tool identifiers.
-var ToolNames = []string{"read", "bash", "edit", "write", "grep", "find", "ls"}
+var ToolNames = []string{"read", "bash", "powershell", "edit", "write", "grep", "find", "ls"}
 
 // ToolSnippets are the one-line prompt snippets keyed by tool name.
 var ToolSnippets = map[string]string{
-	"read":      "Read file contents",
-	"bash":      "Execute bash commands (ls, grep, find, etc.)",
-	"edit":      "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
-	"write":     "Create or overwrite files",
-	"grep":      "Search file contents for patterns (respects .gitignore)",
-	"find":      "Find files by glob pattern (respects .gitignore)",
-	"ls":        "List directory contents",
-	"web_fetch": "Fetch a web URL and return readable text",
+	"read":       "Read file contents",
+	"bash":       "Execute bash commands (ls, grep, find, etc.)",
+	"powershell": "Execute PowerShell commands",
+	"edit":       "Make precise file edits with exact text replacement, including multiple disjoint edits in one call",
+	"write":      "Create or overwrite files",
+	"grep":       "Search file contents for patterns (respects .gitignore)",
+	"find":       "Find files by glob pattern (respects .gitignore)",
+	"ls":         "List directory contents",
+	"web_fetch":  "Fetch a web URL and return readable text",
 }
 
 // CreateTool builds a single built-in tool by name, rooted at cwd. The bash
@@ -167,6 +168,8 @@ func createTool(name, cwd string, sessionEnv sessionEnvFn) (agent.AgentTool, err
 		return readTool(cwd), nil
 	case "bash":
 		return bashTool(cwd, sessionEnv), nil
+	case "powershell":
+		return powershellTool(cwd, sessionEnv), nil
 	case "edit":
 		return editTool(cwd), nil
 	case "write":
@@ -781,21 +784,73 @@ func bashCommandEnv(sessionEnv sessionEnvFn) []string {
 	return env
 }
 
+// shellToolConfig describes one built-in shell tool. pi factors bash and
+// powershell out of a shared createShellToolDefinition (bash.ts ShellToolConfig,
+// upstream 80e62761f); the same split here keeps the two tools byte-identical
+// apart from these fields. pi's label always equals its name for both shells,
+// and its `prompt`/`promptSnippet` fields drive TUI rendering and the prompt
+// snippet map, neither of which lives on the tool in this port.
+type shellToolConfig struct {
+	name           string
+	shellName      string
+	tempFilePrefix string
+	// commandPrefix is prepended verbatim to every command before it reaches the
+	// shell. pi applies it inside the operations wrapper, ahead of any
+	// spawn-hook prefix (powershell.ts createLocalPowerShellOperations).
+	commandPrefix string
+	// resolveShell resolves the shell binary, its args, and whether the command
+	// must be delivered on stdin rather than appended to argv.
+	resolveShell func() (shell string, args []string, useStdin bool, err error)
+	guidelines   []string
+}
+
+// utf8OutputPrefix opts PowerShell's console into UTF-8 so non-ASCII output
+// survives the pipe. Byte-exact from powershell.ts UTF8_OUTPUT_PREFIX,
+// including the trailing newline that separates it from the model's command.
+const utf8OutputPrefix = "try { [Console]::OutputEncoding=[System.Text.Encoding]::UTF8 } catch {}\n"
+
+// piSessionEnvGuideline is the PI_* advertisement both shell tools contribute
+// to the system prompt (pi bb3d7d39, shared by powershell.ts since 80e62761f).
+const piSessionEnvGuideline = "You can inspect PI_* environment variables for current model and session details."
+
+var bashShellConfig = shellToolConfig{
+	name:           "bash",
+	shellName:      "bash",
+	tempFilePrefix: "pi-bash",
+	resolveShell:   getShellConfig,
+	guidelines:     []string{piSessionEnvGuideline},
+}
+
+var powershellShellConfig = shellToolConfig{
+	name:           "powershell",
+	shellName:      "PowerShell",
+	tempFilePrefix: "pi-powershell",
+	commandPrefix:  utf8OutputPrefix,
+	resolveShell:   getPowerShellConfig,
+	guidelines:     []string{piSessionEnvGuideline},
+}
+
 func bashTool(cwd string, sessionEnv sessionEnvFn) agent.AgentTool {
+	return shellTool(cwd, bashShellConfig, sessionEnv)
+}
+
+func powershellTool(cwd string, sessionEnv sessionEnvFn) agent.AgentTool {
+	return shellTool(cwd, powershellShellConfig, sessionEnv)
+}
+
+func shellTool(cwd string, config shellToolConfig, sessionEnv sessionEnvFn) agent.AgentTool {
 	return agent.AgentTool{
-		Name:        "bash",
-		Label:       "bash",
-		Description: fmt.Sprintf("Execute a bash command in the current working directory. Returns stdout and stderr. Output is truncated to last %d lines or %dKB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.", DefaultMaxLines, DefaultMaxBytes/1024),
-		PromptGuidelines: []string{
-			"You can inspect PI_* environment variables for current model and session details.",
-		},
+		Name:             config.name,
+		Label:            config.name,
+		Description:      fmt.Sprintf("Execute a %s command in the current working directory. Returns stdout and stderr. Output is truncated to last %d lines or %dKB (whichever is hit first). If truncated, full output is saved to a temp file. Optionally provide a timeout in seconds.", config.shellName, DefaultMaxLines, DefaultMaxBytes/1024),
+		PromptGuidelines: config.guidelines,
 		Parameters: ai.Object(
-			ai.Prop("command", ai.String("Bash command to execute")),
+			ai.Prop("command", ai.String("Shell command to execute")),
 			ai.Opt("timeout", ai.Number("Timeout in seconds (optional, no default timeout)")),
 		),
 		ConstrainedSampling: GetExperimentalToolSampling(),
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
-			command := argStr(params, "command")
+			command := config.commandPrefix + argStr(params, "command")
 			// pi resolveTimeoutMs (bash.ts) validates the timeout before spawning:
 			// reject a non-positive value and cap it at INT32_MAX ms, surfacing the
 			// raw error as the tool result. JSON numbers are always finite, so pi's
@@ -809,12 +864,12 @@ func bashTool(cwd string, sessionEnv sessionEnvFn) agent.AgentTool {
 					return agent.AgentToolResult{}, fmt.Errorf("Invalid timeout: maximum is %s seconds", maxBashTimeoutSeconds)
 				}
 			}
-			shell, shellArgs, useStdin, err := getShellConfig()
+			shell, shellArgs, useStdin, err := config.resolveShell()
 			if err != nil {
 				return agent.AgentToolResult{}, err
 			}
 			if _, err := os.Stat(cwd); err != nil {
-				return agent.AgentToolResult{}, fmt.Errorf("Working directory does not exist: %s\nCannot execute bash commands.", cwd)
+				return agent.AgentToolResult{}, fmt.Errorf("Working directory does not exist: %s\nCannot execute %s commands.", cwd, config.shellName)
 			}
 			runCtx := ctx
 			var cancel context.CancelFunc
@@ -845,7 +900,7 @@ func bashTool(cwd string, sessionEnv sessionEnvFn) agent.AgentTool {
 			// Stream output through the rolling OutputAccumulator (bounded memory,
 			// incremental temp-file writes) with throttled partial onUpdate emits
 			// including a trailing-edge flush (port of bash.ts:291-348).
-			u := newBashUpdater(onUpdate, newOutputAccumulator(0, 0, "pi-bash"))
+			u := newBashUpdater(onUpdate, newOutputAccumulator(0, 0, config.tempFilePrefix))
 			if onUpdate != nil {
 				// pi emits an initial empty update before spawning (bash.ts:332-334).
 				onUpdate(agent.AgentToolResult{Content: ai.ContentList{}, Details: nil})
@@ -1084,6 +1139,27 @@ func getShellConfig() (shell string, args []string, useStdin bool, err error) {
 		return s, a, stdin, nil
 	}
 	return "sh", []string{"-c"}, false, nil
+}
+
+// powershellArgs ports pi's POWERSHELL_ARGS (shell.ts, upstream 80e62761f):
+// no profile, no interactive prompts, and a process-scoped execution-policy
+// bypass so the machine policy is left alone.
+var powershellArgs = []string{"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command"}
+
+// getPowerShellConfig ports pi's getPowerShellConfig: Windows only, preferring
+// PowerShell 7 (pwsh) over Windows PowerShell. pi throws on both failures; the
+// Go shell resolvers report failure as an error, which the tool surfaces to the
+// model verbatim, so the strings are byte-exact.
+func getPowerShellConfig() (shell string, args []string, useStdin bool, err error) {
+	if runtime.GOOS != "windows" {
+		return "", nil, false, errors.New("The powershell tool is only available on Windows.")
+	}
+	for _, executable := range []string{"pwsh.exe", "powershell.exe"} {
+		if p, lookErr := exec.LookPath(executable); lookErr == nil && p != "" {
+			return p, slices.Clone(powershellArgs), false, nil
+		}
+	}
+	return "", nil, false, errors.New("No PowerShell executable found. Install PowerShell or add powershell.exe/pwsh.exe to PATH.")
 }
 
 // ---------------------------------------------------------------------------

@@ -107,8 +107,19 @@ func BuildSystemPrompt(opts BuildSystemPromptOptions) string {
 		}
 		return false
 	}
-	if has("bash") && !has("grep") && !has("find") && !has("ls") {
-		add("Use bash for file operations like ls, rg, find")
+	// File exploration guidelines (system-prompt.ts:104-112). With no dedicated
+	// exploration tool the guideline names whichever shells are active; the
+	// bash-only wording predates powershell and is unchanged (upstream 80e62761f).
+	hasBash, hasPowerShell := has("bash"), has("powershell")
+	if (hasBash || hasPowerShell) && !has("grep") && !has("find") && !has("ls") {
+		switch {
+		case hasBash && hasPowerShell:
+			add("Use bash or PowerShell for file operations like listing, searching, and finding files")
+		case hasPowerShell:
+			add("Use PowerShell for file operations like listing, searching, and finding files")
+		default:
+			add("Use bash for file operations like ls, rg, find")
+		}
 	}
 	for _, g := range opts.PromptGuidelines {
 		add(strings.TrimSpace(g))
