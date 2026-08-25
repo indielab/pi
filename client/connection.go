@@ -526,11 +526,28 @@ func (c *Connection) failTransport(transport Transport, err error) {
 
 // fail moves to Disconnected, settles any unsettled handshake, and notifies.
 func (c *Connection) fail(err error) {
+	if notify := c.failDeferred(err); notify != nil {
+		notify()
+	}
+}
+
+// failDeferred tears the connection down and hands back the notification
+// instead of delivering it, or nil when there was nothing live to tear down.
+// Once it returns, State() already reports Disconnected and the handshake is
+// already settled — only the callback is outstanding.
+//
+// It exists for Client.Close, which must finish disposing itself BEFORE any
+// connection-state listener runs: a listener is allowed to close the client,
+// and that nested Close has to find a client that is already fully torn down
+// rather than one still mid-teardown. Splitting the notification out is what
+// lets disposal publish completion first and notify second. Everything else
+// goes through fail, which delivers immediately, exactly as pi's #fail does.
+func (c *Connection) failDeferred(err error) func() {
 	c.mu.Lock()
 	lifecycle := c.lifecycle
 	if lifecycle == nil {
 		c.mu.Unlock()
-		return
+		return nil
 	}
 	c.lifecycle = nil
 	hs := lifecycle.handshake
@@ -539,7 +556,30 @@ func (c *Connection) fail(err error) {
 	if hs != nil {
 		hs.settle(nil, err)
 	}
-	c.opts.OnStateChange(ConnectionStateChange{State: Disconnected, Err: err})
+	change := ConnectionStateChange{State: Disconnected, Err: err}
+	return func() { c.opts.OnStateChange(change) }
+}
+
+// DisconnectDeferred is Disconnect with the state-change notification handed
+// back to the caller rather than delivered. See failDeferred; Client.Close is
+// the only caller.
+func (c *Connection) DisconnectDeferred(reason error) func() {
+	if reason == nil {
+		reason = &DisconnectedError{Message: defaultConnectionDisconnectReason}
+	}
+	c.mu.Lock()
+	var transport Transport
+	if c.lifecycle != nil {
+		transport = c.lifecycle.transport
+	}
+	c.mu.Unlock()
+
+	notify := c.failDeferred(reason)
+	if transport != nil {
+		// Dropped for the same reason failAndClose drops it.
+		_ = transport.Close()
+	}
+	return notify
 }
 
 func (c *Connection) isCurrent(id uint64) bool {

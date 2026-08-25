@@ -724,17 +724,97 @@ zeros, so nothing moves now. The port resolves glm-5.3 as the default for both
 `coding/resolve_test.go:265-290` written against the zero-cost derivation —
 **expect those to need re-baselining at the regen that ships this.**
 
-### Pre-existing flake surfaced (recorded, NOT fixed) — `client` disposal race
+### FIXED — the `client` disposal race, open since 2026-08-10
 
-`TestConcurrentCloseWaitsForTeardown` (`client/disposal_test.go:215`, "Close
-returned while a child handle was still attached") fails intermittently — clean
-at `-count=1`, but reproducible a few times in `-count=200 -race`. **Confirmed
-pre-existing and unrelated to this cycle** by running the same stress on a
-worktree at the pristine parent `192e0cb`, where it fails the same way; nothing
-in this delta touches `packages/client/src` (tree-identical upstream) or the Go
-`client` package. Left for its own slice rather than papered over: it is either a
-real race in the port's disposal path or an over-strict test, and deciding which
-is not sync work.
+`TestConcurrentCloseWaitsForTeardown` had been flaky since 2026-08-10 and was
+carried again as a follow-up on 2026-08-20 (see that cycle's "Follow-ups
+recorded, NOT fixed", which had the cause right and proposed a candidate fix).
+Root-caused and fixed here. **Both earlier items are closed by this.**
+
+**Verdict: the implementation was wrong; the test was right.** Three independent
+investigations — Go-concurrency, pi-parity and a lens tasked specifically with
+arguing that the *expectation* was wrong — converged, each by execution rather
+than by reading.
+
+**Cause.** `Client.notifying` was a **client-global bool**, but the fact it had
+to express — "am I the goroutine currently running teardown?" — is
+**goroutine-scoped**. That type mismatch is the entire bug. The flag was raised
+around the whole of `conn.Disconnect`, so ANY unrelated goroutine calling
+`Close` inside that window read `notifying == true`, concluded it must be the
+re-entrant callback, and returned without waiting on `<-c.closed` — observing a
+client that was not yet disposed. Instrumentation put the escape hatch firing on
+roughly 22% of concurrent non-winning `Close` calls, wrong about 3% of the times
+it fired. The code comment stating the cost ("costs it the wait but never
+correctness") was simply false, and is why this survived review for four cycles:
+**the defect was written down as a design note.**
+
+**pi parity settles the contract, and it was established by running real pi**,
+not by reading it — `packages/client` extracted at `a79b37334` and driven under
+node with an in-memory transport. pi's `dispose()` memoises an *already-resolved*
+promise **before** its teardown body, and that body is entirely synchronous, so
+run-to-completion hands every caller — the re-entrant one included — a view of a
+fully torn-down client. So "Close returning means fully disposed" is a faithful
+port of pi's guarantee, not a Go embellishment, and the `<-c.closed` wait is the
+minimum needed to reproduce in Go what JavaScript gets from its event loop.
+`notifying` corresponded to **nothing in pi** — pi's whole idempotence guard is
+`if (this.#disposePromise) return this.#disposePromise`.
+
+**Fix: delete the flag rather than make it smarter.** Disposal now publishes
+completion BEFORE it notifies. `Connection` grows `failDeferred`/
+`DisconnectDeferred`, which tear the connection down and hand the state-change
+callback back instead of delivering it; `Close` then does the client-side
+teardown itself, closes `c.closed`, and only then notifies. A nested `Close`
+from a listener finds an already-closed channel and returns immediately — no
+deadlock — and an unrelated caller waits and sees full disposal. Nothing has to
+tell the two apart, which is the point: **no goroutine identity is needed, so no
+`runtime.Stack` goid hack.** `notifying` and `setNotifying` are gone.
+
+**Rejected alternatives, and why — the near-misses matter more than the fix.**
+- *Narrow the `notifying` window to the listener dispatch only.* Drives the
+  observed failure to zero and is a one-line change. **Rejected**: the dispatch
+  is arbitrary user code and unbounded, so an unrelated goroutine can still land
+  in it. It converts a reproducible bug into a rarer one — the symptom, not the
+  cause.
+- *Move `close(c.closed)` ahead of `conn.Disconnect`.* **Validated as wrong.**
+  It makes the test pass at `-count=500` while silently breaking the
+  connection-state invariant (the reversed-order probe reported 83 violations in
+  4000). It looks green, which is exactly what makes it dangerous.
+- *Goroutine-id keying.* Semantically exact and it works — it is what the probes
+  used to isolate the variable — but parsing `runtime.Stack` for identity is not
+  something a port that prizes idiomatic Go should ship.
+- *Weaken the test.* Both weakenings considered ("after `wg.Wait()` the client is
+  disposed"; "at least one caller observes full disposal") were **coded and run
+  against the broken implementation and passed 9000 iterations**. They assert
+  nothing. Had the contract genuinely been unwanted, the honest form would have
+  been to delete `c.closed`, the wait, and the promise in `Close`'s doc — not to
+  keep a test that reads like a guard and is not one.
+
+**The tests are now stronger and no longer flaky.**
+`TestConcurrentCloseWaitsForTeardown` gains two assertions and short-circuits on
+none of them. `Snapshot()` is the load-bearing addition: `Attached()` and
+`ConnectionState()` are both settled before listeners run, so a window-narrowing
+fix satisfies those two while still exposing an undisposed `State` — only
+`Snapshot()` separates "fully disposed" from "far enough along to look disposed".
+Measured against the pre-fix code over 200 runs: the old assertion fired **7**
+times, the new `Snapshot()` one **148**. A new test,
+`TestCloseFromAListenerDoesNotStrandAnotherCloser`, pins both contracts at once —
+the listener's nested `Close` must return while an unrelated closer must still be
+held — and starts the unrelated closer only once the listener is running, so it
+cannot be the goroutine performing teardown. It is **deterministically red**
+against the old code (0.00s, every run), where the old test needed ~100 runs to
+catch anything.
+
+**Deliberate divergence added, recorded in `Close`'s doc comment.** pi runs
+`#state.dispose()` AFTER `#connection.disconnect`, so a pi connection-state
+listener still sees live session subscribers; the port now disposes `State`
+before notifying, so such a listener sees them cleared. The observable window is
+one statement wide even in pi — a subscription registered from that listener is
+destroyed by the very next line of pi's `dispose()` — and it is what buys the
+guarantee. It is the same class of divergence `State.Dispose` itself already
+records: pi's single-threaded assumptions do not survive the port.
+
+Verified: full `-race` suite green, and `go test ./client/ -count=300 -race`
+green (39s) where the flake previously appeared a few times per 200.
 
 ### Harness — 47 → 49 scenarios, FULLY DIST-BACKED, 49 PASS / 0 KNOWN / 0 FAIL
 
@@ -1818,7 +1898,14 @@ unrecoverable at this layer; this cycle only widens who reaches it.
 ### Follow-ups recorded, NOT fixed this cycle
 
 - **`client/client.go:592` `(*Client).Close` lets an unrelated goroutine return
-  before teardown finishes** (Go-side race, **pre-existing**, not introduced by
+  before teardown finishes** — **CLOSED 2026-08-25**; root-caused and fixed in
+  that cycle (see "FIXED — the `client` disposal race"). The cause recorded below
+  was correct; the candidate fix below was NOT the one taken — scoping the early
+  return to the tearing-down goroutine needs goroutine identity, which Go does
+  not support without a `runtime.Stack` hack, so disposal was restructured to
+  publish completion before notifying and the flag was deleted outright. The
+  2026-08-10 follow-up this bullet points at is closed by the same change.
+  Original record follows. (Go-side race, **pre-existing**, not introduced by
   this delta — nothing in `3a0b9a3ee..b7bb00b93` touches the client or the
   protocol layer). `reentrant := c.notifying` is true for *any* goroutine that
   arrives while teardown is inside one of its own callbacks, not just for the

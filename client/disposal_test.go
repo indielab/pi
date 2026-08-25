@@ -195,7 +195,23 @@ func TestCloseFromAConnectionStateListener(t *testing.T) {
 
 // TestConcurrentCloseWaitsForTeardown: a second caller is told the client is
 // closed only once it actually is, so a caller that closes and then inspects
-// does not see a half-disposed client.
+// does not see a half-disposed client. This is pi's guarantee, not a Go
+// embellishment — pi's dispose() memoises an already-resolved promise and tears
+// down synchronously, so run-to-completion gives every caller, re-entrant ones
+// included, a view of a fully torn-down client.
+//
+// Every invariant is checked on every caller, and none of them short-circuits.
+// That matters: the bug this test was written against
+// (a client-global "am I a callback?" flag that any goroutine could trip) broke
+// all three at once, and a `t.Fatal`-style early exit made it look like only the
+// first one was reachable, which is what kept it filed as an over-strict test
+// rather than a race for four cycles.
+//
+// Snapshot() is the load-bearing third check. Attached() and ConnectionState()
+// are settled before connection-state listeners run, so a fix that merely
+// narrows the window satisfies those two while still letting a caller observe a
+// client whose State has not been disposed. Only Snapshot() distinguishes
+// "fully disposed" from "far enough along to look disposed".
 func TestConcurrentCloseWaitsForTeardown(t *testing.T) {
 	server := newMemoryServer(t)
 	client := connectTestClient(t, server)
@@ -217,10 +233,89 @@ func TestConcurrentCloseWaitsForTeardown(t *testing.T) {
 			if client.ConnectionState() != Disconnected {
 				t.Error("Close returned while the connection was still up")
 			}
+			if client.Snapshot() != nil {
+				t.Error("Close returned while the client still held server state")
+			}
+			if !client.Disposed() {
+				t.Error("Close returned while the client did not report itself disposed")
+			}
 		}()
 	}
 	close(start)
 	wg.Wait()
+}
+
+// TestCloseFromAListenerDoesNotStrandAnotherCloser pins the interaction the two
+// disposal contracts have to satisfy at once, which is what the deleted
+// re-entrancy flag could not do: the listener's own nested Close must return
+// (it cannot wait for a teardown it is part of), while an unrelated goroutine
+// closing at the same moment must still be held until disposal is complete.
+//
+// The unrelated closer is started only once the listener is running, so it
+// cannot be the goroutine performing teardown — that is what makes it
+// unrelated rather than just a second racer. The listener then blocks, so if
+// disposal published completion only AFTER notifying, the unrelated closer is
+// never released and this test times out rather than failing an assertion.
+// That is the honest failure mode for a lost guarantee: the old code deadlocks
+// here, it does not merely observe a half-disposed client.
+func TestCloseFromAListenerDoesNotStrandAnotherCloser(t *testing.T) {
+	server := newMemoryServer(t)
+	client := connectTestClient(t, server)
+	handle := attachTestSession(t, client, server, sessionSnapshot("session-1", 1, true))
+
+	inListener := make(chan struct{})
+	released := make(chan struct{})
+	nestedReturned := make(chan struct{})
+	if _, err := client.OnConnectionStateChange(func(change ConnectionStateChange) {
+		if change.State != Disconnected {
+			return
+		}
+		close(inListener)
+		// Nested Close: must not wait for the teardown running this callback.
+		_ = client.Close()
+		close(nestedReturned)
+		<-released
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	teardown := make(chan struct{})
+	go func() {
+		defer close(teardown)
+		_ = client.Close()
+	}()
+
+	select {
+	case <-inListener:
+	case <-time.After(testTimeout):
+		t.Fatal("the disconnect listener never ran")
+	}
+	select {
+	case <-nestedReturned:
+	case <-time.After(testTimeout):
+		t.Fatal("a Close issued from the listener waited for the teardown it is part of")
+	}
+
+	unrelated := make(chan struct{})
+	go func() {
+		defer close(unrelated)
+		_ = client.Close()
+		if handle.Attached() || client.Snapshot() != nil || !client.Disposed() {
+			t.Error("an unrelated closer was released before teardown finished")
+		}
+	}()
+	select {
+	case <-unrelated:
+	case <-time.After(testTimeout):
+		t.Error("an unrelated closer was never released while a listener held teardown open")
+	}
+
+	close(released)
+	select {
+	case <-teardown:
+	case <-time.After(testTimeout):
+		t.Fatal("disposal never finished")
+	}
 }
 
 // TestConnectionStateListenersAreIteratedLive: pi's

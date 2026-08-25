@@ -52,12 +52,8 @@ type Client struct {
 	state      *State
 	frameLimit int
 
-	mu       sync.Mutex
-	disposed bool
-	// notifying is set while teardown is inside a callback it made. A Close
-	// issued from such a callback must return instead of waiting for the
-	// teardown that is blocked on it.
-	notifying                bool
+	mu                       sync.Mutex
+	disposed                 bool
 	requestSequence          uint64
 	pendingRequests          map[string]*pendingRequest
 	leaseCounts              map[string]int
@@ -578,49 +574,75 @@ func (c *Client) rejectPendingRequests(err error) {
 // flight, drops the connection, and invalidates every lease. It is pi's
 // dispose(), named for Go's io.Closer convention, and is idempotent. A caller
 // that arrives second waits for the first caller's teardown, so Close returning
-// always means the client is fully disposed.
+// always means the client is fully disposed — for every caller, not just the
+// one that won the race.
+//
+// That guarantee is pi's, not an embellishment. pi's dispose() memoises an
+// already-resolved promise and then tears down synchronously, so run-to-
+// completion hands even a re-entrant caller's continuation a fully torn-down
+// client. Go has to build with a channel what JavaScript gets from its event
+// loop.
 //
 // It is also re-entrant, which is why it is not a sync.Once: disposal drops the
 // connection, and dropping the connection notifies connection-state listeners.
 // "Tear the client down when the connection dies" is a listener a reader would
-// think is allowed, and the Close it issues runs while teardown is blocked on
-// it — so that one returns immediately rather than waiting for a teardown it is
-// itself part of.
+// think is allowed, and the Close it issues must not wait for the teardown it
+// is itself part of. That is why disposal publishes completion BEFORE it
+// notifies: by the time any listener runs, c.closed is already closed, so a
+// nested Close finds a finished teardown and returns rather than deadlocking.
+// No flag distinguishes the nested caller from any other — nothing has to,
+// which is the point.
+//
+// DIVERGENCE (deliberate): pi runs #state.dispose() AFTER #connection.disconnect,
+// so a pi connection-state listener still sees live session subscribers; here
+// State is disposed before the notification, so such a listener sees them
+// already cleared. The observable difference is one statement wide even in pi —
+// a subscription registered from that listener is destroyed by the very next
+// line of pi's dispose() — and it buys the guarantee above, which pi gets for
+// free and Go cannot get any other way: the only alternatives are to leave a
+// concurrent caller able to observe an undisposed State, or to identify the
+// tearing-down goroutine, which Go does not support. Same reason State.Dispose
+// itself already diverges from pi: single-threaded assumptions do not survive
+// the port.
 //
 // It always reports nil: disposal is local teardown with nothing left to fail,
 // and the error result exists only so Client satisfies io.Closer.
 func (c *Client) Close() error {
 	c.mu.Lock()
 	if c.disposed {
-		// A caller that arrives while teardown is inside one of its own
-		// callbacks cannot wait for it: the common case is that this caller IS
-		// that callback. An unrelated goroutine that happens to land in the same
-		// window returns early too, which costs it the wait but never
-		// correctness — disposal is already under way and irrevocable.
-		reentrant := c.notifying
 		c.mu.Unlock()
-		if reentrant {
-			return nil
-		}
 		<-c.closed
 		return nil
 	}
 	c.disposed = true
 	c.mu.Unlock()
-	// Deferred rather than written at the end so a panic escaping a callback
-	// below cannot leave another caller waiting on a teardown that will never
-	// report itself finished.
-	defer close(c.closed)
 
 	err := &DisposedError{}
 	// Rejecting first means the disconnect below finds nothing in flight,
 	// so callers learn the client was disposed rather than merely dropped.
 	c.rejectPendingRequests(err)
-	c.setNotifying(true)
-	c.conn.Disconnect(err)
-	c.setNotifying(false)
-	c.state.Dispose()
+
+	// Tear the connection down but hold its notification: State() already
+	// reports Disconnected from here on, and the callback is delivered only
+	// once this client has finished disposing itself.
+	notify := c.conn.DisconnectDeferred(err)
+
+	// The work handleConnectionStateChange would have done for this transition,
+	// done here instead because the notification is deferred. Idempotent, so
+	// the deferred callback re-running it below is a no-op.
+	c.state.ClearAttachments()
 	c.invalidateAllSessionLeases()
+	c.rejectPendingRequests(err)
+	c.state.Dispose()
+
+	// Published before any listener runs, and before a panic in one could
+	// escape: a caller waiting here must never be stranded by someone else's
+	// callback, and a nested Close must find this already closed.
+	close(c.closed)
+
+	if notify != nil {
+		notify()
+	}
 
 	// Cleared last, so subscribers still see the disconnect that disposal
 	// caused. Cleared in place rather than replaced: the ids a live
@@ -629,12 +651,6 @@ func (c *Client) Close() error {
 	c.connectionStateListeners.clear()
 	c.mu.Unlock()
 	return nil
-}
-
-func (c *Client) setNotifying(notifying bool) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.notifying = notifying
 }
 
 func (c *Client) assertNotDisposed() error {
