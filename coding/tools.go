@@ -322,9 +322,13 @@ func readUint32LE(buf []byte, offset int) int {
 	return b(offset) + (b(offset+1) << 8) + (b(offset+2) << 16) + b(offset+3)*0x1000000
 }
 
-// detectSupportedImageMimeTypeFromFile reads up to the sniff window from a file
-// and identifies a supported image type (mime.ts detectSupportedImageMimeTypeFromFile).
-func detectSupportedImageMimeTypeFromFile(path string) string {
+// DetectSupportedImageMimeTypeFromFile reads up to the sniff window from a file
+// and identifies a supported image type (mime.ts
+// detectSupportedImageMimeTypeFromFile), returning "" when the file is not an
+// image pi can attach — including when it cannot be opened, matching pi's null.
+// Upstream de82e5367 promoted it to published SDK surface; the buffer variant it
+// delegates to is not published there and stays unexported here.
+func DetectSupportedImageMimeTypeFromFile(path string) string {
 	f, err := os.Open(path)
 	if err != nil {
 		return ""
@@ -423,7 +427,7 @@ func readTool(cwd string) agent.AgentTool {
 				// pi's fs.readFile on a directory raises Node's EISDIR error text.
 				return agent.AgentToolResult{}, fmt.Errorf("EISDIR: illegal operation on a directory, read")
 			}
-			if mime := detectSupportedImageMimeTypeFromFile(abs); mime != "" {
+			if mime := DetectSupportedImageMimeTypeFromFile(abs); mime != "" {
 				data, err := os.ReadFile(abs)
 				if err != nil {
 					return agent.AgentToolResult{}, err
