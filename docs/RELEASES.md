@@ -20,6 +20,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.84.19`](#v08419) | 2026-08-25 | `2f4e336` | `a79b37334` | pi-ai 0.84.3 | Release v0.84.3 crossed — catalog regen 536,642→558,804 B, 1267→1312 models, draining the whole eight-item generator queue and activating `allowedFallbackModels` (0→2) for the first time; PowerShell joins the built-in tools (opt-in, not default-active) on a shared shell-tool factory, moving the bash `command` schema description to "Shell command to execute"; OpenRouter `reasoning_details` deltas now concatenate into logical entries; `tool_choice` is omitted when a request carries no tools; the image MIME detector joins the public API; differential harness fully dist-backed again at 49 PASS / 0 KNOWN / 0 FAIL |
 | [`v0.84.18`](#v08418) | 2026-08-15 | `3c909e6` | `086c32e74` | pi-ai 0.84.2 | Release v0.84.2 crossed — the catalog regen (536,642 B, 1220→1267 models) drains the entire four-item generator queue: DeepSeek `max_tokens` field, `supportsStrictMode` on 34 cloudflare-ai-gateway models, deepseek-v4-flash low thinking level, and the KimiCLI/1.5 static headers gone; Google MAX_TOKENS stops with tool calls keep `length` instead of being clobbered to `toolUse`; Z.AI Coding Plan defaults glm-5.1→glm-5.3 plus a new every-default-resolves-in-catalog guard test; differential harness fully dist-backed for the first time — all 21 scenarios against the published 0.84.2 build, 21/21 PASS with an empty known-divergence baseline |
 | [`v0.84.17`](#v08417) | 2026-08-07 | `7a95c4b` | `e0900a6ea` | pi-ai 0.84.1 | Two releases crossed (v0.84.0, v0.84.1) — first catalog move since 0.83.0: 511,913 B, 1153→1220 models, 37→39 providers (+baseten data, +qwen-token-plan-individual), activating the already-ported `chat_template_args` / `stream_options.include_usage` paths; **breaking wire change** — session summaries replaced by durable `SessionMetadata`, so listing is no longer per-connection and one snapshot is broadcast to all peers; `Agent.Reset()` now refuses mid-run (API break); blocked tool calls can join the batch early-termination rule; telemetry gains an in-memory reference recorder; PI_* system-prompt guideline softened |
 | [`v0.83.16`](#v08316) | 2026-07-30 | `13088d2` | `c13ffe18` | pi-ai 0.83.0 | First catalog move since 0.82.0 — 1116→1153 models (477,229 B), regenerated from the 0.83.0 build and endpoint-pinned both ends; Qwen token-plan `reasoning_effort` via `thinkingLevelMap` under `??` semantics (a live request-body change for 27 models); `rawStopReason` preserved across the four ported providers with pi's `Provider stopped with: …` strings; tool calls carrying both `custom` and `function` treated as function calls; three missing `defaultModelPerProvider` entries restored (qwen-token-plan fallbacks were cloning the wrong context/token limits) |
@@ -42,6 +43,44 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.84.19
+Upstream sync `4af9d21d3 → a79b37334` (pi 0.84.3). 22 first-parent changes,
+no merges: 6 ports, 3 port-but-catalog-only, 13 n/a, 0 decide. **Release
+v0.84.3 crossed**, so the catalog was regenerated from the integrity-verified
+build — 536,642→558,804 B, 1267→1312 models across an unchanged 39 providers
+(+81/−36, 88 changed) — with the decision made by executing
+`JSON.stringify(MODELS)` against both builds rather than by reading git, and
+endpoint-pinned at both ends so the ported diff is exactly the upstream
+release diff. The regen drains the entire eight-item generator queue that had
+accumulated since 0.84.2, and the queue reopens at three for the next one.
+
+The regen also **activates a feature that had shipped dormant**: the catalog
+now carries `compat.allowedFallbackModels` for two anthropic models (0→2),
+so the server-side refusal-fallback path ported back in `a20597b` — until now
+exercised only by tests that built their own compat — is live against real
+catalog data for the first time.
+
+Behaviour: **PowerShell becomes a built-in tool** (upstream #8512), built on
+the same shared shell-tool factory bash now uses. It is opt-in: `ToolNames`
+gains it, the default active set does not, so the default system prompt is
+byte-unchanged. What does move on the wire is bash's own `command` parameter
+description, now "Shell command to execute". OpenRouter streams
+`reasoning_details` as deltas, and consecutive text/summary deltas now
+concatenate into one logical entry instead of piling up as separate ones — a
+session-format and request-body change that turns on JS's `??=` versus `||=`
+distinction, where an index of 0 survives but an empty format string does not.
+`tool_choice` is no longer sent on requests that carry no tools. A compaction
+summary that stopped on `length` is now rejected rather than installed as a
+checkpoint, so a truncated summary can no longer become permanent. And
+`DetectSupportedImageMimeTypeFromFile` joins the public Go API, matching what
+pi publishes — and only that, the buffer variant deliberately staying internal.
+
+Milestone: the differential harness is **fully dist-backed again**. All 27
+`src` scenarios flipped to `dist` once 0.84.3 shipped the surface they cover,
+and two new `src` scenarios were added for this cycle's own `tool_choice`
+change — 49 PASS / 0 KNOWN / 0 FAIL, with the new pair proven load-bearing by
+watching it fail against the pre-fix published build.
 
 ### v0.84.18
 Upstream sync `f3c406a9b → 086c32e74` (pi 0.84.2). 14 first-parent changes:
