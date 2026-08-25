@@ -29,6 +29,20 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
 
+- **2026-08-25 — the `pi-triage` skill's `port` definition is the single list of
+  in-scope trees, and this ledger is authoritative over it.** Closing an item
+  carried OPEN since 2026-08-22. The skill's verdict-assigning text named three
+  trees while these Rulings had put five more in scope (protocol, client, server,
+  telemetry, session-backends), and a second, correct map sat further down the
+  same file — so the skill held both the wrong answer and the right one. It never
+  bit only because those trees happened not to change. **Not a boundary change:**
+  no tree was added or removed, the definition was made to match rulings already
+  given. The duplicate map is gone; there is now ONE table, in the verdict rules.
+  If the table and this file ever disagree again, this file wins and the table
+  gets fixed. Two carve-outs from the 2026-08-01 ruling are formally retired as
+  dead text: `server/src/legacy/**` (deleted upstream in `05bf9df65`) and
+  `server/src/testing/**` (ported as `server/internal/servertest/`).
+
 - **2026-08-19 — an upstream REVERT is ported like any other change, even when
   it removes exported Go API the port shipped days earlier.** (re: `3a0b9a3ee`
   reverting `2509b5c03`, which the port had landed the previous day as
@@ -758,18 +772,50 @@ reason before being made green, including the two cases where a naive red would
 have been a compile error (the MIME export, asserted over package source; and the
 `CreateAllTools` invariant).
 
-### OPEN — carried from 2026-08-22, still needs an owner ruling
+### RESOLVED (2026-08-25) — the `pi-triage` scope definition now matches the rulings
 
-Unchanged and still unaddressed, now for a fourth cycle: `pi-triage`'s `port`
-**definition** reads "`packages/ai/src`, `packages/agent/src`,
-`packages/coding-agent/src/core|main|sdk`", which is narrower than the recorded
-rulings — it names none of protocol, client, server, telemetry or
-session-backends, and repeats the dead `sdk` element (`sdk.ts` lives at
-`src/core/sdk.ts`). It did not bite this cycle either, and again for the same
-reason: all five of those trees are tree-identical across the range. That is
-still luck, not coverage. Aligning the definition with the rulings is a
-non-port-boundary edit and belongs to the owner under the skill's own "escalate,
-don't ship" rule.
+Carried as OPEN since 2026-08-22 and closed this cycle on the owner's
+instruction. The problem was that `pi-triage`'s `port` **definition** — the text
+a triager actually reads when assigning a verdict — named only three trees
+(`packages/ai/src`, `packages/agent/src`,
+`packages/coding-agent/src/core|main|sdk`) while the recorded rulings had put
+five more in scope (protocol, client, server, telemetry, session-backends). The
+skill also carried a SECOND, correct map further down in its rulings section, so
+it contained both the wrong answer and the right one, several hundred lines
+apart. It never bit only because those five trees happened to be tree-identical
+in every cycle since — luck, not coverage.
+
+Not treated as a boundary change, and that is the point: writing already-decided
+rulings into the definition does not move the boundary, it makes the document
+match the boundary. No tree was added to or removed from scope.
+
+What changed in `.claude/skills/pi-triage/SKILL.md`:
+- The `port` definition is now a **single table** of every in-scope tree with its
+  Go home, living in the verdict rules where a triager reads it. The duplicate
+  map in the rulings section is replaced by a pointer to it, with an explicit
+  "do not reintroduce a second copy" and a note that this exact duplication is
+  what drifted.
+- The dead `src/sdk` element is gone (`sdk.ts` lives at `src/core/sdk.ts`,
+  already covered by `core`).
+- `modes/**` is named as excluded and enumerated as it exists at the pin
+  (`interactive/`, `rpc/`, `print-mode.ts`, `json-event.ts`), with the note that
+  the TUI is `packages/tui` and not a mode, and that `cmd/pi` is a hand-rolled
+  SDK CLI rather than a port of pi's mode layer. This is the gap that had to be
+  resolved from first principles for `a79b37334` this cycle.
+- `port-but-CATALOG-ONLY` is now a named verdict rather than folk knowledge, with
+  the ancestry rule (`merge-base --is-ancestor`, never log order) and the
+  execute-don't-read-git rule for deciding a regen.
+- The `decide` entry gains the standing formula and the four axes that are
+  SETTLED and must not be re-escalated (runtime Go does not target; `DRAFT:`
+  prefix; an upstream revert; a pre-existing parity gap in a ported function).
+
+**Two stale carve-outs were found and removed while verifying the table**, both
+inherited from the 2026-08-01 ruling and both already flagged as dead text
+elsewhere in the same skill: `server/src/legacy/**` no longer exists (upstream
+deleted it in `05bf9df65`, 2026-08-04), and `server/src/testing/**` is now ported
+as `server/internal/servertest/`. Every remaining row was checked against the pin
+and the repo — all 13 upstream trees present at `a79b37334`, all 11 Go homes
+present — rather than copied forward on trust.
 
 
 ## Drift at last sync check (2026-08-24, second check) — pin advanced to 4af9d21d3

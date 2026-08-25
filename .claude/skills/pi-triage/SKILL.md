@@ -29,16 +29,54 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
    hunks for non-trivial files). Note behavior, constants, model-visible
    strings, new/changed tests.
 3. **SCOPE** — verdict, one of:
-   - `port` — touches behavior we ported: `packages/ai/src` (except oauth,
-     images, cli, bedrock/vertex/mistral/azure/codex providers),
-     `packages/agent/src`, `packages/coding-agent/src/core|main|sdk` (except
-     extensions, trust-manager, bun, modes/tui).
-   - `n/a` — only touches non-ported surface (TUI, extensions runtime, OAuth,
-     project trust, unported providers, docs, CI, examples, packaging) — give
-     the specific reason.
-   - `decide` — changes the *boundary* itself (e.g. a feature that makes a
-     non-ported area load-bearing for the SDK, a new provider, a new tool).
-     Escalate to the user instead of deciding silently.
+   - `port` — touches behavior we ported. **These are the in-scope trees, all of
+     them.** The list below and the Go-home map in the Rulings section are the
+     same list; if they ever disagree, `docs/UPSTREAM.md` decides and you fix
+     both.
+
+     | upstream tree | Go home | notes |
+     |---|---|---|
+     | `packages/ai/src` | `ai/`, `ai/providers/` | except oauth acquisition, images, cli, and the bedrock/vertex/mistral/azure/codex providers |
+     | `packages/ai/scripts` | `ai/models_catalog.json` **at the next release regen** | generator-only; verdict is `port-but-CATALOG-ONLY` (see below) |
+     | `packages/agent/src` | `agent/` | `harness/**` and `search/**` are IN scope but DEFERRED — backlog them, never `n/a` (2026-08-07) |
+     | `packages/protocol/src` | `protocol/`, `protocol/cbor/` | 2026-08-01. Byte-golden to a PEER: CBOR + frame layout |
+     | `packages/client/src` | `client/` | 2026-08-01 |
+     | `packages/server/src` | `server/`, `server/unix/`, `server/internal/servertest/` | 2026-08-01. Both of that ruling's carve-outs are now stale and are NOT to be re-applied: `server/src/legacy/**` no longer exists (upstream deleted it in `05bf9df65`, 2026-08-04), and `server/src/testing/**` IS ported (`server/internal/servertest/`) |
+     | `packages/telemetry` | `telemetry/` | 2026-08-06, **runtime half only** — the schema/type-inference half (`defineTelemetrySchema`, `Infer*`, `SchemaTelemetrySpan`) is `n/a` and shares `src/index.ts` with the ported half, so this one must be split by HUNK |
+     | `packages/session-backends` | — | 2026-08-07: IN scope but DEFERRED, same as the harness tree |
+     | `packages/coding-agent/src/{core,client,utils}` | `coding/` | except extensions runtime, trust-manager, bun/packaging, `modes/**` (at the pin: `interactive/`, `rpc/`, `print-mode.ts`, `json-event.ts` — note the TUI itself is `packages/tui`, not a mode). The port has no `modes/` analogue at all; `cmd/pi` is a hand-rolled SDK CLI with a print flag of its own, not a port of pi's mode layer, so do not map a mode change onto it. Also excluded: agent-session-runtime. Two hunks land in `ai/providers/` instead: `utils/pi-user-agent.ts` → `pi_user_agent.go`, `core/provider-attribution.ts` → `attribution.go` |
+
+     `utils/` is judged **by its consumer, not its path** — in scope only when a
+     ported core file consumes it.
+   - `port-but-CATALOG-ONLY` — a `packages/ai/scripts` generator delta. It is a
+     `port`, but nothing lands until a release tag is crossed and the catalog is
+     regenerated from the npm build. Add it to the queue in `docs/UPSTREAM.md`
+     rather than porting it now.
+   - `n/a` — only touches non-ported surface — give the specific reason, and
+     prefer a **structural** check over precedent alone (grep the port for the
+     identifiers the change touches; a recorded absence is worth more than a
+     category). Non-ported: TUI, `modes/**`, extensions runtime, OAuth
+     acquisition, project trust, the unported providers, image generation,
+     bun/CLI packaging and installer/self-update, prompt-templates,
+     settings-manager, config migrations, agent-session-runtime,
+     the telemetry schema half, Radius OAuth + its host wiring, docs, CHANGELOG,
+     CI, `.github/`, `.pi/`, examples.
+   - `decide` — changes the *boundary* itself. Escalate to the user instead of
+     deciding silently.
+
+     **But do not reach for `decide` reflexively.** The owner's **standing
+     formula** — full pi SDK functionality as represented in Go, close faith to
+     the source architecture, leaning into Go's idioms — already answers most of
+     what looks new, and the deciding fact is almost always **published,
+     independently reachable surface** (`src/index.ts` or the package `exports`
+     map). Re-asking a settled question is itself a failure mode. In particular
+     these axes are SETTLED and must not be re-escalated: a transport or feature
+     depending on a runtime Go does not target (2026-08-11); a `DRAFT:` subject
+     prefix (2026-08-04); an upstream REVERT, even one removing Go API the port
+     shipped days earlier (2026-08-19, unless a cut tag already published it); a
+     pre-existing parity gap inside an already-ported function (2026-08-18).
+     A genuinely new question changes a seam — e.g. a transport that changes the
+     `ai.HTTPDoer` seam itself.
 4. For `port` verdicts: map upstream files → our Go files (e.g.
    `core/tools/grep.ts` → `coding/tools.go` + `coding/glob.go`), and flag
    whether any **byte-golden surface** is touched (system prompt, tool output
@@ -59,8 +97,17 @@ Specific rulings (from pilot runs — keep appending):
   matching npm build). The version bump/changelog parts are noise; ALSO note
   the release tag so /pi-sync refreshes the npm reference build.
   `image-models.generated.ts` is excluded (images unported).
+  A release tag ALSO drains the `port-but-CATALOG-ONLY` queue — but only of the
+  deltas that are **ancestors of the release sha**. Check that with
+  `git merge-base --is-ancestor <delta> <release>`, never by log order: generator
+  deltas landing after the release commit belong to the NEXT regen. And decide
+  the regen itself by EXECUTING `JSON.stringify(MODELS)` against both npm builds
+  (2026-07-30 ruling) — a git sweep can never see catalog data, since it is
+  generated at publish time and not committed upstream.
 - `packages/coding-agent/src/utils/` is in scope only if a ported core file
-  consumes it — judge by the consumer, not the path.
+  consumes it — judge by the consumer, not the path. Note this rule is
+  UNEXECUTABLE if the reconciliation sweep never printed the path, which is why
+  the sweep must never carve out a sub-path (see below).
 - `.pi/` files (upstream repo's own agent config/extensions) are always `n/a`.
 - Generated/data files count as ported surface when we embed their derivative
   (currently: models.generated.ts → ai/models_catalog.json — the only one).
@@ -116,23 +163,19 @@ Specific rulings (from pilot runs — keep appending):
 
   Exclusions belong in the CLASSIFICATION step, executed on a hunk, never in
   the pathspec. The pathspec's job is to put paths on your screen.
-- **A ported path does not imply a same-named Go package** — use this map to
-  classify what the sweep prints. Upstream trees with a Go home today:
-  `packages/ai/src` → `ai/` + `ai/providers/`; `packages/ai/scripts` →
-  `ai/models_catalog.json` at the next release regen (**every** catalog-only
-  queue delta lives in `scripts/generate-models.ts`, never in `src/`);
-  `packages/agent/src` → `agent/`, with `harness/**` and `search/**` in scope
-  but DEFERRED (add to the backlog — never a silent `n/a`);
-  `packages/protocol/src` → `protocol/` + `protocol/cbor/`;
-  `packages/client/src` → `client/`; `packages/server/src` → `server/` +
-  `server/unix/` + `server/internal/servertest/`; `packages/telemetry` →
-  `telemetry/` (runtime half only); `packages/session-backends` → in scope but
-  DEFERRED; `packages/coding-agent/src/{core,client,utils}` → `coding/` — except
-  two hunks that land in `ai/providers/` instead
-  (`utils/pi-user-agent.ts` → `ai/providers/pi_user_agent.go`,
-  `core/provider-attribution.ts` → `ai/providers/attribution.go`). The Rulings
-  in `docs/UPSTREAM.md` are authoritative over this map; if they disagree,
-  re-derive and fix the map.
+- **A ported path does not imply a same-named Go package.** Classify what the
+  sweep prints against the single table in the SCOPE section above — that table
+  is the ONE list of in-scope trees and their Go homes. It deliberately lives in
+  the verdict rules rather than down here, because a triager assigning a verdict
+  reads the verdict rules; a second copy in this section is how the two drifted
+  apart for four cycles (the copy up top named three trees while the rulings had
+  ruled in five more). **Do not reintroduce a second copy.** `docs/UPSTREAM.md`
+  is authoritative over both; if they disagree, re-derive and fix the table.
+  Two path facts worth carrying that the table does not:
+  - Catalog-only deltas live under `packages/ai/scripts`, but **not only in
+    `generate-models.ts`** — `650e7a612` added a sibling
+    (`scripts/openrouter-reasoning-options.ts`), so sweep the whole `scripts`
+    tree rather than grepping one filename.
 - **One upstream fix can touch multiple sites that map to ONE Go file — or to a
   differently-structured Go file** (2026-07-21 lesson: `1942b260` "env section
   ignored" fixed BOTH `auth/helpers.ts` and `amazon-bedrock.ts`; the port landed
