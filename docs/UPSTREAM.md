@@ -842,6 +842,36 @@ README's illustrative scenario table had drifted (five rows still said `src` for
 scenarios flipped in an earlier cycle); corrected, the two new rows added, and a
 note added that the column is a snapshot.
 
+### The differential harness is now IN the repo (`difftest/`)
+
+Promoted from `~/.cache/pi-diff`, where it was durable but unversioned: 49
+scenarios, a runner, a canonicalizer written twice as deliberate twins, and a
+known-divergence baseline, all on one disk with no history and no backup —
+while every cycle of this ledger cites its results as evidence. It now lives at
+`difftest/`, versioned in lockstep with the code it verifies, which is the only
+arrangement that holds: each sync re-pins it and flips scenarios based on the
+port's own state, and the two drifted whenever they were kept apart (this
+cycle's README table had five stale rows for exactly that reason).
+
+**The recorded objection was resolved, not overruled.** The harness README
+carried an emphatic note that it must *not* live in the repo because
+`github.com/sky-valley/pi` is published, public and MIT. `difftest/` therefore
+carries **its own `go.mod`**, and a subdirectory containing a `go.mod` is
+excluded from the parent module. Verified rather than asserted: a module zip
+built with `golang.org/x/mod/zip` — the same library the module proxy uses —
+over the repo root contains **297 files and zero `difftest/` entries**, so
+nobody running `go get github.com/sky-valley/pi` downloads a byte of it. The
+note has been rewritten in place to record both the move and the reasoning.
+
+Made clone-portable in the process: the `replace` is now `..` instead of an
+absolute path to one machine's home directory, and `PI_GO_REPO` defaults to the
+repo the harness sits in, so a fresh clone needs no configuration. The only
+remaining absolute paths are the two shared caches (`~/.cache/pi-npm`,
+`~/.cache/pi-upstream`), both overridable by env and both shared with the sync
+job. `out/`, `pisrc/` and the compiled binary are gitignored — all three are
+reproducible on demand. Verified green from the new location at **49 PASS /
+0 KNOWN / 0 FAIL**.
+
 ### Base gate
 
 `gofmt -l` clean, `go build ./...` and `go vet ./...` clean, `go test -race

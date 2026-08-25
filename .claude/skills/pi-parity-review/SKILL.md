@@ -48,9 +48,9 @@ and say so loudly in your report.
    `||`, `Math.round`, Number() coercion, insertion order, truthiness of `{}`);
    check the change's edge cases (empty, zero, absent-vs-null, astral chars).
 3. **If the change touches request building** (`ai/providers/openai*.go`
-   especially): re-run the differential request diff — `~/.cache/pi-diff/run.sh`
+   especially): re-run the differential request diff — `difftest/run.sh` (in this repo)
    (scenarios, both capture sides, canon scripts and the Go harness all live in
-   `~/.cache/pi-diff/`; its go.mod `replace` → this repo, and it captures via
+   `difftest/`; its go.mod `replace` → this repo, and it captures via
    OnPayload returning an error to halt pre-network). It prints per-scenario
    PASS / KNOWN (accepted debt in its `known-divergences.json`) / FAIL / FIXED
    (stale baseline entry), and exits 0 only when every scenario is PASS or

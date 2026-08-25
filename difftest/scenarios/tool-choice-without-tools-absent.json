@@ -1,0 +1,41 @@
+{
+  "name": "tool-choice-without-tools-absent",
+  "note": "fe37e9f9b: tool_choice is omitted when the request carries no tools (pi's `options?.toolChoice && params.tools?.length`). Landed AFTER pi-ai 0.84.3 (release 4e58f324f), so the published build still sends tool_choice unconditionally and cannot be the reference: backend is src and REQUIRES PI_UPSTREAM_SHA >= fe37e9f9b. Flip to \"dist\" once a release ships it (README rule). This is the absent-tools arm.",
+  "backend": "src",
+  "api": "openai-completions",
+  "entry": "streamSimple",
+  "model": {
+    "id": "gpt-4o-mini",
+    "name": "GPT-4o mini",
+    "api": "openai-completions",
+    "provider": "openai",
+    "baseUrl": "https://api.openai.com/v1",
+    "reasoning": false,
+    "input": [
+      "text"
+    ],
+    "cost": {
+      "input": 0.15,
+      "output": 0.6,
+      "cacheRead": 0,
+      "cacheWrite": 0
+    },
+    "contextWindow": 128000,
+    "maxTokens": 16384
+  },
+  "context": {
+    "systemPrompt": "You are a helpful assistant.",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Summarize the conversation.",
+        "timestamp": 1
+      }
+    ]
+  },
+  "options": {
+    "apiKey": "test-key",
+    "maxTokens": 1024,
+    "toolChoice": "none"
+  }
+}

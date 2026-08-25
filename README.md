@@ -20,8 +20,14 @@ for cancellation, goroutines for parallel tool execution).
 | [`ai`](ai/) | `@earendil-works/pi-ai` | Unified multi-provider LLM API: message/content/tool/model types, the channel-based `EventStream`, JSON-Schema tool validation, model catalog + cost, provider registry. |
 | [`ai/providers`](ai/providers/) | `pi-ai/providers` | Concrete providers, all with real `net/http` SSE: **faux** (deterministic test double), **Anthropic** Messages, **OpenAI** Chat Completions, **OpenAI** Responses (GPT-5/o-series), **Google** Gemini. These four wire APIs cover ~816 of pi's 999 catalog models. |
 | [`agent`](agent/) | `@earendil-works/pi-agent-core` | The agent runtime: low-level `AgentLoop`, the stateful `Agent` with tool calling, hooks, steering/follow-up queues, sequential + parallel tool execution. |
-| [`coding`](coding/) | `@earendil-works/pi-coding-agent` | The coding agent: the seven built-in tools (`read`, `write`, `edit`, `bash`, `ls`, `find`, `grep`), the system prompt builder (with AGENTS.override.md/AGENTS.md/CLAUDE.md context files + Agent Skills), model resolver, the session runner, and JSONL session persistence. |
+| [`coding`](coding/) | `@earendil-works/pi-coding-agent` | The coding agent: the eight built-in tools (`read`, `write`, `edit`, `bash`, `powershell`, `ls`, `find`, `grep`), the system prompt builder (with AGENTS.override.md/AGENTS.md/CLAUDE.md context files + Agent Skills), model resolver, the session runner, and JSONL session persistence. |
 | [`cmd/pi`](cmd/pi/) | `pi` CLI | The `pi` command — print mode, interactive REPL with slash commands, session resume, `pi models`, `pi sessions`. |
+
+Alongside those, [`difftest/`](difftest/) is the differential harness: for
+identical inputs it captures the exact HTTP request body that **real pi** builds
+and that this port builds, canonicalizes both, and diffs them. pi is ground
+truth. It is a separate Go module, so `go get github.com/sky-valley/pi` does not
+download it.
 
 ## Build & test
 
