@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -22,8 +23,11 @@ import (
 // `allowedFallbackModels` decides the request's `fallbacks` field, the beta
 // header, and the pricing a response a fallback served is billed at.
 //
-// The embedded catalog carries no allowedFallbackModels yet, so every test here
-// builds a model with explicit compat.
+// Most tests here build a model with explicit compat so each rule can be probed
+// in isolation. The embedded catalog carried NO allowedFallbackModels until the
+// 0.84.3 regen, which is the release that first ships them —
+// TestAnthropicCatalogFallbacksAreLive pins that activation against the real
+// catalog so the feature cannot silently go dormant again on a later regen.
 
 // anthropicSSEWithModel is the shared fixture plus the `model` field real
 // Anthropic responses always carry on message_start.
@@ -465,5 +469,71 @@ func TestAnthropicUsageModelLeavesCatalogModelAlone(t *testing.T) {
 	priced.ID, priced.Cost = "mutated", ai.ModelCost{Input: -1}
 	if model.ID != before.ID || !reflect.DeepEqual(model.Cost, before.Cost) {
 		t.Fatalf("the shared catalog model was mutated: id %q cost %+v", model.ID, model.Cost)
+	}
+}
+
+// TestAnthropicCatalogFallbacksAreLive pins the 0.84.3 activation: until that
+// regen the embedded catalog carried zero allowedFallbackModels, so every rule
+// above was exercised only against hand-built compat and the whole feature was
+// dormant in practice. The catalog now ships them for exactly two anthropic
+// models, and this test drives the REAL catalog compat onto the wire rather than
+// re-asserting the JSON — a regen that drops the field, reshapes the entries, or
+// breaks the decode fails here even though every other test in this file passes.
+func TestAnthropicCatalogFallbacksAreLive(t *testing.T) {
+	ai.LoadBuiltinModels()
+	models := ai.BuiltinModels().GetModels("anthropic")
+
+	// Exactly the two models the 0.84.3 catalog gives fallbacks to, and the
+	// order of each one's list, which is the order Anthropic receives.
+	want := map[string][]string{
+		"claude-fable-5": {"claude-opus-4-8", "claude-opus-5"},
+		"claude-opus-5":  {"claude-opus-4-8"},
+	}
+
+	got := map[string]*ai.Model{}
+	for _, m := range models {
+		if len(m.Compat) == 0 || !strings.Contains(string(m.Compat), "allowedFallbackModels") {
+			continue
+		}
+		got[m.ID] = m
+	}
+	if len(got) != len(want) {
+		ids := make([]string, 0, len(got))
+		for id := range got {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		t.Fatalf("catalog carries allowedFallbackModels for %v, want exactly %d models (%v)", ids, len(want), want)
+	}
+
+	for id, wantChain := range want {
+		model := got[id]
+		if model == nil {
+			t.Fatalf("catalog model anthropic/%s carries no allowedFallbackModels", id)
+		}
+
+		// Drive the real catalog compat through a stub and read the wire.
+		stub := startAnthropicFallbackStub(t, anthropicSSEWithModel)
+		onWire := *model
+		onWire.BaseURL = stub.url
+		runAnthropicFallbackRequest(t, &onWire)
+
+		fallbacks, ok := stub.body["fallbacks"].([]any)
+		if !ok {
+			t.Fatalf("%s: no fallbacks on the wire, body=%v", id, stub.body)
+		}
+		if len(fallbacks) != len(wantChain) {
+			t.Fatalf("%s: got %d fallbacks, want %d: %v", id, len(fallbacks), len(wantChain), fallbacks)
+		}
+		for i, wantModel := range wantChain {
+			entry, ok := fallbacks[i].(map[string]any)
+			if !ok {
+				t.Fatalf("%s: fallback %d is not an object: %v", id, i, fallbacks[i])
+			}
+			// Projected down to {model} only — no provider, no local pricing.
+			if len(entry) != 1 || entry["model"] != wantModel {
+				t.Fatalf("%s: fallback %d = %v, want exactly {\"model\":%q}", id, i, entry, wantModel)
+			}
+		}
 	}
 }

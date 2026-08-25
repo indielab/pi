@@ -12,12 +12,19 @@ import (
 // A slash prefix that is NOT a known provider is part of the model id:
 // OpenRouter-style ids resolve across providers.
 func TestResolveModelOpenRouterSlashedID(t *testing.T) {
-	r, err := ResolveModelPattern("ai21/jamba-large-1.7")
+	// npm 0.84.3 dropped the previous fixture (openrouter/ai21/jamba-large-1.7);
+	// re-point on catalog churn. Pick an id that is unique CASE-INSENSITIVELY
+	// across every provider — resolution folds case, so huggingface's
+	// "meta-llama/Llama-3.1-8B-Instruct" would win an id that only looks unique
+	// when compared byte-for-byte. This one is openrouter's alone and has survived
+	// every build the port has pinned (0.83.0, 0.84.1, 0.84.2, 0.84.3);
+	// "meta-llama" is not a pi provider id, which is what the case is about.
+	r, err := ResolveModelPattern("meta-llama/llama-4-scout")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(r.Model.Provider) != "openrouter" || r.Model.ID != "ai21/jamba-large-1.7" {
-		t.Fatalf("expected openrouter/ai21/jamba-large-1.7, got %s/%s", r.Model.Provider, r.Model.ID)
+	if string(r.Model.Provider) != "openrouter" || r.Model.ID != "meta-llama/llama-4-scout" {
+		t.Fatalf("expected openrouter/meta-llama/llama-4-scout, got %s/%s", r.Model.Provider, r.Model.ID)
 	}
 }
 
