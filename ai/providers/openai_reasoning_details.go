@@ -3,6 +3,7 @@ package providers
 import (
 	"bytes"
 	"encoding/json"
+	"strings"
 )
 
 // openai-completions `reasoning_details` — OpenRouter's structured reasoning
@@ -214,6 +215,211 @@ func stringifyReasoningDetail(raw json.RawMessage) json.RawMessage {
 		return raw
 	}
 	return json.RawMessage(rendered)
+}
+
+// appendOpenAIReasoningDetail appends detail to a sequence, merging it into the
+// previous entry when both are text or both are summary (pi
+// appendOpenAIReasoningDetail, upstream c5ad7c1b0). OpenRouter streams
+// reasoning_details as DELTAS: consecutive text/summary deltas are one logical
+// entry, while encrypted entries stay opaque and discrete. Only ADJACENT
+// entries merge, so an encrypted entry between two text deltas breaks the run
+// and the next text delta starts a fresh entry.
+func appendOpenAIReasoningDetail(details []json.RawMessage, detail json.RawMessage) []json.RawMessage {
+	// pi's `details.push({ ...detail })` is a shallow copy, so later merges
+	// mutate the STORED entry and never the arriving one; rendering the detail
+	// into bytes of its own is that copy.
+	normalized := stringifyReasoningDetail(detail)
+	if len(details) > 0 {
+		if merged, ok := mergeOpenAIReasoningDetail(details[len(details)-1], normalized); ok {
+			details[len(details)-1] = merged
+			return details
+		}
+	}
+	return append(details, normalized)
+}
+
+// mergeOpenAIReasoningDetail folds a text or summary delta into the preceding
+// entry of the same type, reporting false when the two do not merge and the
+// delta has to be appended on its own.
+//
+// Both arguments are stringifyReasoningDetail output, so the merge is a
+// rendering-level edit of the object pi mutates in place — and pi re-parses the
+// sequence out of the signature per arriving detail, so nothing carries between
+// calls that the bytes do not.
+func mergeOpenAIReasoningDetail(last, detail json.RawMessage) (json.RawMessage, bool) {
+	target, ok := decodeReasoningDetailMembers(last)
+	if !ok {
+		return nil, false
+	}
+	source, ok := decodeReasoningDetailMembers(detail)
+	if !ok {
+		return nil, false
+	}
+	detailType := source.stringMember("type")
+	if target.stringMember("type") != detailType {
+		return nil, false
+	}
+	switch detailType {
+	case "reasoning.text":
+		target.concat("text", source)
+		// `signature ||= detail.signature` is a FALSY fill, unlike the nullish
+		// fills below: an empty signature is overwritten, a null one too.
+		if isFalsyJSMember(target.get("signature")) {
+			target.assign("signature", source)
+		}
+	case "reasoning.summary":
+		target.concat("summary", source)
+	default:
+		return nil, false
+	}
+	// fillMissingCommonReasoningDetailFields, inlined. The assignment order is
+	// observable: a key the target lacks is created at the END of the object,
+	// so id, format and index land in that order behind what is already there.
+	if isNullishJSMember(target.get("id")) {
+		target.assign("id", source)
+	}
+	if isFalsyJSMember(target.get("format")) {
+		target.assign("format", source)
+	}
+	// `index ??=`, NOT `||=`: an index of 0 is falsy but PRESENT, and pi keeps it.
+	if isNullishJSMember(target.get("index")) {
+		target.assign("index", source)
+	}
+	return target.render(), true
+}
+
+// reasoningDetailMember is one member of a detail object: its key and its
+// already-rendered JSON value.
+type reasoningDetailMember struct {
+	key   string
+	value string
+}
+
+// reasoningDetailMembers is a detail broken into members in JSON.stringify
+// order. A merge needs that order because pi merges by MUTATING the stored
+// object: overwriting an existing key keeps it in place, while assigning a key
+// the object lacks appends it — so the merged entry's byte order is the order
+// of neither input on its own.
+type reasoningDetailMembers []reasoningDetailMember
+
+// decodeReasoningDetailMembers breaks a detail rendered by
+// stringifyReasoningDetail into its members. The input is already in
+// JSON.stringify shape — duplicate keys collapsed, array-index keys hoisted,
+// values normalized — so walking it in document order reproduces the parsed
+// object's own-property order, and re-rendering each value is the identity.
+func decodeReasoningDetailMembers(raw json.RawMessage) (reasoningDetailMembers, bool) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+	if tok, err := dec.Token(); err != nil || tok != json.Token(json.Delim('{')) {
+		return nil, false
+	}
+	var members reasoningDetailMembers
+	for dec.More() {
+		key, err := dec.Token()
+		if err != nil {
+			return nil, false
+		}
+		name, ok := key.(string)
+		if !ok {
+			return nil, false
+		}
+		var value strings.Builder
+		if err := jsStringifyValue(dec, &value); err != nil {
+			return nil, false
+		}
+		members = append(members, reasoningDetailMember{key: name, value: value.String()})
+	}
+	return members, true
+}
+
+// get returns a member's rendered value, and whether the object has the key at
+// all — the distinction `??=` and `||=` both start from.
+func (m reasoningDetailMembers) get(key string) (string, bool) {
+	for _, member := range m {
+		if member.key == key {
+			return member.value, true
+		}
+	}
+	return "", false
+}
+
+// stringMember returns a member known to hold a JSON string, decoded. An absent
+// or non-string member reads as "", which no caller here can reach: the
+// validator has already pinned `type`, `text` and `summary` as strings.
+func (m reasoningDetailMembers) stringMember(key string) string {
+	value, _ := m.get(key)
+	s, _ := jsonStringValue(json.RawMessage(value))
+	return s
+}
+
+// set overwrites a member in place, or appends it when the object lacks the key
+// — JS property assignment, whose ordering rule this whole type exists to keep.
+func (m *reasoningDetailMembers) set(key, value string) {
+	for i := range *m {
+		if (*m)[i].key == key {
+			(*m)[i].value = value
+			return
+		}
+	}
+	*m = append(*m, reasoningDetailMember{key: key, value: value})
+}
+
+// assign renders `target[key] = source[key]`. Assigning an ABSENT source member
+// assigns undefined, and JSON.stringify omits an undefined value, so the key
+// leaves the rendering entirely — which is what removing it here reproduces.
+func (m *reasoningDetailMembers) assign(key string, source reasoningDetailMembers) {
+	if value, ok := source.get(key); ok {
+		m.set(key, value)
+		return
+	}
+	for i := range *m {
+		if (*m)[i].key == key {
+			*m = append((*m)[:i], (*m)[i+1:]...)
+			return
+		}
+	}
+}
+
+// concat renders pi's `target[key] += source[key]` on two string members.
+func (m *reasoningDetailMembers) concat(key string, source reasoningDetailMembers) {
+	m.set(key, jsQuote(m.stringMember(key)+source.stringMember(key)))
+}
+
+// render serializes the members back into a detail, JSON.stringify-shaped.
+func (m reasoningDetailMembers) render() json.RawMessage {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	for i, member := range m {
+		if i > 0 {
+			buf.WriteByte(',')
+		}
+		buf.WriteString(jsQuote(member.key))
+		buf.WriteByte(':')
+		buf.WriteString(member.value)
+	}
+	buf.WriteByte('}')
+	return json.RawMessage(buf.String())
+}
+
+// isNullishJSMember reports whether a member is nullish in JS — the state `??=`
+// fills. That is absent, or the literal null.
+func isNullishJSMember(value string, present bool) bool {
+	return !present || value == "null"
+}
+
+// isFalsyJSMember reports whether a member is falsy in JS — the state `||=`
+// fills. Beyond nullish that is false, zero and the EMPTY STRING; the empty
+// string is what makes `||=` on `format` and `signature` behave differently
+// from `??=` on `id` and `index` in the very same function.
+func isFalsyJSMember(value string, present bool) bool {
+	if isNullishJSMember(value, present) {
+		return true
+	}
+	switch value {
+	case "false", "0", `""`:
+		return true
+	}
+	return false
 }
 
 // isOpenAICompletionsReasoningField reports whether a thinking signature names

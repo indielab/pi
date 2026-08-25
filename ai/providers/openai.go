@@ -439,6 +439,8 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			// a JSON array kept in the THINKING block's signature — OpenRouter
 			// requires the complete sequence back unmodified and in order, so the
 			// slot holds the sequence rather than one detail per tool call.
+			// OpenRouter streams them as DELTAS, so appending is a merge — see
+			// appendOpenAIReasoningDetail.
 			//
 			// pi reads the field off the untyped delta and guards it with
 			// `Array.isArray`, which ignores ONLY this field when a provider sends
@@ -463,7 +465,9 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingStart, ContentIndex: indexOf(thinkBuilder), Partial: output.Clone()})
 				}
-				thinkingDetails = append(thinkingDetails, stringifyReasoningDetail(rawDetail))
+				// Deltas, not finished entries: consecutive text/summary details
+				// fold into the entry they extend (upstream c5ad7c1b0).
+				thinkingDetails = appendOpenAIReasoningDetail(thinkingDetails, rawDetail)
 				appendedDetail = true
 			}
 			if appendedDetail {

@@ -832,3 +832,220 @@ data: [DONE]
 		t.Fatalf("the provider's own fields must survive verbatim: %s", wireReasoningDetails(t, msg))
 	}
 }
+
+// ---- delta merging (upstream c5ad7c1b0) ----
+
+// OpenRouter streams reasoning_details as DELTAS, so consecutive same-type
+// text/summary entries are ONE logical entry. The merge rules are two different
+// JS assignment operators in the same function — `??=` on id/index, `||=` on
+// format/signature — and the merged entry is byte-golden twice over: it is the
+// thinking block's signature in the session file AND the reasoning_details sent
+// back to the provider.
+func TestAppendOpenAIReasoningDetailMergesDeltas(t *testing.T) {
+	cases := []struct {
+		name   string
+		deltas []string
+		want   []string
+	}{
+		{
+			// `index ??= source.index`: 0 is falsy but PRESENT, so it stays.
+			// `||=` here would let the second delta's 7 through.
+			name: "an index of 0 is present and survives",
+			deltas: []string{
+				`{"type":"reasoning.text","text":"a","index":0}`,
+				`{"type":"reasoning.text","text":"b","index":7}`,
+			},
+			want: []string{`{"type":"reasoning.text","text":"ab","index":0}`},
+		},
+		{
+			// The operators diverge on the empty string: `format ||=` overwrites
+			// it, `id ??=` does not.
+			name: "an empty format is overwritten, an empty id is not",
+			deltas: []string{
+				`{"type":"reasoning.text","text":"a","id":"","format":""}`,
+				`{"type":"reasoning.text","text":"b","id":"src","format":"fmt"}`,
+			},
+			want: []string{`{"type":"reasoning.text","text":"ab","id":"","format":"fmt"}`},
+		},
+		{
+			// null is both nullish and falsy, so every fill fires. A key the
+			// target lacks is created at the END — `index` lands behind `id`.
+			name: "null members are filled and a new key appends",
+			deltas: []string{
+				`{"type":"reasoning.text","text":"a","signature":null,"id":null}`,
+				`{"type":"reasoning.text","text":"b","signature":"sig","id":"i","index":0}`,
+			},
+			want: []string{`{"type":"reasoning.text","text":"ab","signature":"sig","id":"i","index":0}`},
+		},
+		{
+			// Filling from a member the source does not have assigns undefined,
+			// and JSON.stringify omits an undefined value: the key is gone.
+			name: "an absent source member erases a null target member",
+			deltas: []string{
+				`{"type":"reasoning.text","text":"a","signature":null,"id":null,"index":1}`,
+				`{"type":"reasoning.text","text":"b"}`,
+			},
+			want: []string{`{"type":"reasoning.text","text":"ab","index":1}`},
+		},
+		{
+			name: "a non-empty signature is not replaced",
+			deltas: []string{
+				`{"type":"reasoning.text","text":"a","signature":"first"}`,
+				`{"type":"reasoning.text","text":"b","signature":"second"}`,
+			},
+			want: []string{`{"type":"reasoning.text","text":"ab","signature":"first"}`},
+		},
+		{
+			// The summary branch fills only the three common fields: a signature
+			// riding on a summary delta is not carried across, unlike the text
+			// branch's dedicated `signature ||=`.
+			name: "summary deltas merge without taking a signature",
+			deltas: []string{
+				`{"type":"reasoning.summary","summary":"a","index":2}`,
+				`{"type":"reasoning.summary","summary":"b","format":"f","signature":"dropped"}`,
+			},
+			want: []string{`{"type":"reasoning.summary","summary":"ab","index":2,"format":"f"}`},
+		},
+		{
+			name: "text and summary do not merge into each other",
+			deltas: []string{
+				`{"type":"reasoning.text","text":"a"}`,
+				`{"type":"reasoning.summary","summary":"b"}`,
+			},
+			want: []string{
+				`{"type":"reasoning.text","text":"a"}`,
+				`{"type":"reasoning.summary","summary":"b"}`,
+			},
+		},
+		{
+			// Encrypted entries stay opaque and discrete: they never merge with
+			// each other, and one between two text deltas breaks the run.
+			name: "an encrypted entry breaks a text run",
+			deltas: []string{
+				`{"type":"reasoning.text","text":"a"}`,
+				rdEncrypted,
+				rdEncrypted,
+				`{"type":"reasoning.text","text":"b"}`,
+			},
+			want: []string{
+				`{"type":"reasoning.text","text":"a"}`,
+				rdEncrypted,
+				rdEncrypted,
+				`{"type":"reasoning.text","text":"b"}`,
+			},
+		},
+		{
+			name: "three text deltas fold into one",
+			deltas: []string{
+				`{"type":"reasoning.text","text":"one "}`,
+				`{"type":"reasoning.text","text":"two "}`,
+				`{"type":"reasoning.text","text":"three"}`,
+			},
+			want: []string{`{"type":"reasoning.text","text":"one two three"}`},
+		},
+		{
+			// `push({ ...detail })` stores a copy of the object pi PARSED, so a
+			// redundant number form is already normalized away in the entry.
+			name: "a pushed entry is rendered, not carried verbatim",
+			deltas: []string{
+				`{"type":"reasoning.encrypted","data":"ENC","index":1.0}`,
+			},
+			want: []string{`{"type":"reasoning.encrypted","data":"ENC","index":1}`},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var details []json.RawMessage
+			for _, delta := range tc.deltas {
+				if !isOpenAIReasoningDetail(json.RawMessage(delta)) {
+					t.Fatalf("delta is not a valid reasoning detail: %s", delta)
+				}
+				details = appendOpenAIReasoningDetail(details, json.RawMessage(delta))
+			}
+			got := marshalOpenAIReasoningDetails(details)
+			want := "[" + strings.Join(tc.want, ",") + "]"
+			if got != want {
+				t.Fatalf("merged sequence =\n%s\nwant\n%s", got, want)
+			}
+		})
+	}
+}
+
+// Mirrors pi's "merges consecutive text and summary reasoning_details deltas
+// before replay" (openai-completions-reasoning-details.test.ts) end to end: the
+// same deltas, the same merged sequence in the signature, and the same bytes
+// replayed into the next request.
+func TestOpenAIStreamMergesReasoningDetailDeltas(t *testing.T) {
+	const (
+		textDelta              = `{"type":"reasoning.text","text":"The","index":0}`
+		textDeltaWithSignature = `{"type":"reasoning.text","text":" user wants the time.","signature":"sha256:text-signature","format":"openai-responses-v1","index":0}`
+		summaryDelta           = `{"type":"reasoning.summary","summary":"Looked","index":0}`
+		summaryDeltaWithFormat = `{"type":"reasoning.summary","summary":" up time.","format":"openai-responses-v1","index":0}`
+		laterSummaryDelta      = `{"type":"reasoning.summary","summary":"After encrypted block.","format":"openai-responses-v1","index":0}`
+	)
+	// `signature` and `format` sit behind `index` because the first delta of
+	// each run carried neither: the merge creates them, in the operators' order.
+	want := "[" +
+		`{"type":"reasoning.text","text":"The user wants the time.","index":0,"signature":"sha256:text-signature","format":"openai-responses-v1"}` + "," +
+		`{"type":"reasoning.summary","summary":"Looked up time.","index":0,"format":"openai-responses-v1"}` + "," +
+		rdEncrypted + "," +
+		laterSummaryDelta +
+		"]"
+
+	sse := `data: {"choices":[{"delta":{"reasoning_details":[` + textDelta + `]}}]}
+
+data: {"choices":[{"delta":{"reasoning_details":[` + textDeltaWithSignature + `]}}]}
+
+data: {"choices":[{"delta":{"reasoning_details":[` + summaryDelta + `]}}]}
+
+data: {"choices":[{"delta":{"reasoning_details":[` + summaryDeltaWithFormat + `]}}]}
+
+data: {"choices":[{"delta":{"reasoning_details":[` + rdEncrypted + `]}}]}
+
+data: {"choices":[{"delta":{"reasoning_details":[` + laterSummaryDelta + `]}}]}
+
+data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"f","arguments":"{}"}}]}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}
+
+data: [DONE]
+
+`
+	final := runOpenAIStream(t, sse, nil)
+	if final.StopReason != ai.StopToolUse {
+		t.Fatalf("stop: %s (%s)", final.StopReason, final.ErrorMessage)
+	}
+	think, sig := thinkingSig(final)
+	if think != "" {
+		t.Fatalf("thinking text = %q, want empty", think)
+	}
+	if sig != want {
+		t.Fatalf("thinking signature =\n%s\nwant\n%s", sig, want)
+	}
+
+	// The signature slot is also the session format and the replay channel, so
+	// the merged bytes have to come back out on the wire unchanged.
+	msg := replayAssistant(t, replayModel(), final.Content,
+		ai.ToolResultMessage{ToolCallID: "call_1", ToolName: "f", Content: ai.ContentList{ai.TextContent{Text: "ok"}}})
+	if got := wireReasoningDetails(t, msg); got != want {
+		t.Fatalf("replayed reasoning_details =\n%s\nwant\n%s", got, want)
+	}
+}
+
+// A delta arriving in the SAME array as its predecessor merges too: pi appends
+// every element of choice.delta.reasoning_details through the same path.
+func TestOpenAIStreamMergesReasoningDetailDeltasWithinOneDelta(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","text":"one "},{"type":"reasoning.text","text":"two"}]}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+	_, sig := thinkingSig(runOpenAIStream(t, sse, nil))
+	want := `[{"type":"reasoning.text","text":"one two"}]`
+	if sig != want {
+		t.Fatalf("signature =\n%s\nwant\n%s", sig, want)
+	}
+}
