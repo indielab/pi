@@ -543,8 +543,8 @@ func TestSummarizationPassesReasoningAndHeaders(t *testing.T) {
 }
 
 // TestSummarizationAbortedReturnsPartialText locks the compaction part of I13:
-// pi throws only on stopReason "error" (compaction.js:466); an aborted
-// summarization returns the text produced so far.
+// an abort is not a summarization failure in pi, so it returns the text produced
+// so far, while stopReason "error" fails.
 func TestSummarizationAbortedReturnsPartialText(t *testing.T) {
 	sess, reg := newCompactionTestSession(t)
 	reg.SetResponses([]providers.FauxResponseStep{
@@ -563,6 +563,38 @@ func TestSummarizationAbortedReturnsPartialText(t *testing.T) {
 	})
 	if got := sess.summarize(context.Background(), []agent.AgentMessage{ai.NewUserText("hi", 2)}, 16384); got != "" {
 		t.Fatalf("error summarization must fail, got %q", got)
+	}
+}
+
+// TestSummarizationLengthStopRejected locks upstream 97fa14e39 (#7048): a
+// summarization that stopped on "length" holds a truncated summary, so it is a
+// failure and must never become a session checkpoint — unlike an aborted one,
+// which still contributes the text it produced.
+func TestSummarizationLengthStopRejected(t *testing.T) {
+	sess, reg := newCompactionTestSession(t)
+	lengthStopped := func() {
+		reg.SetResponses([]providers.FauxResponseStep{
+			providers.FauxStatic(providers.FauxAssistantMessage(
+				ai.ContentList{ai.TextContent{Text: "## Goal\npartial summar"}}, ai.StopLength)),
+		})
+	}
+
+	lengthStopped()
+	if got := sess.summarize(context.Background(), []agent.AgentMessage{ai.NewUserText("hi", 1)}, 16384); got != "" {
+		t.Fatalf("length-stopped summarization must fail, got %q", got)
+	}
+
+	// ...and it leaves no checkpoint behind: the view stays the full transcript
+	// and nothing is cached for later requests.
+	lengthStopped()
+	messages := bigTranscript(6)
+	state := &compactionState{settings: compactionTestSettings}
+	got := sess.compact(context.Background(), state, messages)
+	if len(got) != len(messages) {
+		t.Fatalf("length-stopped summarization must not compact: got %d messages, want the full %d", len(got), len(messages))
+	}
+	if state.summary != "" {
+		t.Fatalf("truncated summary must not be checkpointed, got %q", state.summary)
 	}
 }
 

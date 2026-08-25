@@ -466,8 +466,8 @@ func (s *Session) summarize(ctx context.Context, older []agent.AgentMessage, res
 // (followed by <previous-summary>...</previous-summary> and the update prompt
 // variant when a previous summary exists), and sent with the dedicated
 // SUMMARIZATION_SYSTEM_PROMPT and a capped maxTokens. Returns ok=false where pi
-// throws (stopReason "error"); an aborted response returns the text produced so
-// far, like pi (compaction.js:466 throws only on "error").
+// fails the summarization (stopReason "error" or "length"); an aborted response
+// returns the text produced so far, like pi.
 func (s *Session) generateSummary(ctx context.Context, older []agent.AgentMessage, reserveTokens int, previousSummary, sessionID string) (string, bool) {
 	conversationText := serializeConversation(messagesAsLlm(older))
 
@@ -543,12 +543,29 @@ func (s *Session) summarizationRequestModel(ctx context.Context) *ai.Model {
 	return &requestModel
 }
 
+// summarizationFailed reports whether a summarization response is unsafe to
+// persist as a checkpoint (pi getSummarizationFailure, compaction.ts, upstream
+// 97fa14e39 / #7048). A "length" stop means generation hit the token cap, so the
+// summary is truncated mid-thought and must not become a session checkpoint —
+// only "error" used to fail. An abort is not a failure: pi keeps the text it
+// produced.
+//
+// pi builds a "<label> failed: <reason>" message here, with a different label at
+// each of its three call sites (Summarization, Turn prefix summarization, Branch
+// summarization). The port has one summarization choke point and no channel for
+// those strings — the same reason its tool-call guard below carries none — so it
+// ports the predicate, which is the whole of the observable behavior.
+func summarizationFailed(reason ai.StopReason) bool {
+	return reason == ai.StopError || reason == ai.StopLength
+}
+
 // completeSummarization sends one summarization request (pi completeSummarization
 // + createSummarizationOptions, compaction.ts:526-552): the session's API key,
 // headers, and — when the model supports reasoning and the session's thinking
 // level is set and not off — the thinking level are passed through. Returns
-// ok=false on a stream error (pi throws); aborted responses return the text
-// blocks produced so far, joined with "\n" (pi .map(c => c.text).join("\n")).
+// ok=false where pi fails the summarization (see summarizationFailed); aborted
+// responses return the text blocks produced so far, joined with "\n" (pi
+// .map(c => c.text).join("\n")).
 func (s *Session) completeSummarization(ctx context.Context, promptText string, maxTokens int, sessionID string) (string, bool) {
 	summarizationMessages := []ai.Message{ai.NewUserText(promptText, nowMillisCoding())}
 
@@ -586,7 +603,7 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	}
 	stream := streamFn(ctx, requestModel, ai.Context{SystemPrompt: summarizationSystemPrompt, Messages: summarizationMessages}, opts)
 	msg := stream.Result()
-	if msg == nil || msg.StopReason == ai.StopError {
+	if msg == nil || summarizationFailed(msg.StopReason) {
 		return "", false
 	}
 	// A model that called a tool anyway did not produce a summary, so the
