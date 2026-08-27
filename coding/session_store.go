@@ -222,6 +222,20 @@ func ResumeSession(path string) (*SessionRecorder, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Repair an unterminated tail (pi 0b5ee5d8b, issue #8345): a file whose last
+	// line has no trailing newline would have the next appended entry fused onto
+	// it, losing both. pi repairs inside its shared loader, but only AFTER the
+	// session header validates — a file that is not a pi session is never written
+	// to. The port keeps that ordering by repairing below the header check above;
+	// the read-only loaders (readSessionInfo, LoadSessionMessages,
+	// LoadSessionTree) split on "\n" and already tolerate an unterminated tail,
+	// so appending is the only path where the corruption can occur.
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		if _, err := f.WriteString("\n"); err != nil {
+			f.Close()
+			return nil, err
+		}
+	}
 	return &SessionRecorder{
 		path:    path,
 		id:      id,
