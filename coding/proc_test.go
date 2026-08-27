@@ -47,3 +47,61 @@ func TestBashKillsProcessTree(t *testing.T) {
 		t.Fatal("backgrounded grandchild survived cancellation (process tree not killed)")
 	}
 }
+
+// TestTaskkillPath locks pi's absolute resolution of taskkill.exe (upstream
+// 7af2d27dc, pi#6596): utils/shell.ts builds
+// `join(process.env.SystemRoot ?? "C:\\Windows", "System32", "taskkill.exe")`
+// instead of letting the OS search PATH. Expectations are assembled by hand
+// rather than with filepath.Join so the test pins the components and their
+// order instead of restating the implementation.
+func TestTaskkillPath(t *testing.T) {
+	sep := string(filepath.Separator)
+	suffix := sep + "System32" + sep + "taskkill.exe"
+
+	tests := []struct {
+		name       string
+		systemRoot string
+		unset      bool
+		want       string
+	}{
+		{
+			name:       "SystemRoot set",
+			systemRoot: "C:" + sep + "CustomWindows",
+			want:       "C:" + sep + "CustomWindows" + suffix,
+		},
+		{
+			// pi's `??` falls back only when the variable is absent.
+			name:  "unset SystemRoot falls back to C:\\Windows",
+			unset: true,
+			want:  `C:\Windows` + suffix,
+		},
+		{
+			// Present-but-empty is not nullish in pi, so join() keeps it and the
+			// empty leading segment simply drops out.
+			name:       "empty SystemRoot is not the nullish fallback",
+			systemRoot: "",
+			want:       "System32" + sep + "taskkill.exe",
+		},
+		{
+			name:       "trailing separator collapses",
+			systemRoot: "C:" + sep + "Windows" + sep,
+			want:       "C:" + sep + "Windows" + suffix,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			// t.Setenv first, so the process's real SystemRoot is restored on
+			// cleanup even in the unset case.
+			t.Setenv("SystemRoot", tt.systemRoot)
+			if tt.unset {
+				if err := os.Unsetenv("SystemRoot"); err != nil {
+					t.Fatalf("unset SystemRoot: %v", err)
+				}
+			}
+			if got := taskkillPath(); got != tt.want {
+				t.Errorf("taskkillPath() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
