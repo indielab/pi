@@ -59,7 +59,7 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      |---|---|---|
      | `packages/ai/src` | `ai/`, `ai/providers/` | **OUT:** `amazon-bedrock` and `openai-codex` (E2 — SigV4/eventstream; WebSocket/zstd) plus the helpers reachable only through them (`utils/node-http-proxy.ts`, `utils/abort-signals.ts` — NOT `utils/uuid.ts` or `session-resources.ts`, which are root-exported, have ported consumers, and in uuid's case are already ported), and `cli.ts` (E1). Azure, Mistral, Vertex, Radius, images and `auth/oauth/**` are IN as of 2026-08-27 — most are QUEUED, see below |
      | `packages/ai/scripts` | `ai/models_catalog.json` **at the next release regen** | generator-only; verdict is `port-but-CATALOG-ONLY`. Includes `generate-image-models.ts` as of 2026-08-27 |
-     | `packages/agent/src` | `agent/` | `harness/**` and `search/**` are IN scope but QUEUED (entry 8) — backlog them, never `n/a`, and **never escalate them again** (2026-08-27) |
+     | `packages/agent/src` | `agent/` (harness deltas land per the chosen shape — default `coding/`) | `harness/**` and `search/**` are IN scope, FUNDED and draining as QUEUED (entry 8) — backlog them, never `n/a`, and **never escalate them again** (2026-08-27) |
      | `packages/protocol/src` | `protocol/`, `protocol/cbor/` | 2026-08-01. Byte-golden to a PEER: CBOR + frame layout |
      | `packages/client/src` | `client/` | 2026-08-01 |
      | `packages/server/src` | `server/`, `server/unix/`, `server/internal/servertest/` | 2026-08-01. Both of that ruling's carve-outs are stale and NOT to be re-applied: `server/src/legacy/**` no longer exists (`05bf9df65`), and `server/src/testing/**` IS ported |
@@ -151,8 +151,11 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      - **anything E1 covers** — never escalate on a host hunk (2026-08-27);
      - **whether an adapter is in scope** — ask `go.mod`, not the user
        (2026-08-27);
-     - **the agent harness** — its status is settled-and-queued; carry the
-       backlog, do not re-open it (2026-08-27).
+     - **the agent harness** — FUNDED 2026-08-27 and actively draining as queue
+       entry 8. Carry its deltas as `port-but-QUEUED`; do not re-open the
+       scope question. The only harness matter still open is its SHAPE (see
+       "Harness shape" in `docs/UPSTREAM.md`), which is an owner
+       architecture call, not a per-commit triage question.
 
      **IN scope but no Go home is NOT a `decide`.** Open a Scope queue row
      instead — the tests already answered scope; only scheduling is open, and

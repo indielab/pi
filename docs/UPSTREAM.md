@@ -265,6 +265,27 @@ and no test reaches it, that is a `decide`: it means a test needs changing.
   discovery remains unimplemented (2026-08-18) and `TrustProject` does not
   enable it — when it is implemented, it ships gated.
 
+- **2026-08-27 (evening) — the agent harness is FUNDED. The owner ruled "harness
+  is in"; it is no longer deferred and the pin's asterisk is retired on
+  completion.** Supersedes the "decision owed" ruling below in its operative
+  half: the question is closed, only the schedule remains. Scope queue entry 8
+  becomes an active drain rather than a parked item, and triage carries its
+  backlog as ordinary queued deltas.
+  **Scoping fact established when the work started, and it changes the shape of
+  the job rather than the decision:** `packages/agent/src/harness` is NOT a
+  relocation of code the port already has. It is a **second, parallel agent
+  implementation** — upstream's reusable "durable harness" for embedders — that
+  coexists with `packages/coding-agent/src/core`, the thing the Go port actually
+  ported. Both exist at `ccfe79ed2` with genuinely different implementations
+  (compaction 848 vs 1012 lines; bash tool 161 vs 544). The coupling is narrow:
+  the ported coding-agent consumes exactly **9** harness symbols through the
+  package root — `createBashTool`, `createEditTool`, `BashToolOptions`,
+  `convertToLlm`, `buildSessionContext`, `CompactionResult`, `SessionStats`,
+  `COMPACTION_SUMMARY_PREFIX`, `createBranchSummaryMessage` — every one of which
+  the port has already absorbed into `coding/` while porting coding-agent.
+  **So the open question is no longer "port it?" but "in what SHAPE?"** — see
+  the Scope queue entry, which records the three options and the default.
+
 - **2026-08-27 — the agent harness is the one item still owed an owner
   decision, and "IN-but-deferred" is not an answer.** Recorded here so it stops
   being re-derived every cycle. Status is unchanged — IN scope since 2026-08-07,
@@ -887,10 +908,29 @@ Drain order is value-first, not size-first. Sizes are upstream source lines at
 | 5 | **Google Vertex** | 710 LOC | ~2 | IN under E2's transparent-wrapper rider (`@google/genai`). ADC is the risk — scope it to the credential paths Go reaches with stdlib. | — |
 | 6 | **Mistral conversations** | 963 LOC | ~1.5 | JSON over HTTPS, header auth. | — |
 | 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **Answer E2 for it in the first cycle that touches it:** it is a `better-sqlite3` backend, so whether a Go port needs a third-party driver (`mattn/go-sqlite3` is cgo; `modernc.org/sqlite` is pure Go but not `golang.org/x/*`) decides whether this entry survives at all. | — |
-| 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | ~24 | **Owner decision owed — see the 2026-08-27 harness ruling.** Fund it or rule it out under E1. Do not leave it here indefinitely; it is the reason this queue has an opening procedure and a rot rule. Backlog: **12**. | 12 (carried) |
+| 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **12**. | 12 (carried) |
 
-Entries 1–6 total **~10 port-cycles**. Entries 7 and 8 are not costed into that
-number: 7 is contingent on its own E2 answer, and 8 is not yet a commitment.
+Entries 1–6 total **~10 port-cycles**. Entry 7 is contingent on its own E2
+answer. Entry 8 is funded but its cost depends on the shape chosen below.
+
+### Harness shape — the open question, with a default
+
+`packages/agent/src/harness` duplicates surface `coding/` already implements.
+Three shapes, materially different in cost:
+
+| shape | what it means | cost | cost of being wrong |
+|---|---|---|---|
+| **(a) mirror upstream** | a new Go package mirroring `packages/agent/src/harness`, alongside `coding/` | ~24 cycles | two implementations of compaction, tools, session storage to keep in parity forever — the port's maintenance burden roughly doubles on its busiest surface |
+| **(b) delta only** *(default)* | treat `coding/` as the port's harness; port only what the harness has that `coding/` lacks, exposing it through existing packages | ~4-6 cycles, pending the delta measurement | the port's package layout keeps diverging from upstream's, so future harness commits need a mapping step rather than a path match |
+| **(c) extract** | refactor `coding/` to split a reusable harness core out, matching upstream's architecture | ~12 cycles + a public Go API break | a large refactor of shipped, working code for an architectural match no Go consumer has asked for |
+
+**Default is (b)**, on the port's own standing formula: full pi SDK
+functionality represented in Go, close faith to the source, leaning into Go's
+idioms — not a transliteration of upstream's package boundaries. (a) buys
+upstream's file layout at the price of duplicating the port's most
+parity-sensitive code; (c) rewrites working code for the same reason. Proceeding
+on (b) unless the owner says otherwise; the delta measurement is the next step
+and will put a real number on it.
 
 **Queue discipline.** An entry untouched for more than ~10 cycles is evidence
 the ruling that created it was wrong; re-open the ruling rather than letting the
