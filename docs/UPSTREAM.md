@@ -907,8 +907,8 @@ Drain order is value-first, not size-first. Sizes are upstream source lines at
 | 4 | **Azure OpenAI responses** | 364 LOC | ~1 | JSON over HTTPS, header auth. | — |
 | 5 | **Google Vertex** | 710 LOC | ~2 | IN under E2's transparent-wrapper rider (`@google/genai`). ADC is the risk — scope it to the credential paths Go reaches with stdlib. | — |
 | 6 | **Mistral conversations** | 963 LOC | ~1.5 | JSON over HTTPS, header auth. | — |
-| 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **Answer E2 for it in the first cycle that touches it:** it is a `better-sqlite3` backend, so whether a Go port needs a third-party driver (`mattn/go-sqlite3` is cgo; `modernc.org/sqlite` is pure Go but not `golang.org/x/*`) decides whether this entry survives at all. | — |
-| 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **12**. | 12 (carried) |
+| 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **Answer E2 for it in the first cycle that touches it:** it is a `better-sqlite3` backend, so whether a Go port needs a third-party driver (`mattn/go-sqlite3` is cgo; `modernc.org/sqlite` is pure Go but not `golang.org/x/*`) decides whether this entry survives at all. | **4** — `e7fb8eb2a`, plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` (reassigned from entry 8, 2026-08-27) |
+| 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **11** against its own tree (12 minus `e7fb8eb2a`, reassigned to entry 7) — of which 3 are already satisfied in `coding/` and 3 are upstream dead code, leaving **4** load-bearing. See "Harness delta" below. | 11 |
 
 Entries 1–6 total **~10 port-cycles**. Entry 7 is contingent on its own E2
 answer. Entry 8 is funded but its cost depends on the shape chosen below.
@@ -935,6 +935,89 @@ and will put a real number on it.
 **Queue discipline.** An entry untouched for more than ~10 cycles is evidence
 the ruling that created it was wrong; re-open the ruling rather than letting the
 row rot. That is the lesson entry 8 has been teaching for 16 cycles.
+
+### Harness delta, measured 2026-08-27 — and why most of entry 8 should wait
+
+The funding decision stands. The measurement changes what it buys, and the
+finding is large enough to state first:
+
+**Upstream's `AgentHarness` is not implemented at `ccfe79ed2`.**
+`packages/agent/src/harness/agent-harness.ts` is 508 lines of which ~450 are
+type declarations, and the class body has **27 sites** that throw
+`HarnessNotImplemented(...)` or return `this.unavailable(...)` — `prompt`,
+`skill`, `compact`, `navigateTree`, `resume`, `abort`, `steer`, `followUp`,
+`nextRun`, `cancelQueued`, `recordUsage`, `waitForIdle`, `peekAction`,
+`executeAction`, `runToCompletion`, `watch`, `lane`, `createLane`, `lanes`,
+`watchSession`, all of them. Its own test file is named
+`agent-harness-scaffold.test.ts`. Corroborating, verified by grep at the sha:
+`reducer.ts` (667 LOC) and `events.ts` (102 LOC) are **not exported from
+`packages/agent/src/index.ts`** and have exactly one importer each — their own
+tests; `startAiSpan`/`startHarnessSpan` are exported and called from nowhere in
+the monorepo. That tree took **79 first-parent commits in 90 days**.
+
+So a large part of entry 8 is upstream's own unfinished rewrite. Porting it now
+would mean porting a spec mid-flight, on the port's most parity-sensitive
+surface, to deliver a recovery kernel with nothing to recover, a durable
+protocol with no writer, and a session format with no data in it.
+
+**Correction to the funding ruling's scoping note.** It said the ported
+coding-agent consumes 9 harness symbols. Measured properly: those 9 names are
+coding-agent's own **local definitions** of the same names, not imports. The
+real coupling is **10 symbols through one file**,
+`packages/coding-agent/src/server/create-harness.ts` — `AgentHarness`,
+`AgentHarnessOptions`, `AgentHarnessTool`, `HarnessTool`, `ExecutionEnv`,
+`ExecutionToolContext`, `createBashTool`, `createEditTool`, `createReadTool`,
+`createWriteTool`. This strengthens shape (b) rather than weakening it: the two
+trees are independent implementations, not a shared core.
+
+**Symbol delta:** 333 export sites / 329 unique names → **93 HAVE, 171
+MISSING-REAL, 69 MISSING-MOOT**. `messages.ts` is 13/13 HAVE; `utils/truncate.ts`
+9/9; `compaction/utils.ts` 6/6; tools 26/36; compaction 22/34. The port's
+existing behavior is coding-agent's — the *richer* of the two implementations
+(544-line bash tool vs the harness's 161).
+
+#### Revised sequencing — buy the callable part, tripwire the rest
+
+| # | slice | est. | why now, or why not |
+|---|---|---|---|
+| ~~8a~~ | ~~Telemetry `pi.ai.request` emission~~ | **STRUCK** | Proposed, then struck the same day on a check that should have come first: **pi does not emit this span either.** `git grep -ln "startAiSpan\|pi.ai.request" ccfe79ed2 -- packages/ai` is EMPTY — the only callers of `startAiSpan`/`AI_TELEMETRY_SCHEMA` anywhere in the monorepo are the doc generator (`agent/scripts/generate-telemetry-docs.ts`) and their own test. The port's telemetry seam is latent because **pi's is latent too**, so emitting spans from `ai/` would be the port INVENTING behavior pi does not have — the one thing this project never does. The schema constant alone would be a dead constant, which is the same dead-code trap as `reducer.ts`. Re-open only when upstream's own request paths start a span. |
+| 8b | **`ExecutionEnv` injection** — the first and, at this pin, ONLY callable slice | 2-3 | The only gap an embedder actually hits today, and the one stable piece (7 commits/90d). Unblocks sandboxed and remote execution and makes `coding/tools.go` testable without a real filesystem. Independently, the recorded upstream `pi-ai` breaking-release direction is "pluggable env + credentials", so the port needs this whatever the harness verdict. Cost is not the ~250-350-line `LocalEnv`; it is threading it through `coding/tools.go` (1,858 lines) and its ~2,000 lines of tests. **Shape at the pin:** `ExecutionEnv extends FileSystem, Shell` — `FileSystem` is 13 methods (`absolutePath`, `joinPath`, `readTextFile`, `readTextLines`, `readBinaryFile`, `writeFile`, `appendFile`, `renameFile`, `fileInfo`, `listDir`, `canonicalPath`, `exists`, plus a `cwd` field) and `Shell` is 2 (`exec`, `cleanup`). Go rendering: `Result<T,E>` collapses to `(T, error)` and `abortSignal` to `context.Context`, per the port's standing conventions. **Land it as a vertical slice with a real consumer** — interface + `LocalEnv` + one tool rewired — never as a bare interface, which would be the same dead-code trap this section is about. |
+| 8c | **`SessionStorage`/`SessionRepo` seam + in-memory backend + the conformance suite** | 3.5-4 | Real value and a genuine reusable asset — `session/testing/conformance.ts` is a runner-agnostic 13-case backend acceptance suite the port lacks. **But it is a design decision, not a mechanical port:** the port's v3 recorder cannot fully conform (no records, no lanes, no facts). Do not fund until the owner wants pluggable durability as a product feature. |
+| 8d | **`search/`** (`b75be04d9`) | 0.5 | Published SDK surface (`export * from "./search/index.ts"`), and the port has zero analogue. But its entire substrate is the `SessionStorage` query surface, so it is worthless before 8c. Rides with 8c. |
+| — | **`reducer.ts`, JSONL v4, `agent-harness.ts`, `events.ts`** | ~6-8 | **DEFERRED, with a tripwire.** All four are dead or stub code upstream. Re-open on the first upstream commit that makes them real. |
+
+**The tripwire, so this is checkable rather than remembered:**
+`git show <sha>:packages/agent/src/harness/agent-harness.ts | grep -cE "HarnessNotImplemented|this\.unavailable\("`
+is **27** at `ccfe79ed2`. When that number starts falling, upstream is landing
+the writer side and the recovery kernel becomes portable against a real
+consumer. Triage checks it whenever a cycle touches the harness tree.
+
+Total: **~2-3 cycles for the callable delta** (8b alone, after 8a was struck), ~6-7 including the
+pluggable-backend feature, against ~10-13 for the whole architectural delta and
+~24 for shape (a).
+
+#### The 12-item backlog, enumerated — and recounted
+
+The counter is honest as a count of deferred commits (11 against
+`harness`/`search` + `e7fb8eb2a` against `session-backends` = 12, cross-checked
+against upstream; none reverted). It is misleading as work owed:
+
+| bucket | items | owed under shape (b) |
+|---|---|---|
+| **Already satisfied in `coding/`** | `ca21c1686` (single-edit guard → `coding/tools.go:664`), `8c2529dae` (root-md skills → `coding/resources.go`), `7af2d27dc` (taskkill → `coding/proc_taskkill.go`) | **zero** |
+| **Belongs to entry 7, not 8** | `e7fb8eb2a` (touches no harness/search source at all), plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` | move to entry 7 |
+| **Real code, no upstream consumer** | `14ad9801b`, `d1a305613`, `1dd235405` — the whole of `events.ts` | discretionary; deferred above |
+| **Genuine load-bearing delta** | `b75be04d9` (search, → 8d), and `7aca0d7b3` / `4a0e2f115` / `7bdb16c28`-harness (all edits to the harness's **own JSONL v4 store**, → 8c) | 4 items |
+| **Subsumed** | `a4453b79b`-harness — the file it retyped was deleted three commits later | zero |
+
+**Drain against the tree state at the pin, never by replaying the commits.**
+Two items prove it: `4a0e2f115`'s try/catch became a `Result` check, and
+`a4453b79b` retyped a field on a file `b75be04d9` then deleted. A commit-replay
+drain would port two things that no longer exist in that form.
+
+**Ledger corrections applied:** entry 7 now carries the four sqlite deltas;
+entry 8's backlog is 11 commits against its own tree, of which 3 are already
+satisfied and 3 are upstream dead code.
 
 ## Drift at last sync check (2026-08-27) — pin advanced to ccfe79ed2
 
