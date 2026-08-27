@@ -263,12 +263,12 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 | `baseten-thinking-off` | dist | the same, thinking OFF: `omitWhenOff`, `thinkingLevelMap.off` |
 | `gemini3-tool-ids` | dist | gemini major ≥ 3 ⇒ `functionCall`/`functionResponse` carry `id` |
 | `gemini25-tool-ids` | dist | control: gemini 2.x stays below the threshold, no `id` |
-| `tool-choice-without-tools-absent` | src | `tool_choice` omitted when the request carries no tools (pi's `params.tools?.length` guard) |
-| `tool-choice-with-tools-control` | src | control for the row above: with tools present the key IS sent |
+| `tool-choice-without-tools-present` | dist | `tool_choice` is sent even when the request carries no tools (upstream `6b36eb592` reverted the `params.tools?.length` guard) |
+| `tool-choice-with-tools-control` | dist | control for the row above: with tools present the key is sent too, so arm one passes on the guard's absence rather than on the key never being written |
 
 The `backend` column above is a snapshot. Scenarios flip `src` -> `dist` as releases
 ship the surface they cover, so re-read `scenarios/*.json` rather than this table when
-the distinction matters. As of pi-ai 0.84.3 the suite is 47 `dist` + 2 `src`.
+the distinction matters. As of pi-ai 0.84.3 the suite is 49 `dist` + 0 `src` — fully dist-backed.
 
 ## Adding a scenario
 
