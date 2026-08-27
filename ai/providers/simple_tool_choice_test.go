@@ -161,12 +161,12 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 	}
 }
 
-// openai-completions drops tool_choice when the request carries no tools
-// (upstream fe37e9f9b): gateways reject the pair, and a compaction request —
-// "summarize the conversation", no tools, toolChoice "none" — is exactly it.
-// Asserted on the captured payload, so it is the wire body and not just the
-// option plumbing.
-func TestSimpleToolChoiceOmittedWithoutTools(t *testing.T) {
+// openai-completions forwards an explicit tool_choice even when the request
+// carries no tools (upstream 6b36eb592, reverting fe37e9f9b): the request shape
+// is a compaction one — "summarize the conversation", no tools — and pi honors
+// the caller's choice rather than dropping it. Asserted on the captured payload,
+// so it is the wire body and not just the option plumbing.
+func TestSimpleToolChoiceSentWithoutTools(t *testing.T) {
 	model := &ai.Model{
 		ID: "gpt-5.5", Api: ai.APIOpenAICompletions, Provider: "openai",
 		Input: []string{"text"}, MaxTokens: 4096,
@@ -176,10 +176,10 @@ func TestSimpleToolChoiceOmittedWithoutTools(t *testing.T) {
 		return StreamSimpleOpenAICompletions(t.Context(), m, r, o)
 	}, model, req, ai.ToolChoiceNone)
 
-	if _, ok := body["tool_choice"]; ok {
-		t.Fatalf("tool_choice must not be sent without tools: %v", body["tool_choice"])
+	if body["tool_choice"] != "none" {
+		t.Fatalf("tool_choice = %v, want none without tools", body["tool_choice"])
 	}
 	if _, ok := body["tools"]; ok {
-		t.Fatalf("tools must not be sent either: %v", body["tools"])
+		t.Fatalf("tools must still not be sent: %v", body["tools"])
 	}
 }

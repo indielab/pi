@@ -586,8 +586,11 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 		CacheRetention: ai.CacheNone,
 		SessionID:      sessionID,
 	}}
-	// A summary is text, never a tool call (pi 90305d90a).
-	opts.ToolChoice = ai.ToolChoiceNone
+	// pi 6b36eb592 withdrew the `toolChoice: "none"` 90305d90a had forced here:
+	// summarization leaves the option absent and lets the provider default apply.
+	// A summary is still text, never a tool call — the guard below enforces that
+	// on the response instead of on the request.
+	//
 	// pi ed867e909 withdrew getAnthropicSummarizationFallback: server-side refusal
 	// fallback is no longer requested per call site. The Anthropic provider derives
 	// it from the model's catalog compat, so a summarization request gets it on the

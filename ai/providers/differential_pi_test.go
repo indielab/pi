@@ -919,19 +919,23 @@ func TestDiffToolChoice(t *testing.T) {
 	}
 }
 
-// Mirrors pi's "omits toolChoice when no tools are provided"
-// (openai-completions-tool-choice.test.ts, upstream fe37e9f9b). Gateways reject
-// tool_choice sent without tools, and compaction is the request shape that hits
-// it: a choice with nothing to choose from. pi guards on `params.tools?.length`,
-// so an EMPTY tools array suppresses it too — not only an absent one.
-func TestDiffOmitsToolChoiceWithoutTools(t *testing.T) {
+// Mirrors pi's "includes toolChoice when no tools are provided"
+// (openai-completions-tool-choice.test.ts, upstream 6b36eb592, which reverted
+// the `params.tools?.length` half of the guard fe37e9f9b had added). An
+// explicitly requested choice is forwarded whatever the tools param looks like,
+// so all three shapes buildParams can produce carry it: no tools at all, the
+// empty array sent for a conversation with tool history, and real tools.
+func TestDiffSendsToolChoiceWithoutTools(t *testing.T) {
 	body := mustBuildOpenAIParams(t, openAIModel(nil), baseReq(), &OpenAIOptions{ToolChoice: "none"})
-	if has(body, "tools") || has(body, "tool_choice") {
-		t.Fatalf("no tools must omit tools and tool_choice alike: %v", body)
+	if has(body, "tools") {
+		t.Fatalf("tools must stay omitted with no tools and no history: %v", body["tools"])
+	}
+	if body["tool_choice"] != "none" {
+		t.Errorf("tool_choice = %v, want none with no tools at all", body["tool_choice"])
 	}
 
 	// Tool history with no tools: `tools` is the empty array a proxied Anthropic
-	// model needs, and its length is 0, so tool_choice still goes.
+	// model needs, and tool_choice rides along with it.
 	req := baseReq()
 	req.Messages = append(req.Messages,
 		ai.AssistantMessage{
@@ -947,8 +951,8 @@ func TestDiffOmitsToolChoiceWithoutTools(t *testing.T) {
 	if !ok || len(tools) != 0 {
 		t.Fatalf("tools should still be the empty array, got %T %v", body2["tools"], body2["tools"])
 	}
-	if has(body2, "tool_choice") {
-		t.Fatalf("an empty tools array must suppress tool_choice too: %v", body2["tool_choice"])
+	if body2["tool_choice"] != "none" {
+		t.Errorf("tool_choice = %v, want none alongside the empty tools array", body2["tool_choice"])
 	}
 
 	// With tools, nothing changes.

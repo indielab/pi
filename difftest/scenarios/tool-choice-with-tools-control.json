@@ -1,7 +1,7 @@
 {
   "name": "tool-choice-with-tools-control",
-  "note": "fe37e9f9b: tool_choice is omitted when the request carries no tools (pi's `options?.toolChoice && params.tools?.length`). Landed AFTER pi-ai 0.84.3 (release 4e58f324f), so the published build still sends tool_choice unconditionally and cannot be the reference: backend is src and REQUIRES PI_UPSTREAM_SHA >= fe37e9f9b. Flip to \"dist\" once a release ships it (README rule). Control arm: with tools present the key IS sent, which is what proves arm one omits it by the length guard rather than by never sending it.",
-  "backend": "src",
+  "note": "6b36eb592: an explicitly requested tool_choice is sent whatever the tools param looks like, reverting the `options?.toolChoice && params.tools?.length` guard of fe37e9f9b. Control arm for tool-choice-without-tools-present: with tools present the key is sent, so the pair shows the tools param has stopped mattering rather than the key never being sent. Because fe37e9f9b landed and was reverted entirely after pi-ai 0.84.3 (release 4e58f324f), the published build never contained the guard and matches upstream HEAD again — so backend is back to \"dist\", the stronger reference.",
+  "backend": "dist",
   "api": "openai-completions",
   "entry": "streamSimple",
   "model": {

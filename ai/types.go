@@ -35,8 +35,9 @@ const (
 type ProviderId = string
 
 // ToolChoice is the provider-neutral tool selection for simple requests (pi
-// ToolChoice, upstream e5dde9a76). The empty value is pi's absent option, which
-// every provider treats as "auto".
+// ToolChoice, upstream e5dde9a76). The empty value is pi's absent option; what
+// that means is the adapter's business, not this type's (upstream 6b36eb592
+// stopped documenting it as "auto").
 type ToolChoice string
 
 const (
@@ -916,7 +917,8 @@ type SimpleStreamOptions struct {
 	StreamOptions
 	Reasoning ThinkingLevel
 	// ToolChoice selects whether the model may call tools. Empty is pi's absent
-	// option; providers default to "auto".
+	// option; when omitted, adapters use provider-specific behavior (upstream
+	// 6b36eb592).
 	ToolChoice ToolChoice
 	// Deferred asks a capable provider to return a DeferredHandle and continue
 	// the request asynchronously; nil is pi's absent `deferred`. Providers that

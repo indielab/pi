@@ -378,10 +378,12 @@ func TestSummarizationFallbacksComeFromTheCatalog(t *testing.T) {
 	}
 }
 
-// TestSummarizationDisablesTools pins pi 90305d90a: summarization requests ask
-// for no tools, and a response that called one anyway is treated as a failed
-// summarization rather than checkpointed.
-func TestSummarizationDisablesTools(t *testing.T) {
+// TestSummarizationDoesNotOverrideToolChoice pins pi 6b36eb592, which withdrew
+// the `toolChoice: "none"` 90305d90a had put on summarization requests: the
+// option is left absent so the provider's own default applies. The guard that
+// outlived it stands — a response that called a tool anyway is a failed
+// summarization, not something to checkpoint.
+func TestSummarizationDoesNotOverrideToolChoice(t *testing.T) {
 	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
 		Models: []providers.FauxModelDefinition{{ID: "faux-1", ContextWindow: 200000}},
 	})
@@ -404,8 +406,8 @@ func TestSummarizationDisablesTools(t *testing.T) {
 	if got := sess.summarize(context.Background(), older, 16384); got == "" {
 		t.Fatal("expected a summary from a text-only response")
 	}
-	if capturedChoice != ai.ToolChoiceNone {
-		t.Fatalf("summarization must request toolChoice=none, got %q", capturedChoice)
+	if capturedChoice != "" {
+		t.Fatalf("summarization must leave toolChoice absent, got %q", capturedChoice)
 	}
 
 	// Same request, but the model calls a tool: no summary survives.
