@@ -17,8 +17,10 @@ commit-by-commit sync pipeline that keeps it current.
 
 ## The scope boundary (rewritten 2026-08-27 — read this before triaging anything)
 
-**The port is pi's SDK half.** Scope is decided by three **exclusion tests**.
-A hunk is `n/a` if and only if one of them fires; **otherwise it is IN scope**.
+**The port is pi's SDK half.** Scope is decided by two **exclusion tests** —
+E1 and E3. A hunk is `n/a` if and only if one of them fires; **otherwise it is
+IN scope**. (E2 was an exclusion test until 2026-08-27; the owner replaced it
+with a consult — see below.)
 
 *The tests are the authority.* Every path list — in this file, in the
 `pi-triage` skill, anywhere — is a **derived convenience**. When a list and a
@@ -91,46 +93,59 @@ Three riders:
   (2026-08-27 project-trust ruling). Host code that only *asks* the user stays
   out; the decision and the gate come in the moment the port grows the consumer.
 
-### E2 — `go.mod` decides the adapters
+### E2 — a third-party dependency is a CONSULT, not an exclusion
 
-**Policy: the port's runtime module depends only on the Go standard library and
-`golang.org/x/*`.** From that, adapter scope follows mechanically:
+**Owner ruling, 2026-08-27 (evening): if it is part of the pi SDK, the port
+supports it. Full stop. If porting it would need an outside Go dependency, that
+is a question to bring to the owner — not a reason to decide `n/a` on your
+own.**
 
-> A `packages/ai/src` adapter is **OUT** iff parity would require a third-party
-> Go module for the **transport**, the **wire encoding**, or the **credential
-> chain**. Otherwise it is IN — the transport is HTTP(S) or SSE, the body is
-> JSON the adapter itself constructs, and auth reduces to static headers.
+This replaces the earlier form of E2, which made "would this add a `require`
+line?" an automatic exclusion and ruled bedrock and codex permanently out. That
+was the port drawing its own boundary rather than following pi's, which is the
+thing this whole rewrite exists to stop. **E2 is therefore no longer an
+exclusion test** — the boundary has two: E1 and E3.
 
-One checkable question: *would porting this add a `require` line?* It resolves
-today as **OUT** for `amazon-bedrock` (SigV4 signer + `vnd.amazon.eventstream`
-framing + the AWS credential chain) and `openai-codex` (WebSocket + zstd), and
-**IN** for `azure-openai-responses`, `mistral-conversations`, `google-vertex`,
-`radius` + `radius-config`, and the `auth/oauth/**` acquisition tree. Bedrock
-additionally has no coherent parity target at all: its wire is authored by
-`aws-sdk-js`, not by pi.
+The standing preference still holds and is worth stating: the port's runtime
+module today depends only on the Go standard library and `golang.org/x/*`, and
+staying there is a real asset (trivial cross-compilation, no cgo, a tiny supply
+chain). So the rule is:
 
-Riders:
-- **A transparent vendor wrapper does not fire E2.** `@google/genai` wraps
-  JSON/SSE over HTTPS, and the port already hand-rolls what `openai` and
-  `@anthropic-ai/sdk` do. Only an *opaque* SDK — one that signs, frames binary,
-  or discovers credentials — counts.
-- Helpers reachable **only** through an E2-excluded adapter
-  (`utils/node-http-proxy.ts`, `utils/abort-signals.ts`) are out with it, and
-  come back in with it if the policy ever changes. Two files that look like they
-  belong here do NOT: `utils/uuid.ts` is root-exported, consumed by ported
-  surface (`core/session-manager.ts`, `core/compaction/compaction.ts`) and is
-  **already ported** (`coding/session_store.go`, `server/uuid.go`); and
-  `session-resources.ts` is root-exported with a second consumer in
-  `core/agent-session.ts`. Both are in scope.
-- **The one escalation E2 can still raise is "should the port take a
-  dependency?"** — an owner policy question with a durable answer, not a
-  per-commit judgement.
+> A `packages/ai/src` adapter is **IN scope**, like everything else the SDK
+> publishes. If a faithful Go port of it would require a third-party module for
+> the transport, the wire encoding, or the credential chain, **open a Scope
+> queue row flagged `CONSULT` and put the specific question to the owner** —
+> which module, how large, what it buys, and whether hand-rolling is credible.
+> Do not port it silently, and do not `n/a` it.
 
-**Accepted consequence, decided here rather than deferred:** the catalog keeps
-shipping **125** `amazon-bedrock` + `openai-codex` models (118 + 7, verified in
-`ai/models_catalog.json`) that list and then fail at stream time with no
-registered api. Accepted, not filtered — pi's catalog is the source, regen is
-whole-file, and inventing a filter would be a divergence from pi.
+Riders that survive unchanged: a hunk inside such an adapter is still `port`
+when its Go home is a shared or generic function (the 2026-07-21 lesson); and a
+transparent JSON/SSE-over-HTTPS vendor wrapper like `@google/genai` raises no
+dependency question at all, since the port already hand-rolls what the `openai`
+and `@anthropic-ai/sdk` packages do.
+
+**Consequence: `amazon-bedrock` and `openai-codex` are back IN scope**, as queue
+entries with open consults. The catalog's 125 bedrock + codex models stop being
+"accepted debt that fails at stream time" and become work with a question in
+front of it.
+
+#### The two consults, stated so they can be answered
+
+- **Bedrock** — needs AWS SigV4 request signing, the `vnd.amazon.eventstream`
+  binary frame format, and the AWS credential chain. **A dependency may not
+  actually be required:** SigV4 is a documented HMAC-SHA256 derivation (~300 Go
+  lines) and eventstream is a documented length-prefixed binary format with
+  CRC32 (~200 lines); both are hand-rollable against stdlib `crypto/*` and
+  `hash/crc32`. The alternative is `aws-sdk-go-v2`, which is large and pulls a
+  wide tree. **Question: hand-roll, or take the SDK?** Note pi's own bedrock
+  wire is authored by `aws-sdk-js`, so there is no pi-authored byte sequence to
+  be faithful to — parity here means "AWS accepts it", which argues for
+  hand-rolling and testing against the documented format.
+- **Codex** — needs a WebSocket transport and zstd decompression. zstd is not
+  credibly hand-rollable; `klauspost/compress` is the standard Go answer.
+  WebSocket could be hand-rolled (RFC 6455) or taken from
+  `nhooyr.io/websocket`. **Question: take `klauspost/compress` (and probably a
+  WebSocket module), or leave codex queued until someone wants it?**
 
 ### E3 — no Go representation
 
@@ -161,7 +176,7 @@ type-system feature with no runtime residue at all.
 | `core/resource-loader.ts` source-info accessors | E1 (only-consumers clause) | 2026-07-30. Sole upstream consumer is `modes/interactive`. |
 | `packages/evals` | E1 | 1,277 LOC. Upstream's own eval harness. |
 | — | — | **Not out, but not homed:** `packages/coding-agent/src/server/**` (161 LOC, `create-harness.ts`) was ruled IN on 2026-08-07 and is the harness factory; it is covered by Scope queue entry 8, not by this table. |
-| `amazon-bedrock`, `openai-codex` (+ `utils/node-http-proxy.ts`, `utils/abort-signals.ts`) | E2 | **3,912 LOC** of implementation (9,052 with upstream's own tests): bedrock 1,459, codex 2,228, helpers 225. |
+| — | — | **No longer out:** `amazon-bedrock` and `openai-codex` are IN scope with open dependency consults (see E2). They are queue entries, not exclusions. |
 | the telemetry schema/type-inference half | E3 | Split by HUNK — shares `src/index.ts` with the ported runtime half. |
 | the trust prompt, selector and store — `cli/project-trust.ts`, `modes/interactive/components/trust-selector.ts`, and `core/trust-manager.ts`'s persistence | E1 | Asking the user is host surface. The trust *decision and gate* are ported (2026-08-27), so **`core/trust-manager.ts` splits by HUNK** — see the table above. |
 | docs, CHANGELOG, CI, `.github/`, `.pi/`, examples, per-package `package.json` version bumps, repo-root `scripts/` | — | Always noise; not a scope question. |
@@ -264,6 +279,23 @@ and no test reaches it, that is a `decide`: it means a test needs changing.
   selector and store stay out under E1 (asking the user is host surface); the decision and the gate are in. Ancestor `<project>/.agents/skills`
   discovery remains unimplemented (2026-08-18) and `TrustProject` does not
   enable it — when it is implemented, it ships gated.
+
+- **2026-08-27 (evening) — if it is part of the pi SDK, the port supports it; a
+  third-party dependency is a CONSULT, not a reason to say no.** Owner ruling,
+  overturning the `go.mod`-decides form of E2 written earlier the same day.
+  That rule made "would this add a `require` line?" an automatic exclusion and
+  put `amazon-bedrock` and `openai-codex` permanently out — which was **the port
+  drawing its own boundary instead of following pi's**, the exact failure this
+  rewrite exists to stop. A dependency question is a real question, but it is
+  the owner's to answer per case, not a standing no.
+  **Effects:** the boundary now has TWO exclusion tests (E1, E3), not three.
+  Bedrock and codex return to scope as queue entries with open consults, each
+  stated concretely enough to answer — bedrock may need no dependency at all
+  (SigV4 and `vnd.amazon.eventstream` are both hand-rollable against stdlib),
+  codex realistically needs `klauspost/compress` for zstd. The session-backends
+  sqlite question (entry 7) becomes the same kind of consult rather than a
+  precondition for the entry surviving. The stdlib-plus-`golang.org/x/*`
+  preference stays as a stated preference and a thing to weigh, not a gate.
 
 - **2026-08-27 (evening) — the agent harness is FUNDED. The owner ruled "harness
   is in"; it is no longer deferred and the pin's asterisk is retired on
@@ -907,7 +939,9 @@ Drain order is value-first, not size-first. Sizes are upstream source lines at
 | 4 | **Azure OpenAI responses** | 364 LOC | ~1 | JSON over HTTPS, header auth. | — |
 | 5 | **Google Vertex** | 710 LOC | ~2 | IN under E2's transparent-wrapper rider (`@google/genai`). ADC is the risk — scope it to the credential paths Go reaches with stdlib. | — |
 | 6 | **Mistral conversations** | 963 LOC | ~1.5 | JSON over HTTPS, header auth. | — |
-| 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **Answer E2 for it in the first cycle that touches it:** it is a `better-sqlite3` backend, so whether a Go port needs a third-party driver (`mattn/go-sqlite3` is cgo; `modernc.org/sqlite` is pure Go but not `golang.org/x/*`) decides whether this entry survives at all. | **4** — `e7fb8eb2a`, plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` (reassigned from entry 8, 2026-08-27) |
+| 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **CONSULT (2026-08-27):** it is a `better-sqlite3` backend, so a Go port needs a driver — `modernc.org/sqlite` (pure Go, no cgo) or `mattn/go-sqlite3` (cgo). Under the evening ruling that is a question for the owner, not a reason to drop the entry; the entry stands either way. | **4** — `e7fb8eb2a`, plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` (reassigned from entry 8, 2026-08-27) |
+| 9 | **Bedrock adapter** | 1,459 LOC | ~3 + consult | **CONSULT: hand-roll SigV4 + eventstream (~500 Go lines, stdlib only), or take `aws-sdk-go-v2`?** Back in scope 2026-08-27. Note pi's bedrock wire is authored by `aws-sdk-js`, so there is no pi-authored byte sequence to match — parity means "AWS accepts it", which favours hand-rolling. | — |
+| 10 | **Codex adapter** | 2,228 LOC | ~3 + consult | **CONSULT: take `klauspost/compress` for zstd (and likely a WebSocket module), or leave queued?** Back in scope 2026-08-27. zstd is not credibly hand-rollable. | — |
 | 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **11** against its own tree (12 minus `e7fb8eb2a`, reassigned to entry 7) — of which 3 are already satisfied in `coding/` and 3 are upstream dead code, leaving **4** load-bearing. See "Harness delta" below. | 11 |
 
 Entries 1–6 total **~10 port-cycles**. Entry 7 is contingent on its own E2

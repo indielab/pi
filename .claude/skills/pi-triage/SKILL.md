@@ -45,8 +45,10 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      - **E1 host surface** — its job ends at presenting to / prompting /
        configuring a human at a terminal, or packaging the Node artifact, **or
        its only consumers are host surface**. Applies to a HUNK, not just a file.
-     - **E2 `go.mod`** — a `packages/ai/src` adapter is OUT iff parity needs a
-       third-party Go module for transport, wire encoding, or credential chain.
+     - **E2 is NOT an exclusion** (owner ruling 2026-08-27 evening). If it is
+       part of the pi SDK, the port supports it. If a faithful port would need
+       an outside Go dependency, open a Scope queue row flagged `CONSULT` and
+       put the specific question to the owner — never `n/a` it yourself.
      - **E3 no Go representation** — a TS type-level construct with no runtime
        behavior (today: the telemetry schema half only).
 
@@ -57,7 +59,7 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
 
      | upstream tree | Go home | notes |
      |---|---|---|
-     | `packages/ai/src` | `ai/`, `ai/providers/` | **OUT:** `amazon-bedrock` and `openai-codex` (E2 — SigV4/eventstream; WebSocket/zstd) plus the helpers reachable only through them (`utils/node-http-proxy.ts`, `utils/abort-signals.ts` — NOT `utils/uuid.ts` or `session-resources.ts`, which are root-exported, have ported consumers, and in uuid's case are already ported), and `cli.ts` (E1). Azure, Mistral, Vertex, Radius, images and `auth/oauth/**` are IN as of 2026-08-27 — most are QUEUED, see below |
+     | `packages/ai/src` | `ai/`, `ai/providers/` | **OUT:** only `cli.ts` (E1). `amazon-bedrock` and `openai-codex` are IN scope with open dependency consults (queue entries 9 and 10) as of 2026-08-27 — do NOT mark them `n/a`. Azure, Mistral, Vertex, Radius, images and `auth/oauth/**` are IN as of 2026-08-27 — most are QUEUED, see below |
      | `packages/ai/scripts` | `ai/models_catalog.json` **at the next release regen** | generator-only; verdict is `port-but-CATALOG-ONLY`. Includes `generate-image-models.ts` as of 2026-08-27 |
      | `packages/agent/src` | `agent/` (harness deltas land per the chosen shape — default `coding/`) | `harness/**` and `search/**` are IN scope, FUNDED and draining as QUEUED (entry 8) — backlog them, never `n/a`, and **never escalate them again** (2026-08-27) |
      | `packages/protocol/src` | `protocol/`, `protocol/cbor/` | 2026-08-01. Byte-golden to a PEER: CBOR + frame layout |
@@ -122,9 +124,7 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      This is the rule that removes most of the per-commit cost — roughly half of
      all mixed commits are mixed only because of host content.
 
-     Also `n/a`: `amazon-bedrock` and `openai-codex` plus `utils/node-http-proxy.ts`
-     and `utils/abort-signals.ts` (E2); the telemetry schema half (E3 — split by HUNK, it
-     shares `src/index.ts` with the ported runtime half); the trust prompt,
+     Also `n/a`: the telemetry schema half (E3 — split by HUNK, it shares `src/index.ts` with the ported runtime half); the trust prompt,
      selector and store; and the always-noise set — docs, CHANGELOG, CI,
      `.github/`, `.pi/`, examples, per-package `package.json` version bumps,
      repo-root `scripts/`.
@@ -149,8 +149,8 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
        earlier (2026-08-19, unless a cut tag already published it);
      - a pre-existing parity gap inside an already-ported function (2026-08-18);
      - **anything E1 covers** — never escalate on a host hunk (2026-08-27);
-     - **whether an adapter is in scope** — ask `go.mod`, not the user
-       (2026-08-27);
+     - **whether an SDK adapter is in scope** — it is. A dependency question is
+       a `CONSULT` queue row, not a `decide` and never an `n/a` (2026-08-27);
      - **the agent harness** — FUNDED 2026-08-27 and actively draining as queue
        entry 8. Carry its deltas as `port-but-QUEUED`; do not re-open the
        scope question. The only harness matter still open is its SHAPE (see
