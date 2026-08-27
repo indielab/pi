@@ -162,12 +162,20 @@ This port reproduces pi's core engine and coding agent faithfully:
   usage/cost, and the full provider control surface (temperature, maxTokens, headers, retries,
   prompt caching, `onPayload`/`onResponse`, context compaction) is plumbed end-to-end.
 
-Not yet ported from the (much larger) upstream: the interactive TUI, the wire APIs that
-need heavy auth machinery (AWS Bedrock SigV4, Google Vertex ADC, Azure OpenAI) or are niche
-(Mistral, OpenAI Codex), OAuth token acquisition/refresh, project-trust gating, and the
-extensions runtime. The architecture leaves clean seams for all of these — providers
-register through `ai.RegisterApiProvider`, tools are plain `agent.AgentTool` values, and the
-agent loop is provider- and tool-agnostic.
+Not yet ported from the (much larger) upstream: the interactive TUI and the host/mode layer
+that drives it, the extensions runtime, and the wire APIs whose transport or credential chain
+Go cannot reach without a third-party dependency (AWS Bedrock's SigV4 + eventstream framing,
+OpenAI Codex's WebSocket + zstd). OAuth token acquisition and the Azure/Mistral/Vertex/Radius
+adapters are in scope and queued — see `docs/UPSTREAM.md`. The architecture leaves clean seams
+for all of these: providers register through `ai.RegisterApiProvider`, tools are plain
+`agent.AgentTool` values, and the agent loop is provider- and tool-agnostic.
+
+**Project trust.** pi discovers project-local resources under `<cwd>/.pi` only once a project
+is trusted, and answers *untrusted* for any host with no UI to prompt with. This port is
+headless, so it takes that same default: `<cwd>/.pi/skills` is **not** scanned unless you opt
+in with `SessionOptions.TrustProject` (or call `coding.LoadSkillsWithTrust`). Opt in only for
+repositories you trust — a project skill's name and description are rendered into the system
+prompt. The interactive trust prompt and trust store are host surface and remain unported.
 
 ## License
 

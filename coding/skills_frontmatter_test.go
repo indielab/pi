@@ -31,7 +31,7 @@ func TestLoadSkillsPreservesDiscoveryOrder(t *testing.T) {
 	writeSkill(t, filepath.Join(cwd, ".pi", "skills", "a-project-skill"),
 		"---\nname: a-project-skill\ndescription: project skill\n---\n")
 
-	skills := LoadSkills(cwd)
+	skills, _ := LoadSkillsWithTrust(cwd, true)
 	if len(skills) != 2 {
 		t.Fatalf("expected 2 skills, got %d: %+v", len(skills), skills)
 	}
@@ -48,7 +48,7 @@ func TestSkillBlockScalarDescription(t *testing.T) {
 	writeSkill(t, filepath.Join(cwd, ".pi", "skills", "folded"),
 		"---\nname: folded\ndescription: >-\n  Line one of the description\n  continues on line two.\n---\nbody\n")
 
-	skills := LoadSkills(cwd)
+	skills, _ := LoadSkillsWithTrust(cwd, true)
 	if len(skills) != 1 {
 		t.Fatalf("folded-description skill did not load: %+v", skills)
 	}
@@ -95,7 +95,8 @@ func TestSkillDisableModelInvocationStrictBool(t *testing.T) {
 		"---\nname: yaml-caps-true\ndescription: d\ndisable-model-invocation: True\n---\n")
 
 	byName := map[string]Skill{}
-	for _, s := range LoadSkills(cwd) {
+	loaded, _ := LoadSkillsWithTrust(cwd, true)
+	for _, s := range loaded {
 		byName[s.Name] = s
 	}
 	if len(byName) != 3 {
@@ -167,7 +168,7 @@ func TestSkillWithLeadingBOMLoads(t *testing.T) {
 	writeSkill(t, filepath.Join(cwd, ".pi", "skills", "bom-skill"),
 		"\ufeff---\nname: bom-skill\ndescription: Loads despite the byte order mark\n---\nbody\n")
 
-	skills := LoadSkills(cwd)
+	skills, _ := LoadSkillsWithTrust(cwd, true)
 	if len(skills) != 1 {
 		t.Fatalf("BOM-prefixed skill did not load: %+v", skills)
 	}

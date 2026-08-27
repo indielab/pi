@@ -293,16 +293,55 @@ func AgentsSkillsDir() string {
 	return filepath.Join(home, ".agents", "skills")
 }
 
-// LoadSkills discovers skills under the user (~/.pi/agent/skills and
-// ~/.agents/skills) and project (<cwd>/.pi/skills) skill directories.
+// LoadSkills discovers skills under the USER skill directories only
+// (~/.pi/agent/skills and ~/.agents/skills). The project directory
+// <cwd>/.pi/skills is NOT scanned.
+//
+// That omission is pi's behavior, not a gap. pi discovers the project skills
+// dir only inside `if (projectTrusted)` (package-manager.ts:2417 at
+// ccfe79ed2), and resolveProjectTrusted answers FALSE for a host with no UI
+// to ask with (`if (!options.projectTrustContext.hasUI) return false`,
+// project-trust.ts). This port is headless by construction — it is an SDK plus
+// a non-interactive CLI, and it ships no trust prompt — so untrusted is the
+// faithful default and scanning unconditionally was a parity INVERSION on a
+// security default: a skill's name and description go into the system prompt
+// (FormatSkillsForPrompt) together with an instruction to read the file when
+// the task matches, so a hostile repo could put attacker-authored text in
+// front of the model just by being the cwd.
+//
+// A host that has actually established trust calls LoadSkillsWithTrust, or
+// sets SessionOptions.TrustProject.
+//
+// Note pi's ancestor <project>/.agents/skills directories are a SEPARATE
+// discovery that this port does not implement at all (2026-08-18 ruling);
+// passing projectTrusted does not enable them.
+//
 // Diagnostics are discarded; see LoadSkillsWithDiagnostics.
 func LoadSkills(cwd string) []Skill {
 	skills, _ := LoadSkillsWithDiagnostics(cwd)
 	return skills
 }
 
-// LoadSkillsWithDiagnostics is LoadSkills but also returns validation diagnostics.
+// LoadSkillsWithDiagnostics is LoadSkills but also returns validation
+// diagnostics. Like LoadSkills it treats the project as UNTRUSTED.
 func LoadSkillsWithDiagnostics(cwd string) ([]Skill, []SkillDiagnostic) {
+	return LoadSkillsWithTrust(cwd, false)
+}
+
+// sessionSkills is the session's skill discovery: LoadSkillsWithTrust with the
+// diagnostics dropped, since a session has nowhere to surface them (pi reports
+// them through its resource UI, which is host surface and unported).
+func sessionSkills(cwd string, projectTrusted bool) []Skill {
+	skills, _ := LoadSkillsWithTrust(cwd, projectTrusted)
+	return skills
+}
+
+// LoadSkillsWithTrust is LoadSkillsWithDiagnostics with the project-trust
+// decision supplied by the caller. Passing true scans <cwd>/.pi/skills, which
+// is what pi does once isProjectTrusted() holds; passing false is pi's
+// headless answer. Only a host that has established trust — by prompting, or
+// by an explicit operator opt-in — may pass true.
+func LoadSkillsWithTrust(cwd string, projectTrusted bool) ([]Skill, []SkillDiagnostic) {
 	var skills []Skill
 	var diags []SkillDiagnostic
 	seen := map[string]bool{}
@@ -321,8 +360,14 @@ func LoadSkillsWithDiagnostics(cwd string) ([]Skill, []SkillDiagnostic) {
 	// each). No sorting.
 	s1, d1 := loadSkillsFromDir(filepath.Join(AgentDir(), "skills"))
 	add(s1, d1)
-	s2, d2 := loadSkillsFromDir(filepath.Join(cwd, ConfigDirName, "skills"))
-	add(s2, d2)
+	// pi reaches this directory only under `if (projectTrusted)`. Discovery
+	// ORDER is preserved either way: skipping the project dir cannot change how
+	// a name already claimed by the user dir resolves, and cannot promote a
+	// later dir into its slot, because add() is first-wins over a shared map.
+	if projectTrusted {
+		s2, d2 := loadSkillsFromDir(filepath.Join(cwd, ConfigDirName, "skills"))
+		add(s2, d2)
+	}
 	// The AGENTS-convention user directory comes last, where upstream also puts
 	// it among its four discovery calls. Since names dedup first-wins, appending
 	// can only ADD skills that no pi directory already defines — it cannot change

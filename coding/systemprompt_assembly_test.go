@@ -63,6 +63,10 @@ func TestNewSessionCustomPromptStillAssembles(t *testing.T) {
 		Model:        reg.GetModel(),
 		Cwd:          cwd,
 		SystemPrompt: "You are a custom agent.",
+		// The fixture skill lives in <cwd>/.pi/skills, which is gated on
+		// project trust. This test is about assembly ORDER, not the gate —
+		// see TestSystemPromptOmitsUntrustedProjectSkill for that.
+		TrustProject: true,
 	})
 	prompt := s.Agent.State().SystemPrompt
 

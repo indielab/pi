@@ -98,7 +98,7 @@ disable-model-invocation: true
 ---
 `), 0o644)
 
-	skills := LoadSkills(cwd)
+	skills, _ := LoadSkillsWithTrust(cwd, true)
 	if len(skills) != 2 {
 		t.Fatalf("expected 2 skills loaded, got %d", len(skills))
 	}

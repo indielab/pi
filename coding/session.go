@@ -53,6 +53,15 @@ type SessionOptions struct {
 	APIKey        string
 	SessionID     string
 
+	// TrustProject enables discovery of project-local resources under
+	// <cwd>/.pi — currently the skills directory. It is pi's isProjectTrusted()
+	// and it defaults to FALSE, which is the answer pi itself gives a host with
+	// no UI to prompt with (project-trust.ts). Set it only after trust has
+	// actually been established: a project skill's name and description reach
+	// the system prompt, so an untrusted repo would otherwise get to author part
+	// of the prompt. See LoadSkillsWithTrust.
+	TrustProject bool
+
 	// Models, when set, is the model runtime used to resolve request auth for
 	// summarization requests (pi AgentSession's _modelRuntime). It is needed
 	// only for providers that carry their endpoint in the credential rather
@@ -383,7 +392,7 @@ func NewSession(opts SessionOptions) *Session {
 		PromptGuidelines: collectPromptGuidelines(tools),
 		Cwd:              cwd,
 		ContextFiles:     LoadProjectContextFiles(cwd),
-		Skills:           LoadSkills(cwd),
+		Skills:           sessionSkills(cwd, opts.TrustProject),
 	})
 	thinking := opts.ThinkingLevel
 	if thinking == "" {
