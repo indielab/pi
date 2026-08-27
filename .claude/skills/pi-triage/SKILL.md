@@ -19,8 +19,11 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
   checkout can show the exact opposite of what the pin holds (2026-08-11: the
   tree was ~2 months behind and read as though a ported change had been
   reverted), and a fresh one is at `origin/main`, which is ahead of the pin.
-- The authoritative non-port list and current pin live in `docs/UPSTREAM.md`
-  ("Current pin" section). Read it before judging anything.
+- **The authoritative scope boundary is `docs/UPSTREAM.md` -> "The scope
+  boundary" — three PREDICATES, rewritten 2026-08-27. Read it before judging
+  anything.** It replaced an exclusion path-list; the tests beat every list,
+  including the tables in this file. Also read "Scope queue" (what is IN scope
+  but has no Go base yet) and the "Current pin" table.
 
 ## Per change, produce:
 1. **WHY** — intent, from the commit/PR message (`git log -1 --format=%B`) and
@@ -29,54 +32,138 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
    hunks for non-trivial files). Note behavior, constants, model-visible
    strings, new/changed tests.
 3. **SCOPE** — verdict, one of:
-   - `port` — touches behavior we ported. **These are the in-scope trees, all of
-     them.** The list below and the Go-home map in the Rulings section are the
-     same list; if they ever disagree, `docs/UPSTREAM.md` decides and you fix
-     both.
+   - `port` — touches behavior we ported.
+
+     **Scope is decided by the three EXCLUSION TESTS in `docs/UPSTREAM.md` ->
+     "The scope boundary" (rewritten 2026-08-27). Read them; they are
+     authoritative over this table.** A hunk is `n/a` iff one fires; otherwise
+     it is IN. The table below is a *derived convenience* — if it and a test
+     disagree, the test wins, you port accordingly, and you fix the table in the
+     same commit.
+
+     The three tests, in one line each:
+     - **E1 host surface** — its job ends at presenting to / prompting /
+       configuring a human at a terminal, or packaging the Node artifact, **or
+       its only consumers are host surface**. Applies to a HUNK, not just a file.
+     - **E2 `go.mod`** — a `packages/ai/src` adapter is OUT iff parity needs a
+       third-party Go module for transport, wire encoding, or credential chain.
+     - **E3 no Go representation** — a TS type-level construct with no runtime
+       behavior (today: the telemetry schema half only).
+
+     **Reachability is evidence, not a test.** Root-exported means "probably SDK
+     surface" and is why the default is IN — but it argues one direction only
+     and NEVER overrides E1-E3. pi root-exports its whole application, TUI
+     components included.
 
      | upstream tree | Go home | notes |
      |---|---|---|
-     | `packages/ai/src` | `ai/`, `ai/providers/` | except oauth acquisition, images, cli, and the bedrock/vertex/mistral/azure/codex providers |
-     | `packages/ai/scripts` | `ai/models_catalog.json` **at the next release regen** | generator-only; verdict is `port-but-CATALOG-ONLY` (see below) |
-     | `packages/agent/src` | `agent/` | `harness/**` and `search/**` are IN scope but DEFERRED — backlog them, never `n/a` (2026-08-07) |
+     | `packages/ai/src` | `ai/`, `ai/providers/` | **OUT:** `amazon-bedrock` and `openai-codex` (E2 — SigV4/eventstream; WebSocket/zstd) plus the helpers reachable only through them (`utils/node-http-proxy.ts`, `utils/abort-signals.ts` — NOT `utils/uuid.ts` or `session-resources.ts`, which are root-exported, have ported consumers, and in uuid's case are already ported), and `cli.ts` (E1). Azure, Mistral, Vertex, Radius, images and `auth/oauth/**` are IN as of 2026-08-27 — most are QUEUED, see below |
+     | `packages/ai/scripts` | `ai/models_catalog.json` **at the next release regen** | generator-only; verdict is `port-but-CATALOG-ONLY`. Includes `generate-image-models.ts` as of 2026-08-27 |
+     | `packages/agent/src` | `agent/` | `harness/**` and `search/**` are IN scope but QUEUED (entry 8) — backlog them, never `n/a`, and **never escalate them again** (2026-08-27) |
      | `packages/protocol/src` | `protocol/`, `protocol/cbor/` | 2026-08-01. Byte-golden to a PEER: CBOR + frame layout |
      | `packages/client/src` | `client/` | 2026-08-01 |
-     | `packages/server/src` | `server/`, `server/unix/`, `server/internal/servertest/` | 2026-08-01. Both of that ruling's carve-outs are now stale and are NOT to be re-applied: `server/src/legacy/**` no longer exists (upstream deleted it in `05bf9df65`, 2026-08-04), and `server/src/testing/**` IS ported (`server/internal/servertest/`) |
+     | `packages/server/src` | `server/`, `server/unix/`, `server/internal/servertest/` | 2026-08-01. Both of that ruling's carve-outs are stale and NOT to be re-applied: `server/src/legacy/**` no longer exists (`05bf9df65`), and `server/src/testing/**` IS ported |
      | `packages/telemetry` | `telemetry/` | 2026-08-06, **runtime half only** — the schema/type-inference half (`defineTelemetrySchema`, `Infer*`, `SchemaTelemetrySpan`) is `n/a` and shares `src/index.ts` with the ported half, so this one must be split by HUNK |
-     | `packages/session-backends` | — | 2026-08-07: IN scope but DEFERRED, same as the harness tree |
-     | `packages/coding-agent/src/{core,client,utils}` | `coding/` | except extensions runtime, trust-manager, bun/packaging, `modes/**` (at the pin: `interactive/`, `rpc/`, `print-mode.ts`, `json-event.ts` — note the TUI itself is `packages/tui`, not a mode). The port has no `modes/` analogue at all; `cmd/pi` is a hand-rolled SDK CLI with a print flag of its own, not a port of pi's mode layer, so do not map a mode change onto it. Also excluded: agent-session-runtime. Two hunks land in `ai/providers/` instead: `utils/pi-user-agent.ts` → `pi_user_agent.go`, `core/provider-attribution.ts` → `attribution.go` |
+     | `packages/session-backends` | — | 2026-08-07: IN scope but QUEUED |
+     | `packages/coding-agent/src/{core,client,utils,server}` | `coding/` (`src/server/` is the harness factory — queue entry 8) | **OUT** (E1, and this list must match the ledger's out-table exactly): `core/extensions/**`, `core/export-html/**`, `core/settings-manager.ts`, `core/prompt-templates.ts`, `core/agent-session-runtime.ts` + the session-reload / `/new` lifecycle, `core/model-registry.ts`, `core/resolve-config-value.ts`, `core/radius.ts`, `core/resource-loader.ts` source-info accessors, `migrations.ts`. **Partly ported, split by HUNK, never diffstat-dispatched:** `core/model-resolver.ts`, `core/package-manager.ts`, `core/trust-manager.ts`. The trust *decision and gate* are IN (2026-08-27); the trust prompt, selector and store are host. Two hunks land in `ai/providers/` instead: `utils/pi-user-agent.ts` -> `pi_user_agent.go`, `core/provider-attribution.ts` -> `attribution.go` |
 
      `utils/` is judged **by its consumer, not its path** — in scope only when a
      ported core file consumes it.
+
+     **Project-local reads carry their gate.** Any change that adds a read of
+     `<cwd>/.pi/**` or an ancestor `.agents/**` must ship with its project-trust
+     gate (`SessionOptions.TrustProject` / `LoadSkillsWithTrust`). An ungated
+     new reader is a **defect**, not a scope question (2026-08-27).
+
+   - `port-but-QUEUED` — the tree is IN scope but has **no Go base yet**, so a
+     hunk-sized port of a file that does not exist cannot land. Verdict is
+     `port`; no Go commit this cycle; append the delta to its entry in
+     `docs/UPSTREAM.md` → "Scope queue" instead. This is the
+     `port-but-CATALOG-ONLY` pattern generalized. The current entries are the
+     rows in `docs/UPSTREAM.md` -> "Scope queue" (today: OAuth acquisition,
+     Radius, images, Azure, Vertex, Mistral, session-backends, agent harness) —
+     read them there rather than trusting this sentence, and **open a new row
+     yourself** when an in-scope change has no Go home. Once an entry's base
+     port ships, the entry closes and that tree triages as ordinary `port`.
+
    - `port-but-CATALOG-ONLY` — a `packages/ai/scripts` generator delta. It is a
      `port`, but nothing lands until a release tag is crossed and the catalog is
      regenerated from the npm build. Add it to the queue in `docs/UPSTREAM.md`
      rather than porting it now.
-   - `n/a` — only touches non-ported surface — give the specific reason, and
-     prefer a **structural** check over precedent alone (grep the port for the
-     identifiers the change touches; a recorded absence is worth more than a
-     category). Non-ported: TUI, `modes/**`, extensions runtime, OAuth
-     acquisition, project trust, the unported providers, image generation,
-     bun/CLI packaging and installer/self-update, prompt-templates,
-     settings-manager, config migrations, agent-session-runtime,
-     the telemetry schema half, Radius OAuth + its host wiring, docs, CHANGELOG,
-     CI, `.github/`, `.pi/`, examples.
+   - `n/a` — excluded by a test. Give the specific reason **naming which test
+     fired (E1/E2/E3)**, and prefer a **structural** check over precedent alone (grep
+     the port for the identifiers the change touches; a recorded absence is
+     worth more than a category).
+
+     **Host surface (E1) — dispatch from the diffstat, no hunk-reading owed.**
+     `packages/tui`, `packages/evals`, `packages/ai/src/cli.ts`, and under
+     `packages/coding-agent/src`: `modes/**` (including `rpc/` — headless is
+     still host), `cli/**`, `main.ts`, `core/extensions/**`,
+     `core/export-html/**`, `core/settings-manager.ts`,
+     `core/prompt-templates.ts`, `core/agent-session-runtime.ts` + the
+     session-reload / `/new` lifecycle, `core/model-registry.ts`,
+     `core/resolve-config-value.ts`, `core/radius.ts`, `core/resource-loader.ts`
+     source-info accessors, `migrations.ts`, `bun/**`, `package-manager-cli.ts`.
+
+     `core/model-registry.ts`, `core/resolve-config-value.ts`, `core/radius.ts`
+     and the `core/resource-loader.ts` accessors are E1's **only-consumers**
+     clause — host machinery populating a ported-and-latent SDK seam. That
+     clause fires **only when EVERY consumer is host**; a mixed consumer set
+     does not fire it, so read the hunk.
+
+     **NEVER diffstat-dispatch these four — they are partly ported and the
+     shortcut would manufacture a miss** (see the split-by-HUNK table in
+     `docs/UPSTREAM.md`): `core/model-resolver.ts` (its
+     `defaultModelPerProvider` is `coding/resolve.go`, and that table has caused
+     a miss TWICE — diff it on every touch), `core/package-manager.ts` (skill
+     discovery is `coding/resources.go`), `core/trust-manager.ts` (decision and
+     gate are ported), `packages/telemetry/src/index.ts` (E3). **A commit spanning the seam is triaged on its
+     non-host hunks alone and NEVER escalates on account of the host half.**
+     This is the rule that removes most of the per-commit cost — roughly half of
+     all mixed commits are mixed only because of host content.
+
+     Also `n/a`: `amazon-bedrock` and `openai-codex` plus `utils/node-http-proxy.ts`
+     and `utils/abort-signals.ts` (E2); the telemetry schema half (E3 — split by HUNK, it
+     shares `src/index.ts` with the ported runtime half); the trust prompt,
+     selector and store; and the always-noise set — docs, CHANGELOG, CI,
+     `.github/`, `.pi/`, examples, per-package `package.json` version bumps,
+     repo-root `scripts/`.
+
+     **No longer `n/a` as of 2026-08-27** — do not carry these forward from
+     memory or from an older cycle section: OAuth acquisition, Radius +
+     `radius-config`, image generation, Azure, Mistral, Vertex, and the
+     project-trust decision/gate. They are `port` (mostly `port-but-QUEUED`).
    - `decide` — changes the *boundary* itself. Escalate to the user instead of
      deciding silently.
 
-     **But do not reach for `decide` reflexively.** The owner's **standing
-     formula** — full pi SDK functionality as represented in Go, close faith to
-     the source architecture, leaning into Go's idioms — already answers most of
-     what looks new, and the deciding fact is almost always **published,
-     independently reachable surface** (`src/index.ts` or the package `exports`
-     map). Re-asking a settled question is itself a failure mode. In particular
-     these axes are SETTLED and must not be re-escalated: a transport or feature
-     depending on a runtime Go does not target (2026-08-11); a `DRAFT:` subject
-     prefix (2026-08-04); an upstream REVERT, even one removing Go API the port
-     shipped days earlier (2026-08-19, unless a cut tag already published it); a
-     pre-existing parity gap inside an already-ported function (2026-08-18).
-     A genuinely new question changes a seam — e.g. a transport that changes the
-     `ai.HTTPDoer` seam itself.
+     **But do not reach for `decide` reflexively.** The three exclusion tests plus
+     the owner's **standing formula** — full pi SDK functionality as represented
+     in Go, close faith to the source architecture, leaning into Go's idioms —
+     already answer nearly everything that looks new. Re-asking a settled
+     question is itself a failure mode. These axes are SETTLED and must not be
+     re-escalated:
+     - a transport or feature depending on a runtime Go does not target
+       (2026-08-11);
+     - a `DRAFT:` subject prefix (2026-08-04);
+     - an upstream REVERT, even one removing Go API the port shipped days
+       earlier (2026-08-19, unless a cut tag already published it);
+     - a pre-existing parity gap inside an already-ported function (2026-08-18);
+     - **anything E1 covers** — never escalate on a host hunk (2026-08-27);
+     - **whether an adapter is in scope** — ask `go.mod`, not the user
+       (2026-08-27);
+     - **the agent harness** — its status is settled-and-queued; carry the
+       backlog, do not re-open it (2026-08-27).
+
+     **IN scope but no Go home is NOT a `decide`.** Open a Scope queue row
+     instead — the tests already answered scope; only scheduling is open, and
+     opening a row needs no owner decision. See "How to OPEN an entry" in
+     `docs/UPSTREAM.md`. Escalating here is exactly how the harness got stuck.
+
+     A genuinely new question changes a **test**, not a path. The two that
+     exist: *"should the port take a third-party dependency?"* (which would move
+     bedrock/codex and decide session-backends) and a transport that changes the
+     `ai.HTTPDoer` seam itself. Both are owner policy questions with durable
+     answers.
 4. For `port` verdicts: map upstream files → our Go files (e.g.
    `core/tools/grep.ts` → `coding/tools.go` + `coding/glob.go`), and flag
    whether any **byte-golden surface** is touched (system prompt, tool output
@@ -96,7 +183,7 @@ Specific rulings (from pilot runs — keep appending):
   which IS ported surface (→ `ai/models_catalog.json`, regenerated from the
   matching npm build). The version bump/changelog parts are noise; ALSO note
   the release tag so /pi-sync refreshes the npm reference build.
-  `image-models.generated.ts` is excluded (images unported).
+  `image-models.generated.ts` joins the catalog-regen surface as of 2026-08-27 (queue entry 3) — regen it alongside `models.generated.ts`.
   A release tag ALSO drains the `port-but-CATALOG-ONLY` queue — but only of the
   deltas that are **ancestors of the release sha**. Check that with
   `git merge-base --is-ancestor <delta> <release>`, never by log order: generator
@@ -114,8 +201,8 @@ Specific rulings (from pilot runs — keep appending):
 - A follow-on commit to a pending `decide` inherits that escalation: mark it
   `decide (rider on <sha>)` and batch into ONE question to the user.
 - Once the user rules on a `decide`, record the ruling in docs/UPSTREAM.md
-  ("Current pin" section's non-port list or a Rulings note) so future triage
-  doesn't re-ask.
+  ("### Rulings", and update "The scope boundary" if a test moved) so
+  future triage doesn't re-ask.
 - Cost control: changes whose `--stat` touches only docs/CHANGELOG/.github/
   scripts/.pi/packages/tui may be dispatched from the diffstat alone; read
   hunks only when any path is in or near ported surface.
@@ -164,18 +251,37 @@ Specific rulings (from pilot runs — keep appending):
   Exclusions belong in the CLASSIFICATION step, executed on a hunk, never in
   the pathspec. The pathspec's job is to put paths on your screen.
 - **A ported path does not imply a same-named Go package.** Classify what the
-  sweep prints against the single table in the SCOPE section above — that table
-  is the ONE list of in-scope trees and their Go homes. It deliberately lives in
-  the verdict rules rather than down here, because a triager assigning a verdict
-  reads the verdict rules; a second copy in this section is how the two drifted
-  apart for four cycles (the copy up top named three trees while the rulings had
-  ruled in five more). **Do not reintroduce a second copy.** `docs/UPSTREAM.md`
-  is authoritative over both; if they disagree, re-derive and fix the table.
+  sweep prints against the EXCLUSION TESTS in `docs/UPSTREAM.md` -> "The scope
+  boundary", using the table in the SCOPE section above only as a lookup for Go
+  homes. Do not maintain a second list anywhere: a duplicated table is how the
+  skill and the rulings drifted apart for four cycles (2026-08-25), and a list
+  of any kind is what the 2026-08-27 rewrite demoted — 12 of 16 scope rulings
+  had moved a path INTO scope and no list survived that. If the table and a
+  test disagree, the test wins, you port accordingly, and you fix the table in
+  the same commit.
   Two path facts worth carrying that the table does not:
   - Catalog-only deltas live under `packages/ai/scripts`, but **not only in
     `generate-models.ts`** — `650e7a612` added a sibling
     (`scripts/openrouter-reasoning-options.ts`), so sweep the whole `scripts`
     tree rather than grepping one filename.
+- **Host-seam commits are diffstat-dispatchable, and that is the point.** When
+  a commit's excluded content is entirely host surface (E1), you owe no
+  hunk-reading for it and no escalation — triage the non-host hunks and move on.
+  Historically ~47% of mixed commits were mixed *only* because of host content,
+  and reading them cost a cycle's attention to reach a foregone `n/a`.
+- **Ask `go.mod`, not the user, about an adapter.** "Would porting this add a
+  `require` line?" is the whole test (E2). Bedrock and codex are the
+  only two that fail it today. A hunk *inside* one of them is still `port` when
+  its Go home is a shared/generic function — the 2026-07-21 lesson applies
+  unchanged.
+- **A queued tree is `port-but-QUEUED`, never `n/a`.** OAuth acquisition,
+  Radius, images, Azure, Mistral, Vertex, the agent harness and session-backends
+  are IN scope with no Go base yet. Append the delta to its "Scope queue" entry
+  in `docs/UPSTREAM.md`. Marking one `n/a` re-creates exactly the drift the
+  2026-08-27 rewrite closed.
+- **A new project-local read must carry its gate.** Any change adding a read of
+  `<cwd>/.pi/**` or an ancestor `.agents/**` ships with the project-trust gate.
+  Ungated is a defect, not a scope question (2026-08-27).
 - **One upstream fix can touch multiple sites that map to ONE Go file — or to a
   differently-structured Go file** (2026-07-21 lesson: `1942b260` "env section
   ignored" fixed BOTH `auth/helpers.ts` and `amazon-bedrock.ts`; the port landed

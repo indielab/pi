@@ -38,9 +38,14 @@ stopped.
 
 ## 1. Triage (skill: pi-triage)
 Run pi-triage over the whole delta (subagent). Append all rows to the ledger
-in `docs/UPSTREAM.md` with their verdicts. `n/a` rows are done. `decide` rows:
+in `docs/UPSTREAM.md` with their verdicts. `n/a` rows are done.
+`port-but-QUEUED` and `port-but-CATALOG-ONLY` rows are appended to their entry
+in the "Scope queue" / catalog queue instead of being ported. `decide` rows:
 STOP and surface to the user — never silently expand or shrink the port's
-scope.
+scope. Note the 2026-08-27 rewrite made scope decidable by three EXCLUSION
+TESTS, which should make `decide` rarer: before escalating, check that E1/E2/E3
+in "The scope boundary" does not already answer it — and remember that "in scope
+but no Go home yet" is a Scope queue row, not a `decide`.
 
 ## 2. Port (per `port`-verdict change, chronological)
 - One subagent per change (or small coherent batch touching the same files).
@@ -109,13 +114,17 @@ scope.
     Rules: open with `Gophers of pi!`; name the port version and the pi npm
     version it tracks; up to 3 high-level `:: `-prefixed changes (plain, no jargon
     dump); link the **repo, not the release**; keep the upbeat tone.
+- Report the **Scope queue** state (entries drained, deltas appended) alongside
+  the catalog-only queue. (The harness backlog is entry 8's queued-deltas column.)
 - Report: N changes — X ported (with commits), Y n/a, Z escalated; the release
   tag if one was cut; any test count change; any new deliberate divergence added
   to UPSTREAM.md.
 
 ## Hard rules
-- Anything that would change the **public Go API** or the deliberate non-port
-  boundary → escalate, don't ship.
+- Anything that would change the **public Go API** or one of the three scope
+  EXCLUSION TESTS in `docs/UPSTREAM.md` -> "The scope boundary" → escalate,
+  don't ship. Moving a path is not a boundary change when a test already covers
+  it; changing what a test SAYS is.
 - A port without a test does not ship. A parity divergence "fixed" by editing
   the assertion to match our output does not ship — goldens come from pi.
 - If the cycle can't finish (e.g. blocked on a decision), ship the completed

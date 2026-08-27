@@ -15,21 +15,269 @@ commit-by-commit sync pipeline that keeps it current.
 | Parity proofs at the pin | **2026-08-27 (4 ports, no release):** the thinking-signature change proven **by executing real pi, not by reading it** — `EventStream.prototype.push` patched in the TS at `ccfe79ed2` to deep-snapshot `partial` at push time, driven through a fake fetch, and the identical SSE run through Go: two interleavings, **event-for-event and byte-for-byte identical**, with the signature reading the bare reasoning FIELD NAME on every partial up to and including `text_delta` and the full sequence appearing only from `thinking_end` (and, for a truncated body, for the first time on the `error` event's message on both sides). Apply sites enumerated rather than assumed: exactly two in Go (`openai.go:107` in `fail`, `:522` before the thinking_end push) against pi's two (`openai-completions.ts:431` in `finishBlock`, `:694` in `catch`), with a grep establishing there is no third. The **at-most-one-thinking-block invariant the port relies on was PROVEN both sides**, not accepted: pi assigns `thinkingBlock` only inside `ensureThinkingBlock` under `if (!thinkingBlock)` and never resets it (all 5 references), Go's `thinkBuilder` likewise only under `if thinkBuilder == nil`. The absent-vs-empty question — pi's guard is `!== undefined`, Go's is `len(...) == 0` — was closed by showing the empty-but-present state is **unreachable in pi**: `streamedReasoningDetails ??= []` is immediately followed by an append with no branch between, so the length is ≥ 1 the instant the variable stops being undefined. `tool_choice` proven on the wire against the PUBLISHED build — 0.84.3's own `dist/api/openai-completions.js:594` reads `if (options?.toolChoice)`, i.e. it never contained the reverted guard — and the renamed scenario proven **load-bearing rather than passing by mutual absence**: both sides emit `"tool_choice":"none"` with no `tools` key, and reinstating the guard in a scratch worktree turns it into `FAIL … missing-key @ $.tool_choice / pi: "none" / go: <absent>`, exit 1, while the with-tools control still PASSes — so the pair localizes the difference to the tools param. All three Go `tools`-writing paths checked, the empty-array tool-history arm by hand against pi dist (both emit `"tools":[],"tool_choice":"none"`). The session repair adjudicated against pi's **three** non-test `loadEntriesFromFile` callers at the sha rather than against the porter's summary. `??` semantics for `SystemRoot` settled at the DISCRIMINATOR, not the name: Node's `undefined` comes from libuv's `uv_os_getenv` returning ENOENT and Go's `LookupEnv` ok-flag from the same `ERROR_ENVVAR_NOT_FOUND`, so `LookupEnv` matches `??` under either Windows semantic where `Getenv` would match only one — mutation-locked. **Every finding from both review gates was put through an independent adversarial verifier instructed to REFUTE it: 2 of 15 survived**, both fixed in `b789eca`; 13 were refuted with reproduction. Harness **49 PASS / 0 KNOWN / 0 FAIL**, exit 0, re-run independently by the parity reviewer and again with `PI_UPSTREAM_DIR=/nonexistent`. **2026-08-25 (6 ports, RELEASE v0.84.3):** the catalog proven by **endpoint pinning, executed on both builds** rather than read from git — `JSON.stringify(MODELS)` from each build's `dist/models.generated.js`, with the outgoing `ai/models_catalog.json` `cmp`-identical to the 0.84.2 derivation and the incoming one `cmp`-identical to a second, independently re-derived 0.84.3 dump, so the ported diff IS the upstream release diff (1267 → 1312 models, 536,642 → 558,804 B); the newly-activated `allowedFallbackModels` proven **on the wire, not in the JSON** — `TestAnthropicCatalogFallbacksAreLive` drives the REAL catalog compat of both anthropic models through a stub and asserts the projected `[{model}]` chain in catalog order, and was verified **red against the 0.84.2 catalog** for the right reason ("catalog carries allowedFallbackModels for []"), with a verifier separately confirming it also reds when the field is present but no longer decodable; the bash `command` description change confirmed against **npm 0.84.3's own dist** and the composed bash `description` proven byte-**un**changed by reading the `Execute a ${config.shellName} command…` template out of `dist/core/tools/bash.js` with `shellName: "bash"`; the DEFAULT system prompt proven unmoved **structurally** — `defaultActiveToolNames` read at `a79b37334:src/core/sdk.ts:256` is still the four-tool list, and `systemprompt_golden_test.go` passes UNEDITED and is in no commit's file list; the reasoning-delta merge proven by **four mutation probes each red on exactly one operator** (push-instead-of-merge → 7 of 10 subtests; `index` nullish→falsy → only the "index of 0 survives" case; `format` falsy→nullish and `id` nullish→falsy → the empty-string case from either side), with the merged entry's KEY ORDER pinned as a byte string because JS assignment keeps an existing key in place and appends a filled-in one; `tool_choice` suppression proven on the wire for **both** Go paths that write `tools` (converted array and the `[]map[string]any{}` tool-history case) and, in the harness, by **temporarily re-pointing the new scenario at the 0.84.3 dist to watch it FAIL** (`pi: "none"` vs `go: <absent>`) — which is what proves the scenario load-bearing rather than passing by mutual absence; the compaction call-site collapse (pi 3 → Go 1) proven by **two independent reds** on the two paths that reach the single gate (`summarize` returned partial text; `compact` installed the truncated summary and dropped 9 of 12 messages) plus a grep establishing branch summarization has no Go implementation at all; the MIME export proven by a source-level assertion (a call-site test would have red as a **compile error**, which does not count) and the "and no more" half locked against pi's own `index.ts` at two shas. **Every finding from both review gates was then put through an independent adversarial verifier**: 1 should-fix and 3 nits survived and were fixed, 5 were refuted with reproduction. Harness **49 PASS / 0 KNOWN / 0 FAIL**, exit 0, fully dist-backed. **2026-08-24, second check (0 ports):** nothing new to prove — the delta touches no ported surface at all: `packages/ai`'s **whole** tree is identical at `a470b121b` and `4af9d21d3` (`a37cc08d`), as are every other ported package's `src`, `packages/ai/scripts` and `packages/session-backends`; the proofs below still stand at this pin. **2026-08-24 (1 port):** the walk was proven by **execution, not inspection** — pi's `findNodePackageDir` extracted verbatim from `a470b121b:packages/coding-agent/src/config.ts:368-383` into a runnable harness and driven against the real Go function over one shared 12-branch tree, **40 start-paths, same cwd: 40/40 agree on every path `PackageDir()` can actually produce**. Termination proven by **instrumented probe-sequence capture** rather than by reading the loop: with a stub where only `/package.json` exists and start `/usr/local/bin`, pi probes `/usr/local/bin`, `/usr/local`, `/usr` and answers `/usr/local/bin`; the new Go probes the **same three in the same order** for the same answer; the OLD Go probed a **fourth** (`/package.json`) and answered `/` — which is what establishes the closed root-probe divergence as real rather than asserted. `basename` vs `filepath.Base` cleared by a Node-vs-Go table: they disagree on exactly three inputs (`""`, `"/"`, `"//"`) and **neither side yields `"dist"` in any of them**, so the `== "dist"` test never flips; `"/"` cannot even enter the loop body, being a fixed point of both `dirname` and `filepath.Dir`. Fallback equivalence checked at the parameter, not the name: pi returns `startDir` and Go returns `start`, both unmutated (Go's loop variable is `for`-scoped). **Golden proven not to move, and the reason matters**: `systemprompt_golden_test.go:27-29` passes `/pkg/...` through opts so `PackageDir()` is never called on the golden path, and the second golden (`:74`) is the custom-prompt branch that omits the docs block entirely — but `coding/session.go:379` leaves all three opts empty, so **live** default-prompt bytes DO move with `findNodePackageDir`, in the two cases recorded in the cycle section. Mutations: **4**, each verified red on exactly one arm and green elsewhere, and re-run independently by the parity reviewer in a scratch copy. **2026-08-22 (0 ports):** nothing new to prove — no ported surface moved (`packages/ai` and `packages/agent` are **tree-identical** at `b7bb00b93` and `c49906ec7`); the proofs below still stand at this pin. **2026-08-20 (5 ports, no release):** header precedence established by **executing the pinned vendor SDKs**, not by reasoning about them — @anthropic-ai/sdk **0.91.1** and @google/genai **1.52.0**, both taken from `~/.cache/pi-npm/0.84.2` (versions re-confirmed off their own `package.json`s) and driven against a local server with the exact header object `mergeClientHeaders` builds at the sha: an **8-case matrix** — oauth and api-key branches x four spellings and both null markers — which the port now matches **8/8**, alongside the PRE-commit `mergeClientHeaders` run through the same SDK returning the opposite answer, which is what proves the seed rather than the merge order is what changes it; the two SDK behaviours the port cannot reproduce (@google/genai comma-joining case-variant names, `net/http` dropping an empty-string user agent) were established the same way and recorded as deliberate divergences rather than asserted away. `getPiUserAgent()` executed from the 0.84.2 dist and `cmp`-compared against Go's `piUserAgent()` — **25 bytes, identical**. `jsStringify` verified against node over **1,863 generated cases plus a 47-case hand-written table, zero divergences** — random float64 bit patterns rendered several ways, exponents from `1e-330` to `1e330`, integer literals 1-29 digits long, 300 random key sets mixing index-like and ordinary keys, 100 duplicate-key objects, and 400 random Unicode strings emitted both `ensure_ascii=True` and `False`. The reasoning-details pair's net-zero halves were proven by **BLOB IDENTITY**, not by reading the diff: `git rev-parse 4ca636c5e^1:packages/server/src/protocol.ts` and `git rev-parse b7bb00b93:packages/server/src/protocol.ts` return the same object (`069828e5`), and on `packages/ai/src/types.ts` the `reasoningDetails` field occurs exactly once at `4ca636c5e` and zero times at BOTH ends, the entire cross-pair diff of that file being one **comment** line — so the session format is byte-untouched. **The differential harness earned its keep**: two reviewer probe scenarios FAILED against ground-truth pi before the fix — value at `$.messages[2].reasoning_details[0].conf` (`pi: 1` vs `go: 1.0`) and key order at `$.messages[2].reasoning_details[1]` (`pi: 0,type,data,id,custom_flag,nothing` vs `go: type,data,id,custom_flag,nothing,0`) — which is what turned byte compaction into `jsStringify`. Mutations: **8** recorded for `a20597b` and **22** for `41171de`; `1308a5a` and `dc2befa` record theirs individually rather than as counts (the `splitBOM` call site, observationally inert under the first fixture and leaving the whole `coding` suite green when removed; and the headers slice's four families — seed deleted -> 5 subtests red, seed moved back to the old force position -> 23 subtests across 10 tests red, re-assigned key promoted to the end -> the OAuth subtest red, sorted order instead of slot order -> 4 tests red). Every one verified red for a **behavioral** reason. Harness **47 PASS / 0 KNOWN / 0 FAIL**, exit 0, re-verified for this ledger entry. **2026-08-19 (3 ports, no release):** the anthropic fallback-costing extract verified against an **oracle transliterated from `4809c2abc:packages/ai/src/api/anthropic-messages.ts` lines 606-613** — modelling `?.cost`, `??` and the truthiness gate with an explicit present/absent type rather than paraphrasing them — run over a **10 compat × 7 fallback-set × 5 served-id matrix (350 cases), zero divergences**, covering unpriced targets, `"cost": null`, zero-priced targets, duplicate-first-unpriced, self-referential catalog entries, `served == ""`, malformed compat and the `"default"` arm, and additionally asserting that the shared catalog `*ai.Model` is never mutated and that the no-swap arm returns the SAME pointer (pi's `: model`); `cost` proven stripped from the `fallbacks` wire value on a real request body (pi's explicit `.map(f => ({model: f.model}))`), mutation-locked; the compaction prompt constants **executed and byte-compared pin vs HEAD** to clear `ef8dc7385`'s prompt-shaped refactor — composed UPDATE prompt **1257 chars, identical**, `SUMMARIZATION_PROMPT` and `SUMMARIZATION_SYSTEM_PROMPT` identical; the un-port proven **exactly** the revert by byte-comparing `agent/loop.go` and `agent/agent.go` against `b79c9e6` (the pre-port parent — identical) and by a `go doc -all` delta showing exactly the three identifiers upstream removed, with no remaining callers including `examples/` and `cmd/`; the two revert PAIRS proven net-zero by `git rev-parse` blob comparison rather than by reading the subjects; **19 mutations each verified red for the right reason**, with one planned mutation accepted as correctly GREEN (the `min` inside `clampThinkingBudgetToAnswerRoom` is algebraically inert — the anthropic test's value comes from a second, separate clamp in `StreamSimpleAnthropic`). Harness: **40 PASS / 0 KNOWN / 0 FAIL** (34 → 40, six new `src` scenarios), verified cold after `rm -rf pisrc/3a0b9a3ee`. **2026-08-18 (6 ports, no release):** `resolveGoogleThinkingLevel` **executed from sha-extracted TS** (`google-shared.ts` at `af2c35223`, blob `a49c6689`) against Go over 18 inputs — **18/18 byte-identical**, covering every `String(mapped)` case (absent → `undefined`, explicit null → `null`, self-referential `"xhigh"`, uppercase, empty-string entry with its trailing space, non-ASCII provider/id) and confirming Go renders the ORIGINAL mapped string, not the lower-cased one; the anthropic fallback beta driven through **all four** Go auth branches against a live server (third in `betaFeatures` every time, absent when unset, and the OAuth branch keeping pi's `claude-code-20250219,oauth-2025-04-20` prefix); `fallbacks` differential-verified on the wire for **both arms** of pi's union (order-preserving 2-entry chain; the `"default"` literal); the served-model capture verified live (`served-model` overriding a requested `claude-x`); the catalog confirmed to carry zero `allowedFallbackModels` at the sha AND in the Go embed, so the feature is dormant both sides; tool choice wire-verified for all five ported providers with google's precedence probed separately **8/8** (strict+auto → `VALIDATED`, i.e. auto does NOT short-circuit; strict+none → `NONE`); the summarization guard proven a strict cover (pi has exactly three `completeSummarization` callers at the sha, all guarded; Go has exactly two, both routed through the single site). Harness: **21 PASS / 0 KNOWN / 0 FAIL** on the 0.84.2 dist, plus **13 new scenarios** built for this cycle's surface (`toolChoice`/`refusalFallbacks` threaded through `SimpleStreamOptions`, re-pinned to `2509b5c03` with `backend:"src"`) — **13 PASS**, payloads inspected to confirm the keys are present rather than passing by mutual absence — those 13 were **promoted into the shipped harness the same day**, taking it to **34 PASS / 0 KNOWN / 0 FAIL**. **2026-08-17 (5 ports, no release):** the single-`Set` rendering of pi's delete-then-set proven by auditing every header write path in `ai/providers` (all `Set`/`Del`, no raw map writes) with exactly-once wire asserts, and the UA string **byte-compared against `getPiUserAgent()` executed from the authentic 0.84.2 dist**; the kimi cache-read chain byte-checked at `d3ab2af96` with per-arm nullish semantics locked by tests; the compaction SessionID threading checked call-site-for-call-site (agent-session passes `undefined` upstream ⇒ behavior unchanged; branch-summary shape stays fresh); `isSingleEditInput`'s domain identical over JSON values; the skills `isString` screen verified against **yaml@2.9.0** (the exact version pinned at the sha and in the build) via a 74-literal adversarial probe, **74/74** agreement; **7 mutations in a scratch worktree each red for the right reason**; catalog untouched and independently re-derived `cmp`-identical (536,642 B); harness **21/21 PASS** on the 0.84.2 dist exercising both changed builders. **2026-08-15 (4 ports, release):** the 0.84.2 catalog **independently re-derived and `cmp`-byte-identical** (536,642 B), endpoint-pinned at both ends (old embed ≡ a fresh 0.84.1 derivation ⇒ ported diff ≡ upstream release diff); schema drift enumerated against consuming types (one new key, decoded); the Google guard proven same-value/same-point against `5093641a5` with `mapGoogleStopReason` entry-for-entry ≡ upstream and mutation-verified on a scratch copy (guard removed → "got toolUse"); the APP_NAME no-op proven against the **shipped package** (`piConfig` carries no `name` ⇒ every changed string byte-identical for stock pi); the zai table compared whole (41 entries, delta exactly the two upstream lines) and mutation-verified via the new guard test; the harness flip justified by ancestry (all 13 scenario-note shas first-parent ancestors of `914cf1472`) and by the reviewer's own re-run: **21 PASS / 0 KNOWN / 0 FAIL on the 0.84.2 dist**. **2026-08-14 (1 port):** the kimi UA override proven **sha-anchored + mutation-verified** (headers are outside the bodies-only harness): all three upstream `createClient` branches confirmed to route through `mergeClientHeaders` after `optionsHeaders` with no per-request header bypass; the Go single-`Set` equivalence established by reading every write path (all canonicalize — no raw map writes); Node token fidelity checked down to the `RTL_OSVERSIONINFOW` layout and libuv's `uv_os_uname` release format; the authentic 0.84.1 dist (integrity-matched) shown to carry `KimiCLI/1.5` and no pi-user-agent module, making TS-at-`9d2ec7ffa` the reference; and both tests mutation-verified in a throwaway worktree (override removed → wire shows `[custom-client]`; made unconditional → non-kimi test fails). Harness re-run anyway for the body surface: **21/21 PASS**. **2026-08-12 (1 port):** the strict conversion was proven against **executed upstream TS at `7915cdac6`** three ways: a 28-case conversion probe (`makeStrictJsonSchema` run via node from sha-extracted source vs Go) byte-identical on 24/28 including every error string and the unsupported-key precedence order — the 4 mismatches are the recorded decode-boundary drift class, not wire-reachable through pi's own tools; a 10-case `validateToolArguments` probe vs **real TypeBox** (npm 0.84.1's) 10/10 including the nested-`$ref` compile-path constructed to break the `Check(nil)` mapping; and 3 new differential-harness scenarios asserting full request bodies on the anthropic/openai-completions/openai-responses wires (required ordering with deliberately non-alphabetical properties, anyOf-null widening, no-rewrap of already-nullable shapes, nested object closing, zero-property object, inconvertible-tool fallback carrying the ORIGINAL parameters). The harness is what caught the one real divergence (`required: []` dropped on zero-property strict objects) — fixed, then re-verified **21/21 PASS**. **2026-08-11 (3 ports):** cwd-footer byte-proven via `cmp` on both prompt branches; DeepSeek fold faithful on membership and order (15 terms) and on `strings.Contains(ToLower)` ≡ `.toLowerCase().includes` for the ASCII needle; gateway binding proven by running real upstream TS against real Go `Do()` over a shared case table (7 divergences found and pinned). |
 | Reviewed via | 2026-08-27 (4 ports, no release) — per-commit diff triage of all 13 changes, judged from the real diff rather than the subject line; hunks read in full for everything touching `packages/ai/src` and `packages/coding-agent/src/{core,utils}`, diffstat-only dispatch for tui/docs/CHANGELOG. Both reconciliation passes ran: the unrestricted `--name-only` **detector** printed **44** paths, all classified, no new top-level package, no file moved out of `packages/`, no new repo-root directory; the **accounting** sweep over `packages` minus the four structural exclusions reported **28 files, 523(+)/59(−)**, every file mapped to a verdict. Ports were executed by three worktree-isolated subagents grouped by Go file so no two could touch the same file; **review was independent of porting** — `pi-go-review` and `pi-parity-review` each ran as its own subagent over the integrated diff, and all 15 findings they filed were handed to further subagents instructed to REFUTE them, with 13 refuted by reproduction. Two n/a verdicts were attacked **structurally** rather than by category: `8fa7eebd2` by grepping the port for every scoped/enabled-model and persist-default identifier it touches (zero hits; `coding/session.go:325` `SetModel` has no persist option and no settings manager), and `e86823096`/`ccfe79ed2` by confirming the port carries no `TerminalCapabilit*`, no `UIPrompt*` and no extension-runner analogue at all. One process note worth carrying: two of the three port worktrees were created on a **five-day-stale base** (`241fdde`, the 2026-08-22 cycle); their target files were verified byte-identical across the two bases before cherry-picking, and the authoritative gate was re-run on `main` after integration. The third agent detected the staleness itself and re-branched from `main`. 2026-08-25 (6 ports, release) — per-commit diff triage of all 22 changes, judged from the real diff rather than the subject line; hunks read in full for everything touching `packages/ai/src`, `packages/coding-agent/src/core` and `packages/ai/scripts`, diffstat-only dispatch for CHANGELOG/.github/docs/examples/packaging. Both reconciliation passes ran: the unrestricted `--name-only` **detector** printed **82** paths, all classified, no new top-level package, no file moved out of `packages/`, no new repo-root directory (the one new file, `packages/ai/scripts/openrouter-reasoning-options.ts`, lands in the known catalog-generator home); the **accounting** sweep over `packages` minus the four structural exclusions reported **59 files, 1348(+)/157(−)**, every file mapped to a verdict. Ports were executed by three worktree-isolated subagents grouped by Go file so no two could touch the same file; **review was independent of porting** — `pi-go-review` and `pi-parity-review` each ran as its own subagent over the integrated diff, and every finding they filed was handed to a further subagent instructed to REFUTE it, with 5 of 9 refuted by reproduction. `cacb5917f` was checked to be a genuinely empty commit (tree hash equal to its parent's) rather than assumed from its diffstat. Base gate green before and after the review fixes; `ai/providers/openai*.go` changed, so the harness request diff was triggered and re-run at **49/49**. 2026-08-24 second check (0 ports) — per-commit diff triage of the single change, judged from the real diff rather than the subject line: hunks read in full for `src/main.ts` and `src/package-manager-cli.ts` (both in or near ported surface), diffstat-only dispatch for the docs line and the release-tooling script. Both mandatory reconciliation passes run under the corrected guard from `6d7e7f1`: the unrestricted `--name-only` **detector** printed **5** paths, all classified, with no new top-level package, no file moved out of `packages/`, and no new repo-root directory (`scripts/` predates the range); the **accounting** sweep over `packages` minus the four structural exclusions reported **3 files, 395(+)/5(−)**, every file mapped to a verdict. **No review gates ran and no subagents were spawned — there is no ported diff to review**; instead the `n/a` itself was attacked structurally, by grepping the port for every self-update/package-manager identifier the change touches (zero hits) and by confirming each of the three imported-but-unmodified helpers pre-exists at the old pin. Base gate: `gofmt -l` clean, `go build ./...` and `go vet ./...` clean, `go test -race ./... -count=1` green across all **10** test-carrying packages (13 listed, 3 with no test files). Differential harness re-pinned `a470b121b` -> `4af9d21d3` and green at **47/47**, exit 0; nothing under `ai/providers/openai*.go` changed — nothing in the port changed at all — so the 6-scenario request diff was not triggered. |
 
-Deliberately not ported (out of scope for the ledger unless a commit changes
-that decision): TUI, extensions runtime, OAuth token acquisition, project-trust
-gating, Bedrock/Vertex/Mistral/Azure/Codex providers, image generation, bun/CLI
-packaging, prompt-templates, settings-manager, config migrations,
-agent-session-runtime (session reload + /new flow), the Radius OAuth provider +
-its host wiring (`utils/oauth/radius.ts`, `core/radius.ts`, `model-registry`
-`oauth:"radius"`, `model-resolver`) — only the generic `pi-messages` SDK API it
-speaks is ported (see the 2026-07-14 ruling) — and the host-side machinery
-that *populates* provider-scoped env overrides (resolve-config-value,
-model-registry, settings) — the SDK `StreamOptions.Env` field is ported but
-stays latent until a host sets it (see the 2026-06-17 ruling).
+## The scope boundary (rewritten 2026-08-27 — read this before triaging anything)
+
+**The port is pi's SDK half.** Scope is decided by three **exclusion tests**.
+A hunk is `n/a` if and only if one of them fires; **otherwise it is IN scope**.
+
+*The tests are the authority.* Every path list — in this file, in the
+`pi-triage` skill, anywhere — is a **derived convenience**. When a list and a
+test disagree, the test wins and the list is fixed in the same commit. This
+replaces the old "Deliberately not ported" enumeration, which was a path list
+pretending to be a boundary: 12 of 16 scope rulings in this ledger resolved a
+path INTO scope, every reversal ran OUT→IN, and twice the cause was upstream
+simply moving a file across the line.
+
+**Reachability is evidence, not a test.** "Published, independently reachable
+surface" (`src/index.ts`, the `exports` map) is what tells you something is SDK
+surface *at all* — it is the deciding fact in 2026-08-07, 2026-08-11 and
+2026-08-18, and it is why the default is IN. But it argues in **one direction
+only**: it can never override E1–E3. pi exports its entire application from
+`packages/coding-agent/src/index.ts`, `InteractiveMode` and the TUI components
+included; being root-exported does not make something SDK surface.
+
+### E1 — host surface
+
+Fires when the file belongs to **the application pi ships around the SDK**
+rather than to the SDK itself: its entry points and its modes of operation
+(interactive, rpc, print — *headless or not*; `modes/rpc` is a JSON-stdio
+embedding surface and is still host), its terminal UI, its operator
+configuration, its packaging and installer — **or when its only consumers are
+host surface.**
+
+That last clause is load-bearing and is what the older rulings were reaching for
+without naming: it covers host machinery that *populates* an already-ported SDK
+seam (the seam is ported and latent; the populator is not — 2026-06-17) and
+constructs that exist to serve the TUI (2026-07-30). **It fires only when EVERY
+consumer is host surface. A mixed consumer set does NOT fire it — read the
+hunk.** That restriction is the whole safety margin: without it the clause
+would swallow files the port has already partly ported.
+
+Derived list (today): `packages/tui`, `packages/evals`, `packages/ai/src/cli.ts`,
+and under `packages/coding-agent/src` — `modes/**`, `cli/**`, `main.ts`,
+`core/extensions/**`, `core/export-html/**`, `core/settings-manager.ts`,
+`core/prompt-templates.ts`, `core/agent-session-runtime.ts` and the session
+reload / `/new` lifecycle, `core/model-registry.ts`,
+`core/resolve-config-value.ts`, `core/radius.ts`, `core/resource-loader.ts`
+source-info accessors, `migrations.ts`, `bun/**`, `package-manager-cli.ts`.
+
+**A commit whose excluded content is entirely on that list is triaged on its
+non-host hunks alone, and never escalates on account of the host half.** No
+hunk-reading is owed; the diffstat is enough. This is the single highest-value
+rule here — roughly half of all mixed commits per 90 days are mixed *only*
+because of host content, and ~65% of mixed commits end in `n/a` anyway.
+
+#### Files that must be split by HUNK — never diffstat-dispatched
+
+These are **partly ported**. The diffstat shortcut above does not apply to them,
+and treating them as host surface would manufacture exactly the miss this
+ledger has already recorded twice:
+
+| file | ported half | host half |
+|---|---|---|
+| `core/model-resolver.ts` | `defaultModelPerProvider` and the fallback-model construction → `coding/resolve.go:18-21,381` | the host resolution flow. **The table has been the source of a MISS twice** (2026-07-26 `24e5cc04`, 2026-08-04 `c1019d920`); the standing rule to diff `defaultModelPerProvider` on every touch is still in force |
+| `core/package-manager.ts` | project/user skill discovery → `coding/resources.go` (it is the `if (projectTrusted)` site the 2026-08-27 trust ruling cites) | npm install / self-update, no Go surface |
+| `core/trust-manager.ts` | the trust decision and gate (2026-08-27) | the prompt, selector and persistent store |
+| `packages/telemetry/src/index.ts` | the runtime `Span` contract (2026-08-06) | the schema half — E3 |
+
+Three riders:
+- **E1 applies to a HUNK, not only a file.** A hunk whose added lines serve only
+  host surface is host, even inside a file that is not. The converse also holds
+  and is the 2026-07-21 lesson: a hunk inside a host file is `port` when its Go
+  home is a shared or generic function.
+- The port deliberately has **no mode layer**. `cmd/pi` is a hand-rolled SDK
+  CLI, not a port of pi's modes; never map a mode change onto it.
+- **A gate is in scope exactly when the port has the thing it gates**
+  (2026-08-27 project-trust ruling). Host code that only *asks* the user stays
+  out; the decision and the gate come in the moment the port grows the consumer.
+
+### E2 — `go.mod` decides the adapters
+
+**Policy: the port's runtime module depends only on the Go standard library and
+`golang.org/x/*`.** From that, adapter scope follows mechanically:
+
+> A `packages/ai/src` adapter is **OUT** iff parity would require a third-party
+> Go module for the **transport**, the **wire encoding**, or the **credential
+> chain**. Otherwise it is IN — the transport is HTTP(S) or SSE, the body is
+> JSON the adapter itself constructs, and auth reduces to static headers.
+
+One checkable question: *would porting this add a `require` line?* It resolves
+today as **OUT** for `amazon-bedrock` (SigV4 signer + `vnd.amazon.eventstream`
+framing + the AWS credential chain) and `openai-codex` (WebSocket + zstd), and
+**IN** for `azure-openai-responses`, `mistral-conversations`, `google-vertex`,
+`radius` + `radius-config`, and the `auth/oauth/**` acquisition tree. Bedrock
+additionally has no coherent parity target at all: its wire is authored by
+`aws-sdk-js`, not by pi.
+
+Riders:
+- **A transparent vendor wrapper does not fire E2.** `@google/genai` wraps
+  JSON/SSE over HTTPS, and the port already hand-rolls what `openai` and
+  `@anthropic-ai/sdk` do. Only an *opaque* SDK — one that signs, frames binary,
+  or discovers credentials — counts.
+- Helpers reachable **only** through an E2-excluded adapter
+  (`utils/node-http-proxy.ts`, `utils/abort-signals.ts`) are out with it, and
+  come back in with it if the policy ever changes. Two files that look like they
+  belong here do NOT: `utils/uuid.ts` is root-exported, consumed by ported
+  surface (`core/session-manager.ts`, `core/compaction/compaction.ts`) and is
+  **already ported** (`coding/session_store.go`, `server/uuid.go`); and
+  `session-resources.ts` is root-exported with a second consumer in
+  `core/agent-session.ts`. Both are in scope.
+- **The one escalation E2 can still raise is "should the port take a
+  dependency?"** — an owner policy question with a durable answer, not a
+  per-commit judgement.
+
+**Accepted consequence, decided here rather than deferred:** the catalog keeps
+shipping **125** `amazon-bedrock` + `openai-codex` models (118 + 7, verified in
+`ai/models_catalog.json`) that list and then fail at stream time with no
+registered api. Accepted, not filtered — pi's catalog is the source, regen is
+whole-file, and inventing a filter would be a divergence from pi.
+
+### E3 — no Go representation
+
+Fires when the construct is a **TypeScript type-level artifact with no runtime
+behavior**, so there is nothing to port. Today this is exactly one thing: the
+schema/type-inference half of `packages/telemetry` (`defineTelemetrySchema`,
+`Infer*`, `SchemaTelemetrySpan` — 2026-08-06). It is root-exported, which is
+why it needs E3 rather than reachability: exported *types* are not runtime
+surface. It shares `src/index.ts` with the ported runtime half, so **this one
+must be split by HUNK** — and it is the standing example of an exclusion that
+is not expressible as a path.
+
+Go generics do not change the answer: pi's schema half exists to make
+`Infer<typeof schema>` produce a compile-time span type, which is a TypeScript
+type-system feature with no runtime residue at all.
+
+### What this leaves genuinely out
+
+| out | test | note |
+|---|---|---|
+| `packages/tui` + `coding-agent/src/modes/**` | E1 | 37,257 LOC of implementation — **69% of the 53,706 LOC this table excludes**. TUI alone is 16,966 LOC (34,144 with upstream's own test suite) across 101 commits in 90 days, yet the sole cause of only **4** mixed commits, one triage lesson and zero defects: the cheapest exclusion the port has. `modes/**` is the other 20,291 LOC and 56 sole-cause mixed commits. The pair is ~95 port-cycles, and there is no oracle — a request body is a value you can diff, an escape-byte stream interpreted by a terminal is not. |
+| extensions runtime (`core/extensions/**`) | E1 | 4,121 LOC. Runs operator-authored JS in the host process. |
+| `cli/**`, `main.ts`, `bun/**`, `package-manager-cli.ts`, `migrations.ts`, `packages/ai/src/cli.ts` | E1 | 4,303 LOC plus `ai/src/cli.ts`. Entry points, installer/self-update, config migrations. `ai/src/cli.ts` was carved out by the old skill table ("except … cli") and keeps its exclusion here on E1 rather than on a list entry. |
+| `core/settings-manager.ts`, `core/prompt-templates.ts` | E1 | 1,645 LOC. Operator configuration. |
+| `core/agent-session-runtime.ts` + the session reload / `/new` lifecycle | E1 | Drives the interactive and print session lifecycle; its consumers are modes. |
+| `core/model-registry.ts`, `core/resolve-config-value.ts`, `core/radius.ts` | E1 (only-consumers clause) | 445 LOC. The host-side machinery that POPULATES ported SDK seams — `StreamOptions.Env` (2026-06-17) and the Radius host wiring (2026-07-14). The seams stay ported and latent. **`core/model-resolver.ts` (782 LOC) is deliberately NOT here** — it is partly ported and is in the split-by-HUNK table above. |
+| `core/export-html/**` | E1 | 746 LOC of TypeScript plus 4,275 lines of bundled template/asset files. Renders a session to an HTML file for a human. |
+| `core/resource-loader.ts` source-info accessors | E1 (only-consumers clause) | 2026-07-30. Sole upstream consumer is `modes/interactive`. |
+| `packages/evals` | E1 | 1,277 LOC. Upstream's own eval harness. |
+| — | — | **Not out, but not homed:** `packages/coding-agent/src/server/**` (161 LOC, `create-harness.ts`) was ruled IN on 2026-08-07 and is the harness factory; it is covered by Scope queue entry 8, not by this table. |
+| `amazon-bedrock`, `openai-codex` (+ `utils/node-http-proxy.ts`, `utils/abort-signals.ts`) | E2 | **3,912 LOC** of implementation (9,052 with upstream's own tests): bedrock 1,459, codex 2,228, helpers 225. |
+| the telemetry schema/type-inference half | E3 | Split by HUNK — shares `src/index.ts` with the ported runtime half. |
+| the trust prompt, selector and store — `cli/project-trust.ts`, `modes/interactive/components/trust-selector.ts`, and `core/trust-manager.ts`'s persistence | E1 | Asking the user is host surface. The trust *decision and gate* are ported (2026-08-27), so **`core/trust-manager.ts` splits by HUNK** — see the table above. |
+| docs, CHANGELOG, CI, `.github/`, `.pi/`, examples, per-package `package.json` version bumps, repo-root `scripts/` | — | Always noise; not a scope question. |
+
+**That table is exhaustive.** If a hunk is not covered by a row above and no
+test fires on it, it is **in scope** — that is the default, and it is the
+direction this boundary has always moved. If you believe something belongs out
+and no test reaches it, that is a `decide`: it means a test needs changing.
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
 
-- **2026-08-25 — the `pi-triage` skill's `port` definition is the single list of
+- **2026-08-27 — scope is decided by EXCLUSION TESTS, not by a path list; the three
+  tests are in "The scope boundary" above and they are authoritative over
+  every list in this repo.** This is the structural answer to a failure the
+  ledger had recorded six separate times without naming: the boundary was drawn
+  on paths, and upstream refactors move files across paths. Evidence, all
+  already in this file — host→SDK relocations (2026-06-23, 06-25, 07-17), a
+  type's home moving into a brand-new package (08-06), an exclusion becoming a
+  published npm artifact (08-07), a carve-out outliving the directory it named
+  (08-25), and the 2026-08-22 sweep rewrite independently concluding that "some
+  real exclusions are unexpressible as paths at all." **Twelve of sixteen scope
+  rulings resolved a path INTO scope**. The other four (2026-06-12 trust,
+  2026-06-24 null headers, 2026-07-30 resource-loader, 2026-08-05 harness) all
+  DECLINED to bring something in; **not one ruling has ever moved surface that
+  was already in scope back OUT**, and two of those four were themselves
+  reversed IN later — null headers after 41 days, the harness after two. So a
+  list of exclusions was a lagging indicator being maintained as though it were
+  a contract. Consequence for triage: when a list and a predicate
+  disagree, the predicate wins and the list is fixed in the same commit — and a
+  hunk no predicate excludes is IN scope by default. This ruling does not move
+  any single boundary by itself; it changes what a boundary IS.
+
+- **2026-08-27 — the host seam replaces the TUI / modes / extensions / cli /
+  settings / packaging entries as a single structural exclusion, and a commit
+  spanning it never escalates on account of its host half.** These were seven
+  separate list entries describing one thing: pi's host application. Stated as a
+  seam it is self-maintaining — a new host file is host surface on the day it
+  appears, with nothing to add to a list. **This is a restatement, not a
+  boundary change**: nothing moves in or out, and the TUI's exclusion is
+  reaffirmed on its merits (16,966 LOC of implementation, 34,144 with
+  upstream's own tests; 101 commits touching it in 90 days yet
+  the sole cause of only 4 mixed commits; zero defects; and no oracle — a
+  request body is a value you can diff, an escape-byte stream interpreted by a
+  terminal is not). `modes/**` is a further 20,291 LOC and 56 sole-cause mixed
+  commits; the pair costs ~95 port-cycles to take on. The cost it removes is
+  per-commit hunk-reading that ended in `n/a` ~65% of the time.
+
+- **2026-08-27 — `go.mod` decides adapter scope. Azure, Mistral, Vertex, Radius
+  (+ `radius-config`) and the whole OAuth token-acquisition tree are IN scope
+  and queued. Bedrock and Codex are OUT for as long as the go.mod policy holds.** This **supersedes the 2026-07-14 ruling** insofar as that ruling
+  put the Radius provider and its host wiring out: `providers/radius-config.ts`
+  is reachable through pi-ai's `"./providers/*"` exports wildcard, i.e.
+  published SDK surface, which is the exact fact that ruled the Cloudflare
+  binding IN on 2026-08-11 — and the 2026-08-22 tripwire had already recorded
+  that "daylight in the ruling text," noting it was spared a `decide` only
+  because `packages/ai` had no delta that range. It is closed now rather than
+  when it fires. The OAuth tree is the highest-value item and is not really "an
+  excluded provider" at all: `OAuthAuth.Refresh`/`ToAuth` and `LazyOAuth` are
+  **already-ported seams with zero implementers**, so Anthropic Pro/Max,
+  Copilot, OpenRouter, Kimi and xAI subscriptions are unreachable from Go
+  today — and closing that needs no dependency the port does not already have.
+  The host-side *env-override population* machinery (2026-06-17) and the Radius
+  HOST wiring (`core/model-registry.ts`, `core/resolve-config-value.ts`,
+  `core/radius.ts`) stay OUT under **E1's only-consumers clause**, not under the
+  reachability default, and are named in E1's derived list and in the out-table.
+  `core/model-resolver.ts` is the exception and must NOT be dispatched from a
+  diffstat: it is partly ported (`defaultModelPerProvider` → `coding/resolve.go`)
+  and sits in the split-by-HUNK table instead. The queue entry covers the
+  `packages/ai` half only.
+
+- **2026-08-27 — image generation is IN scope and queued.** It was a
+  founding-day list entry with **no recorded reasoning**, which is precisely why
+  it kept regenerating the question: a triager had nothing to apply.
+  `packages/ai/src/index.ts` carries `export * from "./images-models.ts"`, so
+  `ImagesModels` / `createImagesModels` / `createImagesProvider` sit on the
+  **root** export of `@earendil-works/pi-ai` — strictly stronger reachability
+  than the `./api/*` wildcard that decided 2026-08-11. Under predicate 2 it was
+  never out. `image-models.generated.ts` joins the catalog-regen surface;
+  `scripts/generate-image-models.ts` becomes `port-but-CATALOG-ONLY` like its
+  sibling.
+
+- **2026-08-27 — project trust: a gate is in scope exactly when the port has the
+  thing it gates, and any new project-local read must ship WITH its gate.**
+  This **supersedes the 2026-06-12 ruling in part**. That ruling rested on three
+  criteria, the third being "verified not to change behavior of ported surface";
+  that criterion stopped holding — not through an upstream commit but because
+  **the port grew the consumer**. `coding/session.go` called `LoadSkills(cwd)`
+  unconditionally, and `coding/resources.go` scanned `<cwd>/.pi/skills`, a
+  directory upstream reaches only inside `if (projectTrusted)`
+  (`package-manager.ts:2417`) and answers *untrusted* for a UI-less host
+  (`project-trust.ts`). The port answered *trusted*: a parity inversion on a
+  security default, in public MIT code, letting a hostile repository author part
+  of the system prompt. Fixed in `873e35a` with the gate defaulting untrusted
+  and `SessionOptions.TrustProject` as the opt-in.
+  **The load-bearing half of this ruling is the corollary**, and it is a rule
+  that would have caught the regression on the day it shipped: *whenever the
+  port adds any new project-local read — anything under `<cwd>/.pi/**` or an
+  ancestor `.agents/**` — that same change must carry the gate. A new reader
+  shipping ungated is a defect, not a scope question.* The trust *prompt*,
+  selector and store stay out under E1 (asking the user is host surface); the decision and the gate are in. Ancestor `<project>/.agents/skills`
+  discovery remains unimplemented (2026-08-18) and `TrustProject` does not
+  enable it — when it is implemented, it ships gated.
+
+- **2026-08-27 — the agent harness is the one item still owed an owner
+  decision, and "IN-but-deferred" is not an answer.** Recorded here so it stops
+  being re-derived every cycle. Status is unchanged — IN scope since 2026-08-07,
+  backlog now 12 — but the state itself is the most expensive one available: it
+  generates triage work every cycle and produces no parity, and the pin has
+  carried a qualifying asterisk for 12+ consecutive cycles. Sized at ~24
+  port-cycles (~10.3k lines of harness + search src, ~5.7k lines of upstream
+  test, plus ~1.6 upstream commits/day of new obligation). **The owner owes one
+  call: fund it, or rule it out under E1.** Until then it stays at the
+  bottom of the scope queue and the pin keeps its asterisk. Triage must not
+  escalate it again; it must simply carry the backlog.
+
+- **[AMENDED 2026-08-27] 2026-08-25 — the `pi-triage` skill's `port` definition is the single list of
   in-scope trees, and this ledger is authoritative over it.** Closing an item
   carried OPEN since 2026-08-22. The skill's verdict-assigning text named three
   trees while these Rulings had put five more in scope (protocol, client, server,
@@ -43,6 +291,12 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   dead text: `server/src/legacy/**` (deleted upstream in `05bf9df65`) and
   `server/src/testing/**` (ported as `server/internal/servertest/`).
 
+
+  > **AMENDED 2026-08-27.** The mechanism this ruling installed — one
+  > authoritative LIST — is superseded by the three exclusion tests in "The
+  > scope boundary". Its *substance* stands: this ledger is authoritative over
+  > the skill, and there must never be two copies of anything. Read "single
+  > list" as "single source of truth", which is now the tests.
 - **2026-08-19 — an upstream REVERT is ported like any other change, even when
   it removes exported Go API the port shipped days earlier.** (re: `3a0b9a3ee`
   reverting `2509b5c03`, which the port had landed the previous day as
@@ -75,7 +329,7 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   gap was invisible to the suite. When a revert removes a test, re-establish
   what it pinned through whatever path survives before shipping.
 
-- **2026-08-18 — `.agents/skills` discovery: the USER directory is IN scope
+- **[AMENDED 2026-08-27] 2026-08-18 — `.agents/skills` discovery: the USER directory is IN scope
   (port it, as backlog); the project-ancestor directories stay `n/a` under the
   trust ruling.** (re: `5e11f6586` "load nested markdown skills", which only
   widens `collectSkillEntries` for mode `"agents"`.) Deliberately NOT escalated
@@ -109,6 +363,18 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   against BOTH modes now; the ancestor `<project>/.agents/skills` dirs stay `n/a`
   while project trust is unported.
 
+
+  > **AMENDED 2026-08-27 — the trust legs below are DEAD; do not cite them.**
+  > Every sentence in this ruling that grounds the project-ancestor `n/a` on
+  > "project trust is on the non-port list" or "while project trust is
+  > unported" is false since `873e35a`: the gate IS ported
+  > (`SessionOptions.TrustProject`, `LoadSkillsWithTrust`).
+  > **Corrected disposition:** ancestor `<project>/.agents/skills` discovery is
+  > IN scope and has no Go home, which under the rewritten boundary is a
+  > **Scope queue** matter, not an `n/a` — it is folded into queue entry 3's
+  > neighbourhood as a one-file item and ships GATED when built, per the
+  > 2026-08-27 project-trust corollary. Marking it `n/a` would re-create exactly
+  > the "in scope, no home, called n/a" pattern the queue exists to end.
 - **2026-08-11 — the Cloudflare AI-binding gateway transport is IN scope; port it
   latent. A transport is not out of scope for being runtime-specific.** (re:
   `230029078` "feat(ai): AI Gateway transport over the Cloudflare AI binding",
@@ -223,7 +489,7 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   schema/typing half or to harness span catalogs stay `n/a` under the
   2026-08-05 harness ruling.
 
-- **2026-08-05 — the agent-harness exclusion HOLDS even though harness-v2 is now
+- **[SUPERSEDED 2026-08-07 and 2026-08-27] 2026-08-05 — the agent-harness exclusion HOLDS even though harness-v2 is now
   `packages/agent`'s promoted public API. No cutover, no date; watch a tripwire
   instead.** (re: `44289550a` "feat(agent): promote durable harness API", with
   riders `f119b01cb`, `79cc1ef00`, `591f22a61`, `7bdeeb8f9`, `1e95e16b6`,
@@ -280,6 +546,11 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   `packages/session-backends/**`, and `packages/agent/docs/harness-v2.md` remain
   `n/a` and triage must not re-escalate them.
 
+
+  > **SUPERSEDED 2026-08-07** (reopened IN scope) and again **2026-08-27**
+  > (queued, entries 7 and 8). Its closing instruction that the harness and
+  > session-backends "remain `n/a`" is DEAD TEXT — do not act on it. Retained
+  > only for the reasoning trail.
 - **2026-08-04 — null-`ProviderHeaders` suppression is now IN scope; port it**
   (re: `a24fb9e96` "preserve auth header deletion markers", #7539). Owner call
   (noam): **port it.** This closes the 2026-06-24 deferral on its own terms —
@@ -370,7 +641,7 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   (non-`legacy/`), and `coding-agent/src/client/` are `port` under this ruling;
   commits confined to `server/src/legacy/**` are `n/a`.
 
-- **2026-07-17 — the model-runtime facade is ported SDK-scoped** (re:
+- **[PARTLY SUPERSEDED 2026-08-27] 2026-07-17 — the model-runtime facade is ported SDK-scoped** (re:
   `ff28097a` "merge model runtime facade" + rider `bd9e09db` "expose dynamic
   provider refresh"). Owner call (noam): maximum fidelity to source via
   maximum Go idioms, and the port supports **only the SDK and everything it
@@ -397,7 +668,15 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   `packages/ai/src` are `port`; commits only to the host runtime files above
   are `n/a`.
 
-- **2026-07-14 — port the `pi-messages` provider API; leave Radius OAuth + host
+
+  > **PARTLY SUPERSEDED 2026-08-27.** Its "Not ported" list has moved: the
+  > **OAuth reorg / acquisition tree is now IN scope and queued** (entry 1),
+  > and `radius`/`radius-config` with it (E2). `cli.ts` and the host
+  > `coding-agent/src/core` restructuring (`model-runtime`, `model-config`,
+  > `provider-composer`, `models-store`, `runtime-credentials`,
+  > `remote-catalog-provider`) stay out — `cli.ts` under E1 directly, the `core`
+  > cluster under E1's only-consumers clause where every consumer is host.
+- **[PARTLY SUPERSEDED 2026-08-27] 2026-07-14 — port the `pi-messages` provider API; leave Radius OAuth + host
   wiring out** (re: `961fa6c1` "feat(ai): add Radius gateway support"). The
   commit adds a new first-class provider API `pi-messages` — a generic
   POST-`{model,context,options}` + SSE wire protocol — plus a `radius` provider
@@ -420,6 +699,10 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   `packages/ai/src/api/pi-messages.ts` are `port`; commits only to the Radius
   OAuth/host machinery are `n/a` under this ruling.
 
+
+  > **PARTLY SUPERSEDED 2026-08-27.** The Radius *provider* + `radius-config`
+  > are IN scope and queued (E2). The *host wiring* stays out under E1's
+  > only-consumers clause. See the 2026-08-27 go.mod ruling.
 - **2026-06-25 — adopt the relocated SDK retry classifier as a latent export**
   (re: `371adcf3` "retry explicit provider retry errors", #6019). Upstream moved
   `isRetryableAssistantError` out of host code (`coding-agent/src/core/agent-session.ts`)
@@ -501,7 +784,7 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   `Env`. The `auth/resolve.ts` credential→env resolution is the new boundary
   edge: future commits to it in `packages/ai/src` are `port`.
 
-- **2026-06-17 — provider-scoped env overrides ported faithfully** (re:
+- **[RE-DERIVED 2026-08-27] 2026-06-17 — provider-scoped env overrides ported faithfully** (re:
   `7f29e7a3`). Owner call: maximum parity. `StreamOptions.Env`
   (`map[string]string`) is consulted ahead of `os.Getenv` (helper
   `getProviderEnvValue`: non-empty scoped value wins, empty falls through —
@@ -515,11 +798,15 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   the env-override *plumbing in ported providers* are `port`; commits only to
   the unported host-side population are `n/a`.
 
+
+  > **RE-DERIVED 2026-08-27.** Verdict unchanged; the host-side population
+  > machinery stays out under E1's only-consumers clause, and those files are
+  > now named explicitly in E1's derived list rather than left to prose.
 - **2026-06-16 — provider-attribution ported faithfully** (port-it ruling); SDK
   sends pi's default attribution headers (http-referer/x-title/...) on the
   providers pi does.
 
-- **2026-06-12 — project trust stays excluded** (re: `718215bd`, `d8aef0fe`,
+- **[PARTLY SUPERSEDED 2026-08-27] 2026-06-12 — project trust stays excluded** (re: `718215bd`, `d8aef0fe`,
   and the wider upstream trust push). Criteria set by the owner: not an SDK
   use case (host apps control what loads), postponable (purely additive
   subsystem), and verified not to change behavior of ported surface (the only
@@ -528,6 +815,11 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   `n/a` under this ruling UNLESS they change behavior of surface we ported —
   that re-escalates.
 
+
+  > **PARTLY SUPERSEDED 2026-08-27.** The trust DECISION and GATE are ported
+  > (`873e35a`); only the prompt/selector/store stay out under E1. This
+  > ruling's third criterion — "verified not to change behavior of ported
+  > surface" — stopped holding when the port grew the consumer.
 - **2026-07-30 — catalog data lives only in the npm build, never in upstream
   git.** The per-provider model data (`dist/providers/data/*.json`) is generated
   at publish time by `scripts/generate-models.ts`; it is **not committed**
@@ -543,7 +835,7 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   `models.generated.js`.** A generator-only (`scripts/generate-models.ts`) hunk
   in the delta is a positive signal that the next release WILL move the catalog.
 
-- **2026-07-30 — `core/resource-loader.ts` source-info additions stay `n/a`**
+- **[RE-DERIVED 2026-08-27] 2026-07-30 — `core/resource-loader.ts` source-info additions stay `n/a`**
   (re: `bff5ab71`, extending the `66eead65` precedent). The port has no
   `ResourceLoader` object, no `SYSTEM.md`/`APPEND_SYSTEM.md` discovery, and no
   path-or-inline prompt source — `BuildSystemPromptOptions.AppendSystemPrompt`
@@ -554,6 +846,55 @@ stays latent until a host sets it (see the 2026-06-17 ruling).
   list (2026-06-12). Porting them would mean inventing an entire exported
   subsystem to serve no ported consumer. Future `resource-loader.ts` commits are
   `n/a` UNLESS the port grows a resource-loader analog.
+
+
+  > **RE-DERIVED 2026-08-27.** Verdict unchanged, ground restated: it is E1's
+  > only-consumers clause (sole upstream consumer is `modes/interactive`). The
+  > second leg below — "gated on `isProjectTrusted()`, itself on the non-port
+  > list" — is DEAD: the trust gate is ported as of `873e35a`. Do not cite it.
+## Scope queue (IN scope, not yet built — opened 2026-08-27)
+
+The 2026-08-27 rewrite moved surface into scope faster than it can be ported.
+Those items live here, and this queue is why that is **not** the
+"IN-but-deferred" trap the harness fell into: each entry has an order, a size
+measured at `ccfe79ed2`, and a place to accumulate deltas, and the queue is
+reported in every cycle's ledger entry like the catalog-only queue is.
+
+**How triage handles a queued tree.** An upstream change touching one is
+`port-but-QUEUED`: verdict `port`, no Go commit this cycle, delta appended to
+the entry below. That is the `port-but-CATALOG-ONLY` pattern generalized — these
+trees have **no Go base yet**, so a hunk-sized port of a file that does not
+exist is not a thing that can land. Once an entry's base port ships, its queued
+deltas land with it, the entry closes, and that tree triages as ordinary `port`.
+
+**How to OPEN an entry — this is the part the harness never had.** If a change
+is IN scope (no exclusion test fires) and the port has no Go home for it, do
+**not** escalate and do **not** mark it `n/a`. Open a new row here: name the
+tree, size it at the pin, and put it at the bottom. Opening a row is a normal
+triage action requiring no owner decision, because the scope question was
+already answered by the tests — only the scheduling is open. Say so in the
+cycle's ledger entry so the row is visible the day it appears.
+
+Drain order is value-first, not size-first. Sizes are upstream source lines at
+`ccfe79ed2`, implementation only.
+
+| # | entry | size | est. | why here | queued deltas |
+|---|---|---|---|---|---|
+| 1 | **OAuth token acquisition** (`auth/oauth/**`, `oauth.ts`) | 2,983 LOC / 12 files (2,439 excluding `openai-codex.ts`, whose adapter is OUT under E2) | ~3 | Highest value in the queue. `OAuthAuth.Refresh`/`ToAuth` and `LazyOAuth` are **ported seams with zero implementers** — Anthropic Pro/Max, Copilot, OpenRouter, Kimi and xAI subscription auth are simply unreachable from Go. Needs nothing beyond `crypto/rand`, `crypto/sha256`, `net/http`, `os/exec`. Carries `auth/oauth/radius.ts` (403), so land it with entry 2. | — |
+| 2 | **Radius provider** (`providers/radius.ts`, `providers/radius-config.ts`) | **178 LOC** | ~0.5 | Smallest entry by an order of magnitude, and it closes the **2026-08-22 tripwire**, which is loaded and will fire on the next behavioral commit: `radius-config.ts` is reachable through pi-ai's `"./providers/*"` exports wildcard, i.e. published SDK surface the 2026-07-14 ruling did not name. Only ~8 first-parent commits in 90 days touch anything Radius-named, so this is bought for the tripwire, not for churn relief. | — |
+| 3 | **Image generation** | 1,125 LOC in `packages/ai/src` (of which **684 is `image-models.generated.ts`** → catalog surface, not hand-ported) + 228 LOC of `openrouter-images` api/provider | ~2 | Root-export surface (2026-08-27 ruling). Auth, catalog machinery and helpers already exist port-side. `scripts/generate-image-models.ts` is `port-but-CATALOG-ONLY`. | — |
+| 4 | **Azure OpenAI responses** | 364 LOC | ~1 | JSON over HTTPS, header auth. | — |
+| 5 | **Google Vertex** | 710 LOC | ~2 | IN under E2's transparent-wrapper rider (`@google/genai`). ADC is the risk — scope it to the credential paths Go reaches with stdlib. | — |
+| 6 | **Mistral conversations** | 963 LOC | ~1.5 | JSON over HTTPS, header auth. | — |
+| 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **Answer E2 for it in the first cycle that touches it:** it is a `better-sqlite3` backend, so whether a Go port needs a third-party driver (`mattn/go-sqlite3` is cgo; `modernc.org/sqlite` is pure Go but not `golang.org/x/*`) decides whether this entry survives at all. | — |
+| 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | ~24 | **Owner decision owed — see the 2026-08-27 harness ruling.** Fund it or rule it out under E1. Do not leave it here indefinitely; it is the reason this queue has an opening procedure and a rot rule. Backlog: **12**. | 12 (carried) |
+
+Entries 1–6 total **~10 port-cycles**. Entries 7 and 8 are not costed into that
+number: 7 is contingent on its own E2 answer, and 8 is not yet a commitment.
+
+**Queue discipline.** An entry untouched for more than ~10 cycles is evidence
+the ruling that created it was wrong; re-open the ruling rather than letting the
+row rot. That is the lesson entry 8 has been teaching for 16 cycles.
 
 ## Drift at last sync check (2026-08-27) — pin advanced to ccfe79ed2
 
