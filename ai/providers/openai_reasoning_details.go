@@ -243,9 +243,18 @@ func appendOpenAIReasoningDetail(details []json.RawMessage, detail json.RawMessa
 // delta has to be appended on its own.
 //
 // Both arguments are stringifyReasoningDetail output, so the merge is a
-// rendering-level edit of the object pi mutates in place — and pi re-parses the
-// sequence out of the signature per arriving detail, so nothing carries between
-// calls that the bytes do not.
+// rendering-level edit of the object pi mutates in place. Since upstream
+// 7aab6c26e pi no longer re-parses the sequence out of the signature per
+// arriving detail: it holds live JS objects and stringifies once at block end.
+// Rendering per arrival is still equivalent for every value that survives a
+// JSON round trip, which is every value a provider can send but one — a
+// magnitude JSON.parse saturates to Infinity. That renders to `null` here on
+// arrival, and the nullish fill below then reads it as absent and drops the
+// key, where pi's live Infinity is not nullish, survives the fill, and
+// serializes as `null`. So `{"index": 1e400}` followed by an ADJACENT same-type
+// delta yields no `index` here and `"index":null` in pi; unmerged, both render
+// `"index":null` and agree. Recorded, not fixed — see docs/UPSTREAM.md — since
+// reaching it needs a provider to send `index: 1e400` in the first place.
 func mergeOpenAIReasoningDetail(last, detail json.RawMessage) (json.RawMessage, bool) {
 	target, ok := decodeReasoningDetailMembers(last)
 	if !ok {

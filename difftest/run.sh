@@ -85,20 +85,30 @@ verify_integrity "@earendil-works/pi-coding-agent"
 # Scenarios marked "backend": "src" build against pi's TypeScript source,
 # because the change they cover was ported before it was ever released and the
 # published build simply does not contain it.
+#
+# Skipped entirely when no scenario asks for it. The suite empties of "src"
+# scenarios every time a release ships the surface they cover — it is fully
+# dist-backed as of the 2026-08-27 sync — and extracting then would make the
+# upstream clone and a resolvable PI_UPSTREAM_SHA hard requirements of a run
+# that reads neither, which is a fresh-clone and CI failure for nothing.
 
 SRC="$HERE/pisrc/$PI_UPSTREAM_SHA"
-if [ ! -d "$SRC/src" ]; then
-	info "== extracting upstream packages/ai @ $PI_UPSTREAM_SHA (read-only, via git archive)"
-	rm -rf "$SRC"
-	mkdir -p "$SRC"
-	git -C "$PI_UPSTREAM_DIR" archive "$PI_UPSTREAM_SHA" packages/ai |
-		tar -x -C "$SRC" --strip-components=2 || {
-		red "could not extract $PI_UPSTREAM_SHA from $PI_UPSTREAM_DIR"
-		exit 1
-	}
+if grep -lq '"backend"[[:space:]]*:[[:space:]]*"src"' "$HERE"/scenarios/*.json 2>/dev/null; then
+	if [ ! -d "$SRC/src" ]; then
+		info "== extracting upstream packages/ai @ $PI_UPSTREAM_SHA (read-only, via git archive)"
+		rm -rf "$SRC"
+		mkdir -p "$SRC"
+		git -C "$PI_UPSTREAM_DIR" archive "$PI_UPSTREAM_SHA" packages/ai |
+			tar -x -C "$SRC" --strip-components=2 || {
+			red "could not extract $PI_UPSTREAM_SHA from $PI_UPSTREAM_DIR"
+			exit 1
+		}
+	fi
+	# Node resolves bare imports (openai, typebox, ...) through this symlink.
+	ln -sfn "$PI_NPM_DIR/node_modules" "$SRC/node_modules"
+else
+	info "== no \"backend\": \"src\" scenarios; skipping the upstream TS extraction"
 fi
-# Node resolves bare imports (openai, typebox, ...) through this symlink.
-ln -sfn "$PI_NPM_DIR/node_modules" "$SRC/node_modules"
 
 # --- 3. Regenerate both sides ----------------------------------------------
 
