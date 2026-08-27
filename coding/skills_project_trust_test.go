@@ -1,9 +1,12 @@
 package coding
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sky-valley/pi/ai/providers"
 )
 
 // pi discovers <cwd>/.pi/skills only inside `if (projectTrusted)`
@@ -43,6 +46,72 @@ func TestLoadSkillsUntrustedSkipsProjectDir(t *testing.T) {
 	// Order is pi's: user dir first, then project.
 	if trusted[0].Name != "user-skill" || trusted[1].Name != "repo-skill" {
 		t.Fatalf("trusted load must keep user-then-project order, got %s, %s", trusted[0].Name, trusted[1].Name)
+	}
+}
+
+// With no HOME, AgentDir() and AgentsSkillsDir() fall back to RELATIVE paths
+// (".pi/agent", ".agents/skills") which resolve against the process cwd — the
+// untrusted repository. That walked straight around the gate: the repo's own
+// .pi/agent/skills and .agents/skills were read as though they were the user's.
+// pi cannot reach this state (getHomeDir is `process.env.HOME || homedir()`,
+// and Node's homedir() consults the passwd database rather than returning a
+// relative path), so failing closed is both the safe and the faithful answer.
+func TestLoadSkillsWithoutHomeIgnoresRepoLocalUserDirs(t *testing.T) {
+	cwd := t.TempDir()
+	t.Setenv("HOME", "")
+
+	const marker = "ZZ-REPO-PLANTED-AS-USER-SKILL"
+	writeSkill(t, filepath.Join(cwd, ".pi", "agent", "skills", "planted-agent"),
+		"---\nname: planted-agent\ndescription: "+marker+"\n---\n")
+	writeSkill(t, filepath.Join(cwd, ".agents", "skills", "planted-agents"),
+		"---\nname: planted-agents\ndescription: "+marker+"\n---\n")
+	writeSkill(t, filepath.Join(cwd, ".pi", "skills", "planted-project"),
+		"---\nname: planted-project\ndescription: "+marker+"\n---\n")
+
+	// The relative-path fallback only bites when the process cwd IS the repo.
+	restore, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chdir(cwd); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(restore) })
+
+	if got, _ := LoadSkillsWithTrust(cwd, false); len(got) != 0 {
+		t.Fatalf("HOME-less untrusted load must find no skills at all, got %+v", got)
+	}
+	// Trust opens the project dir and nothing else: the two repo-local
+	// directories that merely LOOK like user dirs stay shut.
+	trusted, _ := LoadSkillsWithTrust(cwd, true)
+	if len(trusted) != 1 || trusted[0].Name != "planted-project" {
+		t.Fatalf("HOME-less trusted load must see only the project dir, got %+v", trusted)
+	}
+}
+
+// The gate's only production consumer is NewSession. Exercising the loader
+// directly would leave the wiring — SessionOptions.TrustProject reaching
+// sessionSkills — unlocked, and the ZERO VALUE is the security-relevant case.
+func TestNewSessionDefaultsToUntrustedProject(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+
+	const marker = "ZZ-UNTRUSTED-VIA-NEWSESSION"
+	writeSkill(t, filepath.Join(cwd, ".pi", "skills", "repo-skill"),
+		"---\nname: repo-skill\ndescription: "+marker+"\n---\n")
+
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+
+	// Zero value for TrustProject — the default every embedder gets.
+	untrusted := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: cwd})
+	if strings.Contains(untrusted.Agent.State().SystemPrompt, marker) {
+		t.Fatalf("NewSession must default to an untrusted project")
+	}
+
+	trusted := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: cwd, TrustProject: true})
+	if !strings.Contains(trusted.Agent.State().SystemPrompt, marker) {
+		t.Fatalf("NewSession with TrustProject must load the project skill")
 	}
 }
 

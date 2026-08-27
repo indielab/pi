@@ -358,8 +358,20 @@ func LoadSkillsWithTrust(cwd string, projectTrusted bool) ([]Skill, []SkillDiagn
 	// pi preserves discovery order (skills.ts loadSkills: a name-keyed Map in
 	// insertion order — user dir first, then project, filesystem order within
 	// each). No sorting.
-	s1, d1 := loadSkillsFromDir(filepath.Join(AgentDir(), "skills"))
-	add(s1, d1)
+	// A USER skill directory is absolute by definition. AgentDir() and
+	// AgentsSkillsDir() fall back to a RELATIVE path when os.UserHomeDir()
+	// fails (no HOME — containers, CI, systemd, cron), and a relative path
+	// resolves against the process cwd, which is the untrusted repository. That
+	// would read <cwd>/.pi/agent/skills and <cwd>/.agents/skills as though they
+	// were the user's own, walking straight around the project-trust gate
+	// below. pi cannot reach this state — its getHomeDir is
+	// `process.env.HOME || homedir()` and Node's homedir() consults the passwd
+	// database rather than yielding a relative path — so skipping is both the
+	// safe answer and the faithful one: with no home there IS no user dir.
+	if dir := filepath.Join(AgentDir(), "skills"); filepath.IsAbs(dir) {
+		s1, d1 := loadSkillsFromDir(dir)
+		add(s1, d1)
+	}
 	// pi reaches this directory only under `if (projectTrusted)`. Discovery
 	// ORDER is preserved either way: skipping the project dir cannot change how
 	// a name already claimed by the user dir resolves, and cannot promote a
@@ -374,8 +386,10 @@ func LoadSkillsWithTrust(cwd string, projectTrusted bool) ([]Skill, []SkillDiagn
 	// how an existing name resolves. pi's ancestor <project>/.agents/skills dirs
 	// are NOT discovered here: they are gated on project trust, which is not
 	// ported (2026-06-12 ruling; see the 2026-08-18 ruling for this split).
-	s3, d3 := loadSkillsFromDirMode(AgentsSkillsDir(), skillModeAgents)
-	add(s3, d3)
+	if dir := AgentsSkillsDir(); filepath.IsAbs(dir) {
+		s3, d3 := loadSkillsFromDirMode(dir, skillModeAgents)
+		add(s3, d3)
+	}
 	return skills, diags
 }
 
