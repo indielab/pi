@@ -12,10 +12,19 @@ import (
 const ConfigDirName = ".pi"
 
 // AgentDir returns the global agent config directory (~/.pi/agent).
+// It returns "" when the home directory cannot be determined (no HOME — which
+// is ordinary in containers, CI, systemd units and cron). It must NOT fall back
+// to a relative path: a relative path resolves against the process working
+// directory, i.e. whatever repository the agent happens to be run in, so
+// `.pi/agent` would make a hostile repo's files look like the user's own global
+// config. pi cannot reach that state — its getHomeDir is
+// `process.env.HOME || homedir()` and Node's homedir() consults the passwd
+// database — so failing closed is the faithful answer as well as the safe one.
+// Every caller must treat "" as "there is no agent directory".
 func AgentDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(ConfigDirName, "agent")
+		return ""
 	}
 	return filepath.Join(home, ConfigDirName, "agent")
 }
@@ -215,7 +224,10 @@ func LoadProjectContextFiles(cwd string) []ContextFile {
 	var files []ContextFile
 	seen := map[string]bool{}
 
-	if gc, ok := loadContextFileFromDir(agentDir); ok {
+	// An absent agent dir (no home) contributes no GLOBAL context file. Without
+	// this the relative fallback used to read <cwd>/.pi/agent/AGENTS.md — the
+	// repository's own file — as though it were the user's global one.
+	if gc, ok := loadContextFileFromDir(agentDir); ok && agentDir != "" {
 		files = append(files, gc)
 		seen[gc.Path] = true
 	}
@@ -285,10 +297,12 @@ const (
 
 // AgentsSkillsDir returns the user's AGENTS-convention skills directory
 // (~/.agents/skills), the sibling of pi's own ~/.pi/agent/skills.
+// It returns "" when the home directory cannot be determined, for the same
+// reason AgentDir does — see there.
 func AgentsSkillsDir() string {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return filepath.Join(".agents", "skills")
+		return ""
 	}
 	return filepath.Join(home, ".agents", "skills")
 }
@@ -368,7 +382,8 @@ func LoadSkillsWithTrust(cwd string, projectTrusted bool) ([]Skill, []SkillDiagn
 	// `process.env.HOME || homedir()` and Node's homedir() consults the passwd
 	// database rather than yielding a relative path — so skipping is both the
 	// safe answer and the faithful one: with no home there IS no user dir.
-	if dir := filepath.Join(AgentDir(), "skills"); filepath.IsAbs(dir) {
+	if d := AgentDir(); d != "" {
+		dir := filepath.Join(d, "skills")
 		s1, d1 := loadSkillsFromDir(dir)
 		add(s1, d1)
 	}
@@ -386,7 +401,7 @@ func LoadSkillsWithTrust(cwd string, projectTrusted bool) ([]Skill, []SkillDiagn
 	// how an existing name resolves. pi's ancestor <project>/.agents/skills dirs
 	// are NOT discovered here: they are gated on project trust, which is not
 	// ported (2026-06-12 ruling; see the 2026-08-18 ruling for this split).
-	if dir := AgentsSkillsDir(); filepath.IsAbs(dir) {
+	if dir := AgentsSkillsDir(); dir != "" {
 		s3, d3 := loadSkillsFromDirMode(dir, skillModeAgents)
 		add(s3, d3)
 	}

@@ -21,9 +21,16 @@ const CurrentSessionVersion = 3
 
 // DefaultSessionDir returns the per-cwd session directory under the agent dir,
 // using pi's safe-path encoding (--<cwd with separators as dashes>--).
+// It returns "" when AgentDir() does — with no home there is nowhere global to
+// put sessions, and the old relative fallback wrote them into whatever repo the
+// process was run in.
 func DefaultSessionDir(cwd string) string {
+	agentDir := AgentDir()
+	if agentDir == "" {
+		return ""
+	}
 	resolved, _ := filepath.Abs(cwd)
-	return filepath.Join(AgentDir(), "sessions", "--"+encodeCwdSafePath(resolved)+"--")
+	return filepath.Join(agentDir, "sessions", "--"+encodeCwdSafePath(resolved)+"--")
 }
 
 // encodeCwdSafePath mirrors pi's safe-path encoding (session-manager.ts:441):
@@ -148,6 +155,9 @@ type SessionRecorder struct {
 // parameter keeps existing callers source-compatible.
 func StartSession(cwd string, model *ai.Model, thinkingLevel ...string) (*SessionRecorder, error) {
 	dir := DefaultSessionDir(cwd)
+	if dir == "" {
+		return nil, fmt.Errorf("cannot locate the agent directory: no home directory is set, so there is nowhere to store sessions. Set HOME (or USERPROFILE on Windows), or pass an explicit session directory")
+	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}

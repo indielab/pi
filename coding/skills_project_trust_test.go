@@ -81,6 +81,25 @@ func TestLoadSkillsWithoutHomeIgnoresRepoLocalUserDirs(t *testing.T) {
 	if got, _ := LoadSkillsWithTrust(cwd, false); len(got) != 0 {
 		t.Fatalf("HOME-less untrusted load must find no skills at all, got %+v", got)
 	}
+	// The same root cause reached the GLOBAL context file: with a relative
+	// AgentDir(), <cwd>/.pi/agent/AGENTS.md was read as the user's own.
+	if err := os.MkdirAll(filepath.Join(cwd, ".pi", "agent"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, ".pi", "agent", "AGENTS.md"), []byte(marker), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, cf := range LoadProjectContextFiles(cwd) {
+		if strings.Contains(cf.Content, marker) {
+			t.Fatalf("repo-local .pi/agent/AGENTS.md was loaded as the global context file (%s)", cf.Path)
+		}
+	}
+	if AgentDir() != "" || AgentsSkillsDir() != "" {
+		t.Fatalf("with no home both dirs must be empty, got %q and %q", AgentDir(), AgentsSkillsDir())
+	}
+	if got := DefaultSessionDir(cwd); got != "" {
+		t.Fatalf("with no home the session dir must be empty, got %q", got)
+	}
 	// Trust opens the project dir and nothing else: the two repo-local
 	// directories that merely LOOK like user dirs stay shut.
 	trusted, _ := LoadSkillsWithTrust(cwd, true)
