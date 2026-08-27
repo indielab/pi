@@ -405,7 +405,16 @@ func isAnimatedPNG(buf []byte) bool {
 	return false
 }
 
-func readTool(cwd string) agent.AgentTool {
+// readTool builds the read tool against the local filesystem. It is the
+// env-free form every existing caller uses; readToolEnv is the seam.
+func readTool(cwd string) agent.AgentTool { return readToolEnv(NewLocalEnv(cwd)) }
+
+// readToolEnv builds the read tool against an injected ExecutionEnv, so a host
+// can point it at a sandbox or a remote filesystem (pi's ExecutionEnv, ported
+// 2026-08-27). Behavior is byte-identical to the local form when env is a
+// LocalEnv — that equivalence is what readtool_env_test.go pins.
+func readToolEnv(env ExecutionEnv) agent.AgentTool {
+	cwd := env.Cwd()
 	return agent.AgentTool{
 		Name:        "read",
 		Label:       "read",
@@ -422,16 +431,16 @@ func readTool(cwd string) agent.AgentTool {
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			path := argStr(params, "path")
 			abs := resolveReadPath(path, cwd)
-			info, err := os.Stat(abs)
+			info, err := env.Stat(ctx, abs)
 			if err != nil {
 				return agent.AgentToolResult{}, err
 			}
-			if info.IsDir() {
+			if info.Kind == FileKindDirectory {
 				// pi's fs.readFile on a directory raises Node's EISDIR error text.
 				return agent.AgentToolResult{}, fmt.Errorf("EISDIR: illegal operation on a directory, read")
 			}
 			if mime := DetectSupportedImageMimeTypeFromFile(abs); mime != "" {
-				data, err := os.ReadFile(abs)
+				data, err := env.ReadBinaryFile(ctx, abs)
 				if err != nil {
 					return agent.AgentToolResult{}, err
 				}
@@ -455,7 +464,7 @@ func readTool(cwd string) agent.AgentTool {
 				}, Details: map[string]any{}}, nil
 			}
 
-			data, err := os.ReadFile(abs)
+			data, err := env.ReadBinaryFile(ctx, abs)
 			if err != nil {
 				return agent.AgentToolResult{}, err
 			}
