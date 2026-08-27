@@ -65,7 +65,46 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			Content: ai.ContentList{}, Api: model.Api, Provider: model.Provider, Model: model.ID,
 			StopReason: ai.StopPending, Timestamp: nowMillis(),
 		}
+		// The blocks accumulating out of the SSE deltas, and the two closures that
+		// publish them. They live above fail because fail reports output, the same
+		// reason pi hoists streamedReasoningDetails / applyStreamedReasoningDetails
+		// above its try (upstream 7aab6c26e). The rest of the streaming state is
+		// declared with the loop that fills it.
+		var thinkBuilder *blockBuilder
+		// thinkingDetails is the reasoning_details sequence bound for the thinking
+		// block's signature. One stream opens at most one thinking block, so this
+		// is the whole of it. It starts empty and is never re-read out of the
+		// signature slot: pi dropped its seed-from-the-existing-signature step in
+		// 7aab6c26e, so a signature already in the slot (the reasoning field name)
+		// is replaced rather than extended.
+		var thinkingDetails []json.RawMessage
+		var order []*blockBuilder
+		materialize := func() {
+			content := make(ai.ContentList, len(order))
+			for i, b := range order {
+				content[i] = b.toContent()
+			}
+			output.Content = content
+		}
+		// applyStreamedReasoningDetails serializes the sequence into the thinking
+		// block's signature. reasoning_details are replay metadata, not a visible
+		// stream delta, so pi does this exactly twice — once where the block is
+		// finalized and once on the failure path — instead of on every arrival
+		// (upstream 7aab6c26e).
+		applyStreamedReasoningDetails := func() {
+			if thinkBuilder == nil || len(thinkingDetails) == 0 {
+				return
+			}
+			thinkBuilder.thinkingSig = marshalOpenAIReasoningDetails(thinkingDetails)
+			// pi assigns straight onto the block inside its live output object;
+			// Go's output.Content is a snapshot of the builders, so republish.
+			materialize()
+		}
 		fail := func(err error) {
+			// pi's catch block signs any thinking block still in output.content
+			// before reporting it, which is what keeps an aborted stream's replay
+			// data intact now that nothing writes it per delta (upstream 7aab6c26e).
+			applyStreamedReasoningDetails()
 			if ctx != nil && ctx.Err() != nil {
 				output.StopReason = ai.StopAborted
 			} else {
@@ -221,25 +260,12 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
 
 		var textBuilder *blockBuilder
-		var thinkBuilder *blockBuilder
-		// thinkingDetails is the reasoning_details sequence accumulating in
-		// thinkBuilder.thinkingSig. One stream opens at most one thinking block,
-		// so the signature can only ever hold what the last delta wrote there.
-		var thinkingDetails []json.RawMessage
 		// pi ensureToolCallBlock keeps BOTH maps (openai-completions.ts:229-265):
 		// lookup by stream index when the delta carries one, falling back to id,
 		// and registers blocks under both keys.
 		toolBuildersByIndex := map[int]*blockBuilder{}
 		toolBuildersByID := map[string]*blockBuilder{}
 		builderHasIndex := map[*blockBuilder]bool{}
-		var order []*blockBuilder
-		materialize := func() {
-			content := make(ai.ContentList, len(order))
-			for i, b := range order {
-				content[i] = b.toContent()
-			}
-			output.Content = content
-		}
 		indexOf := func(b *blockBuilder) int {
 			for i, x := range order {
 				if x == b {
@@ -436,11 +462,13 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 
 			// reasoning_details: OpenRouter's structured reasoning replay channel
 			// (pi :620-632, upstream b7bb00b93). Every valid detail is appended to
-			// a JSON array kept in the THINKING block's signature — OpenRouter
-			// requires the complete sequence back unmodified and in order, so the
-			// slot holds the sequence rather than one detail per tool call.
-			// OpenRouter streams them as DELTAS, so appending is a merge — see
-			// appendOpenAIReasoningDetail.
+			// thinkingDetails, which becomes the THINKING block's signature —
+			// OpenRouter requires the complete sequence back unmodified and in
+			// order, so the slot holds the sequence rather than one detail per tool
+			// call. OpenRouter streams them as DELTAS, so appending is a merge —
+			// see appendOpenAIReasoningDetail. Nothing is written into the
+			// signature here: applyStreamedReasoningDetails does that once, at the
+			// end of the block (upstream 7aab6c26e).
 			//
 			// pi reads the field off the untyped delta and guards it with
 			// `Array.isArray`, which ignores ONLY this field when a provider sends
@@ -452,7 +480,6 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			if len(d.ReasoningDetails) > 0 && json.Unmarshal(d.ReasoningDetails, &arrivingDetails) != nil {
 				arrivingDetails = nil
 			}
-			appendedDetail := false
 			for _, rawDetail := range arrivingDetails {
 				if !isOpenAIReasoningDetail(rawDetail) {
 					continue
@@ -468,34 +495,6 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 				// Deltas, not finished entries: consecutive text/summary details
 				// fold into the entry they extend (upstream c5ad7c1b0).
 				thinkingDetails = appendOpenAIReasoningDetail(thinkingDetails, rawDetail)
-				appendedDetail = true
-			}
-			if appendedDetail {
-				// A signature that is not already a sequence — the reasoning field
-				// name set above, say — does not survive, because thinkingDetails
-				// started empty and this overwrites the slot wholesale. pi gets
-				// there by re-parsing the signature and finding it is not an array;
-				// holding the sequence is the same answer without re-parsing,
-				// re-validating and re-serializing every earlier entry per arrival.
-				//
-				// Not an unconditional equivalence, though: pi's re-parse also
-				// re-validates the entries it already stored, and discards the whole
-				// sequence if one now fails. The only way a stored entry can turn
-				// invalid is an `index` big enough that JSON.parse saturates it to
-				// Infinity — still a number on arrival, but serialized as null, so
-				// pi's next re-parse rejects it. Nothing in this port drops the
-				// sequence there. It needs a provider to send `index: 1e400`, and
-				// the divergence predates c5ad7c1b0 (the old push-only code held the
-				// sequence the same way), so it is recorded, not fixed.
-				thinkBuilder.thinkingSig = marshalOpenAIReasoningDetails(thinkingDetails)
-				// Republish into output.Content. pi's `partial` IS the live output
-				// object, so its assignment above is already visible; Go rebuilds
-				// output.Content from the builders, and a details-only delta pushes
-				// no event of its own to do it. Load-bearing for a stream that ends
-				// here: fail() reports the live output, so without this an aborted
-				// turn shows the thinking block still signed with the reasoning
-				// field name.
-				materialize()
 			}
 			return nil
 		})
@@ -517,6 +516,10 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			case "text":
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextEnd, ContentIndex: indexOf(b), Content: b.text.String(), Partial: output.Clone()})
 			case "thinking":
+				// pi signs the block immediately before pushing thinking_end, so
+				// the sequence first becomes visible in THIS event's partial and
+				// not in any earlier one (upstream 7aab6c26e).
+				applyStreamedReasoningDetails()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: indexOf(b), Content: b.thinking.String(), Partial: output.Clone()})
 			case "toolCall":
 				if b.grammar != nil {

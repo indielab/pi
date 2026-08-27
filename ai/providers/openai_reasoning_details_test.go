@@ -336,12 +336,9 @@ data: [DONE]
 		t.Fatalf("thinking signature =\n%s\nwant\n%s", sig, want)
 	}
 
-	// The accumulated sequence has to be republished into output.Content as it
-	// grows, not only at finalization: pi's `partial` IS the live output object,
-	// so a consumer reading mid-stream sees each append immediately, while Go's
-	// is a Clone taken when the event is pushed. The second delta carries only
-	// details, so the first Partial that can show its work is the thinking_end
-	// pushed after it — and a stream that aborted there would have nothing else.
+	// thinking_end is where the sequence reaches the block (upstream 7aab6c26e),
+	// so its Partial is the first one that carries the whole thing — including
+	// the second delta's two details, which pushed no event of their own.
 	var sawEnd bool
 	for _, e := range events {
 		if e.Type != ai.EventThinkingEnd {
@@ -350,6 +347,67 @@ data: [DONE]
 		sawEnd = true
 		if _, partialSig := thinkingSig(e.Partial); partialSig != want {
 			t.Fatalf("thinking_end Partial signature =\n%s\nwant\n%s", partialSig, want)
+		}
+	}
+	if !sawEnd {
+		t.Fatalf("no thinking_end event: %v", eventTypes(events))
+	}
+}
+
+// The sequence is serialized into the signature ONCE, when the thinking block
+// is finalized — never per delta (upstream 7aab6c26e). That is observable, not
+// an implementation detail: pi's `partial` IS the live output object, so while
+// pi assigned the signature on every arriving detail a consumer watching the
+// stream saw it grow; now nothing published before thinking_end carries it at
+// all. Go's Clone-per-event partials have to show the same thing, or the port
+// leaks replay metadata into the UI earlier than pi does.
+func TestOpenAIStreamReasoningDetailsSignedOnceAtBlockEnd(t *testing.T) {
+	sse := `data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}
+
+data: {"choices":[{"delta":{"reasoning_details":[` + rdSummary + `]}}]}
+
+data: {"choices":[{"delta":{"content":"hello"}}]}
+
+data: {"choices":[{"delta":{},"finish_reason":"stop"}]}
+
+data: [DONE]
+
+`
+	events, final := collectOpenAIEvents(t, sse, nil)
+	want := "[" + rdSummary + "]"
+	if _, sig := thinkingSig(final); sig != want {
+		t.Fatalf("final signature =\n%s\nwant\n%s", sig, want)
+	}
+
+	// Until thinking_end the block still wears the signature the reasoning field
+	// name gave it; from thinking_end on it wears the sequence. Partials taken
+	// before the block exists have nothing to say either way.
+	hasThinking := func(m *ai.AssistantMessage) bool {
+		if m == nil {
+			return false
+		}
+		for _, c := range m.Content {
+			if _, ok := c.(ai.ThinkingContent); ok {
+				return true
+			}
+		}
+		return false
+	}
+	sawEnd := false
+	for _, e := range events {
+		if e.Type == ai.EventThinkingEnd {
+			sawEnd = true
+		}
+		if !hasThinking(e.Partial) {
+			continue
+		}
+		_, sig := thinkingSig(e.Partial)
+		if sawEnd {
+			if sig != want {
+				t.Errorf("%s partial signature =\n%s\nwant\n%s", e.Type, sig, want)
+			}
+		} else if sig != "reasoning_content" {
+			t.Errorf("%s partial signature = %q, want %q: the sequence must not be published before thinking_end", e.Type, sig, "reasoning_content")
 		}
 	}
 	if !sawEnd {
@@ -450,14 +508,15 @@ data: [DONE]
 	}
 }
 
-// The sequence has to be republished into output.Content as it grows, because
-// output is what an aborted stream reports. pi has no equivalent risk: its
-// `partial` IS the live output object, so `block.thinkingSignature = ...`
-// updates it, where Go rebuilds output.Content from the builders.
+// A stream that dies before its thinking block is finalized never reaches the
+// thinking_end that signs it, so the failure path has to sign it instead — pi's
+// catch block walks output.content doing exactly that (upstream 7aab6c26e).
+// Without it the accumulated sequence would simply be dropped, since nothing
+// writes the signature per delta any more.
 //
-// A details-only delta pushes no event of its own, so the truncated stream is
-// what makes the republish observable: nothing else materializes between the
-// append and the error.
+// The truncated stream is what makes that observable: a details-only delta
+// pushes no event of its own, so the error is the first thing the consumer sees
+// after the append.
 func TestOpenAIStreamReasoningDetailsSurviveATruncatedStream(t *testing.T) {
 	body := `data: {"choices":[{"delta":{"reasoning":"thinking"}}]}
 
@@ -535,6 +594,12 @@ data: [DONE]
 // The signature slot is single-purpose: once a sequence starts accumulating, the
 // reasoning field name that opened the block is gone (and convertMessages stops
 // needing it — the raw field is suppressed anyway).
+//
+// This is also the lock on the accumulator seeding EMPTY. pi used to seed it by
+// re-parsing whatever sat in the slot; 7aab6c26e deleted that step, so the slot
+// is written, never read. Streaming can only ever put the field name there, so
+// the field name is what a seed-from-the-slot implementation would have to
+// preserve — and does not.
 func TestOpenAIStreamReasoningDetailsReplaceFieldNameSignature(t *testing.T) {
 	sse := `data: {"choices":[{"delta":{"reasoning_content":"thinking"}}]}
 
