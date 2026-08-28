@@ -405,16 +405,16 @@ func isAnimatedPNG(buf []byte) bool {
 	return false
 }
 
-// readTool builds the read tool against the local filesystem. It is the
-// env-free form every existing caller uses; readToolEnv is the seam.
-func readTool(cwd string) agent.AgentTool { return readToolEnv(NewLocalEnv(cwd)) }
+// readTool builds the read tool against the local filesystem — the form every
+// existing caller uses. readToolOps is the injection seam.
+func readTool(cwd string) agent.AgentTool { return readToolOps(cwd, ReadOperations{}) }
 
-// readToolEnv builds the read tool against an injected ExecutionEnv, so a host
-// can point it at a sandbox or a remote filesystem (pi's ExecutionEnv, ported
-// 2026-08-27). Behavior is byte-identical to the local form when env is a
-// LocalEnv — that equivalence is what readtool_env_test.go pins.
-func readToolEnv(env ExecutionEnv) agent.AgentTool {
-	cwd := env.Cwd()
+// readToolOps builds the read tool against injectable file operations, porting
+// pi's ReadOperations seam (core/tools/read.ts:49). pi's own words: "Override
+// these to delegate file reading to remote systems (for example SSH)." A nil
+// member falls back to the local default, which is pi's spread-over-defaults.
+func readToolOps(cwd string, ops ReadOperations) agent.AgentTool {
+	ops = ops.withDefaults()
 	return agent.AgentTool{
 		Name:        "read",
 		Label:       "read",
@@ -431,16 +431,16 @@ func readToolEnv(env ExecutionEnv) agent.AgentTool {
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			path := argStr(params, "path")
 			abs := resolveReadPath(path, cwd)
-			info, err := env.Stat(ctx, abs)
-			if err != nil {
+			// pi calls ops.access before reading (read.ts:248). The EISDIR a
+			// directory produces is NOT checked here: Node's fs.readFile raises it
+			// on its own, so it belongs to the filesystem implementation — see
+			// DefaultReadOperations. Checking it here would stat the LOCAL disk
+			// even when a host has injected a remote filesystem.
+			if err := ops.Access(ctx, abs); err != nil {
 				return agent.AgentToolResult{}, err
 			}
-			if info.Kind == FileKindDirectory {
-				// pi's fs.readFile on a directory raises Node's EISDIR error text.
-				return agent.AgentToolResult{}, fmt.Errorf("EISDIR: illegal operation on a directory, read")
-			}
-			if mime := DetectSupportedImageMimeTypeFromFile(abs); mime != "" {
-				data, err := env.ReadBinaryFile(ctx, abs)
+			if mime := ops.DetectImageMimeType(ctx, abs); mime != "" {
+				data, err := ops.ReadFile(ctx, abs)
 				if err != nil {
 					return agent.AgentToolResult{}, err
 				}
@@ -464,7 +464,7 @@ func readToolEnv(env ExecutionEnv) agent.AgentTool {
 				}, Details: map[string]any{}}, nil
 			}
 
-			data, err := env.ReadBinaryFile(ctx, abs)
+			data, err := ops.ReadFile(ctx, abs)
 			if err != nil {
 				return agent.AgentToolResult{}, err
 			}
@@ -546,7 +546,13 @@ func readToolEnv(env ExecutionEnv) agent.AgentTool {
 // write
 // ---------------------------------------------------------------------------
 
-func writeTool(cwd string) agent.AgentTool {
+// writeTool builds the write tool against the local filesystem.
+func writeTool(cwd string) agent.AgentTool { return writeToolOps(cwd, WriteOperations{}) }
+
+// writeToolOps builds the write tool against injectable file operations,
+// porting pi's WriteOperations seam (core/tools/write.ts:31).
+func writeToolOps(cwd string, ops WriteOperations) agent.AgentTool {
+	ops = ops.withDefaults()
 	return agent.AgentTool{
 		Name:        "write",
 		Label:       "write",
@@ -564,10 +570,10 @@ func writeTool(cwd string) agent.AgentTool {
 			content := argStr(params, "content")
 			abs := resolveToCwd(path, cwd)
 			return withFileMutationQueue(abs, func() (agent.AgentToolResult, error) {
-				if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+				if err := ops.Mkdir(ctx, filepath.Dir(abs)); err != nil {
 					return agent.AgentToolResult{}, err
 				}
-				if err := os.WriteFile(abs, []byte(content), 0o644); err != nil {
+				if err := ops.WriteFile(ctx, abs, content); err != nil {
 					return agent.AgentToolResult{}, err
 				}
 				// pi reports `content.length` — JS string length in UTF-16 code units
@@ -582,7 +588,14 @@ func writeTool(cwd string) agent.AgentTool {
 // edit
 // ---------------------------------------------------------------------------
 
-func editTool(cwd string) agent.AgentTool {
+// editTool builds the edit tool against the local filesystem.
+func editTool(cwd string) agent.AgentTool { return editToolOps(cwd, EditOperations{}) }
+
+// editToolOps builds the edit tool against injectable file operations, porting
+// pi's EditOperations seam (core/tools/edit.ts:96). Note pi's edit Access
+// checks R_OK|W_OK where read's checks R_OK alone.
+func editToolOps(cwd string, ops EditOperations) agent.AgentTool {
+	ops = ops.withDefaults()
 	editObjSchema := ai.Object(
 		ai.Prop("oldText", ai.String("Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call.")),
 		ai.Prop("newText", ai.String("Replacement text for this targeted edit.")),
@@ -619,7 +632,7 @@ func editTool(cwd string) agent.AgentTool {
 			abs := resolveToCwd(path, cwd)
 			// Serialize edits/writes to the same file (different files run in parallel).
 			return withFileMutationQueue(abs, func() (agent.AgentToolResult, error) {
-				data, err := os.ReadFile(abs)
+				data, err := ops.ReadFile(ctx, abs)
 				if err != nil {
 					return agent.AgentToolResult{}, fmt.Errorf("Could not edit file: %s. %s.", path, fsErrorCode(err))
 				}
@@ -633,7 +646,7 @@ func editTool(cwd string) agent.AgentTool {
 					return agent.AgentToolResult{}, err
 				}
 				final := bom + restoreLineEndings(newContent, ending)
-				if err := os.WriteFile(abs, []byte(final), 0o644); err != nil {
+				if err := ops.WriteFile(ctx, abs, final); err != nil {
 					return agent.AgentToolResult{}, err
 				}
 				return textResult(fmt.Sprintf("Successfully replaced %d block(s) in %s.", len(edits), path)), nil

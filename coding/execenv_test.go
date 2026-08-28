@@ -34,11 +34,18 @@ func (f *fakeEnv) JoinPath(_ context.Context, parts []string) (string, error) {
 	return filepath.Join(parts...), nil
 }
 func (f *fakeEnv) ReadBinaryFile(_ context.Context, path string) ([]byte, error) {
-	data, ok := f.files[path]
-	if !ok {
-		return nil, os.ErrNotExist
+	if data, ok := f.files[path]; ok {
+		return data, nil
 	}
-	return data, nil
+	// A real filesystem raises EISDIR for a directory; so does this one, which
+	// is what lets the read tool report pi's text without stat-ing local disk.
+	prefix := strings.TrimSuffix(path, "/") + "/"
+	for p := range f.files {
+		if strings.HasPrefix(p, prefix) {
+			return nil, errors.New("EISDIR: illegal operation on a directory, read")
+		}
+	}
+	return nil, os.ErrNotExist
 }
 func (f *fakeEnv) ReadTextFile(ctx context.Context, path string) (string, error) {
 	data, err := f.ReadBinaryFile(ctx, path)
@@ -114,7 +121,7 @@ func TestReadToolUsesInjectedEnv(t *testing.T) {
 	env := newFakeEnv(dir)
 	env.files[filepath.Join(dir, "hello.txt")] = []byte("line one\nline two\n")
 
-	tool := readToolEnv(env)
+	tool := readToolOps(env.Cwd(), EnvReadOperations(env))
 	res, err := tool.Execute(context.Background(), "1",
 		map[string]any{"path": "hello.txt"}, nil)
 	if err != nil {
@@ -137,7 +144,7 @@ func TestReadToolEnvRejectsDirectory(t *testing.T) {
 	env := newFakeEnv(dir)
 	env.files[filepath.Join(dir, "sub", "a.txt")] = []byte("x")
 
-	tool := readToolEnv(env)
+	tool := readToolOps(env.Cwd(), EnvReadOperations(env))
 	_, err := tool.Execute(context.Background(), "1", map[string]any{"path": "sub"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "EISDIR") {
 		t.Fatalf("reading a directory must report EISDIR, got %v", err)
@@ -153,7 +160,7 @@ func TestReadToolLocalEnvMatchesDirectRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	viaWrapper := readTool(dir)
-	viaEnv := readToolEnv(NewLocalEnv(dir))
+	viaEnv := readToolOps(dir, EnvReadOperations(NewLocalEnv(dir)))
 
 	a, err := viaWrapper.Execute(context.Background(), "1", map[string]any{"path": "file.txt"}, nil)
 	if err != nil {
