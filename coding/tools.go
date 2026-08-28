@@ -872,6 +872,16 @@ func powershellTool(cwd string, sessionEnv sessionEnvFn) agent.AgentTool {
 }
 
 func shellTool(cwd string, config shellToolConfig, sessionEnv sessionEnvFn) agent.AgentTool {
+	return shellToolOps(cwd, config, sessionEnv, nil)
+}
+
+// shellToolOps builds a shell tool against injectable process execution,
+// porting pi's BashOperations seam (core/tools/bash.ts:63), which pi shares
+// between bash and powershell. Only the SPAWN is injectable: the output
+// accumulator, truncation, temp-file overflow and status formatting stay in the
+// tool, exactly as they do upstream.
+func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, custom *BashOperations) agent.AgentTool {
+	ops := resolveBashOperations(custom, config)
 	return agent.AgentTool{
 		Name:             config.name,
 		Label:            config.name,
@@ -897,39 +907,6 @@ func shellTool(cwd string, config shellToolConfig, sessionEnv sessionEnvFn) agen
 					return agent.AgentToolResult{}, fmt.Errorf("Invalid timeout: maximum is %s seconds", maxBashTimeoutSeconds)
 				}
 			}
-			shell, shellArgs, useStdin, err := config.resolveShell()
-			if err != nil {
-				return agent.AgentToolResult{}, err
-			}
-			if _, err := os.Stat(cwd); err != nil {
-				return agent.AgentToolResult{}, fmt.Errorf("Working directory does not exist: %s\nCannot execute %s commands.", cwd, config.shellName)
-			}
-			runCtx := ctx
-			var cancel context.CancelFunc
-			if hasTimeout {
-				runCtx, cancel = context.WithTimeout(ctx, time.Duration(timeout*float64(time.Second)))
-				defer cancel()
-			}
-			// Legacy WSL bash takes the command on stdin (`bash -s`); otherwise it
-			// is the final argv entry (`bash -c <command>`).
-			var cmd *exec.Cmd
-			if useStdin {
-				cmd = exec.CommandContext(runCtx, shell, shellArgs...)
-				cmd.Stdin = strings.NewReader(command)
-			} else {
-				cmd = exec.CommandContext(runCtx, shell, append(shellArgs, command)...)
-			}
-			cmd.Dir = cwd
-			cmd.Env = bashCommandEnv(sessionEnv)
-			// Run in its own process group and, on cancel/timeout, kill the whole
-			// tree so backgrounded grandchildren don't survive (port of pi).
-			setProcessGroup(cmd)
-			cmd.Cancel = func() error { return killProcessTree(cmd) }
-			// WaitDelay backstops the manual drain: if killProcessTree fires on
-			// cancel/timeout and a descendant still pins the pipe, os/exec force-
-			// closes the inherited fds shortly after Wait returns so we never hang.
-			cmd.WaitDelay = time.Second
-
 			// Stream output through the rolling OutputAccumulator (bounded memory,
 			// incremental temp-file writes) with throttled partial onUpdate emits
 			// including a trailing-edge flush (port of bash.ts:291-348).
@@ -938,7 +915,15 @@ func shellTool(cwd string, config shellToolConfig, sessionEnv sessionEnvFn) agen
 				// pi emits an initial empty update before spawning (bash.ts:332-334).
 				onUpdate(agent.AgentToolResult{Content: ai.ContentList{}, Details: nil})
 			}
-			runErr := runBashCommand(cmd, u)
+			execTimeout := 0.0
+			if hasTimeout {
+				execTimeout = timeout
+			}
+			exitCode, execErr := ops.Exec(ctx, command, cwd, BashExecOptions{
+				OnData:         func(p []byte) { u.Write(p) },
+				TimeoutSeconds: execTimeout,
+				Env:            bashCommandEnv(sessionEnv),
+			})
 
 			snap := u.finish()
 			formatOutput := func(emptyText string) (string, map[string]any) {
@@ -970,29 +955,28 @@ func shellTool(cwd string, config shellToolConfig, sessionEnv sessionEnvFn) agen
 				}
 				return status
 			}
-			// Abort wins over timeout when both fired (bash.ts:112-117).
-			if ctx.Err() != nil {
-				text, _ := formatOutput("")
-				return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, "Command aborted"))
-			}
-			if runCtx.Err() == context.DeadlineExceeded {
-				text, _ := formatOutput("")
-				// pi prints the raw timeout value (`timeout:${timeout}`), so 0.5
-				// renders "0.5" and 2 renders "2".
-				return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, fmt.Sprintf("Command timed out after %s seconds", strconv.FormatFloat(timeout, 'g', -1, 64))))
-			}
-			if runErr != nil {
-				exitErr, ok := runErr.(*exec.ExitError)
-				if !ok {
-					return agent.AgentToolResult{}, runErr
+			// pi classifies the spawn's failure before looking at the exit status,
+			// and abort wins over timeout when both fired (bash.ts:112-117, 457-467).
+			if execErr != nil {
+				if errors.Is(execErr, ErrShellAborted) {
+					text, _ := formatOutput("")
+					return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, "Command aborted"))
 				}
-				// A signal-killed child has no exit code (pi: exitCode === null) and
-				// is treated as success with whatever output was produced
-				// (bash.ts:397 `exitCode !== 0 && exitCode !== null`).
-				if code := exitErr.ExitCode(); code != -1 {
-					text, _ := formatOutput("(no output)")
-					return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, fmt.Sprintf("Command exited with code %d", code)))
+				var timeoutErr *ShellTimeoutError
+				if errors.As(execErr, &timeoutErr) {
+					text, _ := formatOutput("")
+					// pi prints the raw timeout value (`timeout:${timeout}`), so 0.5
+					// renders "0.5" and 2 renders "2".
+					return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, fmt.Sprintf("Command timed out after %s seconds", strconv.FormatFloat(timeoutErr.Seconds, 'g', -1, 64))))
 				}
+				return agent.AgentToolResult{}, execErr
+			}
+			// A signal-killed child has no exit code (pi: exitCode === null) and is
+			// treated as success with whatever output was produced
+			// (bash.ts:397 `exitCode !== 0 && exitCode !== null`).
+			if exitCode != nil && *exitCode != 0 {
+				text, _ := formatOutput("(no output)")
+				return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, fmt.Sprintf("Command exited with code %d", *exitCode)))
 			}
 			text, details := formatOutput("(no output)")
 			res := textResult(text)
@@ -1020,7 +1004,7 @@ const bashExitStdioGrace = 100 * time.Millisecond
 // idle grace rather than a fixed deadline so output a detached descendant writes
 // past exit is captured (port of 3fa40956). It returns the same error cmd.Wait
 // would: nil or *exec.ExitError on a non-zero/​signalled exit.
-func runBashCommand(cmd *exec.Cmd, u *bashUpdater) error {
+func runBashCommand(cmd *exec.Cmd, w io.Writer) error {
 	pr, pw, err := os.Pipe()
 	if err != nil {
 		return err
@@ -1037,7 +1021,7 @@ func runBashCommand(cmd *exec.Cmd, u *bashUpdater) error {
 	// The parent must drop its write end or pr never sees EOF.
 	pw.Close()
 
-	// The reader goroutine feeds u and reports each chunk (and final EOF) on
+	// The reader goroutine feeds w and reports each chunk (and final EOF) on
 	// chunks. Closing pr unblocks a read parked on a pipe a descendant still
 	// holds open.
 	chunks := make(chan struct{}, 1)
@@ -1048,7 +1032,7 @@ func runBashCommand(cmd *exec.Cmd, u *bashUpdater) error {
 		for {
 			n, rerr := pr.Read(buf)
 			if n > 0 {
-				u.Write(buf[:n])
+				w.Write(buf[:n])
 			}
 			select {
 			case chunks <- struct{}{}:
@@ -1699,7 +1683,14 @@ func findToolOps(cwd string, custom *FindOperations) agent.AgentTool {
 // grep
 // ---------------------------------------------------------------------------
 
-func grepTool(cwd string) agent.AgentTool {
+// grepTool builds the grep tool against the local filesystem.
+func grepTool(cwd string) agent.AgentTool { return grepToolOps(cwd, nil) }
+
+// grepToolOps builds the grep tool against injectable file operations, porting
+// pi's GrepOperations seam (core/tools/grep.ts:56). See the divergence note on
+// GrepOperations.ReadFile: here it is the primary scan read.
+func grepToolOps(cwd string, custom *GrepOperations) agent.AgentTool {
+	ops := resolveGrepOperations(custom)
 	return agent.AgentTool{
 		Name:        "grep",
 		Label:       "grep",
@@ -1747,11 +1738,11 @@ func grepTool(cwd string) agent.AgentTool {
 				return agent.AgentToolResult{}, fmt.Errorf("invalid regex: %v", err)
 			}
 
-			info, err := os.Stat(root)
+			rootIsDir, err := ops.IsDirectory(ctx, root)
 			if err != nil {
 				return agent.AgentToolResult{}, fmt.Errorf("Path not found: %s", root)
 			}
-			isDir := info.IsDir()
+			isDir := rootIsDir
 
 			var matchLines []string
 			matchCount := 0
@@ -1762,7 +1753,7 @@ func grepTool(cwd string) agent.AgentTool {
 			// byte in the first 8KB marks the file binary; only applies during
 			// directory traversal — explicitly-given files are always searched).
 			searchFile := func(path, rel string, skipBinary bool) bool {
-				data, err := os.ReadFile(path)
+				data, err := ops.ReadFile(ctx, path)
 				if err != nil {
 					return true
 				}

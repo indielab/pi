@@ -3,8 +3,14 @@ package coding
 import (
 	"context"
 	"errors"
+	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strconv"
+	"strings"
+	"time"
 )
 
 // Pluggable operations for the built-in tools, ported from pi's per-tool
@@ -23,22 +29,15 @@ import (
 // Every tool keeps its existing env-free constructor, which uses the local
 // defaults, so none of this changes behavior until a host injects something.
 //
-// TWO seams are deliberately absent until they can be ported faithfully,
-// rather than shipped as types nothing uses:
-//
-//   - The shell seam (pi's BashOperations, shared by bash and powershell).
-//     Wiring it means reshaping the port's streaming execution path — pi's
-//     ops.exec signals abort and timeout by THROWING `aborted` / `timeout:<n>`
-//     and returns `{exitCode: number | null}`, which in Go wants sentinel
-//     errors plus an OnData writer, and runBashCommand currently takes a
-//     *bashUpdater rather than an io.Writer.
-//   - The grep seam (pi's GrepOperations). Its `readFile` is NOT the primary
-//     scan: pi matches with ripgrep and uses readFile only to fetch CONTEXT
-//     LINES around a hit (grep.ts:210, and the interface says so). The port's
-//     grep has no ripgrep dependency — it walks and matches in Go — so the same
-//     member would be the primary read here. Mapping it naively would silently
-//     change what a custom implementation controls. Porting it means deciding
-//     that architectural difference first.
+// ONE RECORDED DIVERGENCE, in GrepOperations.ReadFile. In pi that member is
+// NOT the primary scan: pi matches with ripgrep and calls readFile only to
+// fetch CONTEXT LINES around a hit (grep.ts:210). This port has no ripgrep
+// dependency — it walks and matches in Go — so the same member IS the primary
+// read here, and a custom implementation therefore controls strictly more than
+// it would upstream: it decides what grep can see at all, not just how context
+// is rendered. That is a consequence of the port's own grep architecture rather
+// than a porting choice, it cannot be avoided without taking a ripgrep
+// dependency, and it is stated on the member so nobody has to rediscover it.
 //
 // Note these are the CODING-AGENT seams. pi's separate harness tools take a
 // single broad ExecutionEnv instead (see execenv.go); the port carries both,
@@ -70,6 +69,205 @@ type WriteOperations struct {
 	WriteFile func(ctx context.Context, absolutePath, content string) error
 	// Mkdir creates a directory and its parents.
 	Mkdir func(ctx context.Context, dir string) error
+}
+
+// ErrShellAborted is what a shell operation returns when the context ended the
+// command. It is pi's `throw new Error("aborted")` from ops.exec (bash.ts:461),
+// rendered as a sentinel so the tool can classify it with errors.Is.
+var ErrShellAborted = errors.New("aborted")
+
+// ShellTimeoutError is what a shell operation returns when the command outran
+// its timeout — pi's `throw new Error("timeout:<seconds>")` (bash.ts:464),
+// rendered as a typed error so the tool can recover the seconds with errors.As
+// instead of parsing a message.
+type ShellTimeoutError struct{ Seconds float64 }
+
+func (e *ShellTimeoutError) Error() string {
+	return "timeout:" + strconv.FormatFloat(e.Seconds, 'g', -1, 64)
+}
+
+// BashExecOptions are the per-command controls pi passes to BashOperations.exec.
+type BashExecOptions struct {
+	// OnData receives interleaved stdout/stderr as it is produced.
+	OnData func(data []byte)
+	// TimeoutSeconds bounds the command; zero or less means no timeout.
+	TimeoutSeconds float64
+	// Env is the child environment, already assembled.
+	Env []string
+}
+
+// BashOperations is the process execution the shell tools perform. pi shares
+// one interface between bash and powershell (`PowerShellOperations =
+// BashOperations`), so the port does too.
+type BashOperations struct {
+	// Exec runs a command, streaming output through OnData, and reports the
+	// exit code. A NIL exit code with a nil error is pi's `exitCode: null` — the
+	// child was signal-killed, which pi treats as success with whatever output
+	// was produced. Abort and timeout come back as ErrShellAborted and
+	// *ShellTimeoutError.
+	Exec func(ctx context.Context, command, cwd string, options BashExecOptions) (exitCode *int, err error)
+}
+
+// LocalBashOperations runs commands on the local machine through the shell the
+// tool config resolves, porting pi's createLocalBashOperations (bash.ts:84).
+func LocalBashOperations(config shellToolConfig) BashOperations {
+	return BashOperations{
+		Exec: func(ctx context.Context, command, cwd string, options BashExecOptions) (*int, error) {
+			shell, shellArgs, useStdin, err := config.resolveShell()
+			if err != nil {
+				return nil, err
+			}
+			if _, err := os.Stat(cwd); err != nil {
+				return nil, fmt.Errorf("Working directory does not exist: %s\nCannot execute %s commands.", cwd, config.shellName)
+			}
+			runCtx := ctx
+			if options.TimeoutSeconds > 0 {
+				var cancel context.CancelFunc
+				runCtx, cancel = context.WithTimeout(ctx, time.Duration(options.TimeoutSeconds*float64(time.Second)))
+				defer cancel()
+			}
+			// Legacy WSL bash takes the command on stdin (`bash -s`); otherwise it
+			// is the final argv entry (`bash -c <command>`).
+			var cmd *exec.Cmd
+			if useStdin {
+				cmd = exec.CommandContext(runCtx, shell, shellArgs...)
+				cmd.Stdin = strings.NewReader(command)
+			} else {
+				cmd = exec.CommandContext(runCtx, shell, append(shellArgs, command)...)
+			}
+			cmd.Dir = cwd
+			cmd.Env = options.Env
+			// Own process group, and on cancel/timeout kill the whole tree so
+			// backgrounded grandchildren don't survive (port of pi).
+			setProcessGroup(cmd)
+			cmd.Cancel = func() error { return killProcessTree(cmd) }
+			// WaitDelay backstops the manual drain: if killProcessTree fires and a
+			// descendant still pins the pipe, os/exec force-closes the inherited
+			// fds shortly after Wait returns so we never hang.
+			cmd.WaitDelay = time.Second
+
+			runErr := runBashCommand(cmd, onDataWriter(options.OnData))
+
+			return classifyShellRun(ctx.Err(), runCtx.Err(), runErr, options.TimeoutSeconds)
+		},
+	}
+}
+
+// classifyShellRun turns a finished command into pi's `{exitCode}` / thrown
+// error pair. It is a pure function of the three signals rather than inline
+// code, because its ORDER is the contract and the order is not reachable from a
+// live process test: getting a real command to have both aborted AND timed out
+// is a race, so a test written that way passes whichever way the branches are
+// written. See TestClassifyShellRunPrecedence.
+//
+//   - Abort wins over timeout when both fired (bash.ts:112-117).
+//   - Both are checked BEFORE the exit status, as pi's try/catch is.
+//   - A signal-killed child has no exit code (pi: `exitCode === null`).
+func classifyShellRun(ctxErr, runCtxErr, runErr error, timeoutSeconds float64) (*int, error) {
+	if ctxErr != nil {
+		return nil, ErrShellAborted
+	}
+	if runCtxErr == context.DeadlineExceeded {
+		return nil, &ShellTimeoutError{Seconds: timeoutSeconds}
+	}
+	if runErr != nil {
+		var exitErr *exec.ExitError
+		if !errors.As(runErr, &exitErr) {
+			return nil, runErr
+		}
+		if code := exitErr.ExitCode(); code != -1 {
+			return &code, nil
+		}
+		return nil, nil
+	}
+	zero := 0
+	return &zero, nil
+}
+
+func resolveBashOperations(ops *BashOperations, config shellToolConfig) BashOperations {
+	if ops == nil {
+		return LocalBashOperations(config)
+	}
+	return *ops
+}
+
+// onDataWriter adapts pi's onData callback to the io.Writer runBashCommand
+// feeds. A nil callback discards, which keeps Exec usable without streaming.
+func onDataWriter(onData func([]byte)) io.Writer {
+	if onData == nil {
+		return io.Discard
+	}
+	return writerFunc(func(p []byte) (int, error) { onData(p); return len(p), nil })
+}
+
+type GrepOperations struct {
+	// IsDirectory reports whether a path is a directory, erroring if it does
+	// not exist.
+	IsDirectory func(ctx context.Context, absolutePath string) (bool, error)
+	// ReadFile reads a file's contents. NOTE the divergence recorded at the top
+	// of this file: here this is the PRIMARY scan read, not pi's context-line
+	// fetch, because the port matches in Go rather than shelling out to
+	// ripgrep. Whatever this returns is what grep can match.
+	ReadFile func(ctx context.Context, absolutePath string) ([]byte, error)
+}
+
+// DefaultGrepOperations reads the local filesystem.
+func DefaultGrepOperations() GrepOperations {
+	return GrepOperations{
+		IsDirectory: func(_ context.Context, p string) (bool, error) {
+			st, err := os.Stat(p)
+			if err != nil {
+				return false, err
+			}
+			return st.IsDir(), nil
+		},
+		ReadFile: func(_ context.Context, p string) ([]byte, error) { return os.ReadFile(p) },
+	}
+}
+
+func resolveGrepOperations(ops *GrepOperations) GrepOperations {
+	if ops == nil {
+		return DefaultGrepOperations()
+	}
+	return *ops
+}
+
+// EnvGrepOperations backs the grep tool with an ExecutionEnv.
+func EnvGrepOperations(env ExecutionEnv) GrepOperations {
+	return GrepOperations{
+		IsDirectory: func(ctx context.Context, p string) (bool, error) {
+			info, err := env.Stat(ctx, p)
+			if err != nil {
+				return false, err
+			}
+			return info.Kind == FileKindDirectory, nil
+		},
+		ReadFile: env.ReadBinaryFile,
+	}
+}
+
+// EnvBashOperations backs the shell tools with an ExecutionEnv's Shell half.
+func EnvBashOperations(env ExecutionEnv) BashOperations {
+	return BashOperations{
+		Exec: func(ctx context.Context, command, cwd string, options BashExecOptions) (*int, error) {
+			emit := func(chunk string) {
+				if options.OnData != nil {
+					options.OnData([]byte(chunk))
+				}
+			}
+			res, err := env.Exec(ctx, command, &ShellExecOptions{
+				Cwd:            cwd,
+				TimeoutSeconds: int(options.TimeoutSeconds),
+				OnStdout:       emit,
+				OnStderr:       emit,
+			})
+			if err != nil {
+				return nil, err
+			}
+			code := res.ExitCode
+			return &code, nil
+		},
+	}
 }
 
 // FindOperations are the file operations the find tool performs.
