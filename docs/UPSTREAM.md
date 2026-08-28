@@ -942,7 +942,7 @@ Drain order is value-first, not size-first. Sizes are upstream source lines at
 | 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **CONSULT (2026-08-27):** it is a `better-sqlite3` backend, so a Go port needs a driver — `modernc.org/sqlite` (pure Go, no cgo) or `mattn/go-sqlite3` (cgo). Under the evening ruling that is a question for the owner, not a reason to drop the entry; the entry stands either way. | **4** — `e7fb8eb2a`, plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` (reassigned from entry 8, 2026-08-27) |
 | 9 | **Bedrock adapter** | 1,459 LOC | ~3 + consult | **CONSULT: hand-roll SigV4 + eventstream (~500 Go lines, stdlib only), or take `aws-sdk-go-v2`?** Back in scope 2026-08-27. Note pi's bedrock wire is authored by `aws-sdk-js`, so there is no pi-authored byte sequence to match — parity means "AWS accepts it", which favours hand-rolling. | — |
 | 10 | **Codex adapter** | 2,228 LOC | ~3 + consult | **CONSULT: take `klauspost/compress` for zstd (and likely a WebSocket module), or leave queued?** Back in scope 2026-08-27. zstd is not credibly hand-rollable. | — |
-| 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **11** against its own tree (12 minus `e7fb8eb2a`, reassigned to entry 7) — of which 3 are already satisfied in `coding/` and 3 are upstream dead code, leaving **4** load-bearing. See "Harness delta" below. **Slice 8b SHIPPED 2026-08-28** (`b677517`, `ce76e94`, `cd0e3b9`, `1f49233`); the entry stays open on 8c and 8d, and the backlog count is unaffected because 8b was a base-port slice rather than one of the deferred commits. | 11 |
+| 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **11** against its own tree (12 minus `e7fb8eb2a`, reassigned to entry 7) — of which 3 are already satisfied in `coding/` and 3 are upstream dead code, leaving **4** load-bearing. See "Harness delta" below. **Slice 8b SHIPPED 2026-08-28** (`b677517`, `ce76e94`, `cd0e3b9`, `1f49233`), and the re-measure split it into **8b-i** (`ExecutionEnv`, harness source, 7 symbols closed) and **8b-ii** (the seven `*Operations` seams, coding-agent source, invisible to this entry's counter) — 8b-ii ships with a named remainder. The entry stays open on 8c and 8d, and the backlog count is unaffected because 8b was a base-port slice rather than one of the deferred commits. | 11 |
 
 Entries 1–6 total **~10 port-cycles**. Entry 7 is contingent on its own E2
 answer. Entry 8 is funded but its cost depends on the shape chosen below.
@@ -1010,27 +1010,81 @@ MISSING-REAL, 69 MISSING-MOOT**. `messages.ts` is 13/13 HAVE; `utils/truncate.ts
 existing behavior is coding-agent's — the *richer* of the two implementations
 (544-line bash tool vs the harness's 161).
 
-#### Revised sequencing — buy the callable part, tripwire the rest
+#### Revised sequencing — rewritten 2026-08-28, after 8b shipped
 
-| # | slice | est. | why now, or why not |
-|---|---|---|---|
-| ~~8a~~ | ~~Telemetry `pi.ai.request` emission~~ | **STRUCK** | Proposed, then struck the same day on a check that should have come first: **pi does not emit this span either.** `git grep -ln "startAiSpan\|pi.ai.request" ccfe79ed2 -- packages/ai` is EMPTY — the only callers of `startAiSpan`/`AI_TELEMETRY_SCHEMA` anywhere in the monorepo are the doc generator (`agent/scripts/generate-telemetry-docs.ts`) and their own test. The port's telemetry seam is latent because **pi's is latent too**, so emitting spans from `ai/` would be the port INVENTING behavior pi does not have — the one thing this project never does. The schema constant alone would be a dead constant, which is the same dead-code trap as `reducer.ts`. Re-open only when upstream's own request paths start a span. |
-| 8b | **`ExecutionEnv` injection** — the first and, at this pin, ONLY callable slice — **SHIPPED 2026-08-28** in `b677517`, `ce76e94`, `cd0e3b9`, `1f49233`, and it grew to carry all seven coding-agent `*Operations` seams, which this table did not model; see the 2026-08-28 cycle | 2-3 (spent) | The only gap an embedder actually hits today, and the one stable piece (7 commits/90d). Unblocks sandboxed and remote execution and makes `coding/tools.go` testable without a real filesystem. Independently, the recorded upstream `pi-ai` breaking-release direction is "pluggable env + credentials", so the port needs this whatever the harness verdict. Cost is not the ~250-350-line `LocalEnv`; it is threading it through `coding/tools.go` (1,858 lines) and its ~2,000 lines of tests. **Shape at the pin:** `ExecutionEnv extends FileSystem, Shell` — `FileSystem` is 13 methods (`absolutePath`, `joinPath`, `readTextFile`, `readTextLines`, `readBinaryFile`, `writeFile`, `appendFile`, `renameFile`, `fileInfo`, `listDir`, `canonicalPath`, `exists`, plus a `cwd` field) and `Shell` is 2 (`exec`, `cleanup`). Go rendering: `Result<T,E>` collapses to `(T, error)` and `abortSignal` to `context.Context`, per the port's standing conventions. **Land it as a vertical slice with a real consumer** — interface + `LocalEnv` + one tool rewired — never as a bare interface, which would be the same dead-code trap this section is about. |
-| 8c | **`SessionStorage`/`SessionRepo` seam + in-memory backend + the conformance suite** | 3.5-4 | Real value and a genuine reusable asset — `session/testing/conformance.ts` is a runner-agnostic 13-case backend acceptance suite the port lacks. **But it is a design decision, not a mechanical port:** the port's v3 recorder cannot fully conform (no records, no lanes, no facts). Do not fund until the owner wants pluggable durability as a product feature. |
-| 8d | **`search/`** (`b75be04d9`) | 0.5 | Published SDK surface (`export * from "./search/index.ts"`), and the port has zero analogue. But its entire substrate is the `SessionStorage` query surface, so it is worthless before 8c. Rides with 8c. |
-| — | **`reducer.ts`, JSONL v4, `agent-harness.ts`, `events.ts`** | ~6-8 | **DEFERRED, with a tripwire.** All four are dead or stub code upstream. Re-open on the first upstream commit that makes them real. |
+The 2026-08-27 table was written before slice 8b landed. Re-measuring it against
+the shipped code found three of its numbers wrong **as originally written** —
+`packages/agent` is tree-identical across `ccfe79ed2..56f3f33a9`, so nothing
+upstream moved and none of these is staleness. They are corrected below and the
+old values are named so nobody reconciles to them again.
+
+**Correction 1 — `FileSystem` is a `cwd` field + 17 methods, not 13.** The old
+row's "13 methods (…)" listed twelve and counted the `cwd` field as the
+thirteenth — and that list describes what the **port** shipped, not upstream's
+interface. Upstream adds `createDir`, `remove`, `createTempDir`, `createTempFile`
+and a `cleanup`. So the shape claim was measuring the wrong object.
+
+**Correction 2 — the conformance suite is 30 cases in 5 groups, not 13**
+(entries and lanes 8, records and log 8, repository and forks 6, queries and
+facts 4, validation and immutability 4). Count it with
+`git show <sha>:packages/agent/src/harness/session/testing/conformance.ts | grep -c '^\t\tcreateCase('`
+— a single-line regex under-reports, because 14 of the 30 call sites wrap their
+arguments.
+
+**Correction 3 — the symbol universe is 334 export sites / 330 unique names**,
+not 333/329. Every per-file denominator the old row quoted reproduces exactly
+(`messages.ts` 13, `utils/truncate.ts` 9, `compaction/utils.ts` 6, tools/ 36,
+compaction/ 34), so the extraction rule is the same rule, off by one site and one
+name. **The dropped site was never located** — do not repeat the guess that it
+was `harness/env/nodejs.ts`; that was proposed and left untested.
+
+**Symbol delta, stated honestly: 100 HAVE / 165 MISSING-REAL / 69 MISSING-MOOT**
+— which is the prior 93/171/69 **plus 7 movers, not an independent recount**. The
+buckets were not re-derived this cycle, and the split is contingent on the
+unlocated 334th site being MISSING-REAL. Per-file scores that were re-verified
+and are unchanged: `messages.ts` 13/13, `utils/truncate.ts` 9/9,
+`compaction/utils.ts` 6/6, tools/ **26/36**, compaction/ 22/34.
+
+**The structural finding that broke the old model, and the reason this table is
+now split.** Slice 8b as shipped straddles two upstream trees. `ExecutionEnv` /
+`FileSystem` / `Shell` are **harness** source (`harness/types.ts:231-315`), inside
+entry 8. All seven `*Operations` interfaces are **coding-agent** source —
+`packages/coding-agent/src/core/tools/{read:49,edit:96,write:31,bash:63,grep:56,find:55,ls:37}.ts`,
+and a grep for them across `packages/agent` returns empty. `tooloperations.go` is
+522 of the 955 shipped Go lines, and **entry 8's counter cannot see any of it**.
+A single row holding both will keep mis-predicting, because half the row is
+invisible to the measure that scores it. Hence 8b-i and 8b-ii.
+
+| # | slice | est. | state | what it bought, and what remains |
+|---|---|---|---|---|
+| ~~8a~~ | ~~Telemetry `pi.ai.request` emission~~ | — | **STRUCK 2026-08-27** | Struck the same day it was proposed, on a check that should have come first: **pi does not emit this span either.** `git grep -ln "startAiSpan\|pi.ai.request" <sha> -- packages/ai` is EMPTY; the only callers of `startAiSpan`/`AI_TELEMETRY_SCHEMA` in the monorepo are the doc generator and their own test. The port's telemetry seam is latent because pi's is. Emitting would be the port INVENTING behavior pi lacks. Re-open only when upstream's own request paths start a span. |
+| 8b-i | **`ExecutionEnv` + `LocalEnv`** — harness source, inside entry 8 | 2-3 | **SHIPPED 2026-08-28** (`b677517`) | `coding/execenv.go`, **433 LOC** + 294 test. Closes **7 export sites** MISSING-REAL → HAVE: `ExecutionEnv`, `FileSystem`, `Shell`, `FileInfo`, `FileKind`, `ShellExecOptions`, `NodeExecutionEnv`→`LocalEnv`. Two of the seven (`ShellExecOptions`, `FileInfo`) sit on a judgement boundary — the pre-8b bash tool already carried cwd/env/timeout inline and ls used `os.Stat` metadata, which the same shape-collapsed rule scores HAVE elsewhere. **Coverage is 13 of 18 members** (counting `cleanup` on the `Shell` side): `cwd`→`Cwd()` plus 12 methods, `fileInfo`→`Stat` (a Go method may not share its return type's name). **Unported and uncommented: `createDir`, `remove`, `createTempDir`, `createTempFile`.** `Shell` is 2/2. Side effect worth carrying: the port now has a Go stand-in for a `harness/` runtime class for the first time, so "no Go home, therefore zero owed" is no longer available for `harness/env/nodejs.ts` — it remains available for `harness/session/**`, `harness/tools/**`, `events.ts` and `agent-harness.ts`. |
+| 8b-ii | **The seven per-tool `*Operations` seams** — coding-agent source, **NOT entry 8** | not estimated | **SHIPPED 2026-08-28, with a remainder** (`ce76e94`, `cd0e3b9`, `1f49233`) | `coding/tooloperations.go`, **522 LOC** + 371 test, plus 207 changed lines in `coding/tools.go`. Seven seams / 16 members, matching pi member-for-member, as **structs of funcs** rather than interfaces (pi's members are individually overridable and one is optional). Seven `Env*Operations` bridges turn an `ExecutionEnv` into each seam — a port-only construct with no single upstream file behind it. **REMAINDER, and it is why this is not "done":** (a) three members are declared, defaulted, bridged and **never consulted** — `EditOperations.Access`, `LsOperations.Exists`, `FindOperations.Glob` — while pi consults all three (`edit.ts:349`, `ls.ts:133`, `find.ts:169-178`); `Glob` is the substantive one, since upstream a supplied glob replaces the matcher wholesale, so an injected find seam cannot yet change what find finds. (b) **No host can reach any of this** — every `*ToolOps` constructor is unexported and `CreateTool`/`CreateCodingTools`/`CreateAllTools` take only `cwd`, so injection works from inside package `coding` and its tests only. The slice's stated purpose, pointing the agent at a sandbox, has not shipped. (c) `EnvBashOperations` drops `BashExecOptions.Env` (the `PI_*` session metadata never reaches the child) and never yields `ErrShellAborted`/`*ShellTimeoutError`, so an `ExecutionEnv`-backed shell tool renders neither "Command aborted" nor "Command timed out". (d) find and grep still enumerate the local disk directly (`tools.go:1617`, `:1820`), faithful to pi's fd/ripgrep architecture but meaning an injected remote filesystem would enumerate nothing. |
+| 8c | **`SessionStorage`/`SessionRepo` seam + in-memory backend + conformance suite** | re-derive — the old 3.5-4 was set against wrong numbers | **NOT STARTED, owner-gated** | Re-sized at `56f3f33a9`: `SessionStorage` is **17 methods** (`session/types.ts:290-326`), `SessionRepo` **5** (create, open, list, delete, fork); in-memory backend `session/memory.ts` 192 LOC; conformance `session/testing/conformance.ts` **1,016 LOC / 30 cases**. Three honest tiers, because the seam alone does not compile: **narrow 1,280 LOC**, **buildable 1,623** (the interfaces are typed against the `Entry`/`RecordBase`/`EntryQuery`/`SessionError` substrate in the same file), **whole non-JSONL session subtree 2,379**. The gate is unchanged and still correct: the port's v3 recorder cannot conform — no records, no lanes, no facts — so this is a design decision, not a mechanical port. Do not fund until the owner wants pluggable durability as a product feature. |
+| 8d | **`search/`** (`b75be04d9`) | 0.5 | **NOT STARTED, rides with 8c** | **208 LOC src** (`search/index.ts` 32 + `search/scanning.ts` 176), 12 exported symbols, +125 LOC upstream test. All 12 MISSING-REAL; the port has zero analogue and 8b changed that not at all. Published SDK surface (`export * from "./search/index.ts"`). Confirmed still worthless before 8c: `scanning.ts` types its entire substrate against the `SessionStorage` query surface — `ScanningReadable` is a `Pick<>` of it. |
+| — | **`reducer.ts`, JSONL v4, `agent-harness.ts`, `events.ts`** | ~6-8 | **DEFERRED, tripwired** | **2,134 LOC src + 2,836 LOC test** — 21% of entry 8's source but **49% of its test mass**, which is itself an argument for deferring. All four are dead or stub code upstream: `events.ts`'s only importer at the pin is its own test, and `agent-harness.ts` is a scaffold. Re-open on the first upstream commit that makes them real. |
 
 **The tripwire, so this is checkable rather than remembered:**
 `git show <sha>:packages/agent/src/harness/agent-harness.ts | grep -cE "HarnessNotImplemented|this\.unavailable\("`
-is **27** at `ccfe79ed2`. When that number starts falling, upstream is landing
-the writer side and the recovery kernel becomes portable against a real
-consumer. Triage checks it whenever a cycle touches the harness tree.
+is **27** at `ccfe79ed2` and **27** at `56f3f33a9` — not merely equal but the same
+blob (`3802900d`, 508 lines), split 5 `HarnessNotImplemented` + 22
+`this.unavailable(`. When that number starts falling, upstream is landing the
+writer side and the recovery kernel becomes portable against a real consumer.
+Triage checks it whenever a cycle touches the harness tree.
 
-Total: **~2-3 cycles for the callable delta** (8b alone, after 8a was struck), ~6-7 including the
-pluggable-backend feature, against ~10-13 for the whole architectural delta and
-~24 for shape (a). **Spent 2026-08-28:** 8b shipped in four commits (see the
-2026-08-28 cycle), so what remains of the callable delta is 8c + 8d, both still
-owner-gated.
+**Spent and remaining.** 8b shipped in 4 commits over 2 days: **1,737(+)/90(−)
+across 5 files**, 955 LOC of new implementation and 665 of new test, 24 new test
+functions. Read the estimate as "about right for the scoped part, and the slice
+then grew to roughly twice it" — not as pessimism, since 8b-ii was never scoped
+here at all. What remains of the callable delta is **8b-ii's remainder** (the
+three dead members and, more importantly, an exported injection point), then
+8c + 8d, both still owner-gated. Entry 8 does **not** close.
+
+**Estimating rule this rewrite establishes:** score a slice by what it closes in
+the entry-8 symbol universe, not by lines shipped. 8b moved **7 sites** for 1,737
+inserted lines, and the gap is not waste — it is 8b-ii, which is real
+coding-agent parity that entry 8's counter structurally cannot see. A slice that
+cannot be scored by the counter needs its own row.
 
 #### The 12-item backlog, enumerated — and recounted
 
@@ -1040,7 +1094,7 @@ against upstream; none reverted). It is misleading as work owed:
 
 | bucket | items | owed under shape (b) |
 |---|---|---|
-| **Already satisfied in `coding/`** | `ca21c1686` (single-edit guard → `coding/tools.go:664`), `8c2529dae` (root-md skills → `coding/resources.go`), `7af2d27dc` (taskkill → `coding/proc_taskkill.go`) | **zero** |
+| **Already satisfied in `coding/`** | `ca21c1686` (single-edit guard → `coding/tools.go:725`, reached via `PrepareArguments: prepareEditArguments` at `:624`; the pre-8b citation `:664` was invalidated by 8b's rewire), `8c2529dae` (root-md skills → `coding/resources.go`), `7af2d27dc` (taskkill → `coding/proc_taskkill.go`) | **zero** |
 | **Belongs to entry 7, not 8** | `e7fb8eb2a` (touches no harness/search source at all), plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` | move to entry 7 |
 | **Real code, no upstream consumer** | `14ad9801b`, `d1a305613`, `1dd235405` — the whole of `events.ts` | discretionary; deferred above |
 | **Genuine load-bearing delta** | `b75be04d9` (search, → 8d), and `7aca0d7b3` / `4a0e2f115` / `7bdb16c28`-harness (all edits to the harness's **own JSONL v4 store**, → 8c) | 4 items |
@@ -1048,7 +1102,7 @@ against upstream; none reverted). It is misleading as work owed:
 
 **Drain against the tree state at the pin, never by replaying the commits.**
 Two items prove it: `4a0e2f115`'s try/catch became a `Result` check, and
-`a4453b79b` retyped a field on a file `b75be04d9` then deleted. A commit-replay
+`a4453b79b` retyped a field on a file `b75be04d9` then deleted — **22** upstream commits later, though the very next backlog commit (both landed 2026-08-11); the "three commits later" written here previously is wrong under either reading. A commit-replay
 drain would port two things that no longer exist in that form.
 
 **Ledger corrections applied:** entry 7 now carries the four sqlite deltas;
