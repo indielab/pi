@@ -23,6 +23,23 @@ import (
 // Every tool keeps its existing env-free constructor, which uses the local
 // defaults, so none of this changes behavior until a host injects something.
 //
+// TWO seams are deliberately absent until they can be ported faithfully,
+// rather than shipped as types nothing uses:
+//
+//   - The shell seam (pi's BashOperations, shared by bash and powershell).
+//     Wiring it means reshaping the port's streaming execution path — pi's
+//     ops.exec signals abort and timeout by THROWING `aborted` / `timeout:<n>`
+//     and returns `{exitCode: number | null}`, which in Go wants sentinel
+//     errors plus an OnData writer, and runBashCommand currently takes a
+//     *bashUpdater rather than an io.Writer.
+//   - The grep seam (pi's GrepOperations). Its `readFile` is NOT the primary
+//     scan: pi matches with ripgrep and uses readFile only to fetch CONTEXT
+//     LINES around a hit (grep.ts:210, and the interface says so). The port's
+//     grep has no ripgrep dependency — it walks and matches in Go — so the same
+//     member would be the primary read here. Mapping it naively would silently
+//     change what a custom implementation controls. Porting it means deciding
+//     that architectural difference first.
+//
 // Note these are the CODING-AGENT seams. pi's separate harness tools take a
 // single broad ExecutionEnv instead (see execenv.go); the port carries both,
 // with EnvReadOperations and friends bridging one to the other.
@@ -53,35 +70,6 @@ type WriteOperations struct {
 	WriteFile func(ctx context.Context, absolutePath, content string) error
 	// Mkdir creates a directory and its parents.
 	Mkdir func(ctx context.Context, dir string) error
-}
-
-// BashExecOptions are the per-command controls pi passes to BashOperations.exec.
-type BashExecOptions struct {
-	// OnData receives output as it is produced.
-	OnData func(data []byte)
-	// TimeoutSeconds bounds the command; zero or less means pi's default.
-	TimeoutSeconds float64
-	// Env is the child environment.
-	Env []string
-}
-
-// BashOperations is the process execution the shell tools perform. pi shares
-// one interface between bash and powershell (`PowerShellOperations =
-// BashOperations`), so the port does too.
-type BashOperations struct {
-	// Exec runs a command and streams its output, returning the exit code.
-	// A nil ExitCode means the process was killed rather than exiting, which is
-	// pi's `exitCode: number | null`.
-	Exec func(ctx context.Context, command, cwd string, options BashExecOptions) (exitCode *int, err error)
-}
-
-// GrepOperations are the file operations the grep tool performs.
-type GrepOperations struct {
-	// IsDirectory reports whether a path is a directory, erroring if it does
-	// not exist.
-	IsDirectory func(ctx context.Context, absolutePath string) (bool, error)
-	// ReadFile reads a file's contents for context lines.
-	ReadFile func(ctx context.Context, absolutePath string) (string, error)
 }
 
 // FindOperations are the file operations the find tool performs.
@@ -131,23 +119,6 @@ func DefaultWriteOperations() WriteOperations {
 	}
 }
 
-// DefaultGrepOperations reads the local filesystem.
-func DefaultGrepOperations() GrepOperations {
-	return GrepOperations{
-		IsDirectory: func(_ context.Context, p string) (bool, error) {
-			st, err := os.Stat(p)
-			if err != nil {
-				return false, err
-			}
-			return st.IsDir(), nil
-		},
-		ReadFile: func(_ context.Context, p string) (string, error) {
-			data, err := os.ReadFile(p)
-			return string(data), err
-		},
-	}
-}
-
 // DefaultFindOperations checks the local filesystem. Glob is nil, matching pi,
 // whose default is a placeholder because real matching happens in the tool.
 func DefaultFindOperations() FindOperations {
@@ -182,79 +153,53 @@ func DefaultLsOperations() LsOperations {
 	}
 }
 
-// --- filling: a nil member falls back to the local default, which is pi's
-// spread-over-defaults (`{...defaults, ...operations}`) ---
+// --- resolution: pi is `options?.operations ?? defaultOperations`, i.e.
+// WHOLE-OBJECT replacement, not a per-member merge ---
+//
+// A caller who supplies operations supplies ALL of them; there is no
+// spread-over-defaults anywhere in pi's tools. That is why these take a
+// POINTER: nil is pi's absent `operations?`, and a non-nil value is used as
+// given. Getting this wrong would silently give an injected remote filesystem a
+// local fallback for any member its author left out — the opposite of what the
+// seam is for.
+//
+// The one optional member, ReadOperations.DetectImageMimeType, is handled at
+// its call site the way pi does it (`ops.detectImageMimeType ? ... : undefined`,
+// read.ts:250) rather than by filling.
 
-func (o ReadOperations) withDefaults() ReadOperations {
-	d := DefaultReadOperations()
-	if o.ReadFile == nil {
-		o.ReadFile = d.ReadFile
+func resolveReadOperations(ops *ReadOperations) ReadOperations {
+	if ops == nil {
+		return DefaultReadOperations()
 	}
-	if o.Access == nil {
-		o.Access = d.Access
-	}
-	if o.DetectImageMimeType == nil {
-		o.DetectImageMimeType = d.DetectImageMimeType
-	}
-	return o
+	return *ops
 }
 
-func (o EditOperations) withDefaults() EditOperations {
-	d := DefaultEditOperations()
-	if o.ReadFile == nil {
-		o.ReadFile = d.ReadFile
+func resolveEditOperations(ops *EditOperations) EditOperations {
+	if ops == nil {
+		return DefaultEditOperations()
 	}
-	if o.WriteFile == nil {
-		o.WriteFile = d.WriteFile
-	}
-	if o.Access == nil {
-		o.Access = d.Access
-	}
-	return o
+	return *ops
 }
 
-func (o WriteOperations) withDefaults() WriteOperations {
-	d := DefaultWriteOperations()
-	if o.WriteFile == nil {
-		o.WriteFile = d.WriteFile
+func resolveWriteOperations(ops *WriteOperations) WriteOperations {
+	if ops == nil {
+		return DefaultWriteOperations()
 	}
-	if o.Mkdir == nil {
-		o.Mkdir = d.Mkdir
-	}
-	return o
+	return *ops
 }
 
-func (o GrepOperations) withDefaults() GrepOperations {
-	d := DefaultGrepOperations()
-	if o.IsDirectory == nil {
-		o.IsDirectory = d.IsDirectory
+func resolveFindOperations(ops *FindOperations) FindOperations {
+	if ops == nil {
+		return DefaultFindOperations()
 	}
-	if o.ReadFile == nil {
-		o.ReadFile = d.ReadFile
-	}
-	return o
+	return *ops
 }
 
-func (o FindOperations) withDefaults() FindOperations {
-	d := DefaultFindOperations()
-	if o.Exists == nil {
-		o.Exists = d.Exists
+func resolveLsOperations(ops *LsOperations) LsOperations {
+	if ops == nil {
+		return DefaultLsOperations()
 	}
-	return o
-}
-
-func (o LsOperations) withDefaults() LsOperations {
-	d := DefaultLsOperations()
-	if o.Exists == nil {
-		o.Exists = d.Exists
-	}
-	if o.Stat == nil {
-		o.Stat = d.Stat
-	}
-	if o.Readdir == nil {
-		o.Readdir = d.Readdir
-	}
-	return o
+	return *ops
 }
 
 // --- the bridge: an ExecutionEnv can back the coding-agent seams ---
@@ -302,20 +247,6 @@ func EnvWriteOperations(env ExecutionEnv) WriteOperations {
 	}
 }
 
-// EnvGrepOperations backs the grep tool with an ExecutionEnv.
-func EnvGrepOperations(env ExecutionEnv) GrepOperations {
-	return GrepOperations{
-		IsDirectory: func(ctx context.Context, p string) (bool, error) {
-			info, err := env.Stat(ctx, p)
-			if err != nil {
-				return false, err
-			}
-			return info.Kind == FileKindDirectory, nil
-		},
-		ReadFile: env.ReadTextFile,
-	}
-}
-
 // EnvLsOperations backs the ls tool with an ExecutionEnv.
 func EnvLsOperations(env ExecutionEnv) LsOperations {
 	return LsOperations{
@@ -345,32 +276,6 @@ func EnvLsOperations(env ExecutionEnv) LsOperations {
 // as in pi's default: an env exposes no glob, so matching stays with the tool.
 func EnvFindOperations(env ExecutionEnv) FindOperations {
 	return FindOperations{Exists: env.Exists}
-}
-
-// EnvBashOperations backs the shell tools with an ExecutionEnv's Shell half.
-// Streaming is preserved by handing the env's chunk callback straight to OnData.
-func EnvBashOperations(env ExecutionEnv) BashOperations {
-	return BashOperations{
-		Exec: func(ctx context.Context, command, cwd string, options BashExecOptions) (*int, error) {
-			res, err := env.Exec(ctx, command, &ShellExecOptions{
-				Cwd:            cwd,
-				TimeoutSeconds: int(options.TimeoutSeconds),
-				OnStdout:       func(chunk string) { emitChunk(options.OnData, chunk) },
-				OnStderr:       func(chunk string) { emitChunk(options.OnData, chunk) },
-			})
-			if err != nil {
-				return nil, err
-			}
-			code := res.ExitCode
-			return &code, nil
-		},
-	}
-}
-
-func emitChunk(onData func([]byte), chunk string) {
-	if onData != nil {
-		onData([]byte(chunk))
-	}
 }
 
 // localReadFile is os.ReadFile plus Node's EISDIR text. Node's fs.readFile

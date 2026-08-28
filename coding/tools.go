@@ -407,14 +407,14 @@ func isAnimatedPNG(buf []byte) bool {
 
 // readTool builds the read tool against the local filesystem — the form every
 // existing caller uses. readToolOps is the injection seam.
-func readTool(cwd string) agent.AgentTool { return readToolOps(cwd, ReadOperations{}) }
+func readTool(cwd string) agent.AgentTool { return readToolOps(cwd, nil) }
 
 // readToolOps builds the read tool against injectable file operations, porting
 // pi's ReadOperations seam (core/tools/read.ts:49). pi's own words: "Override
 // these to delegate file reading to remote systems (for example SSH)." A nil
 // member falls back to the local default, which is pi's spread-over-defaults.
-func readToolOps(cwd string, ops ReadOperations) agent.AgentTool {
-	ops = ops.withDefaults()
+func readToolOps(cwd string, custom *ReadOperations) agent.AgentTool {
+	ops := resolveReadOperations(custom)
 	return agent.AgentTool{
 		Name:        "read",
 		Label:       "read",
@@ -439,7 +439,11 @@ func readToolOps(cwd string, ops ReadOperations) agent.AgentTool {
 			if err := ops.Access(ctx, abs); err != nil {
 				return agent.AgentToolResult{}, err
 			}
-			if mime := ops.DetectImageMimeType(ctx, abs); mime != "" {
+			mime := ""
+			if ops.DetectImageMimeType != nil {
+				mime = ops.DetectImageMimeType(ctx, abs)
+			}
+			if mime != "" {
 				data, err := ops.ReadFile(ctx, abs)
 				if err != nil {
 					return agent.AgentToolResult{}, err
@@ -547,12 +551,12 @@ func readToolOps(cwd string, ops ReadOperations) agent.AgentTool {
 // ---------------------------------------------------------------------------
 
 // writeTool builds the write tool against the local filesystem.
-func writeTool(cwd string) agent.AgentTool { return writeToolOps(cwd, WriteOperations{}) }
+func writeTool(cwd string) agent.AgentTool { return writeToolOps(cwd, nil) }
 
 // writeToolOps builds the write tool against injectable file operations,
 // porting pi's WriteOperations seam (core/tools/write.ts:31).
-func writeToolOps(cwd string, ops WriteOperations) agent.AgentTool {
-	ops = ops.withDefaults()
+func writeToolOps(cwd string, custom *WriteOperations) agent.AgentTool {
+	ops := resolveWriteOperations(custom)
 	return agent.AgentTool{
 		Name:        "write",
 		Label:       "write",
@@ -589,13 +593,13 @@ func writeToolOps(cwd string, ops WriteOperations) agent.AgentTool {
 // ---------------------------------------------------------------------------
 
 // editTool builds the edit tool against the local filesystem.
-func editTool(cwd string) agent.AgentTool { return editToolOps(cwd, EditOperations{}) }
+func editTool(cwd string) agent.AgentTool { return editToolOps(cwd, nil) }
 
 // editToolOps builds the edit tool against injectable file operations, porting
 // pi's EditOperations seam (core/tools/edit.ts:96). Note pi's edit Access
 // checks R_OK|W_OK where read's checks R_OK alone.
-func editToolOps(cwd string, ops EditOperations) agent.AgentTool {
-	ops = ops.withDefaults()
+func editToolOps(cwd string, custom *EditOperations) agent.AgentTool {
+	ops := resolveEditOperations(custom)
 	editObjSchema := ai.Object(
 		ai.Prop("oldText", ai.String("Exact text for one targeted replacement. It must be unique in the original file and must not overlap with any other edits[].oldText in the same call.")),
 		ai.Prop("newText", ai.String("Replacement text for this targeted edit.")),
@@ -1467,7 +1471,13 @@ func (u *bashUpdater) finish() outputSnapshot {
 // ls
 // ---------------------------------------------------------------------------
 
-func lsTool(cwd string) agent.AgentTool {
+// lsTool builds the ls tool against the local filesystem.
+func lsTool(cwd string) agent.AgentTool { return lsToolOps(cwd, nil) }
+
+// lsToolOps builds the ls tool against injectable file operations, porting pi's
+// LsOperations seam (core/tools/ls.ts:37).
+func lsToolOps(cwd string, custom *LsOperations) agent.AgentTool {
+	ops := resolveLsOperations(custom)
 	return agent.AgentTool{
 		Name:        "ls",
 		Label:       "ls",
@@ -1485,21 +1495,17 @@ func lsTool(cwd string) agent.AgentTool {
 			if l, ok := argInt(params, "limit"); ok {
 				limit = l
 			}
-			info, err := os.Stat(dir)
+			isDir, err := ops.Stat(ctx, dir)
 			if err != nil {
 				return agent.AgentToolResult{}, fmt.Errorf("Path not found: %s", dir)
 			}
-			if !info.IsDir() {
+			if !isDir {
 				return agent.AgentToolResult{}, fmt.Errorf("Not a directory: %s", dir)
 			}
-			entries, err := os.ReadDir(dir)
+			// Bare names, sorted case-insensitively below.
+			names, err := ops.Readdir(ctx, dir)
 			if err != nil {
 				return agent.AgentToolResult{}, fmt.Errorf("Cannot read directory: %v", err)
-			}
-			// Collect bare names, sort case-insensitively on the bare name.
-			names := make([]string, 0, len(entries))
-			for _, e := range entries {
-				names = append(names, e.Name())
 			}
 			// pi sorts with a.toLowerCase().localeCompare(b.toLowerCase());
 			// approximate localeCompare with a root-locale UCA collator so
@@ -1518,8 +1524,8 @@ func lsTool(cwd string) agent.AgentTool {
 				}
 				// Stat (follows symlinks) to detect dir-ness, like pi.
 				suffix := ""
-				if st, err := os.Stat(filepath.Join(dir, name)); err == nil {
-					if st.IsDir() {
+				if entryIsDir, err := ops.Stat(ctx, filepath.Join(dir, name)); err == nil {
+					if entryIsDir {
 						suffix = "/"
 					}
 				} else {
@@ -1584,7 +1590,15 @@ func relativizeFindResultPath(resultPath, searchPath string) string {
 	return rel
 }
 
-func findTool(cwd string) agent.AgentTool {
+// findTool builds the find tool against the local filesystem.
+func findTool(cwd string) agent.AgentTool { return findToolOps(cwd, nil) }
+
+// findToolOps builds the find tool against injectable file operations, porting
+// pi's FindOperations seam (core/tools/find.ts:55). pi branches on whether the
+// CUSTOM operations supplied glob (`if (customOps?.glob)`), falling back to fd
+// otherwise — so the custom value is kept alongside the resolved one.
+func findToolOps(cwd string, custom *FindOperations) agent.AgentTool {
+	ops := resolveFindOperations(custom)
 	return agent.AgentTool{
 		Name:        "find",
 		Label:       "find",
@@ -1607,7 +1621,7 @@ func findTool(cwd string) agent.AgentTool {
 			// fd --max-results treats 0 as unlimited; never slice with a
 			// non-positive limit.
 			unlimited := limit <= 0
-			if _, err := os.Stat(root); err != nil {
+			if ok, err := ops.Exists(ctx, root); err != nil || !ok {
 				return agent.AgentToolResult{}, fmt.Errorf("Path not found: %s", root)
 			}
 			// fd: gitignore applies whether or not we are in a repo (the old

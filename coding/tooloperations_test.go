@@ -22,7 +22,7 @@ func TestReadToolOperationsAreConsulted(t *testing.T) {
 		Access:              func(context.Context, string) error { accessCalls++; return nil },
 		DetectImageMimeType: func(context.Context, string) string { detectCalls++; return "" },
 	}
-	tool := readToolOps("/nowhere", ops)
+	tool := readToolOps("/nowhere", &ops)
 	res, err := tool.Execute(context.Background(), "1", map[string]any{"path": "x.txt"}, nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -45,7 +45,7 @@ func TestReadToolAccessFailureStopsTheRead(t *testing.T) {
 			return nil, nil
 		},
 	}
-	tool := readToolOps("/nowhere", ops)
+	tool := readToolOps("/nowhere", &ops)
 	if _, err := tool.Execute(context.Background(), "1", map[string]any{"path": "x"}, nil); !errors.Is(err, denied) {
 		t.Fatalf("err = %v, want the Access error", err)
 	}
@@ -57,7 +57,7 @@ func TestWriteToolOperationsAreConsulted(t *testing.T) {
 		WriteFile: func(_ context.Context, p, content string) error { wrotePath, wroteContent = p, content; return nil },
 		Mkdir:     func(_ context.Context, d string) error { madeDir = d; return nil },
 	}
-	tool := writeToolOps("/nowhere", ops)
+	tool := writeToolOps("/nowhere", &ops)
 	if _, err := tool.Execute(context.Background(), "1",
 		map[string]any{"path": "sub/new.txt", "content": "hello"}, nil); err != nil {
 		t.Fatalf("execute: %v", err)
@@ -81,7 +81,7 @@ func TestEditToolOperationsAreConsulted(t *testing.T) {
 		WriteFile: func(_ context.Context, _ string, content string) error { wrote = content; return nil },
 		Access:    func(context.Context, string) error { return nil },
 	}
-	tool := editToolOps("/nowhere", ops)
+	tool := editToolOps("/nowhere", &ops)
 	_, err := tool.Execute(context.Background(), "1", map[string]any{
 		"path":  "x.txt",
 		"edits": []any{map[string]any{"oldText": "beta", "newText": "gamma"}},
@@ -94,27 +94,46 @@ func TestEditToolOperationsAreConsulted(t *testing.T) {
 	}
 }
 
-// A nil member must fall back to the local default — pi's spread-over-defaults.
-// Overriding one member must not blank the others.
-func TestOperationsPartialOverrideKeepsDefaults(t *testing.T) {
+// pi resolves ops as `options?.operations ?? defaults` — WHOLE-OBJECT
+// replacement. Supplying operations replaces ALL of them; there is no
+// per-member merge. An earlier draft of this port filled member-by-member,
+// which would have given an injected remote filesystem a silent LOCAL fallback
+// for anything its author left out. This pins the correct semantics.
+func TestOperationsReplaceWholesaleNotPerMember(t *testing.T) {
 	dir := t.TempDir()
-	path := filepath.Join(dir, "f.txt")
-	if err := os.WriteFile(path, []byte("on disk\n"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("on disk\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	// Only DetectImageMimeType is overridden; ReadFile and Access must still be
-	// the local defaults, so the on-disk content comes back.
-	tool := readToolOps(dir, ReadOperations{
+	// Only DetectImageMimeType is supplied. ReadFile and Access are therefore
+	// NIL — not local defaults — so the tool must not silently read the disk.
+	tool := readToolOps(dir, &ReadOperations{
 		DetectImageMimeType: func(context.Context, string) string { return "" },
 	})
-	res, err := tool.Execute(context.Background(), "1", map[string]any{"path": "f.txt"}, nil)
+	defer func() {
+		if recover() == nil {
+			t.Fatal("a partial override must NOT fall back to local defaults")
+		}
+	}()
+	_, _ = tool.Execute(context.Background(), "1", map[string]any{"path": "f.txt"}, nil)
+}
+
+// nil operations is pi's absent `operations?` and DOES use the defaults.
+func TestNilOperationsUsesDefaults(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("on disk\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	res, err := readToolOps(dir, nil).Execute(context.Background(), "1",
+		map[string]any{"path": "f.txt"}, nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
 	if !strings.Contains(resultText(res), "on disk") {
-		t.Fatalf("defaults were not preserved: %q", resultText(res))
+		t.Fatalf("nil operations must use the local defaults: %q", resultText(res))
 	}
 }
+
+func ptr[T any](v T) *T { return &v }
 
 // The local default reproduces Node's EISDIR text, because that emulation
 // belongs to the filesystem implementation rather than to the tool.
@@ -123,5 +142,41 @@ func TestDefaultReadOperationsReportsEISDIR(t *testing.T) {
 	if _, err := DefaultReadOperations().ReadFile(context.Background(), dir); err == nil ||
 		!strings.Contains(err.Error(), "EISDIR") {
 		t.Fatalf("reading a directory = %v, want pi's EISDIR text", err)
+	}
+}
+
+// ls and find consult their seams too.
+func TestLsToolOperationsAreConsulted(t *testing.T) {
+	ops := LsOperations{
+		Exists:  func(context.Context, string) (bool, error) { return true, nil },
+		Stat:    func(_ context.Context, p string) (bool, error) { return !strings.HasSuffix(p, ".txt"), nil },
+		Readdir: func(context.Context, string) ([]string, error) { return []string{"beta.txt", "alpha"}, nil },
+	}
+	res, err := lsToolOps("/nowhere", &ops).Execute(context.Background(), "1", map[string]any{}, nil)
+	if err != nil {
+		t.Fatalf("execute: %v", err)
+	}
+	text := resultText(res)
+	// The injected listing is what shows, and Stat decides the trailing slash.
+	if !strings.Contains(text, "alpha/") || !strings.Contains(text, "beta.txt") {
+		t.Fatalf("injected listing not used: %q", text)
+	}
+	if _, err := os.Stat("/nowhere"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("injected ls must not touch disk (stat = %v)", err)
+	}
+}
+
+func TestFindToolExistsIsConsulted(t *testing.T) {
+	var asked string
+	ops := FindOperations{
+		Exists: func(_ context.Context, p string) (bool, error) { asked = p; return false, nil },
+	}
+	_, err := findToolOps("/nowhere", &ops).Execute(context.Background(), "1",
+		map[string]any{"pattern": "*.go"}, nil)
+	if err == nil {
+		t.Fatal("a missing root must be an error")
+	}
+	if asked == "" {
+		t.Fatal("find never consulted Exists")
 	}
 }
