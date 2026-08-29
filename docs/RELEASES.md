@@ -20,6 +20,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
+| [`v0.84.20`](#v08420) | 2026-08-29 | `886ece5` | `853a80d26` | pi-ai 0.84.4 | Release v0.84.4 crossed — catalog regen 558,804→563,988 B, 1312→1290 models across an unchanged 39 providers (+57/−79, 227 changed) with no schema drift at any level, draining the whole three-item generator queue; the agent loop now prepares each turn immediately before its request rather than right after the previous one, so `ShouldStopAfterTurn` runs first on the completed turn, preparation no longer fires after a final turn, and steering typed during a long preparation reaches the turn it was typed for; two exported hooks gain the doc comments their changed contract needs; differential harness re-pinned and green at 49 PASS / 0 KNOWN / 0 FAIL on the new 0.84.4 dist |
 | [`v0.84.19`](#v08419) | 2026-08-25 | `2f4e336` | `a79b37334` | pi-ai 0.84.3 | Release v0.84.3 crossed — catalog regen 536,642→558,804 B, 1267→1312 models, draining the whole eight-item generator queue and activating `allowedFallbackModels` (0→2) for the first time; PowerShell joins the built-in tools (opt-in, not default-active) on a shared shell-tool factory, moving the bash `command` schema description to "Shell command to execute"; OpenRouter `reasoning_details` deltas now concatenate into logical entries; `tool_choice` is omitted when a request carries no tools; the image MIME detector joins the public API; differential harness fully dist-backed again at 49 PASS / 0 KNOWN / 0 FAIL |
 | [`v0.84.18`](#v08418) | 2026-08-15 | `3c909e6` | `086c32e74` | pi-ai 0.84.2 | Release v0.84.2 crossed — the catalog regen (536,642 B, 1220→1267 models) drains the entire four-item generator queue: DeepSeek `max_tokens` field, `supportsStrictMode` on 34 cloudflare-ai-gateway models, deepseek-v4-flash low thinking level, and the KimiCLI/1.5 static headers gone; Google MAX_TOKENS stops with tool calls keep `length` instead of being clobbered to `toolUse`; Z.AI Coding Plan defaults glm-5.1→glm-5.3 plus a new every-default-resolves-in-catalog guard test; differential harness fully dist-backed for the first time — all 21 scenarios against the published 0.84.2 build, 21/21 PASS with an empty known-divergence baseline |
 | [`v0.84.17`](#v08417) | 2026-08-07 | `7a95c4b` | `e0900a6ea` | pi-ai 0.84.1 | Two releases crossed (v0.84.0, v0.84.1) — first catalog move since 0.83.0: 511,913 B, 1153→1220 models, 37→39 providers (+baseten data, +qwen-token-plan-individual), activating the already-ported `chat_template_args` / `stream_options.include_usage` paths; **breaking wire change** — session summaries replaced by durable `SessionMetadata`, so listing is no longer per-connection and one snapshot is broadcast to all peers; `Agent.Reset()` now refuses mid-run (API break); blocked tool calls can join the batch early-termination rule; telemetry gains an in-memory reference recorder; PI_* system-prompt guideline softened |
@@ -43,6 +44,45 @@ captured from. The commit-by-commit triage/port ledger lives in
 | [`v0.1.0`](#v010) | 2026-06-10 | `1210b0a` | — | — | Initial tagged baseline |
 
 ## Notes
+
+### v0.84.20
+Upstream sync `56f3f33a9 → 853a80d26` (pi 0.84.4). 7 first-parent changes, no
+merges: 2 ports, 2 port-but-queued, 3 n/a, 0 decide. **Release v0.84.4
+crossed**, so the catalog was regenerated from the integrity-verified build —
+558,804→563,988 B, 1312→1290 models across an unchanged 39 providers (+57/−79,
+227 changed) — with the decision made by executing `JSON.stringify(MODELS)`
+against both builds rather than by reading git, and endpoint-pinned at both ends
+so the ported diff is exactly the upstream release diff. Both review gates
+re-derived it independently. The regen drains the entire three-item generator
+queue that had accumulated since 0.84.3, and the queue does not reopen — no
+generator delta landed this cycle. There is **no schema drift at any level**,
+and `compat.allowedFallbackModels` keeps its two anthropic entries and their
+chains, so the refusal-fallback path is unaffected.
+
+Behaviour: **the agent loop prepares each turn immediately before its request**
+(upstream #8782) instead of right after the previous turn ended. Three
+consequences reach the public API. `ShouldStopAfterTurn` now runs first, on the
+context of the turn that just completed. `PrepareNextTurn` runs only when
+another turn will actually happen, so it no longer fires after a final or
+terminating turn — if you were doing end-of-run work there, move it to
+`agent_end` handling. And because preparation can be long-running, steering
+queued while it ran is picked up before the turn starts, so a message typed
+during compaction reaches the turn it was typed for rather than the one after.
+Both hooks gained doc comments recording the new ordering; upstream filed the
+same change under Breaking Changes.
+
+The coding-agent half of that upstream fix needed no port: the port drives auto
+compaction through a per-request `TransformContext` hook, which already fired
+before every provider request including post-tool ones — the property upstream
+was adding. One residual is recorded as a deliberate divergence in
+`UPSTREAM.md`: because the port compacts inside the request rather than in
+`prepareNextTurn`, steering typed *during* compaction lands one turn later than
+in pi, costing one extra provider round-trip. It is a tripwire on the
+compaction-placement ruling, not a defect.
+
+Two upstream changes are in scope but have no Go base yet and were queued rather
+than ported: a Mistral tool-call chunk-merging fix (Scope queue entry 6) and an
+image-model catalog refresh (entry 3).
 
 ### v0.84.19
 Upstream sync `4af9d21d3 → a79b37334` (pi 0.84.3). 22 first-parent changes,
