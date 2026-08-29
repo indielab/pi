@@ -112,7 +112,10 @@ func aborted(ctx context.Context) bool {
 }
 
 func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMessage, config AgentLoopConfig, emit EventSink, streamFn StreamFn) {
-	firstTurn := true
+	// lastCompletedTurn is nil until a turn has finished; it doubles as pi's
+	// firstTurn flag and as the context handed to PrepareNextTurn at the head of
+	// the NEXT iteration (agent-loop.ts:166,173).
+	var lastCompletedTurn *ShouldStopAfterTurnContext
 	var pending []AgentMessage
 	if config.GetSteeringMessages != nil {
 		pending = config.GetSteeringMessages()
@@ -122,10 +125,36 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 		hasMoreToolCalls := true
 
 		for hasMoreToolCalls || len(pending) > 0 {
-			if !firstTurn {
+			if lastCompletedTurn != nil {
+				// Preparation runs here — immediately before the next provider
+				// request — not right after the previous turn_end, so a preparation
+				// that rewrites the context (compaction) also covers requests made
+				// after tool calls (agent-loop.ts:176-195, upstream 56700d42e).
+				if config.PrepareNextTurn != nil {
+					if snap := config.PrepareNextTurn(*lastCompletedTurn); snap != nil {
+						if snap.Context != nil {
+							*current = *snap.Context
+						}
+						if snap.Model != nil {
+							config.Model = snap.Model
+						}
+						if snap.ThinkingLevel != nil {
+							if *snap.ThinkingLevel == "off" {
+								config.Reasoning = ""
+							} else {
+								config.Reasoning = ThinkingLevel(*snap.ThinkingLevel)
+							}
+						}
+					}
+				}
+				// Preparation can be long-running (for example, compaction). Pick up
+				// steering queued while it ran. Only poll again if the earlier poll
+				// returned nothing; otherwise one-at-a-time mode would deliver two
+				// messages in this turn.
+				if len(pending) == 0 && config.GetSteeringMessages != nil {
+					pending = config.GetSteeringMessages()
+				}
 				mustEmit(emit, AgentEvent{Type: EvTurnStart})
-			} else {
-				firstTurn = false
 			}
 
 			if len(pending) > 0 {
@@ -172,31 +201,17 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 
 			mustEmit(emit, AgentEvent{Type: EvTurnEnd, Message: message, ToolResults: toolResults})
 
-			nextTurnCtx := ShouldStopAfterTurnContext{
+			// Nothing appends to newMessages between here and the PrepareNextTurn
+			// call at the head of the next iteration, so this snapshot stays
+			// current where pi shares one growing array (agent-loop.ts:245).
+			lastCompletedTurn = &ShouldStopAfterTurnContext{
 				Message:     message,
 				ToolResults: toolResults,
 				Context:     current,
 				NewMessages: *newMessages,
 			}
-			if config.PrepareNextTurn != nil {
-				if snap := config.PrepareNextTurn(nextTurnCtx); snap != nil {
-					if snap.Context != nil {
-						*current = *snap.Context
-					}
-					if snap.Model != nil {
-						config.Model = snap.Model
-					}
-					if snap.ThinkingLevel != nil {
-						if *snap.ThinkingLevel == "off" {
-							config.Reasoning = ""
-						} else {
-							config.Reasoning = ThinkingLevel(*snap.ThinkingLevel)
-						}
-					}
-				}
-			}
 
-			if config.ShouldStopAfterTurn != nil && config.ShouldStopAfterTurn(nextTurnCtx) {
+			if config.ShouldStopAfterTurn != nil && config.ShouldStopAfterTurn(*lastCompletedTurn) {
 				mustEmit(emit, AgentEvent{Type: EvAgentEnd, Messages: *newMessages})
 				return
 			}
