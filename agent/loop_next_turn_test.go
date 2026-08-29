@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -10,9 +11,9 @@ import (
 )
 
 // noopToolFor builds a tool that records nothing and always succeeds.
-func noopToolFor(name string) AgentTool {
+func noopTool() AgentTool {
 	return AgentTool{
-		Name:        name,
+		Name:        "noop",
 		Description: "Noop tool",
 		Parameters:  ai.Object(),
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
@@ -45,7 +46,7 @@ func runProbeLoop(t *testing.T, p *nextTurnProbe, cfg AgentLoopConfig, msgs ...*
 	t.Helper()
 	scripted := scriptedStream(msgs...)
 	cfg.Model = testModel
-	agentCtx := AgentContext{Tools: []AgentTool{noopToolFor("noop")}}
+	agentCtx := AgentContext{Tools: []AgentTool{noopTool()}}
 	runAgentLoop(context.Background(), []AgentMessage{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "start"}}}},
 		agentCtx, cfg,
 		func(e AgentEvent) error {
@@ -117,7 +118,6 @@ func TestShouldStopAfterTurnRunsBeforePrepareNextTurn(t *testing.T) {
 // BEFORE the end-of-turn poll), so it is not a red-green discriminator for the
 // reorder — it is locked by mutation instead: deleting the re-poll turns it red.
 func TestPrepareNextTurnPicksUpSteeringQueuedWhilePreparing(t *testing.T) {
-	p := &nextTurnProbe{}
 	var queued []AgentMessage
 	var typed bool
 
@@ -147,7 +147,7 @@ func TestPrepareNextTurnPicksUpSteeringQueuedWhilePreparing(t *testing.T) {
 	}
 
 	var requests int
-	agentCtx := AgentContext{Tools: []AgentTool{noopToolFor("noop")}}
+	agentCtx := AgentContext{Tools: []AgentTool{noopTool()}}
 	runAgentLoop(context.Background(), []AgentMessage{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "start"}}}},
 		agentCtx, cfg,
 		func(e AgentEvent) error { return nil },
@@ -172,17 +172,20 @@ func TestPrepareNextTurnPicksUpSteeringQueuedWhilePreparing(t *testing.T) {
 			}
 		}
 	}
-	if !contains(texts, "steered") {
+	if !slices.Contains(texts, "steered") {
 		t.Fatalf("steering queued during preparation never reached the turn it prepared; user texts = %v", texts)
 	}
-	_ = p
 }
 
-// TestPrepareNextTurnDoesNotDoubleDeliverSteering pins the "len(pending) == 0"
-// guard on that re-poll: when the end-of-turn poll already produced a message, preparation
-// must NOT poll again, or one-at-a-time steering would deliver two messages in
-// a single turn.
-func TestPrepareNextTurnDoesNotDoubleDeliverSteering(t *testing.T) {
+// TestPrepareNextTurnDoesNotDiscardAlreadyPolledSteering pins the
+// "len(pending) == 0" guard on that re-poll. Upstream states the hazard as
+// double delivery under one-at-a-time steering; in Go the re-poll ASSIGNS
+// rather than appends (pending = config.GetSteeringMessages()), so an
+// unguarded re-poll manifests as the already-polled message being silently
+// thrown away and replaced by the next one. Same guard, same bug class — the
+// assertion is written against the failure this implementation can actually
+// exhibit, and is mutation-verified against it.
+func TestPrepareNextTurnDoesNotDiscardAlreadyPolledSteering(t *testing.T) {
 	first := ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "first"}}}
 	second := ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "second"}}}
 
@@ -211,7 +214,7 @@ func TestPrepareNextTurnDoesNotDoubleDeliverSteering(t *testing.T) {
 		GetSteeringMessages: poll,
 		PrepareNextTurn:     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate { return nil },
 	}
-	agentCtx := AgentContext{Tools: []AgentTool{noopToolFor("noop")}}
+	agentCtx := AgentContext{Tools: []AgentTool{noopTool()}}
 	runAgentLoop(context.Background(), []AgentMessage{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "start"}}}},
 		agentCtx, cfg,
 		func(e AgentEvent) error { return nil },
@@ -233,19 +236,78 @@ func TestPrepareNextTurnDoesNotDoubleDeliverSteering(t *testing.T) {
 			}
 		}
 	}
-	if contains(texts, "first") && contains(texts, "second") {
-		t.Fatalf("both steering messages landed in one turn; user texts = %v", texts)
+	// Exactly one message per turn. The unguarded re-poll discards "first" and
+	// substitutes "second", so both halves are load-bearing.
+	if !slices.Contains(texts, "first") {
+		t.Fatalf("the already-polled steering message was discarded by the re-poll; user texts = %v", texts)
 	}
-	if !contains(texts, "first") {
-		t.Fatalf("the polled steering message never reached the turn; user texts = %v", texts)
+	if slices.Contains(texts, "second") {
+		t.Fatalf("two steering messages landed in one turn; user texts = %v", texts)
 	}
 }
 
-func contains(xs []string, want string) bool {
-	for _, x := range xs {
-		if x == want {
-			return true
-		}
+// TestPrepareNextTurnSnapshotReachesTheNextRequest covers the payload of the
+// upstream fix rather than only its timing: a snapshot returned by
+// PrepareNextTurn must actually reach the provider request it prepares. The
+// replacement Context stands in for the compacted transcript that motivated
+// upstream #6879, and ThinkingLevel is included because "off" is the one field
+// whose absent and present-but-off cases differ (absent keeps the current
+// level, "off" clears it). Without this the whole apply path could be deleted
+// with the suite still green.
+func TestPrepareNextTurnSnapshotReachesTheNextRequest(t *testing.T) {
+	scripted := scriptedStream(
+		assistantWithToolCall("tool-1", "noop", map[string]any{}),
+		&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "done"}}, StopReason: ai.StopStop},
+	)
+
+	replacementModel := &ai.Model{ID: "prepared", Name: "prepared", Api: "faux", Provider: "faux"}
+	off := ThinkingLevel("off")
+
+	var requests int
+	var seenPrompts []string
+	var seenModels []string
+	var seenReasoning []ai.ThinkingLevel
+
+	cfg := AgentLoopConfig{
+		Model:     testModel,
+		Reasoning: ThinkingLevel("high"),
+		PrepareNextTurn: func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
+			next := *c.Context
+			next.SystemPrompt = "compacted"
+			return &AgentLoopTurnUpdate{Context: &next, Model: replacementModel, ThinkingLevel: &off}
+		},
 	}
-	return false
+
+	agentCtx := AgentContext{SystemPrompt: "original", Tools: []AgentTool{noopTool()}}
+	runAgentLoop(context.Background(), []AgentMessage{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "start"}}}},
+		agentCtx, cfg,
+		func(e AgentEvent) error { return nil },
+		func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			requests++
+			seenPrompts = append(seenPrompts, req.SystemPrompt)
+			seenModels = append(seenModels, model.ID)
+			seenReasoning = append(seenReasoning, opts.Reasoning)
+			return scripted(ctx, model, req, opts)
+		})
+
+	if requests != 2 {
+		t.Fatalf("expected 2 provider requests, got %d", requests)
+	}
+	// Turn 1 predates any preparation and must be untouched.
+	if seenPrompts[0] != "original" || seenModels[0] != testModel.ID {
+		t.Fatalf("turn 1 was already prepared: prompt=%q model=%q", seenPrompts[0], seenModels[0])
+	}
+	// Turn 2 is the one the snapshot prepared.
+	if seenPrompts[1] != "compacted" {
+		t.Fatalf("snapshot Context never reached the next request: system prompt = %q, want %q", seenPrompts[1], "compacted")
+	}
+	if seenModels[1] != replacementModel.ID {
+		t.Fatalf("snapshot Model never reached the next request: model = %q, want %q", seenModels[1], replacementModel.ID)
+	}
+	if seenReasoning[1] != "" {
+		t.Fatalf(`snapshot ThinkingLevel "off" did not clear reasoning: opts.Reasoning = %q, want ""`, seenReasoning[1])
+	}
+	if seenReasoning[0] != ai.ThinkingLevel("high") {
+		t.Fatalf("turn 1 reasoning was disturbed: %q", seenReasoning[0])
+	}
 }

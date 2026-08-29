@@ -132,19 +132,7 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 				// after tool calls (agent-loop.ts:176-195, upstream 56700d42e).
 				if config.PrepareNextTurn != nil {
 					if snap := config.PrepareNextTurn(*lastCompletedTurn); snap != nil {
-						if snap.Context != nil {
-							*current = *snap.Context
-						}
-						if snap.Model != nil {
-							config.Model = snap.Model
-						}
-						if snap.ThinkingLevel != nil {
-							if *snap.ThinkingLevel == "off" {
-								config.Reasoning = ""
-							} else {
-								config.Reasoning = ThinkingLevel(*snap.ThinkingLevel)
-							}
-						}
+						snap.applyTo(current, &config)
 					}
 				}
 				// Preparation can be long-running (for example, compaction). Pick up
