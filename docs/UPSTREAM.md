@@ -1397,6 +1397,48 @@ drain would port two things that no longer exist in that form.
 entry 8's backlog is 11 commits against its own tree, of which 3 are already
 satisfied and 3 are upstream dead code.
 
+## Drift at last sync check (2026-08-31) — NO pin advance, four out-of-cycle commits
+
+**Zero drift.** `853a80d26..origin/main` is empty on both counts — 0 first-parent
+changes and 0 total commits — against a mirror refreshed the same day
+(`git fetch origin main` + `checkout -B main origin/main`), so upstream HEAD *is*
+the pin. Newest upstream tag `v0.84.4` (2026-08-28) is already an ancestor of the
+pin by `merge-base --is-ancestor`, and `packages/ai/package.json` reads `0.84.4`
+there, so no release is pending and no catalog regen is due. Verdicts: **0 port,
+0 n/a, 0 decide**. The pin does not move and no port tag is cut.
+
+**This is recorded because zero drift is not a no-op cycle**, which is the exact
+failure this ledger has hit before — slice 8b shipped on 2026-08-28 while the
+queue still described it as unstarted. Four commits landed today with the pin
+unchanged:
+
+| commit | what |
+|---|---|
+| `f92a83c` | entry 7 consult answered — no SQLite driver, queued behind 8c |
+| `3170312` | `internal/policy/deps_test.go` — the dependency + no-cgo gate |
+| `2024b2d` | entry 9 consult answered — `aws-sdk-go-v2` in a `providers/bedrock` submodule |
+| `0e42189` | entry 10 consult answered + the **governing ruling** on dependency questions |
+
+Net effect on the queue: **the CONSULT backlog drains 3 → 0.** Entries 7, 9 and
+10 all carried an open owner question; none does now. No entry closed and no row
+opened — all three remain queued work, with their dependency questions
+pre-decided rather than pending. Entry 10 gains a recorded **blocker on entry
+1** (Codex is OAuth-only; the port's OAuth seams have zero implementers). Queued
+deltas are untouched: entry 3 still 1, entry 6 still 1, entry 7 still 4, entry 8
+still 11.
+
+**Two ledger bugs fixed** while verifying, both pre-existing: entry 1's carve-out
+still called `openai-codex.ts` "OUT under E2", stale since the 2026-08-27 rewrite
+and contradicting entry 10's "back in scope"; and its 544 OAuth lines are
+double-counted in both entry 1's 2,983 and entry 10's 2,228, so the queue's sizes
+must not be summed.
+
+**Base gate green** on the shipped tree: `gofmt -l` clean, `CGO_ENABLED=0 go
+build ./...` clean, `go vet ./...` clean, `go test -race ./... -count=1` green.
+Package count **13 → 14**, test-carrying **10 → 11**, from the new
+`internal/policy` package. The differential harness was not re-run: the pin did
+not move and no Go behavior changed — the only non-doc file added is a test.
+
 ## Drift at last sync check (2026-08-29) — pin advanced to 853a80d26
 
 Delta `56f3f33a9..853a80d26`, **7** first-parent changes, **no merges**: the
