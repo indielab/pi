@@ -109,7 +109,12 @@ exclusion test** — the boundary has two: E1 and E3.
 The standing preference still holds and is worth stating: the port's runtime
 module today depends only on the Go standard library and `golang.org/x/*`, and
 staying there is a real asset (trivial cross-compilation, no cgo, a tiny supply
-chain). So the rule is:
+chain). **As of 2026-08-31 this is enforced mechanically, not by this
+paragraph** — `internal/policy/deps_test.go` fails when the build reaches a
+module outside its allowlist, or when any non-stdlib package carries cgo files.
+It runs under the base gate's existing `go test ./...`, which is the only thing
+this repo runs every cycle (there is no CI). Adding a module means editing that
+allowlist, which is the consult, made unskippable. So the rule is:
 
 > A `packages/ai/src` adapter is **IN scope**, like everything else the SDK
 > publishes. If a faithful Go port of it would require a third-party module for
@@ -230,8 +235,17 @@ and no test reaches it, that is a `decide`: it means a test needs changing.
   rule of the form "`CGO_ENABLED=0 go build ./...` must pass" is therefore
   structurally incapable of catching the regression it would exist to prevent.
   The gate that works asserts the dependency set (`go list -deps ./...`, or a
-  `go.mod` allowlist). Not yet implemented; noted here so nobody builds the
-  useless one.
+  `go.mod` allowlist). **A second, subtler trap was found while implementing
+  it:** the natural fallback — "assert no package has `CgoFiles`" — is blind for
+  the same reason if it runs with cgo off, because the toolchain excludes cgo
+  files by build constraint before `go list` sees them. Measured on
+  `mattn/go-sqlite3 v1.14.50`: `cgofiles=0` under `CGO_ENABLED=0`, `cgofiles=10`
+  under `CGO_ENABLED=1`. Any cgo check must therefore force `CGO_ENABLED=1`; a
+  dependency-set assertion is immune either way. **Implemented 2026-08-31** as
+  `internal/policy/deps_test.go` — two independent tests (allowlist, cgo),
+  both proven to fail against a real violation before being landed, the cgo one
+  against third-party *and* first-party `import "C"`. Package count 13 → 14,
+  test-carrying 10 → 11.
 
   **Known cost of this answer, and the tells that reopen it.** A driver-free
   seam is not free: porting the interface with zero in-tree implementers repeats
