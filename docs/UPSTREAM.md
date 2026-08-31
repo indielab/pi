@@ -188,6 +188,64 @@ and no test reaches it, that is a `decide`: it means a test needs changing.
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
 
+- **2026-08-31 — the session-backends driver consult is answered NEITHER, NOT
+  YET: entry 7 stays queued and the root module takes no SQLite driver.** The
+  question as posed ("`modernc.org/sqlite` or `mattn/go-sqlite3`?") rested on a
+  premise that had gone stale. Verified at the pin, not from the 08-27 note:
+  `git grep -l better-sqlite3 853a80d26` exits 1 — the string is absent from the
+  whole upstream tree — and `packages/session-backends/sqlite-node/package.json`
+  lists exactly two dependencies, `@earendil-works/pi-ai` and
+  `@earendil-works/pi-agent-core`, **no sqlite dependency of any kind**. The
+  backend is Node's builtin `node:sqlite` gated by `engines.node >=22.19.0`, and
+  upstream split the package out so the core would not pull native sqlite in.
+  Taking either Go driver would therefore add a native dependency in order to
+  match an upstream that has none. The second and stronger reason: entry 7 is a
+  backend *implementation* of the 8c `SessionStorage`/`SessionRepo` seam, and 8c
+  is recorded here as "NOT STARTED, owner-gated … do not fund until the owner
+  wants pluggable durability as a product feature". Choosing a driver now picks
+  flooring for an unapproved storey — nothing in the port imports session
+  storage today (`SessionRepo`/`SessionStorage` appear in no Go file; the lone
+  grep hit is a substring of `TestRemoteSessionReportsSubscriberFailures`).
+
+  **The merits are nonetheless settled, so 8c can be answered in one line.**
+  Established by EXECUTING a probe against both drivers, not by reading docs:
+  `modernc.org/sqlite` v1.57.0 (SQLite 3.53.3) passes every exotic construct the
+  upstream schema uses — FTS5 external-content with `content_rowid`, the
+  `trigram remove_diacritics 1` tokenizer, the `ai`/`ad`/`au` sync triggers,
+  `VALUES('rebuild')`, `bm25()` + `MATCH`, conditional `UPSERT … RETURNING`,
+  nested `SAVEPOINT`/`ROLLBACK TO`, `WITHOUT ROWID`, WAL and `BEGIN IMMEDIATE` —
+  **with no build tags**. `mattn/go-sqlite3` needs cgo *and* a non-default
+  `-tags sqlite_fts5`, failing at runtime with `no such module: fts5` without
+  it. If 8c ever opens, the driver is `modernc.org/sqlite`, and it belongs in a
+  `github.com/sky-valley/pi/backends/sqlite` submodule with its own tag series —
+  never in the root module. Measured cost of putting it in the root: non-stdlib
+  modules **2 → 11**, binary **13.9 → ~21.9 MB**, and the loss of the
+  dragonfly, solaris, illumos and aix targets that build clean today.
+
+  **Correction to the enforcement story, worth more than the ruling itself.**
+  The no-cgo stance in E2 is prose with no mechanical check, and the obvious
+  check does not work: adding `mattn/go-sqlite3` and building with
+  `CGO_ENABLED=0` **succeeds**, because mattn ships a build-tagged stub — the
+  binary then fails at runtime with "requires cgo to work. This is a stub". A CI
+  rule of the form "`CGO_ENABLED=0 go build ./...` must pass" is therefore
+  structurally incapable of catching the regression it would exist to prevent.
+  The gate that works asserts the dependency set (`go list -deps ./...`, or a
+  `go.mod` allowlist). Not yet implemented; noted here so nobody builds the
+  useless one.
+
+  **Known cost of this answer, and the tells that reopen it.** A driver-free
+  seam is not free: porting the interface with zero in-tree implementers repeats
+  the "ported seam with no implementers" failure already recorded against entry
+  1 (OAuth) and `server.Service`. If 8c is funded, land the in-memory backend
+  from `session/memory.ts` in the same slice so the seam has one real
+  implementer, and keep `modernc.org/sqlite` behind a build-tagged **test-only**
+  import so conformance runs against a real database without the root module
+  requiring it. Reopen this ruling on either of two upstream tells, neither
+  present at the pin: a **second** backend sibling appearing under
+  `packages/session-backends/` (a `bun-sqlite` or `pg`), or `packages/coding-agent`
+  gaining its first real import of `SqliteSessionRepository` — at `853a80d26`
+  it has none. Either means durability has become a product feature.
+
 - **2026-08-27 — scope is decided by EXCLUSION TESTS, not by a path list; the three
   tests are in "The scope boundary" above and they are authoritative over
   every list in this repo.** This is the structural answer to a failure the
@@ -939,13 +997,15 @@ Drain order is value-first, not size-first. Sizes are upstream source lines at
 | 4 | **Azure OpenAI responses** | 364 LOC | ~1 | JSON over HTTPS, header auth. | — |
 | 5 | **Google Vertex** | 710 LOC | ~2 | IN under E2's transparent-wrapper rider (`@google/genai`). ADC is the risk — scope it to the credential paths Go reaches with stdlib. | — |
 | 6 | **Mistral conversations** | 963 LOC | ~1.5 | JSON over HTTPS, header auth. | **1** — `6c87d9a02` (2026-08-29: merge indexed Mistral tool-call chunks — `consumeChatStream`'s `toolBlocksByKey` is rekeyed from the composite `` `${callId}:${index}` `` string to `toolCall.index ?? callId`, so chunks of one call that arrive with differing ids still merge. No Go base: `ai/providers/` has no mistral adapter, only registry-level references in `ai/envkeys.go`, `ai/types.go` and `coding/resolve.go`) |
-| 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **CONSULT (2026-08-27):** it is a `better-sqlite3` backend, so a Go port needs a driver — `modernc.org/sqlite` (pure Go, no cgo) or `mattn/go-sqlite3` (cgo). Under the evening ruling that is a question for the owner, not a reason to drop the entry; the entry stands either way. | **4** — `e7fb8eb2a`, plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` (reassigned from entry 8, 2026-08-27) |
+| 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **CONSULT ANSWERED (2026-08-31) — NEITHER DRIVER, NOT YET.** The 2026-08-27 premise was stale: at `853a80d26` `better-sqlite3` appears **nowhere** in upstream (`git grep -l better-sqlite3 853a80d26` exits 1) and `packages/session-backends/sqlite-node/package.json` declares **zero** sqlite dependencies — the backend is Node's *builtin* `node:sqlite` behind `engines.node >=22.19.0`. The consult was therefore asking which native dependency to take in order to match an upstream that deliberately took none. Entry 7 is a backend for the **8c** `SessionStorage`/`SessionRepo` seam, which is owner-gated and unfunded, so the entry stays queued and the root module takes no driver. Merits settled for whenever 8c opens: `modernc.org/sqlite`. See the 2026-08-31 ruling. | **4** — `e7fb8eb2a`, plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` (reassigned from entry 8, 2026-08-27) |
 | 9 | **Bedrock adapter** | 1,459 LOC | ~3 + consult | **CONSULT: hand-roll SigV4 + eventstream (~500 Go lines, stdlib only), or take `aws-sdk-go-v2`?** Back in scope 2026-08-27. Note pi's bedrock wire is authored by `aws-sdk-js`, so there is no pi-authored byte sequence to match — parity means "AWS accepts it", which favours hand-rolling. | — |
 | 10 | **Codex adapter** | 2,228 LOC | ~3 + consult | **CONSULT: take `klauspost/compress` for zstd (and likely a WebSocket module), or leave queued?** Back in scope 2026-08-27. zstd is not credibly hand-rollable. | — |
 | 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **11** against its own tree (12 minus `e7fb8eb2a`, reassigned to entry 7) — of which 3 are already satisfied in `coding/` and 3 are upstream dead code, leaving **4** load-bearing. See "Harness delta" below. **Slice 8b SHIPPED 2026-08-28** (`b677517`, `ce76e94`, `cd0e3b9`, `1f49233`), and the re-measure split it into **8b-i** (`ExecutionEnv`, harness source, 7 symbols closed) and **8b-ii** (the seven `*Operations` seams, coding-agent source, invisible to this entry's counter) — 8b-ii ships with a named remainder. The entry stays open on 8c and 8d, and the backlog count is unaffected because 8b was a base-port slice rather than one of the deferred commits. | 11 |
 
-Entries 1–6 total **~10 port-cycles**. Entry 7 is contingent on its own E2
-answer. Entry 8 is funded but its cost depends on the shape chosen below.
+Entries 1–6 total **~10 port-cycles**. Entry 7's E2 answer landed 2026-08-31 —
+**no driver in the root module**, and the entry is now gated on slice 8c rather
+than on a dependency question. Entry 8 is funded but its cost depends on the
+shape chosen below.
 
 ### Harness shape — the open question, with a default
 
