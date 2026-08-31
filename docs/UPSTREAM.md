@@ -118,10 +118,15 @@ allowlist, which is the consult, made unskippable. So the rule is:
 
 > A `packages/ai/src` adapter is **IN scope**, like everything else the SDK
 > publishes. If a faithful Go port of it would require a third-party module for
-> the transport, the wire encoding, or the credential chain, **open a Scope
-> queue row flagged `CONSULT` and put the specific question to the owner** —
-> which module, how large, what it buys, and whether hand-rolling is credible.
-> Do not port it silently, and do not `n/a` it.
+> the transport, the wire encoding, or the credential chain, **resolve it with
+> the standing formula** (see the 2026-08-31 governing ruling) and record the
+> answer as an ordinary triage decision. Open a Scope queue row flagged
+> `CONSULT` **only** when the formula's answer is one of the three escalating
+> kinds: it requires cgo, it costs supported build targets, or it is large
+> enough to change the port's shape. Do not port it silently, and do not
+> `n/a` it. **Three of the first three E2 consults rested on a premise that was
+> already false at the pin** — check what upstream does *today* before writing
+> the question, and most of the time there is no question.
 
 Riders that survive unchanged: a hunk inside such an adapter is still `port`
 when its Go home is a shared or generic function (the 2026-07-21 lesson); and a
@@ -146,11 +151,16 @@ front of it.
   wire is authored by `aws-sdk-js`, so there is no pi-authored byte sequence to
   be faithful to — parity here means "AWS accepts it", which argues for
   hand-rolling and testing against the documented format.
-- **Codex** — needs a WebSocket transport and zstd decompression. zstd is not
-  credibly hand-rollable; `klauspost/compress` is the standard Go answer.
-  WebSocket could be hand-rolled (RFC 6455) or taken from
-  `nhooyr.io/websocket`. **Question: take `klauspost/compress` (and probably a
-  WebSocket module), or leave codex queued until someone wants it?**
+- **Codex** — ANSWERED 2026-08-31, and the question as written was wrong on its
+  facts. There is **no zstd decompression**: no `Accept-Encoding` is ever set and
+  no response-side decode exists anywhere in `packages/ai/src`. It is request-body
+  **compression** only, on the SSE path only, and the WebSocket transport sends
+  uncompressed JSON. It is also severable by construction —
+  `compressRequestBodyZstd` returns `null` when zstd is unavailable and the caller
+  sends plain JSON with no header. Upstream takes **no** third-party package for
+  either capability: zstd is `process.getBuiltinModule("node:zlib")` and WebSocket
+  is `globalThis.WebSocket`. So: **take nothing for zstd**, and defer the
+  WebSocket module to the WS slice. See the 2026-08-31 ruling.
 
 ### E3 — no Go representation
 
@@ -192,6 +202,117 @@ direction this boundary has always moved. If you believe something belongs out
 and no test reaches it, that is a `decide`: it means a test needs changing.
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
+
+- **2026-08-31 — GOVERNING: the owner's standing formula decides dependency
+  questions; E2 escalates only for cgo, a target loss, or a shape change.** Owner,
+  verbatim: *"follow upstream in terms of impl, engineering and ergonomics by
+  understanding the motivations. find the go equivalent. implement."* That is a
+  decision procedure, not a preference, and it supersedes the reflex to escalate.
+  As a procedure:
+
+  1. **Establish what upstream actually does, at the pin.** Not from this ledger,
+     not from the consult text — from `git show <pin>:<path>`. Three of the first
+     three E2 consults were written against premises that were false by the time
+     they were asked: session-backends was said to need `better-sqlite3` (upstream
+     had moved to builtin `node:sqlite` and declares **zero** sqlite deps), Bedrock
+     was said to favour hand-rolling (true of the signer, which is a third of the
+     work, and false of the credential chain, which pi does not implement at all),
+     and Codex was said to need "zstd decompression" (there is none — no
+     `Accept-Encoding`, no response decode; it is severable request-body
+     compression). A stale premise is the normal case, not the exception.
+  2. **If upstream took no dependency, take none.** The Go question is then
+     "what is the Go equivalent of their builtin or their fallback", and the
+     answer is usually the stdlib or simply doing without, exactly as upstream
+     does on every non-Node runtime.
+  3. **If upstream took one, take the Go equivalent — and reproduce their
+     containment, not just their dependency.** Upstream's containment is
+     expressed in whatever mechanism their ecosystem gives them (a lazy
+     variable-specifier import so bundlers cannot follow; a package split so the
+     core does not pull native code). Go has no bundler, so the equivalent
+     mechanism is the module boundary. Contained upstream → submodule here.
+     Uncontained upstream → root is fine.
+  4. **Escalate only when the Go equivalent is materially worse than upstream's
+     position**, which means exactly three things: it requires **cgo**, it
+     **costs supported build targets**, or it is large enough to **change the
+     port's shape**. Binary size alone is not an escalation — record the measured
+     number and decide. Measure marginal cost against the **real `cmd/pi`**, never
+     against hello-world, which links neither `net/http` nor `crypto/tls`.
+
+  Consequence for triage: a third-party dependency question is an ordinary
+  decision with a recorded ruling, like every other parity gap resolved by the
+  standing formula. It is not a `decide`, and it does not wait on the owner.
+
+- **2026-08-31 — the Codex consult is answered NO DEPENDENCY REQUIRED TO SHIP;
+  zstd takes nothing, and the WebSocket module is deferred to the WS slice and
+  pre-decided as `github.com/coder/websocket` in the ROOT module.**
+
+  **The premise was wrong.** The consult said Codex "needs a WebSocket transport
+  and zstd **decompression**". There is no decompression: `git grep -i
+  'accept-encoding\|decompress'` over `packages/ai/src` at the pin returns
+  nothing, and the response is read as `text/event-stream`. It is request-body
+  **compression**, on the SSE path only; the WebSocket transport sends
+  uncompressed JSON. The distinction decides the entry — a decoder is a
+  correctness requirement, an encoder is an optimization.
+
+  **zstd — take nothing.** Upstream takes no package for it: zstd is
+  `process.getBuiltinModule("node:zlib")` → `zstdCompressSync`, and it is
+  severable by construction — `compressRequestBodyZstd` returns `null` when
+  unavailable, the caller does `sseBody = compressedBody ?? bodyJson`, and the
+  `content-encoding` header is set only on success. Every browser/Vite build
+  already takes that path. Upstream pays zero for zstd; Go would pay 264 KiB and
+  a supply-chain entry for a bandwidth optimization on the *fallback* transport.
+  Parity risk is near zero and was checked rather than assumed: `difftest/`
+  captures via `onPayload`, which upstream fires on the body object **before**
+  `JSON.stringify` and long before compression, so zstd is structurally invisible
+  to the port's fidelity harness.
+
+  **WebSocket — deferred, not declined.** Ship SSE first. An SSE-only adapter is
+  an upstream-defined runtime state rather than a parity gap: `transport: "sse"`
+  has its own `prompt_cache_key` affinity path, upstream ships a live e2e test
+  for it, and an explicit `transport: "websocket"` falls back to SSE when the
+  runtime lacks one — emitting `provider_transport_failure` with
+  `fallbackTransport: "sse"` and the literal message "WebSocket transport is not
+  available in this runtime". The Go port emits the same diagnostic and is
+  faithful.
+
+  **When the WS slice lands, the module is `github.com/coder/websocket`, in the
+  root.** `golang.org/x/net/websocket` is **disqualified on capability, not
+  policy** — it is already inside the allowlist, so policy was never the binding
+  constraint. Its entire message API (`Codec.Receive`) has no continuation-frame
+  accumulation. Measured by execution against an independent server: one
+  4,000-byte message sent in 4 fragments arrived as **5 separate `Message.Receive`
+  results**, and `JSON.Receive` failed with `unexpected end of JSON input`;
+  `Conn.Read` does span fragments but reports no message boundary, so a JSON
+  event stream cannot be delimited from it. Codex's WS transport is exactly a
+  stream of discrete JSON events, and the failure is server-controlled and
+  intermittent — it works until the backend fragments. `coder/websocket`
+  reassembled the same message correctly, dials through the caller's
+  `*http.Client` (so it inherits `ai/providers/retry.go`'s
+  `Proxy: http.ProxyFromEnvironment` for free — proxy support is a documented pi
+  feature, and hand-rolling would regress it), has **zero transitive requires**,
+  is cgo-free, and builds on all 12 supported targets. Measured on the real
+  `cmd/pi` (linux/amd64, `-s -w`): **+92 KiB, 1.009×**; zstd would have been
+  +264 KiB, 1.025×.
+
+  **Why this departs from the Bedrock submodule shape**, as that ruling requires
+  a departure to be stated. Magnitude: 92 KiB against the 3.12 MiB already
+  accepted for Bedrock, while the submodule's price — a two-step tag ritual every
+  release plus silent rot with no CI — is fixed and recurring. Structure: Bedrock
+  severs cleanly because AWS owns *both* halves, wire and credentials; Codex's
+  credential half is **pi's own OAuth**, which is entry 1, root-module and
+  stdlib-only. A `providers/codex` submodule would split one adapter across a
+  module boundary with the root owning half of it.
+
+  **Sequencing:** entry 10 is **blocked on entry 1**. Codex is OAuth-only —
+  `options.apiKey` *is* the OAuth access token, there is no API-key path — and
+  the port's `OAuthAuth`/`LazyOAuth` seams have zero implementers. The
+  dependency question must not hold the entry's ~1,000 lines of business logic
+  hostage; it no longer does.
+
+  **Tells that flip the zstd half to "take klauspost" as a correctness
+  requirement**, worth one grep per cycle: upstream adds an `Accept-Encoding`
+  header, `compressRequestBodyZstd` loses its `return null` branch, or any
+  response-side decode appears.
 
 - **2026-08-31 — the Bedrock consult is answered TAKE `aws-sdk-go-v2`, CONFINED
   TO A SUBMODULE: `github.com/sky-valley/pi/providers/bedrock`, own tag series,
@@ -1067,7 +1188,7 @@ Drain order is value-first, not size-first. Sizes are upstream source lines at
 
 | # | entry | size | est. | why here | queued deltas |
 |---|---|---|---|---|---|
-| 1 | **OAuth token acquisition** (`auth/oauth/**`, `oauth.ts`) | 2,983 LOC / 12 files (2,439 excluding `openai-codex.ts`, whose adapter is OUT under E2) | ~3 | Highest value in the queue. `OAuthAuth.Refresh`/`ToAuth` and `LazyOAuth` are **ported seams with zero implementers** — Anthropic Pro/Max, Copilot, OpenRouter, Kimi and xAI subscription auth are simply unreachable from Go. Needs nothing beyond `crypto/rand`, `crypto/sha256`, `net/http`, `os/exec`. Carries `auth/oauth/radius.ts` (403), so land it with entry 2. | — |
+| 1 | **OAuth token acquisition** (`auth/oauth/**`, `oauth.ts`) | 2,983 LOC / 12 files — **corrected 2026-08-31**: the old parenthetical read "2,439 excluding `openai-codex.ts`, whose adapter is OUT under E2", which has been stale since the 2026-08-27 rewrite (the Codex adapter is entry 10, back in scope) and contradicted it. `openai-codex.ts` is the 544-line **OAuth** file and belongs to this entry; note it is also inside entry 10's 2,228, so the two entries **double-count** those 544 lines — 2,983 − 2,439 = 544. Do not sum the queue's sizes | ~3 | Highest value in the queue. `OAuthAuth.Refresh`/`ToAuth` and `LazyOAuth` are **ported seams with zero implementers** — Anthropic Pro/Max, Copilot, OpenRouter, Kimi and xAI subscription auth are simply unreachable from Go. Needs nothing beyond `crypto/rand`, `crypto/sha256`, `net/http`, `os/exec`. Carries `auth/oauth/radius.ts` (403), so land it with entry 2. | — |
 | 2 | **Radius provider** (`providers/radius.ts`, `providers/radius-config.ts`) | **178 LOC** | ~0.5 | Smallest entry by an order of magnitude, and it closes the **2026-08-22 tripwire**, which is loaded and will fire on the next behavioral commit: `radius-config.ts` is reachable through pi-ai's `"./providers/*"` exports wildcard, i.e. published SDK surface the 2026-07-14 ruling did not name. Only ~8 first-parent commits in 90 days touch anything Radius-named, so this is bought for the tripwire, not for churn relief. | — |
 | 3 | **Image generation** | 1,125 LOC in `packages/ai/src` (of which **684 is `image-models.generated.ts`** → catalog surface, not hand-ported) + 228 LOC of `openrouter-images` api/provider | ~2 | Root-export surface (2026-08-27 ruling). Auth, catalog machinery and helpers already exist port-side. `scripts/generate-image-models.ts` is `port-but-CATALOG-ONLY`. | **1** — `5ce4afbd9` (2026-08-29: `image-models.generated.ts` +75 lines, three openrouter image models — `meta/muse-image`, `recraft/recraft-v4-styles` and one sibling. Catalog surface with no port-side file: `ai/` embeds `models_catalog.json` only, so this lands when the entry's base port ships) |
 | 4 | **Azure OpenAI responses** | 364 LOC | ~1 | JSON over HTTPS, header auth. | — |
@@ -1075,7 +1196,7 @@ Drain order is value-first, not size-first. Sizes are upstream source lines at
 | 6 | **Mistral conversations** | 963 LOC | ~1.5 | JSON over HTTPS, header auth. | **1** — `6c87d9a02` (2026-08-29: merge indexed Mistral tool-call chunks — `consumeChatStream`'s `toolBlocksByKey` is rekeyed from the composite `` `${callId}:${index}` `` string to `toolCall.index ?? callId`, so chunks of one call that arrive with differing ids still merge. No Go base: `ai/providers/` has no mistral adapter, only registry-level references in `ai/envkeys.go`, `ai/types.go` and `coding/resolve.go`) |
 | 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **CONSULT ANSWERED (2026-08-31) — NEITHER DRIVER, NOT YET.** The 2026-08-27 premise was stale: at `853a80d26` `better-sqlite3` appears **nowhere** in upstream (`git grep -l better-sqlite3 853a80d26` exits 1) and `packages/session-backends/sqlite-node/package.json` declares **zero** sqlite dependencies — the backend is Node's *builtin* `node:sqlite` behind `engines.node >=22.19.0`. The consult was therefore asking which native dependency to take in order to match an upstream that deliberately took none. Entry 7 is a backend for the **8c** `SessionStorage`/`SessionRepo` seam, which is owner-gated and unfunded, so the entry stays queued and the root module takes no driver. Merits settled for whenever 8c opens: `modernc.org/sqlite`. See the 2026-08-31 ruling. | **4** — `e7fb8eb2a`, plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` (reassigned from entry 8, 2026-08-27) |
 | 9 | **Bedrock adapter** | 1,459 LOC | ~3 + consult | **CONSULT ANSWERED (2026-08-31) — TAKE `aws-sdk-go-v2` (with `config`), CONFINED TO A `github.com/sky-valley/pi/providers/bedrock` SUBMODULE** with its own tag series; the root module's graph stays at its two `golang.org/x/*` requires. Back in scope 2026-08-27. The 2026-08-27 note that parity "favours hand-rolling" is **withdrawn**: it is true that there is no pi-authored byte sequence to match, but it priced only the signer. Signing is roughly a third of the work and the credential chain is the rest — and pi carries **no credential-resolution code at all**, so `AWS_PROFILE`, ECS task roles and IRSA (all advertised in `packages/coding-agent/docs/providers.md`) work only because the SDK's default chain is linked in. Hand-rolling ships a documented-feature regression. See the 2026-08-31 ruling. | — |
-| 10 | **Codex adapter** | 2,228 LOC | ~3 + consult | **CONSULT: take `klauspost/compress` for zstd (and likely a WebSocket module), or leave queued?** Back in scope 2026-08-27. zstd is not credibly hand-rollable. | — |
+| 10 | **Codex adapter** | 2,228 LOC | ~3 + consult | **CONSULT ANSWERED (2026-08-31) — NO DEPENDENCY REQUIRED TO SHIP.** Upstream takes no third-party package here (`node:zlib` builtin, `globalThis.WebSocket`), and the consult's premise — "zstd decompression" — does not exist: it is request-body compression only, SSE-path only, with a `return null` fallback to plain JSON. **zstd: take nothing**, mirroring upstream's own null-compression branch. **WebSocket: deferred to the WS slice**, pre-decided as `github.com/coder/websocket` in the **root** module (not a submodule — see the ruling). Ship SSE first; an SSE-only adapter is an upstream-defined runtime state, not a parity gap. **Blocked on entry 1** — Codex is OAuth-only and the port's OAuth seams have zero implementers. Back in scope 2026-08-27. | — |
 | 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **11** against its own tree (12 minus `e7fb8eb2a`, reassigned to entry 7) — of which 3 are already satisfied in `coding/` and 3 are upstream dead code, leaving **4** load-bearing. See "Harness delta" below. **Slice 8b SHIPPED 2026-08-28** (`b677517`, `ce76e94`, `cd0e3b9`, `1f49233`), and the re-measure split it into **8b-i** (`ExecutionEnv`, harness source, 7 symbols closed) and **8b-ii** (the seven `*Operations` seams, coding-agent source, invisible to this entry's counter) — 8b-ii ships with a named remainder. The entry stays open on 8c and 8d, and the backlog count is unaffected because 8b was a base-port slice rather than one of the deferred commits. | 11 |
 
 Entries 1–6 total **~10 port-cycles**. Entry 7's E2 answer landed 2026-08-31 —
