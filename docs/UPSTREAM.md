@@ -193,6 +193,68 @@ and no test reaches it, that is a `decide`: it means a test needs changing.
 
 ### Rulings (answers to `decide` escalations — triage must not re-ask)
 
+- **2026-08-31 — the Bedrock consult is answered TAKE `aws-sdk-go-v2`, CONFINED
+  TO A SUBMODULE: `github.com/sky-valley/pi/providers/bedrock`, own tag series,
+  root module untouched.** This is the first ruling to admit a non-`golang.org/x`
+  module into the port at all, and it is admitted *outside* the root module.
+
+  **Why not hand-roll.** The 2026-08-27 framing ("~500 Go lines, stdlib only")
+  priced the signer and nothing else. A trimmed SigV4 plus an eventstream decoder
+  is plausibly 600–900 Go lines — the SDK's own are `signer/v4` 1,197 +
+  `signer/internal/v4` 528 + `eventstream` 1,353 = 3,078 — and that is the cheap
+  third of the job. The expensive part is credentials, which pi does not
+  implement: it contains **no credential-resolution code**, delegating entirely
+  to the SDK default chain. `packages/coding-agent/docs/providers.md` advertises
+  `AWS_PROFILE`, ECS task roles and IRSA as supported Bedrock credential sources,
+  and `AWS_ENDPOINT_URL_BEDROCK_RUNTIME` likewise appears in zero lines of pi
+  source. All of it is free only because the chain is linked in. The Go
+  equivalent of that surface is `config` 7,297 + `credentials` 2,970 + `imds`
+  1,752 = **12,019 LOC**, and the sharpest edge is not EKS but **SSO** — the
+  `~/.aws/sso/cache` token store and OIDC refresh, i.e. the enterprise laptop
+  path. Lambda alone would survive a hand-roll, because it injects static env
+  keys. So hand-rolling does not buy independence; it buys a documented-feature
+  regression.
+
+  **Why the root module still must not carry it.** This follows upstream's own
+  engineering rather than departing from it. Upstream *took* the AWS SDK
+  (`@aws-sdk/client-bedrock-runtime` + `@smithy/node-http-handler`, declared in
+  `packages/ai`), then deliberately quarantined it: `bedrock-converse-stream.lazy.ts`
+  loads the implementation through a **variable specifier** so bundlers cannot
+  follow the import into the Node-only SDK, with a `setBedrockProviderModule`
+  override for the Bun binary build. Take the dependency; do not let it reach
+  everyone. Go has no bundler, so the module boundary is the mechanism that
+  expresses the same intent.
+
+  **Verified in a three-module prototype, not argued:** root `go list -m all`
+  contains **0** `github.com/aws/` modules and `go.sum` stays at **4 lines**; the
+  submodule builds and carries 6 aws modules; `internal/policy/deps_test.go`
+  stays **green** on the root, so this shape needs no exception to the gate
+  landed the same day. Marginal binary cost, measured on the real `cmd/pi` at
+  linux/amd64 `-s -w`: **10,674,338 → 13,951,138 bytes, +3.12 MiB (1.31×)** with
+  the full credential chain — and only for consumers who opt in. The earlier
+  "5.5× blowup" figure was measured against hello-world, which links neither
+  `net/http` nor `crypto/tls`; pi already pays for both.
+
+  **Scope note:** roughly **1,021 of the ~1,459 upstream lines is business logic**
+  — message conversion, thinking payloads, GovCloud display omission, the
+  byte-stable error prefixes `agent-session` string-matches, diagnostics, stop
+  reasons. That work is identical under every option, so the dependency question
+  governs about a third of the entry and must not be allowed to hold the other
+  two thirds hostage.
+
+  **Known risk — the submodule rots silently, because there is no CI.** Only the
+  root is built each cycle, so a change to `ai`'s `ApiProvider`, `StreamOptions`
+  or the assistant event-stream contract leaves root green while nothing compiles
+  `providers/bedrock`. Tells: `go build ./...` inside the submodule fails at a
+  pin advance, `go list -m -u github.com/sky-valley/pi` there reports the root
+  requirement behind the newest root tag, or a cycle tags `v0.8x.NN` with no
+  matching `providers/bedrock/v0.8x.NN`. Mitigation follows the enforcement
+  correction already on record — not a `CGO_ENABLED=0` build, which is
+  structurally useless, but a per-module build plus a dependency-set assertion
+  (zero `^github.com/aws/` in root, non-zero only in the submodule), extending
+  `internal/policy/deps_test.go` when the submodule actually exists. Absent CI it
+  is a release-checklist step run at each pin advance.
+
 - **2026-08-31 — the session-backends driver consult is answered NEITHER, NOT
   YET: entry 7 stays queued and the root module takes no SQLite driver.** The
   question as posed ("`modernc.org/sqlite` or `mattn/go-sqlite3`?") rested on a
@@ -1012,7 +1074,7 @@ Drain order is value-first, not size-first. Sizes are upstream source lines at
 | 5 | **Google Vertex** | 710 LOC | ~2 | IN under E2's transparent-wrapper rider (`@google/genai`). ADC is the risk — scope it to the credential paths Go reaches with stdlib. | — |
 | 6 | **Mistral conversations** | 963 LOC | ~1.5 | JSON over HTTPS, header auth. | **1** — `6c87d9a02` (2026-08-29: merge indexed Mistral tool-call chunks — `consumeChatStream`'s `toolBlocksByKey` is rekeyed from the composite `` `${callId}:${index}` `` string to `toolCall.index ?? callId`, so chunks of one call that arrive with differing ids still merge. No Go base: `ai/providers/` has no mistral adapter, only registry-level references in `ai/envkeys.go`, `ai/types.go` and `coding/resolve.go`) |
 | 7 | **session-backends** (`packages/session-backends/**`) | 2,389 LOC src | ~4 | IN scope since 2026-08-07, never given a home until now — the skill has been telling triage to append deltas to an entry that did not exist. **CONSULT ANSWERED (2026-08-31) — NEITHER DRIVER, NOT YET.** The 2026-08-27 premise was stale: at `853a80d26` `better-sqlite3` appears **nowhere** in upstream (`git grep -l better-sqlite3 853a80d26` exits 1) and `packages/session-backends/sqlite-node/package.json` declares **zero** sqlite dependencies — the backend is Node's *builtin* `node:sqlite` behind `engines.node >=22.19.0`. The consult was therefore asking which native dependency to take in order to match an upstream that deliberately took none. Entry 7 is a backend for the **8c** `SessionStorage`/`SessionRepo` seam, which is owner-gated and unfunded, so the entry stays queued and the root module takes no driver. Merits settled for whenever 8c opens: `modernc.org/sqlite`. See the 2026-08-31 ruling. | **4** — `e7fb8eb2a`, plus the sqlite halves of `7bdb16c28`, `a4453b79b`, `b75be04d9` (reassigned from entry 8, 2026-08-27) |
-| 9 | **Bedrock adapter** | 1,459 LOC | ~3 + consult | **CONSULT: hand-roll SigV4 + eventstream (~500 Go lines, stdlib only), or take `aws-sdk-go-v2`?** Back in scope 2026-08-27. Note pi's bedrock wire is authored by `aws-sdk-js`, so there is no pi-authored byte sequence to match — parity means "AWS accepts it", which favours hand-rolling. | — |
+| 9 | **Bedrock adapter** | 1,459 LOC | ~3 + consult | **CONSULT ANSWERED (2026-08-31) — TAKE `aws-sdk-go-v2` (with `config`), CONFINED TO A `github.com/sky-valley/pi/providers/bedrock` SUBMODULE** with its own tag series; the root module's graph stays at its two `golang.org/x/*` requires. Back in scope 2026-08-27. The 2026-08-27 note that parity "favours hand-rolling" is **withdrawn**: it is true that there is no pi-authored byte sequence to match, but it priced only the signer. Signing is roughly a third of the work and the credential chain is the rest — and pi carries **no credential-resolution code at all**, so `AWS_PROFILE`, ECS task roles and IRSA (all advertised in `packages/coding-agent/docs/providers.md`) work only because the SDK's default chain is linked in. Hand-rolling ships a documented-feature regression. See the 2026-08-31 ruling. | — |
 | 10 | **Codex adapter** | 2,228 LOC | ~3 + consult | **CONSULT: take `klauspost/compress` for zstd (and likely a WebSocket module), or leave queued?** Back in scope 2026-08-27. zstd is not credibly hand-rollable. | — |
 | 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **11** against its own tree (12 minus `e7fb8eb2a`, reassigned to entry 7) — of which 3 are already satisfied in `coding/` and 3 are upstream dead code, leaving **4** load-bearing. See "Harness delta" below. **Slice 8b SHIPPED 2026-08-28** (`b677517`, `ce76e94`, `cd0e3b9`, `1f49233`), and the re-measure split it into **8b-i** (`ExecutionEnv`, harness source, 7 symbols closed) and **8b-ii** (the seven `*Operations` seams, coding-agent source, invisible to this entry's counter) — 8b-ii ships with a named remainder. The entry stays open on 8c and 8d, and the backlog count is unaffected because 8b was a base-port slice rather than one of the deferred commits. | 11 |
 
@@ -1020,6 +1082,37 @@ Entries 1–6 total **~10 port-cycles**. Entry 7's E2 answer landed 2026-08-31 �
 **no driver in the root module**, and the entry is now gated on slice 8c rather
 than on a dependency question. Entry 8 is funded but its cost depends on the
 shape chosen below.
+
+### Submodule shape for heavy optional dependencies (settled 2026-08-31)
+
+The Bedrock ruling establishes a reusable layout, and future consults of the
+same kind should follow it or say why they depart from it.
+
+```
+github.com/sky-valley/pi                     root — stdlib + golang.org/x/* only
+github.com/sky-valley/pi/providers/bedrock   own go.mod, own tag series, requires root
+```
+
+Rules that make it work, all verified in prototype rather than assumed:
+
+- The submodule **requires a tagged root**, never a `replace` directive —
+  `replace` is ignored for downstream consumers, so a `replace`-based submodule
+  is unimportable and proves nothing. This is what makes `difftest/` (module
+  `pidiff`, `replace … => ..`) precedent for confining something nobody imports,
+  and *not* precedent for this.
+- It gets its **own tag series** (`providers/bedrock/v0.8x.NN`), which means a
+  two-step release: tag root, then tag the submodule against it.
+- The seam it plugs into already exists and is public: `ai/registry.go` exposes
+  `RegisterApiProvider` over an open map, so a provider registers at runtime and
+  no root code changes to admit one.
+- Root stays clean by construction, and `internal/policy/deps_test.go` proves it
+  each cycle — the submodule's dependencies never enter the root graph because
+  `go list ./...` in the root does not descend into a nested module.
+
+The cost is the risk recorded in the ruling: with no CI, only the root is built,
+so the submodule can rot silently against root API changes. That cost is
+accepted deliberately. It is the price of keeping the root module's dependency
+budget, which is the port's most-stated invariant.
 
 ### Harness shape — the open question, with a default
 
