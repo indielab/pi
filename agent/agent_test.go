@@ -1018,19 +1018,19 @@ func TestAgentParallelPreflightAbortStopsPreparedTools(t *testing.T) {
 		},
 	})
 
-	var starts, ends []string
-	endIsError := map[string]bool{}
-	resultText := map[string]string{}
+	var starts, ends, resultIDs, resultTexts []string
+	var endIsError []bool
 	ag.Subscribe(func(ctx context.Context, e AgentEvent) error {
 		switch e.Type {
 		case EvToolExecutionStart:
 			starts = append(starts, e.ToolCallID)
 		case EvToolExecutionEnd:
 			ends = append(ends, e.ToolCallID)
-			endIsError[e.ToolCallID] = e.IsError
+			endIsError = append(endIsError, e.IsError)
 		case EvMessageStart:
 			if tr, ok := e.Message.(ai.ToolResultMessage); ok {
-				resultText[tr.ToolCallID] = textOfContent(tr.Content)
+				resultIDs = append(resultIDs, tr.ToolCallID)
+				resultTexts = append(resultTexts, textOfContent(tr.Content))
 			}
 		}
 		return nil
@@ -1052,21 +1052,28 @@ func TestAgentParallelPreflightAbortStopsPreparedTools(t *testing.T) {
 	}
 
 	// Both calls still get a start, an end flagged isError, and a tool result.
-	slices.Sort(starts)
-	slices.Sort(ends)
+	// starts are emitted by the prepare loop, so they are strictly ordered.
 	if got := strings.Join(starts, ","); got != "first,second" {
-		t.Fatalf("expected a start for both calls, got %q", got)
+		t.Fatalf("expected starts [first second], got %q", got)
 	}
-	if got := strings.Join(ends, ","); got != "first,second" {
-		t.Fatalf("expected an end for both calls, got %q", got)
+	// ends are compared as a SET, exactly as pi's #8935 does: the aborted call's
+	// own end is emitted inline by the prepare loop, ahead of the deferred ones,
+	// so end order is not start order in pi either (here: second, then first).
+	sortedEnds := slices.Clone(ends)
+	slices.Sort(sortedEnds)
+	if got := strings.Join(sortedEnds, ","); got != "first,second" {
+		t.Fatalf("expected an end for each start, got %v", ends)
 	}
-	for _, id := range []string{"first", "second"} {
-		if !endIsError[id] {
-			t.Fatalf("expected tool_execution_end for %q to be an error", id)
-		}
-		if resultText[id] != "Operation aborted" {
-			t.Fatalf("expected 'Operation aborted' for %q, got %q (all: %v)", id, resultText[id], resultText)
-		}
+	if !slices.Equal(endIsError, []bool{true, true}) {
+		t.Fatalf("expected every tool_execution_end flagged isError, got %v", endIsError)
+	}
+	// pi asserts the tool results carry the same ids, in the same order, as the
+	// starts, and that each reads exactly "Operation aborted".
+	if !slices.Equal(resultIDs, starts) {
+		t.Fatalf("expected tool results %v to match starts %v", resultIDs, starts)
+	}
+	if !slices.Equal(resultTexts, []string{"Operation aborted", "Operation aborted"}) {
+		t.Fatalf("expected both results to read 'Operation aborted', got %v", resultTexts)
 	}
 }
 

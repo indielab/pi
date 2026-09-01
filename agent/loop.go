@@ -490,6 +490,7 @@ func executeToolCallsParallel(ctx context.Context, current *AgentContext, msg *a
 
 	type slot struct {
 		immediate *finalizedOutcome
+		toolCall  ai.ToolCall
 		thunk     func() finalizedOutcome
 	}
 	slots := make([]slot, 0, len(toolCalls))
@@ -510,20 +511,7 @@ func executeToolCallsParallel(ctx context.Context, current *AgentContext, msg *a
 			continue
 		}
 		prepared := *prep.prepared
-		slots = append(slots, slot{thunk: func() finalizedOutcome {
-			// pi afda4d620 (#8936): preparation is sequential but execution is
-			// deferred, so an abort raised while a LATER call is being prepared
-			// must still stop the earlier, already-prepared ones. pi re-checks
-			// the signal at the head of every deferred entry. The check belongs
-			// here rather than in the prepare loop because the abort can also
-			// land after that loop, between queueing and start. An aborted call
-			// yields "Operation aborted" and skips execute AND finalize, so
-			// AfterToolCall never runs for it.
-			if aborted(ctx) {
-				fo := finalizedOutcome{toolCall: prepared.toolCall, result: errorToolResult("Operation aborted"), isError: true}
-				emitToolExecutionEnd(fo, safeEmit)
-				return fo
-			}
+		slots = append(slots, slot{toolCall: prepared.toolCall, thunk: func() finalizedOutcome {
 			// Tool execution runs in parallel, OUTSIDE the lock (pi's Promise.all).
 			executed := executePreparedToolCall(ctx, prepared, safeEmit)
 			// Finalization runs the AfterToolCall hook and reads/writes shared
@@ -560,9 +548,41 @@ func executeToolCallsParallel(ctx context.Context, current *AgentContext, msg *a
 	var wg sync.WaitGroup
 	var panicOnce sync.Once
 	var panicVal any
+	// pi afda4d620 (#8936): preparation is sequential but execution is deferred,
+	// so an abort raised while a LATER call is being prepared must still stop the
+	// earlier, already-prepared ones. pi re-checks the signal at the head of every
+	// deferred entry, and JS runs all of those checks inside ONE uninterruptible
+	// turn (`finalizedCalls.map(entry => entry())`), so an externally-raised abort
+	// is all-or-nothing for the batch and can never land between two checks.
+	//
+	// We reproduce that by deciding ONCE here, on the loop goroutine, before any
+	// tool body starts. Checking inside each goroutine instead would let the
+	// scheduler split the batch: a user abort landing just after the batch starts
+	// would skip whichever calls had not been scheduled yet, while pi runs them
+	// all. An aborted call yields "Operation aborted" and skips execute AND
+	// finalize, so AfterToolCall never runs for it; deciding here also keeps those
+	// end events in slot order, as pi's synchronous map does.
+	batchAborted := aborted(ctx)
 	for i, s := range slots {
 		if s.immediate != nil {
 			ordered[i] = *s.immediate
+			continue
+		}
+		if batchAborted {
+			fo := finalizedOutcome{toolCall: s.toolCall, result: errorToolResult("Operation aborted"), isError: true}
+			// Emit exactly as a thunk would, but never unwind straight out of this
+			// loop: a listener error here must still let the already-spawned tool
+			// goroutines be joined at wg.Wait below, so it is routed through the
+			// same panicOnce the goroutines use and re-raised after the join.
+			func() {
+				defer func() {
+					if r := recover(); r != nil {
+						panicOnce.Do(func() { panicVal = r })
+					}
+				}()
+				emitToolExecutionEnd(fo, safeEmit)
+			}()
+			ordered[i] = fo
 			continue
 		}
 		wg.Add(1)
