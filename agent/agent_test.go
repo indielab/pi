@@ -965,6 +965,111 @@ func TestAgentAbortDuringToolExecution(t *testing.T) {
 	}
 }
 
+// TestAgentParallelPreflightAbortStopsPreparedTools ports pi's #8935 regression
+// (upstream afda4d620). In PARALLEL mode preparation is sequential but execution
+// is deferred, so a call can be fully prepared before a LATER call's preflight
+// aborts the run. Before the fix the prepared call still ran, which for a tool
+// with an external side effect meant the write happened after the user aborted.
+// Every prepared-but-unstarted call must instead yield "Operation aborted",
+// without executing and without running AfterToolCall — while both calls still
+// get a tool_execution_start, a tool_execution_end and a tool result.
+func TestAgentParallelPreflightAbortStopsPreparedTools(t *testing.T) {
+	var ag *Agent
+	var mu sync.Mutex
+	var executed, preflights, afterHooks []string
+
+	externalWrite := AgentTool{
+		Name:       "external_write",
+		Parameters: ai.Object(),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			mu.Lock()
+			executed = append(executed, id)
+			mu.Unlock()
+			return AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: id}}}, nil
+		},
+	}
+
+	ag = NewAgent(AgentOptions{
+		// ToolExecution left at ToolDefault: this batch runs in parallel.
+		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{externalWrite}},
+		StreamFn: scriptedStream(&ai.AssistantMessage{
+			Content: ai.ContentList{
+				ai.ToolCall{ID: "first", Name: "external_write", Arguments: map[string]any{}},
+				ai.ToolCall{ID: "second", Name: "external_write", Arguments: map[string]any{}},
+			},
+			StopReason: ai.StopToolUse,
+		}),
+		BeforeToolCall: func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult {
+			mu.Lock()
+			preflights = append(preflights, c.ToolCall.ID)
+			mu.Unlock()
+			// "first" prepares cleanly and is queued; the abort lands on the
+			// SECOND call's preflight, after the first is already prepared.
+			if c.ToolCall.ID == "second" {
+				ag.Abort()
+			}
+			return nil
+		},
+		AfterToolCall: func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult {
+			mu.Lock()
+			afterHooks = append(afterHooks, c.ToolCall.ID)
+			mu.Unlock()
+			return nil
+		},
+	})
+
+	var starts, ends []string
+	endIsError := map[string]bool{}
+	resultText := map[string]string{}
+	ag.Subscribe(func(ctx context.Context, e AgentEvent) error {
+		switch e.Type {
+		case EvToolExecutionStart:
+			starts = append(starts, e.ToolCallID)
+		case EvToolExecutionEnd:
+			ends = append(ends, e.ToolCallID)
+			endIsError[e.ToolCallID] = e.IsError
+		case EvMessageStart:
+			if tr, ok := e.Message.(ai.ToolResultMessage); ok {
+				resultText[tr.ToolCallID] = textOfContent(tr.Content)
+			}
+		}
+		return nil
+	})
+
+	if err := ag.Prompt(context.Background(), "run both writes"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Both calls were preflighted; neither tool body ran and no result hook fired.
+	if got := strings.Join(preflights, ","); got != "first,second" {
+		t.Fatalf("expected both calls preflighted, got %q", got)
+	}
+	if len(executed) != 0 {
+		t.Fatalf("aborted batch must not execute any tool, ran %v", executed)
+	}
+	if len(afterHooks) != 0 {
+		t.Fatalf("AfterToolCall must not run for an aborted call, ran %v", afterHooks)
+	}
+
+	// Both calls still get a start, an end flagged isError, and a tool result.
+	slices.Sort(starts)
+	slices.Sort(ends)
+	if got := strings.Join(starts, ","); got != "first,second" {
+		t.Fatalf("expected a start for both calls, got %q", got)
+	}
+	if got := strings.Join(ends, ","); got != "first,second" {
+		t.Fatalf("expected an end for both calls, got %q", got)
+	}
+	for _, id := range []string{"first", "second"} {
+		if !endIsError[id] {
+			t.Fatalf("expected tool_execution_end for %q to be an error", id)
+		}
+		if resultText[id] != "Operation aborted" {
+			t.Fatalf("expected 'Operation aborted' for %q, got %q (all: %v)", id, resultText[id], resultText)
+		}
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Parity sweep 2: A2 + B1-B6
 // ---------------------------------------------------------------------------

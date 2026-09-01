@@ -511,6 +511,19 @@ func executeToolCallsParallel(ctx context.Context, current *AgentContext, msg *a
 		}
 		prepared := *prep.prepared
 		slots = append(slots, slot{thunk: func() finalizedOutcome {
+			// pi afda4d620 (#8936): preparation is sequential but execution is
+			// deferred, so an abort raised while a LATER call is being prepared
+			// must still stop the earlier, already-prepared ones. pi re-checks
+			// the signal at the head of every deferred entry. The check belongs
+			// here rather than in the prepare loop because the abort can also
+			// land after that loop, between queueing and start. An aborted call
+			// yields "Operation aborted" and skips execute AND finalize, so
+			// AfterToolCall never runs for it.
+			if aborted(ctx) {
+				fo := finalizedOutcome{toolCall: prepared.toolCall, result: errorToolResult("Operation aborted"), isError: true}
+				emitToolExecutionEnd(fo, safeEmit)
+				return fo
+			}
 			// Tool execution runs in parallel, OUTSIDE the lock (pi's Promise.all).
 			executed := executePreparedToolCall(ctx, prepared, safeEmit)
 			// Finalization runs the AfterToolCall hook and reads/writes shared
