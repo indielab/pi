@@ -272,7 +272,9 @@ func TestAnthropicOAuthHeadersAndStealth(t *testing.T) {
 	if got := headers.Get("x-api-key"); got != "" {
 		t.Fatalf("x-api-key must not be set for OAuth: %q", got)
 	}
-	if got := headers.Get("user-agent"); got != "claude-cli/2.1.75" {
+	// Spelled through the constant so a version bump is one edit; the literal
+	// itself is pinned by TestAnthropicClaudeCodeUserAgentPinnedToUpstream.
+	if got := headers.Get("user-agent"); got != "claude-cli/"+claudeCodeVersion {
 		t.Fatalf("user-agent wrong: %q", got)
 	}
 	if got := headers.Get("x-app"); got != "cli" {
@@ -327,6 +329,20 @@ func TestAnthropicOAuthHeadersAndStealth(t *testing.T) {
 	if !foundToolUse {
 		t.Fatalf("assistant tool_use block not found in %v", msgs)
 	}
+}
+
+// The Claude Code identity version is a byte-golden wire value, not an internal
+// detail: it must equal upstream's `claudeCodeVersion` literal
+// (packages/ai/src/api/anthropic-messages.ts, "2.1.251" as of upstream
+// 96317e50b). Every other assertion in the port spells this header through the
+// constant, so this is the one place that pins the literal — without it a stale
+// constant would keep the whole suite green while every OAuth request went out
+// impersonating a retired Claude Code build.
+func TestAnthropicClaudeCodeUserAgentPinnedToUpstream(t *testing.T) {
+	h := captureAnthropicHeaders(t, anthropicUAModel(), anthropicUAOptions(ai.ProviderRequestOptions{
+		APIKey: "sk-ant-oat-secret",
+	}))
+	wantUserAgent(t, h, "claude-cli/2.1.251")
 }
 
 // --- Job A.2: cache_control 1h beta on long retention ---

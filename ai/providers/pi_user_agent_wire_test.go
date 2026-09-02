@@ -252,7 +252,7 @@ func TestOptionsHeadersOverridePiUserAgentAndModelHeaders(t *testing.T) {
 	// the name "User-Agent" writes back into slot 0 and still loses. Executed
 	// against @anthropic-ai/sdk 0.91.1 from ~/.cache/pi-npm/0.84.2, driving the
 	// real client with the object mergeClientHeaders builds at 87af49dec:
-	// {"User-Agent": custom-agent} → wire `user-agent: claude-cli/2.1.75`,
+	// {"User-Agent": custom-agent} → wire `user-agent: claude-cli/<v>`,
 	// {"user-agent": custom-agent} → wire `user-agent: custom-agent`.
 	t.Run("anthropic oauth identity keeps the User-Agent slot", func(t *testing.T) {
 		h := captureAnthropicHeaders(t, anthropicUAModel(), anthropicUAOptions(ai.ProviderRequestOptions{
@@ -344,7 +344,7 @@ func TestUserAgentMarkerBeatsPiDefault(t *testing.T) {
 	// A marker only empties the SLOT it names. On the OAuth branch slot 0 is
 	// the seeded "User-Agent" and the claude-cli identity sits at a later slot,
 	// so cancelling the default leaves the identity standing — probe against
-	// @anthropic-ai/sdk 0.91.1: {"User-Agent": null} → `claude-cli/2.1.75`.
+	// @anthropic-ai/sdk 0.91.1: {"User-Agent": null} → `claude-cli/<v>`.
 	t.Run("anthropic oauth marker on the seed slot only", func(t *testing.T) {
 		h := captureAnthropicHeaders(t, anthropicUAModel(), anthropicUAOptions(ai.ProviderRequestOptions{
 			APIKey:  "sk-ant-oat-token",

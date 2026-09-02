@@ -21,7 +21,7 @@ const (
 	fineGrainedToolStreamBeta = "fine-grained-tool-streaming-2025-05-14"
 	interleavedThinkingBeta   = "interleaved-thinking-2025-05-14"
 	serverSideFallbackBeta    = "server-side-fallback-2026-07-01"
-	claudeCodeVersion         = "2.1.75"
+	claudeCodeVersion         = "2.1.251"
 	anthropicDefaultBaseURL   = "https://api.anthropic.com"
 )
 
