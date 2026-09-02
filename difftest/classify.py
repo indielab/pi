@@ -225,6 +225,22 @@ def find_entry(entries, name, d):
 # --- main ------------------------------------------------------------------
 
 
+def _tracked_in(entry):
+    """Where a baseline entry says its divergence is written up.
+
+    Accepts either a plain string ("docs/UPSTREAM.md -> '<section>'") or the
+    mapping shape {"ledger": ..., "section": ...}. Both appear in the wild
+    because this line only runs when an entry goes FIXED, which first happened
+    long after the field was introduced.
+    """
+    t = entry.get("tracked_in")
+    if isinstance(t, dict):
+        where = t.get("ledger") or "the ledger"
+        section = t.get("section")
+        return f"{where} -> {section}" if section else where
+    return t or "the ledger"
+
+
 def main(argv):
     entries = load_baseline()
     fired = set()  # (entry id, match index) triples observed this run
@@ -317,7 +333,7 @@ def main(argv):
                 color(
                     MAGENTA,
                     f"      RETIRE it: delete this match from known-divergences.json "
-                    f"(entry '{e['id']}'), and close it out in {e.get('tracked_in', {}).get('ledger', 'the ledger')}.",
+                    f"(entry '{e['id']}'), and close it out in {_tracked_in(e)}.",
                 )
             )
 
