@@ -15,5 +15,25 @@
     "'Retiring a baseline entry'. Do not add an entry to make a red run green: add",
     "one only for a divergence that is already escalated and has a home in the ledger."
   ],
-  "divergences": []
+  "divergences": [
+    {
+      "id": "responses-compat-one-shot-decode",
+      "description": "getResponsesCompat decodes the entire compat blob into one anonymous struct, so a single type-mismatched key discards EVERY compat override for that model. pi resolves each compat key independently.",
+      "symptom": "With compat {\"supportsToolSearch\":\"yes\",\"supportsMaxOutputTokens\":false} and options.maxTokens 1024, pi omits max_output_tokens (it honours the valid supportsMaxOutputTokens:false) while the port emits max_output_tokens:1024.",
+      "root_cause": "ai/providers/openai_responses.go:90 — `if json.Unmarshal(model.Compat, &raw) != nil { return c }`. Go's decoder aborts the whole object on the first type mismatch, so the early return hands back the defaults literal and the caller's explicit false is lost. pi's getCompat (packages/ai/src/api/openai-responses.ts) reads each key with `model.compat?.<key> ?? <default>`, so one bad key cannot affect its siblings.",
+      "impact": "A user models.json with one mistyped compat key silently reverts every other compat flag on that model to its default, changing the request body. Port-wide: the same one-shot-decode shape is used for every Responses compat flag, not just supportsMaxOutputTokens. Narrow in practice — it needs a hand-edited, type-invalid compat blob.",
+      "why_not_fixed": "Pre-existing and port-wide: fixing it means changing how compat decoding works for every flag (decode to map[string]json.RawMessage and resolve per key), which is a behavior change well outside the two upstream changes this cycle ports. Scoping it to this one flag would leave the port inconsistent with itself.",
+      "status": "open",
+      "accepted_on": "2026-09-02",
+      "tracked_in": "docs/UPSTREAM.md -> 'Drift at last sync check (2026-09-02) — pin advanced to 96317e50b' -> 'Pre-existing divergence surfaced this cycle (recorded, NOT fixed) — one-shot compat decoding'",
+      "retire_when": "getResponsesCompat resolves compat keys independently (per-key decode), so a type-mismatched sibling no longer discards valid overrides. At that point this scenario becomes PASS and the runner reports FIXED.",
+      "matches": [
+        {
+          "scenario": "responses-compat-malformed-key",
+          "path": "$.max_output_tokens",
+          "kind": "extra-key"
+        }
+      ]
+    }
+  ]
 }
