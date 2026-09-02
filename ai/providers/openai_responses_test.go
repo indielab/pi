@@ -1321,6 +1321,13 @@ func TestResponsesSupportsMaxOutputTokens(t *testing.T) {
 		{"unrelated compat keys keep the default", json.RawMessage(`{"supportsToolSearch":true}`), 1024, 1024},
 		{"explicit false omits the parameter", json.RawMessage(`{"supportsMaxOutputTokens":false}`), 1024, nil},
 		{"explicit false outranks the floor", json.RawMessage(`{"supportsMaxOutputTokens":false}`), 8, nil},
+		// NOTE: a type-mismatched sibling key (e.g. {"supportsToolSearch":"yes",
+		// "supportsMaxOutputTokens":false}) makes getResponsesCompat's one-shot
+		// json.Unmarshal fail, discarding EVERY override including the explicit
+		// false, so the port emits max_output_tokens where pi omits it. That is
+		// a real PRE-EXISTING, port-wide divergence, not a behavior to pin
+		// green here — it is tracked against real pi by the difftest scenario
+		// `responses-compat-malformed-key` and its known-divergences entry.
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1355,6 +1362,49 @@ func TestResponsesDefaultBodyUnchangedByMaxOutputTokensFlag(t *testing.T) {
 	const want = `{"input":[{"content":[{"text":"hi","type":"input_text"}],"role":"user"}],"max_output_tokens":1024,"model":"gpt-5","reasoning":{"effort":"none"},"store":false,"stream":true}`
 	if diff := gotWantJSON(t, body, want); diff != "" {
 		t.Fatal(diff)
+	}
+}
+
+// The contract b8b873b98 introduces is "the default body MINUS exactly one
+// key", not merely "max_output_tokens is absent". Asserting the FULL body under
+// both flag values — with the optional params that sit immediately around the
+// gate populated — pins the difference to that one key: a gate that swallows a
+// neighbouring block (temperature nesting inside it) or that reaches back into
+// params it has no business touching (dropping store) changes the body without
+// changing whether max_output_tokens is present, and only a whole-body golden
+// sees it.
+func TestResponsesFullBodyUnderMaxOutputTokensFlag(t *testing.T) {
+	tests := []struct {
+		name   string
+		compat json.RawMessage
+		want   string
+	}{
+		{
+			name:   "flag true (the catalog default)",
+			compat: json.RawMessage(`{"supportsMaxOutputTokens":true}`),
+			want:   `{"input":[{"content":[{"text":"hi","type":"input_text"}],"role":"user"}],"max_output_tokens":1024,"model":"gpt-5","reasoning":{"effort":"none"},"service_tier":"priority","store":false,"stream":true,"temperature":0.5}`,
+		},
+		{
+			name:   "flag false drops max_output_tokens and nothing else",
+			compat: json.RawMessage(`{"supportsMaxOutputTokens":false}`),
+			want:   `{"input":[{"content":[{"text":"hi","type":"input_text"}],"role":"user"}],"model":"gpt-5","reasoning":{"effort":"none"},"service_tier":"priority","store":false,"stream":true,"temperature":0.5}`,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := reasoningModel()
+			model.Compat = tc.compat
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+			maxTokens := 1024
+			temperature := 0.5
+			body := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{
+				StreamOptions: ai.StreamOptions{MaxTokens: &maxTokens, Temperature: &temperature},
+				ServiceTier:   "priority",
+			})
+			if diff := gotWantJSON(t, body, tc.want); diff != "" {
+				t.Fatal(diff)
+			}
+		})
 	}
 }
 
