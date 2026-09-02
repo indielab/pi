@@ -10,9 +10,9 @@ commit-by-commit sync pipeline that keeps it current.
 
 | What | Value |
 |---|---|
-| TS source fully reviewed/ported | `96317e50b` — "fix(ai): bump claude code user agent version" (2026-09-02; **2 port, 3 n/a, 0 decide**). Delta `3fc3ef532..96317e50b`, **5** first-parent changes, **no merges** — first-parent count and total commit count are both 5, so nothing rode in under a merge. **NO RELEASE CROSSED:** zero `package.json` files appear anywhere in the range, `git tag --contains 3fc3ef532` is empty, and the newest tag `v0.84.4` (2026-08-28) is an ancestor of the **old** pin, so no tag falls inside the delta — no catalog regen, the npm reference build holds at **0.84.4**, and **no port tag and no release tweet**. Nothing under `packages/ai/scripts`, so the `port-but-CATALOG-ONLY` queue stays at **0**. Both upstream changes ported: `f57c288` (the `supportsMaxOutputTokens` compat flag, upstream `b8b873b98`) and `2bff692` (the claude-cli user-agent bump, upstream `96317e50b`), plus `bdb60cf` (review fixes) and `ad96f67` (harness re-pin + two new scenarios). The **Scope queue** takes **no** delta this cycle and **no new row was opened**; entry 3 stays 1, entry 6 stays 1, entry 7 stays 4, entries 9 and 10 stay 1 each, the harness backlog stays **11**. Both reconciliation passes ran: the detector printed **11** paths (10 M, 1 A, **no D and no R even under `--find-renames`**), the top-level tree and the `packages/` set are identical at both ends, and the accounting sweep reported **8** files / 146(+)/3(−) — the three-file gap is exactly `.github/APPROVED_CONTRIBUTORS` and the `packages/tui` pair. **None of the four never-diffstat-dispatch files appears in the range**, so `defaultModelPerProvider` was untouched. One **pre-existing** divergence was surfaced and recorded, NOT fixed: one-shot compat decoding (see the cycle section). |
+| TS source fully reviewed/ported | `96317e50b` — "fix(ai): bump claude code user agent version" (2026-09-02; **2 port, 3 n/a, 0 decide**). Delta `3fc3ef532..96317e50b`, **5** first-parent changes, **no merges** — first-parent count and total commit count are both 5, so nothing rode in under a merge. **NO RELEASE CROSSED:** zero `package.json` files appear anywhere in the range, `git tag --contains 3fc3ef532` is empty, and the newest tag `v0.84.4` (2026-08-28) is an ancestor of the **old** pin, so no tag falls inside the delta — no catalog regen, the npm reference build holds at **0.84.4**, and **no port tag and no release tweet**. Nothing under `packages/ai/scripts`, so the `port-but-CATALOG-ONLY` queue stays at **0**. Both upstream changes ported: `f57c288` (the `supportsMaxOutputTokens` compat flag, upstream `b8b873b98`) and `2bff692` (the claude-cli user-agent bump, upstream `96317e50b`), plus `bdb60cf` (review fixes) and `ad96f67` (harness re-pin + two new scenarios). The **Scope queue** takes **no** delta this cycle and **no new row was opened**; entry 3 stays 1, entry 6 stays 1, entry 7 stays 4, entries 9 and 10 stay 1 each, the harness backlog stays **11**. Both reconciliation passes ran: the detector printed **11** paths (10 M, 1 A, **no D and no R even under `--find-renames`**), the top-level tree and the `packages/` set are identical at both ends, and the accounting sweep reported **8** files / 146(+)/3(−) — the three-file gap is exactly `.github/APPROVED_CONTRIBUTORS` and the `packages/tui` pair. **None of the four never-diffstat-dispatch files appears in the range**, so `defaultModelPerProvider` was untouched. One **pre-existing** divergence was surfaced **and fixed in the same cycle** (owner's boy-scout call): one-shot compat decoding, where a single type-mismatched compat key discarded every override for that model. Fixed by a per-key resolver (`ai/providers/compat.go`, `e1f502c`), proven against real pi, with an old-vs-new differential over the whole catalog (1290 models, 914 with a compat blob) showing **zero** change on the clean path. It also closed a second, unrecorded divergence (compat key matching was case-INSENSITIVE via `encoding/json` struct-tag fallback; pi reads an exact-case JS property) and inherited test debt (compat key-string coverage **37/44 → 44/44**). |
 | npm build the byte-goldens were captured from | `@earendil-works/pi-ai` **0.84.4** — **held at the 2026-09-02 cycle**: the delta `3fc3ef532..96317e50b` crosses no release tag (zero `package.json` churn anywhere in the range, and `v0.84.4` is an ancestor of the *old* pin), so the reference build is unchanged and no golden was recaptured. **Both changes this cycle are UNRELEASED** — 0.84.4 predates both shas and contains neither, confirmed structurally (`grep -rl supportsMaxOutputTokens ~/.cache/pi-npm/0.84.4` returns 0 files). That is why the two new differential scenarios are `backend:"src"`: the published build cannot be the reference for a change it does not contain, and a `dist` capture would emit `max_output_tokens` by construction and read as a false FAIL. |
-| Parity proofs at the pin | **2026-09-02 (2 shipped ports, no release):** no generated artifact moved, so there is no catalog derivation this cycle. The `supportsMaxOutputTokens` port is proven against **real pi**, not against the porter's assertions: the new `src`-backed scenario `responses-max-output-tokens-unsupported` captures upstream TS at `96317e50b` under Node type-stripping and both sides agree on a body carrying **no** `max_output_tokens` despite `options.maxTokens: 1024`. That scenario was shown to have teeth by mutation — dropping `&& compat.SupportsMaxOutputTokens` from the shipped gate makes it FAIL with `extra-key @ $.max_output_tokens`, pi `<absent>` vs go `1024`. The default (true) arm is proven for free by the existing dist scenarios that set `maxTokens`. The user-agent port carries no body bytes at all (difftest compares **request bodies only, never headers** — `difftest/README.md:244`), so it is pinned in-repo instead, by one test asserting the literal `claude-cli/2.1.251` against the upstream sha. Differential harness: **50 PASS / 1 KNOWN / 0 FAIL across 51 scenarios, exit 0** — the single KNOWN is this cycle's newly recorded pre-existing divergence, not a regression. |
+| Parity proofs at the pin | **2026-09-02 (2 shipped ports, no release):** no generated artifact moved, so there is no catalog derivation this cycle. The `supportsMaxOutputTokens` port is proven against **real pi**, not against the porter's assertions: the new `src`-backed scenario `responses-max-output-tokens-unsupported` captures upstream TS at `96317e50b` under Node type-stripping and both sides agree on a body carrying **no** `max_output_tokens` despite `options.maxTokens: 1024`. That scenario was shown to have teeth by mutation — dropping `&& compat.SupportsMaxOutputTokens` from the shipped gate makes it FAIL with `extra-key @ $.max_output_tokens`, pi `<absent>` vs go `1024`. The default (true) arm is proven for free by the existing dist scenarios that set `maxTokens`. The user-agent port carries no body bytes at all (difftest compares **request bodies only, never headers** — `difftest/README.md:244`), so it is pinned in-repo instead, by one test asserting the literal `claude-cli/2.1.251` against the upstream sha. Differential harness: **51 PASS / 0 KNOWN / 0 FAIL across 51 scenarios, exit 0**. The cycle's newly recorded divergence was fixed before the cycle closed, so its baseline entry went FIXED and was retired per the harness README — the debt ledger is empty again. |
 | Reviewed via | 2026-09-02 (2 shipped ports, no release) — per-commit diff triage of all 5 changes, judged from the real diff rather than the subject line; hunks read in full for everything touching `packages/ai/src` and `packages/coding-agent/src/core`, diffstat-dispatched only for the tui-only and `.github` changes. Then **8 independent agents**, none of them the porter: `pi-go-review` and `pi-parity-review` per change (**4× SHIP/FAITHFUL, 1 finding filed and killed 3/3 as pre-existing**), a 3-lens completeness sweep (coverage / test-strength / collateral, **9 gaps**), and a final adversarial verifier over the hardening work. Every review finding was handed to three further agents instructed to REFUTE it. The verifier caught the cycle's most consequential item: a proposed test row asserting `want: 1024` for a malformed-compat input where **pi omits the key**, which would have pinned a real parity defect green — it was dropped and re-tracked as difftest KNOWN debt instead. |
 
 ## The scope boundary (rewritten 2026-08-27 — read this before triaging anything)
@@ -1469,48 +1469,129 @@ and an `http://` model baseUrl — and out of scope regardless, since the whole
 dispatcher is host. Read from GOROOT source (go1.26.4), not measured by
 execution; recorded so the next toucher does not re-derive it.
 
-### Pre-existing divergence surfaced this cycle (recorded, NOT fixed) — one-shot compat decoding
+### Pre-existing divergence surfaced AND FIXED this cycle — one-shot compat decoding
 
-**pi resolves each compat key independently; the port decodes the blob in one
-shot, so one type-mismatched key discards EVERY override for that model.**
+**pi resolves each compat key independently; the port decoded the blob in one
+shot, so one type-mismatched key discarded EVERY override for that model.** It
+was found while porting `b8b873b98`, recorded as tracked debt, and then — on the
+owner's instruction not to leave an old bug to rot because it predated the
+change — fixed in the same cycle.
 
-`getResponsesCompat` (`ai/providers/openai_responses.go:78-91`) unmarshals the
-whole `model.Compat` blob into one anonymous struct and, on
-`json.Unmarshal(...) != nil`, returns the defaults literal. Go's decoder aborts
-the entire object on the first type mismatch, so a single bad key silently
-reverts every sibling flag. pi's `getCompat` reads each key with
-`model.compat?.<key> ?? <default>`, where a bad sibling cannot interfere.
+**The bug.** All three readers (`getResponsesCompat`, `getOpenAICompat`,
+`getAnthropicCompat`) unmarshalled `model.Compat` into one anonymous struct and
+bailed on error, so a single bad key silently reverted every sibling flag. pi's
+`getCompat` reads each key with `model.compat?.<key> ?? <default>`, where a bad
+sibling cannot interfere.
 
 **Measured against real pi, not reasoned about.** With compat
 `{"supportsToolSearch":"yes","supportsMaxOutputTokens":false}` and
-`options.maxTokens: 1024`, pi **omits** `max_output_tokens` (it honours the
-valid `false`) while the port **emits** `1024` (the failed decode restores the
-default `true`). Captured by the new `src`-backed scenario
-`responses-compat-malformed-key` at `96317e50b`.
+`options.maxTokens: 1024`, pi **omits** `max_output_tokens`; the port **emitted**
+`1024`. That is now the difftest scenario `responses-compat-malformed-key`,
+which **PASSes**.
 
-**Why it is recorded rather than fixed:** it is pre-existing and **port-wide** —
-the same one-shot-decode shape governs every Responses compat flag, and the same
-pattern recurs in the other providers' compat readers. Fixing it means moving
-compat resolution to a per-key decode across the board, which is a behaviour
-change well outside the two upstream changes this cycle ports; scoping it to one
-flag would leave the port inconsistent with itself. Per the standing rulings a
-pre-existing parity gap inside an already-ported function is resolved with the
-formula, not escalated as a `decide`. It is now tracked mechanically as
-`known-divergences.json` entry `responses-compat-one-shot-decode`, whose
-`retire_when` is "`getResponsesCompat` resolves compat keys independently" — at
-which point the runner reports **FIXED** and fails the run until the entry is
-retired. It cannot rot silently.
+**The fix is not the obvious one, and the obvious one is a second bug.** The
+tempting move is to drop the early return and keep whatever decoded — the
+`anthropic.go` workaround comment (see below) even points that way. Probed on
+go1.26.4: `encoding/json` does **not** abort on a type mismatch; it records the
+error, skips that one value and decodes every other key normally. **But it has
+already allocated the mistyped field's own pointer and left it at the zero
+value**, so `if raw.X != nil` reads a bad key as an explicit `false`. Keeping
+what decoded would therefore turn a mistyped flag into a deliberate opt-out.
+Neither branch is right, so the values are held undecoded and resolved one at a
+time: new `ai/providers/compat.go` — `compatOverrides`
+(`map[string]json.RawMessage`), `newCompatOverrides`, and a generic
+`applyCompat[T](o, key, *T) bool`.
 
-**How it surfaced is the point.** The hardening pass proposed a Go test row
-asserting `want: 1024` for exactly this input, with a comment saying it "pins
-the behavior, it does not endorse it". The adversarial verifier rejected that:
-a green test with `want: 1024` *is* an endorsement to every future reader and to
-every mutation run, and it would have gone red the day someone fixed the port
-**toward** pi. The row was dropped and replaced by the KNOWN entry above, which
-pins the divergence against pi rather than against our own belief. This is the
-`pi-sync` hard rule — a parity divergence "fixed" by editing an assertion to
-match our output does not ship — catching a case where the assertion was new
-rather than edited.
+Three details that are load-bearing rather than incidental:
+- **JSON `null` must mean absent.** pi's `??` falls through on null exactly as on
+  undefined. Go's `json.Unmarshal([]byte("null"), &v)` *succeeds* and leaves `v`
+  at the zero value, so without an explicit null check
+  `{"maxTokensField":null}` would set the field to `""` — observed literally
+  during mutation as a request body with an empty-string key,
+  `map[:1024 messages:[…]]`.
+- **Decode into a fresh `T`, never into `*dst`.** `encoding/json` populates as it
+  goes, so a slice with one unreadable element leaves half-built entries in
+  `dst` before it errors. Pinned by
+  `TestAnthropicCompatSurvivesMalformedFallbackTargets/legacy_string_targets`.
+  It also preserves pi's replace-not-merge semantics for object-valued overrides.
+- **`applyCompat` returns `bool` for exactly one caller**:
+  `c.HasOpenRouterRouting = applyCompat(o, "openRouterRouting", …)`, where
+  presence must mean *successfully applied* so a mistyped value does not set the
+  flag.
+
+**The fourth site was an ad-hoc mitigation of this very bug, and is now gone.**
+`anthropic.go` decoded `allowedFallbackModels` separately, with a comment
+explaining that a type error on that one non-bool field "would silently revert
+every compatibility flag". That split protected the list from the bools but
+**never the bools from the list** — a boundary the mutation sweep made visible:
+restoring the pre-fix anthropic reader reds only the bool assertions while every
+fallback-list assertion still passes. It is now one `applyCompat` line among the
+flags; `setBool` lost its last caller and was deleted.
+
+**Second latent divergence closed on the way.** `encoding/json` struct-field
+matching falls back to **case-insensitive**, so the old readers applied
+`{"supportsstore":false}` and `{"SUPPORTSMAXOUTPUTTOKENS":false}`. A map lookup
+is exact, and pi reads a JS property, which is exact-case — so the new behavior
+matches pi and the old was a second, unrecorded divergence. All 26 distinct
+compat keys the real catalog emits are exact-case, so nothing shipped changes;
+hand-written model configs relying on the old leniency would.
+
+**Residual divergence, stated precisely.** pi does no runtime validation: `??`
+passes a type-mismatched value straight through and the use site applies JS
+semantics. Go cannot type-erase, so the port skips the key and the **default**
+stands. They agree whenever the mistyped value's behavior at pi's use site
+coincides with the port's default — which covers the default-TRUE flags read in
+boolean position, since a truthy mistyped value and the default `true` are the
+same thing. Two specific notes, both **pre-existing and unchanged** by this fix:
+- `openai-responses`'s developer-role decision is
+  `compat?.supportsDeveloperRole !== false` read straight off `model.compat`
+  (`openai-responses-shared.ts:176-177`), **not** the completions expression — so
+  every mistyped value yields `"developer"`, exactly as the port's default does.
+  There is **no** residual there. (An earlier write-up of this cycle cited the
+  completions site and over-reported a divergence; corrected here.)
+- Nested mistyping inside an object-valued key still diverges, in **both**
+  `allowedFallbackModels` and `vercelGatewayRouting`:
+  `{"vercelGatewayRouting":{"only":5}}` makes pi emit
+  `providerOptions:{gateway:{only:5}}` while the port's struct decode fails and
+  it emits nothing. Verified old ≡ new, so this is untouched inherited behavior,
+  not a regression.
+
+**Proof it changed nothing on the clean path.** An old-vs-new differential over
+the entire real catalog — **1290 models, 914 carrying a compat blob**, at all
+three readers — reports **zero** differences. Every difference appears only on
+hand-built malformed blobs, and each moves toward pi.
+
+### Test-coverage debt closed in the same pass — 37/44 → 44/44 compat keys
+
+The mutation sweep that verified the fix also revealed that **7 of the 44 compat
+key string literals had no test driving an override through them**: breaking the
+literal left the whole suite green, so a future typo would silently disable the
+flag. This was confirmed **pre-existing** rather than introduced, by reproducing
+it against the unmodified pre-fix tree (mutating the old struct tag
+`json:"cacheControlFormat"` produced an identical FAIL set — none).
+
+All seven were live in the real catalog: `supportsStrictMode` (231 models),
+`supportsLongCacheRetention` (127, at two readers), `cacheControlFormat` (32),
+`sessionAffinityFormat` (27), `supportsUsageInStreaming` (19),
+`supportsCacheControlOnTools` (13). Two of them — `supportsStrictMode` and
+`sessionAffinityFormat` — were covered at the **responses** reader and blind at
+the **completions** one, which is the coverage shape most likely to mislead:
+grep finds a test naming the key and it proves nothing about the other site.
+**Per-site, not per-key, is the unit.**
+
+Each new case asserts a wire consequence, never a struct field read back — the
+header-only `sessionAffinityFormat` is pinned through a real `httptest` server,
+since it has no body trace at all. An independent sweep re-enumerated all 44
+literals from scratch, broke each one, and reports **44/44 caught, 0 blind**,
+with no pre-existing assertion weakened or deleted.
+
+### Harness bug fixed — the RETIRE path had never executed
+
+Retiring the entry crashed `difftest/classify.py`: it rendered the hint with
+`e.get('tracked_in', {}).get('ledger', …)`, which raises `AttributeError` on the
+string shape the README documents and the live entry used. This is the **first
+divergence entry the harness has ever recorded**, so the FIXED branch had never
+run. `classify.py` now accepts both the string and the mapping shape.
 
 ### Review gates
 
@@ -1568,8 +1649,9 @@ serialized within a working tree**, or given a worktree per agent.
 ### Harness — 49 → 51 scenarios, and the first `src`-backed scenarios since the suite went all-dist
 
 Differential harness re-pinned `3fc3ef532` → `96317e50b` in `difftest/config.env`
-(`ad96f67`) and re-run: **50 PASS / 1 KNOWN / 0 FAIL across 51 scenarios,
-exit 0**. Unlike the last three cycles the re-pin is **not** bookkeeping: it is
+(`ad96f67`) and re-run: **51 PASS / 0 KNOWN / 0 FAIL across 51 scenarios,
+exit 0** (50 PASS / 1 KNOWN mid-cycle, before the compat fix landed and its
+baseline entry was retired). Unlike the last three cycles the re-pin is **not** bookkeeping: it is
 the hard prerequisite for the two scenarios added this cycle, since a `src`
 capture extracts upstream at `PI_UPSTREAM_SHA` and `supportsMaxOutputTokens`
 does not exist before `b8b873b98`.
@@ -1580,8 +1662,12 @@ does not exist before `b8b873b98`.
   teeth:** dropping `&& compat.SupportsMaxOutputTokens` from the shipped gate
   makes it FAIL with `extra-key @ $.max_output_tokens`, pi `<absent>` vs go
   `1024`.
-- `responses-compat-malformed-key` (**KNOWN**) — the pre-existing divergence
-  recorded above, entry `responses-compat-one-shot-decode`.
+- `responses-compat-malformed-key` (**PASS**, was KNOWN) — the pre-existing
+  one-shot-decode divergence. Recorded as tracked debt when it was found, then
+  fixed later the same cycle; the runner reported its baseline entry FIXED and
+  the entry was retired, leaving `known-divergences.json` empty. This is the
+  harness doing exactly what it is for: the divergence could not rot quietly,
+  because a stale entry fails the run until someone closes it out.
 
 The npm reference build is unchanged at **0.84.4**. Both new scenarios are
 `backend:"src"` and both carry the standing instruction to flip to `"dist"`
