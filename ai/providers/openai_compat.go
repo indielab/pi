@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"encoding/json"
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
@@ -174,121 +173,44 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	}
 }
 
-// getOpenAICompat applies explicit model.compat overrides over the detected profile.
+// getOpenAICompat applies explicit model.compat overrides over the detected
+// profile, one key at a time — as pi's `model.compat.<key> ?? detected.<key>`
+// does. See compatOverrides for why the blob is not decoded in one shot.
 func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	c := detectOpenAICompat(model)
-	if len(model.Compat) == 0 {
-		return c
-	}
-	var raw struct {
-		SupportsStore                               *bool                 `json:"supportsStore"`
-		SupportsDeveloperRole                       *bool                 `json:"supportsDeveloperRole"`
-		SupportsReasoningEffort                     *bool                 `json:"supportsReasoningEffort"`
-		SupportsUsageInStreaming                    *bool                 `json:"supportsUsageInStreaming"`
-		SupportsFinishReason                        *bool                 `json:"supportsFinishReason"`
-		MaxTokensField                              *string               `json:"maxTokensField"`
-		ThinkingFormat                              *string               `json:"thinkingFormat"`
-		SupportsStrictMode                          *bool                 `json:"supportsStrictMode"`
-		SupportsOpenAIGrammarTools                  *bool                 `json:"supportsOpenAIGrammarTools"`
-		SupportsLongCacheRetention                  *bool                 `json:"supportsLongCacheRetention"`
-		RequiresReasoningContentOnAssistantMessages *bool                 `json:"requiresReasoningContentOnAssistantMessages"`
-		RequiresToolResultName                      *bool                 `json:"requiresToolResultName"`
-		RequiresAssistantAfterToolResult            *bool                 `json:"requiresAssistantAfterToolResult"`
-		RequiresThinkingAsText                      *bool                 `json:"requiresThinkingAsText"`
-		ZaiToolStream                               *bool                 `json:"zaiToolStream"`
-		ThinkingTokenBudgetField                    *string               `json:"thinkingTokenBudgetField"`
-		SupportsThinkingTokenBudget                 *bool                 `json:"supportsThinkingTokenBudget"`
-		SendSessionAffinityHeaders                  *bool                 `json:"sendSessionAffinityHeaders"`
-		DeferredToolsMode                           *string               `json:"deferredToolsMode"`
-		SessionAffinityFormat                       *string               `json:"sessionAffinityFormat"`
-		CacheControlFormat                          *string               `json:"cacheControlFormat"`
-		OpenRouterRouting                           map[string]any        `json:"openRouterRouting"`
-		VercelGatewayRouting                        *vercelGatewayRouting `json:"vercelGatewayRouting"`
-		ChatTemplateKwargs                          json.RawMessage       `json:"chatTemplateKwargs"`
-		ChatTemplateArgs                            json.RawMessage       `json:"chatTemplateArgs"`
-	}
-	if json.Unmarshal(model.Compat, &raw) != nil {
-		return c
-	}
-	if raw.SupportsStore != nil {
-		c.SupportsStore = *raw.SupportsStore
-	}
-	if raw.SupportsDeveloperRole != nil {
-		c.SupportsDeveloperRole = *raw.SupportsDeveloperRole
-	}
-	if raw.SupportsReasoningEffort != nil {
-		c.SupportsReasoningEffort = *raw.SupportsReasoningEffort
-	}
-	if raw.SupportsUsageInStreaming != nil {
-		c.SupportsUsageInStreaming = *raw.SupportsUsageInStreaming
-	}
-	if raw.SupportsFinishReason != nil {
-		c.SupportsFinishReason = *raw.SupportsFinishReason
-	}
-	if raw.MaxTokensField != nil {
-		c.MaxTokensField = *raw.MaxTokensField
-	}
-	if raw.ThinkingFormat != nil {
-		c.ThinkingFormat = *raw.ThinkingFormat
-	}
-	if raw.SupportsStrictMode != nil {
-		c.SupportsStrictMode = *raw.SupportsStrictMode
-	}
-	if raw.SupportsOpenAIGrammarTools != nil {
-		c.SupportsOpenAIGrammarTools = *raw.SupportsOpenAIGrammarTools
-	}
-	if raw.SupportsLongCacheRetention != nil {
-		c.SupportsLongCacheRetention = *raw.SupportsLongCacheRetention
-	}
-	if raw.RequiresReasoningContentOnAssistantMessages != nil {
-		c.RequiresReasoningContentOnAssistantMessages = *raw.RequiresReasoningContentOnAssistantMessages
-	}
-	if raw.RequiresToolResultName != nil {
-		c.RequiresToolResultName = *raw.RequiresToolResultName
-	}
-	if raw.RequiresAssistantAfterToolResult != nil {
-		c.RequiresAssistantAfterToolResult = *raw.RequiresAssistantAfterToolResult
-	}
-	if raw.RequiresThinkingAsText != nil {
-		c.RequiresThinkingAsText = *raw.RequiresThinkingAsText
-	}
-	if raw.ZaiToolStream != nil {
-		c.ZaiToolStream = *raw.ZaiToolStream
-	}
-	if raw.ThinkingTokenBudgetField != nil {
-		c.ThinkingTokenBudgetField = *raw.ThinkingTokenBudgetField
-	}
-	if raw.SupportsThinkingTokenBudget != nil {
-		c.SupportsThinkingTokenBudget = *raw.SupportsThinkingTokenBudget
-	}
-	if raw.SendSessionAffinityHeaders != nil {
-		c.SendSessionAffinityHeaders = *raw.SendSessionAffinityHeaders
-	}
-	if raw.DeferredToolsMode != nil {
-		c.DeferredToolsMode = *raw.DeferredToolsMode
-	}
-	if raw.SessionAffinityFormat != nil {
-		c.SessionAffinityFormat = *raw.SessionAffinityFormat
-	}
-	if raw.CacheControlFormat != nil {
-		c.CacheControlFormat = *raw.CacheControlFormat
-	}
-	// pi: openRouterRouting falls back to {} (override always replaces). An
+	o := newCompatOverrides(model.Compat)
+	applyCompat(o, "supportsStore", &c.SupportsStore)
+	applyCompat(o, "supportsDeveloperRole", &c.SupportsDeveloperRole)
+	applyCompat(o, "supportsReasoningEffort", &c.SupportsReasoningEffort)
+	applyCompat(o, "supportsUsageInStreaming", &c.SupportsUsageInStreaming)
+	applyCompat(o, "supportsFinishReason", &c.SupportsFinishReason)
+	applyCompat(o, "maxTokensField", &c.MaxTokensField)
+	applyCompat(o, "thinkingFormat", &c.ThinkingFormat)
+	applyCompat(o, "supportsStrictMode", &c.SupportsStrictMode)
+	applyCompat(o, "supportsOpenAIGrammarTools", &c.SupportsOpenAIGrammarTools)
+	applyCompat(o, "supportsLongCacheRetention", &c.SupportsLongCacheRetention)
+	applyCompat(o, "requiresReasoningContentOnAssistantMessages", &c.RequiresReasoningContentOnAssistantMessages)
+	applyCompat(o, "requiresToolResultName", &c.RequiresToolResultName)
+	applyCompat(o, "requiresAssistantAfterToolResult", &c.RequiresAssistantAfterToolResult)
+	applyCompat(o, "requiresThinkingAsText", &c.RequiresThinkingAsText)
+	applyCompat(o, "zaiToolStream", &c.ZaiToolStream)
+	applyCompat(o, "thinkingTokenBudgetField", &c.ThinkingTokenBudgetField)
+	applyCompat(o, "supportsThinkingTokenBudget", &c.SupportsThinkingTokenBudget)
+	applyCompat(o, "sendSessionAffinityHeaders", &c.SendSessionAffinityHeaders)
+	applyCompat(o, "deferredToolsMode", &c.DeferredToolsMode)
+	applyCompat(o, "sessionAffinityFormat", &c.SessionAffinityFormat)
+	applyCompat(o, "cacheControlFormat", &c.CacheControlFormat)
+	applyCompat(o, "vercelGatewayRouting", &c.VercelGatewayRouting)
+	// pi: openRouterRouting falls back to {} (an override always replaces). An
 	// explicit {} in model.compat is truthy in JS, so record its presence.
-	if raw.OpenRouterRouting != nil {
-		c.OpenRouterRouting = raw.OpenRouterRouting
-		c.HasOpenRouterRouting = true
-	}
-	if raw.VercelGatewayRouting != nil {
-		c.VercelGatewayRouting = *raw.VercelGatewayRouting
-	}
+	c.HasOpenRouterRouting = applyCompat(o, "openRouterRouting", &c.OpenRouterRouting)
 	// pi: chatTemplateKwargs/chatTemplateArgs overrides always replace the
-	// detected defaults ({}).
-	if raw.ChatTemplateKwargs != nil {
-		c.ChatTemplateKwargs = parseChatTemplateValues(raw.ChatTemplateKwargs)
+	// detected defaults ({}); they are ordered maps, decoded by their own parser.
+	if raw, ok := o.value("chatTemplateKwargs"); ok {
+		c.ChatTemplateKwargs = parseChatTemplateValues(raw)
 	}
-	if raw.ChatTemplateArgs != nil {
-		c.ChatTemplateArgs = parseChatTemplateValues(raw.ChatTemplateArgs)
+	if raw, ok := o.value("chatTemplateArgs"); ok {
+		c.ChatTemplateArgs = parseChatTemplateValues(raw)
 	}
 	return c
 }

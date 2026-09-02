@@ -1514,10 +1514,9 @@ data: {"type":"message_stop"}
 // reversed into a plain default by 87af49dec) is pinned in
 // pi_user_agent_wire_test.go alongside the other adapters.
 
-// allowedFallbackModels is decoded on its own so a shape it cannot read cannot
-// take the boolean compat flags down with it: encoding/json populates the
-// siblings but still returns an error for the whole blob, and getAnthropicCompat
-// applies the booleans only when the decode succeeded.
+// A shape allowedFallbackModels cannot read must not take the boolean compat
+// flags down with it — getAnthropicCompat resolves every compat key on its own
+// (see compatOverrides), so this key's failure costs only this key.
 //
 // The "generated shape" case is also the regen tripwire for the queued catalog
 // update (upstream ed867e909): the generator now emits each permitted fallback as

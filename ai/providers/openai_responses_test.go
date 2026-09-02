@@ -1321,13 +1321,13 @@ func TestResponsesSupportsMaxOutputTokens(t *testing.T) {
 		{"unrelated compat keys keep the default", json.RawMessage(`{"supportsToolSearch":true}`), 1024, 1024},
 		{"explicit false omits the parameter", json.RawMessage(`{"supportsMaxOutputTokens":false}`), 1024, nil},
 		{"explicit false outranks the floor", json.RawMessage(`{"supportsMaxOutputTokens":false}`), 8, nil},
-		// NOTE: a type-mismatched sibling key (e.g. {"supportsToolSearch":"yes",
-		// "supportsMaxOutputTokens":false}) makes getResponsesCompat's one-shot
-		// json.Unmarshal fail, discarding EVERY override including the explicit
-		// false, so the port emits max_output_tokens where pi omits it. That is
-		// a real PRE-EXISTING, port-wide divergence, not a behavior to pin
-		// green here — it is tracked against real pi by the difftest scenario
-		// `responses-compat-malformed-key` and its known-divergences entry.
+		// A type-mismatched SIBLING key cannot disturb this one: compat keys are
+		// resolved independently, as pi's `?? true` does. The full per-key
+		// contract for all three compat readers lives in compat_test.go; this
+		// case is here because it is the one the difftest scenario
+		// `responses-compat-malformed-key` measures against real pi.
+		{"mistyped sibling key cannot revert this override",
+			json.RawMessage(`{"supportsToolSearch":"yes","supportsMaxOutputTokens":false}`), 1024, nil},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

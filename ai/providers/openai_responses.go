@@ -73,50 +73,18 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 		SupportsToolSearch:         false,
 		SupportsMaxOutputTokens:    true,
 	}
-	if len(model.Compat) == 0 {
-		return c
-	}
-	var raw struct {
-		SupportsDeveloperRole           *bool   `json:"supportsDeveloperRole"`
-		SessionAffinityFormat           *string `json:"sessionAffinityFormat"`
-		SupportsLongCacheRetention      *bool   `json:"supportsLongCacheRetention"`
-		SupportsStrictMode              *bool   `json:"supportsStrictMode"`
-		SupportsOpenAIGrammarTools      *bool   `json:"supportsOpenAIGrammarTools"`
-		SupportsAdditionalTools         *bool   `json:"supportsAdditionalTools"`
-		SupportsToolSearch              *bool   `json:"supportsToolSearch"`
-		SupportsExplicitPromptCacheMode *bool   `json:"supportsExplicitPromptCacheMode"`
-		SupportsMaxOutputTokens         *bool   `json:"supportsMaxOutputTokens"`
-	}
-	if json.Unmarshal(model.Compat, &raw) != nil {
-		return c
-	}
-	if raw.SupportsDeveloperRole != nil {
-		c.SupportsDeveloperRole = *raw.SupportsDeveloperRole
-	}
-	if raw.SessionAffinityFormat != nil {
-		c.SessionAffinityFormat = *raw.SessionAffinityFormat
-	}
-	if raw.SupportsLongCacheRetention != nil {
-		c.SupportsLongCacheRetention = *raw.SupportsLongCacheRetention
-	}
-	if raw.SupportsStrictMode != nil {
-		c.SupportsStrictMode = *raw.SupportsStrictMode
-	}
-	if raw.SupportsOpenAIGrammarTools != nil {
-		c.SupportsOpenAIGrammarTools = *raw.SupportsOpenAIGrammarTools
-	}
-	if raw.SupportsAdditionalTools != nil {
-		c.SupportsAdditionalTools = *raw.SupportsAdditionalTools
-	}
-	if raw.SupportsToolSearch != nil {
-		c.SupportsToolSearch = *raw.SupportsToolSearch
-	}
-	if raw.SupportsExplicitPromptCacheMode != nil {
-		c.SupportsExplicitPromptCacheMode = *raw.SupportsExplicitPromptCacheMode
-	}
-	if raw.SupportsMaxOutputTokens != nil {
-		c.SupportsMaxOutputTokens = *raw.SupportsMaxOutputTokens
-	}
+	// Each key is resolved on its own, as pi's `model.compat?.<key> ?? default`
+	// does — see compatOverrides.
+	o := newCompatOverrides(model.Compat)
+	applyCompat(o, "supportsDeveloperRole", &c.SupportsDeveloperRole)
+	applyCompat(o, "sessionAffinityFormat", &c.SessionAffinityFormat)
+	applyCompat(o, "supportsLongCacheRetention", &c.SupportsLongCacheRetention)
+	applyCompat(o, "supportsStrictMode", &c.SupportsStrictMode)
+	applyCompat(o, "supportsOpenAIGrammarTools", &c.SupportsOpenAIGrammarTools)
+	applyCompat(o, "supportsAdditionalTools", &c.SupportsAdditionalTools)
+	applyCompat(o, "supportsToolSearch", &c.SupportsToolSearch)
+	applyCompat(o, "supportsExplicitPromptCacheMode", &c.SupportsExplicitPromptCacheMode)
+	applyCompat(o, "supportsMaxOutputTokens", &c.SupportsMaxOutputTokens)
 	return c
 }
 

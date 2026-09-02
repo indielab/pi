@@ -137,43 +137,21 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 		supportsToolReferences:          defaultSupportsToolReferences(model),
 	}
 
-	// Apply explicit model.compat overrides.
-	if len(model.Compat) > 0 {
-		var raw struct {
-			SupportsEagerToolInputStreaming *bool `json:"supportsEagerToolInputStreaming"`
-			SupportsLongCacheRetention      *bool `json:"supportsLongCacheRetention"`
-			SendSessionAffinityHeaders      *bool `json:"sendSessionAffinityHeaders"`
-			SupportsCacheControlOnTools     *bool `json:"supportsCacheControlOnTools"`
-			SupportsTemperature             *bool `json:"supportsTemperature"`
-			AllowEmptySignature             *bool `json:"allowEmptySignature"`
-			ForceAdaptiveThinking           *bool `json:"forceAdaptiveThinking"`
-			SupportsStrictTools             *bool `json:"supportsStrictTools"`
-			SupportsToolReferences          *bool `json:"supportsToolReferences"`
-		}
-		if json.Unmarshal(model.Compat, &raw) == nil {
-			setBool(&c.supportsEagerToolInputStreaming, raw.SupportsEagerToolInputStreaming)
-			setBool(&c.supportsLongCacheRetention, raw.SupportsLongCacheRetention)
-			setBool(&c.sendSessionAffinityHeaders, raw.SendSessionAffinityHeaders)
-			setBool(&c.supportsCacheControlOnTools, raw.SupportsCacheControlOnTools)
-			setBool(&c.supportsTemperature, raw.SupportsTemperature)
-			setBool(&c.allowEmptySignature, raw.AllowEmptySignature)
-			setBool(&c.forceAdaptiveThinking, raw.ForceAdaptiveThinking)
-			setBool(&c.supportsStrictTools, raw.SupportsStrictTools)
-			setBool(&c.supportsToolReferences, raw.SupportsToolReferences)
-		}
-
-		// Decoded on its own, not folded into raw: encoding/json reports a type
-		// error for the whole blob even though it populates the sibling fields, and
-		// the guard above drops every override when the blob errors — so one catalog
-		// shape change in this non-bool field would silently revert every
-		// compatibility flag.
-		var fb struct {
-			AllowedFallbackModels []anthropicAllowedFallbackModel `json:"allowedFallbackModels"`
-		}
-		if json.Unmarshal(model.Compat, &fb) == nil {
-			c.allowedFallbackModels = fb.AllowedFallbackModels
-		}
-	}
+	// Each key is resolved on its own, as pi's `model.compat?.<key> ?? default`
+	// does — a type-mismatched key costs only itself, so the non-bool
+	// allowedFallbackModels sits alongside the flags rather than needing its own
+	// decode. See compatOverrides.
+	o := newCompatOverrides(model.Compat)
+	applyCompat(o, "supportsEagerToolInputStreaming", &c.supportsEagerToolInputStreaming)
+	applyCompat(o, "supportsLongCacheRetention", &c.supportsLongCacheRetention)
+	applyCompat(o, "sendSessionAffinityHeaders", &c.sendSessionAffinityHeaders)
+	applyCompat(o, "supportsCacheControlOnTools", &c.supportsCacheControlOnTools)
+	applyCompat(o, "supportsTemperature", &c.supportsTemperature)
+	applyCompat(o, "allowEmptySignature", &c.allowEmptySignature)
+	applyCompat(o, "forceAdaptiveThinking", &c.forceAdaptiveThinking)
+	applyCompat(o, "supportsStrictTools", &c.supportsStrictTools)
+	applyCompat(o, "supportsToolReferences", &c.supportsToolReferences)
+	applyCompat(o, "allowedFallbackModels", &c.allowedFallbackModels)
 	return c
 }
 
@@ -261,12 +239,6 @@ func defaultSupportsToolReferences(model *ai.Model) bool {
 		}
 	}
 	return major > 4 || (major == 4 && minor >= 5)
-}
-
-func setBool(dst *bool, v *bool) {
-	if v != nil {
-		*dst = *v
-	}
 }
 
 func resolveCacheRetention(r ai.CacheRetention, env map[string]string) ai.CacheRetention {
