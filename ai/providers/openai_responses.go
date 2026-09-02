@@ -53,6 +53,10 @@ type responsesCompat struct {
 	// `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older
 	// OpenAI models reject the parameter. Default: false.
 	SupportsExplicitPromptCacheMode bool
+	// SupportsMaxOutputTokens reports whether the provider accepts the
+	// `max_output_tokens` parameter. Some Codex-protocol gateways reject it.
+	// Default: true.
+	SupportsMaxOutputTokens bool
 }
 
 // detectResponsesSessionAffinityFormat is pi's detectSessionAffinityFormat:
@@ -67,6 +71,7 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 		SessionAffinityFormat:      detectResponsesSessionAffinityFormat(model),
 		SupportsLongCacheRetention: true,
 		SupportsToolSearch:         false,
+		SupportsMaxOutputTokens:    true,
 	}
 	if len(model.Compat) == 0 {
 		return c
@@ -80,6 +85,7 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 		SupportsAdditionalTools         *bool   `json:"supportsAdditionalTools"`
 		SupportsToolSearch              *bool   `json:"supportsToolSearch"`
 		SupportsExplicitPromptCacheMode *bool   `json:"supportsExplicitPromptCacheMode"`
+		SupportsMaxOutputTokens         *bool   `json:"supportsMaxOutputTokens"`
 	}
 	if json.Unmarshal(model.Compat, &raw) != nil {
 		return c
@@ -107,6 +113,9 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 	}
 	if raw.SupportsExplicitPromptCacheMode != nil {
 		c.SupportsExplicitPromptCacheMode = *raw.SupportsExplicitPromptCacheMode
+	}
+	if raw.SupportsMaxOutputTokens != nil {
+		c.SupportsMaxOutputTokens = *raw.SupportsMaxOutputTokens
 	}
 	return c
 }
@@ -955,9 +964,10 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 	if retention == ai.CacheNone && compat.SupportsExplicitPromptCacheMode {
 		params["prompt_cache_options"] = map[string]any{"mode": "explicit"}
 	}
-	// pi `if (options?.maxTokens)` — JS truthiness, so 0 is omitted. pi then
-	// floors the value at 16 (Math.max) since the Responses API rejects lower.
-	if opts.MaxTokens != nil && *opts.MaxTokens != 0 {
+	// pi `if (options?.maxTokens && compat.supportsMaxOutputTokens)` — JS
+	// truthiness, so 0 is omitted. pi then floors the value at 16 (Math.max)
+	// since the Responses API rejects lower.
+	if opts.MaxTokens != nil && *opts.MaxTokens != 0 && compat.SupportsMaxOutputTokens {
 		mo := *opts.MaxTokens
 		if mo < openaiResponsesMinOutputTokens {
 			mo = openaiResponsesMinOutputTokens

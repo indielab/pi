@@ -1305,6 +1305,59 @@ func TestResponsesMaxTokensFloor(t *testing.T) {
 	}
 }
 
+// Upstream b8b873b98: compat.supportsMaxOutputTokens gates max_output_tokens
+// entirely — some Codex-protocol gateways reject the parameter. Unlike the
+// other Responses compat opt-ins it defaults to TRUE, so only an explicit
+// false drops the parameter, and the floor never resurrects it.
+func TestResponsesSupportsMaxOutputTokens(t *testing.T) {
+	tests := []struct {
+		name      string
+		compat    json.RawMessage
+		maxTokens int
+		want      any // nil means the parameter must be absent
+	}{
+		{"unset compat defaults to true", nil, 1024, 1024},
+		{"explicit true", json.RawMessage(`{"supportsMaxOutputTokens":true}`), 1024, 1024},
+		{"unrelated compat keys keep the default", json.RawMessage(`{"supportsToolSearch":true}`), 1024, 1024},
+		{"explicit false omits the parameter", json.RawMessage(`{"supportsMaxOutputTokens":false}`), 1024, nil},
+		{"explicit false outranks the floor", json.RawMessage(`{"supportsMaxOutputTokens":false}`), 8, nil},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			model := reasoningModel()
+			model.Compat = tc.compat
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+			body := mustBuildResponsesParams(t, model, req,
+				&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{MaxTokens: &tc.maxTokens}})
+			got, has := body["max_output_tokens"]
+			if tc.want == nil {
+				if has {
+					t.Fatalf("max_output_tokens must be omitted, got %v", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Fatalf("max_output_tokens = %v (present=%v), want %v", got, has, tc.want)
+			}
+		})
+	}
+}
+
+// No catalog model sets supportsMaxOutputTokens, so the default request body
+// must stay byte-identical to the pre-b8b873b98 wire shape. Golden captured
+// from this port at 65ffeec, before the flag existed.
+func TestResponsesDefaultBodyUnchangedByMaxOutputTokensFlag(t *testing.T) {
+	model := reasoningModel()
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	maxTokens := 1024
+	body := mustBuildResponsesParams(t, model, req,
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{MaxTokens: &maxTokens}})
+	const want = `{"input":[{"content":[{"text":"hi","type":"input_text"}],"role":"user"}],"max_output_tokens":1024,"model":"gpt-5","reasoning":{"effort":"none"},"store":false,"stream":true}`
+	if diff := gotWantJSON(t, body, want); diff != "" {
+		t.Fatal(diff)
+	}
+}
+
 // D7c: an invalid thinkingSignature on a same-model replay fails the stream
 // (pi's JSON.parse throws) instead of silently dropping the block.
 func TestResponsesInvalidThinkingSignatureFailsStream(t *testing.T) {
