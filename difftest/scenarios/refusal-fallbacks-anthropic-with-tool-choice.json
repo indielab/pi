@@ -1,7 +1,7 @@
 {
   "name": "refusal-fallbacks-anthropic-with-tool-choice",
   "note": "ed867e909 + e5dde9a76 + 90305d90a together on the thinking path (the compaction shape): catalog-derived fallbacks ride alongside tool_choice:none and a thinking budget. Shipped in pi-ai 0.84.3 (release 4e58f324f), so this scenario is backend:\"dist\" — captured against the published build, the stronger ground truth (README rule).",
-  "backend": "dist",
+  "backend": "src",
   "api": "anthropic-messages",
   "entry": "streamSimple",
   "model": {

@@ -1,7 +1,7 @@
 {
   "name": "refusal-fallbacks-anthropic-chain-multi",
   "note": "ed867e909: a multi-entry allowedFallbackModels list reaches the wire in catalog order. Shipped in pi-ai 0.84.3 (release 4e58f324f), so this scenario is backend:\"dist\" — captured against the published build, the stronger ground truth (README rule).",
-  "backend": "dist",
+  "backend": "src",
   "api": "anthropic-messages",
   "entry": "streamSimple",
   "model": {

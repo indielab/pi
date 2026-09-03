@@ -1036,8 +1036,31 @@ func gitignoreMatchPath(pattern, path string) bool {
 	return false
 }
 
-// FormatSkillsForPrompt renders visible skills as the Agent Skills XML block.
+// SkillFileReadTool names the tool the skills block tells the model to use to
+// load a skill file (pi skills.ts `fileReadTool: "read" | "bash"`). The zero
+// value is SkillFileReadToolRead, pi's default argument.
+type SkillFileReadTool string
+
+const (
+	// SkillFileReadToolRead points the model at the read tool.
+	SkillFileReadToolRead SkillFileReadTool = "read"
+	// SkillFileReadToolBash points the model at bash, for tool sets that have
+	// no read tool (upstream 1d6dbf9e3).
+	SkillFileReadToolBash SkillFileReadTool = "bash"
+)
+
+// FormatSkillsForPrompt renders visible skills as the Agent Skills XML block,
+// telling the model to load skill files with the read tool. It is
+// FormatSkillsForPromptWithTool at pi's default fileReadTool.
 func FormatSkillsForPrompt(skills []Skill) string {
+	return FormatSkillsForPromptWithTool(skills, SkillFileReadToolRead)
+}
+
+// FormatSkillsForPromptWithTool renders visible skills as the Agent Skills XML
+// block, naming fileReadTool as the way to load a skill's file. Any value
+// other than SkillFileReadToolBash reads as "read"; pi's union has no third
+// member, so the zero value stays on its default arm.
+func FormatSkillsForPromptWithTool(skills []Skill, fileReadTool SkillFileReadTool) string {
 	var visible []Skill
 	for _, s := range skills {
 		if !s.DisableModelInvocation {
@@ -1047,9 +1070,13 @@ func FormatSkillsForPrompt(skills []Skill) string {
 	if len(visible) == 0 {
 		return ""
 	}
+	loadInstruction := "Use the read tool to load a skill's file when the task matches its description."
+	if fileReadTool == SkillFileReadToolBash {
+		loadInstruction = "Use bash to load a skill's file when the task matches its description."
+	}
 	lines := []string{
 		"\n\nThe following skills provide specialized instructions for specific tasks.",
-		"Use the read tool to load a skill's file when the task matches its description.",
+		loadInstruction,
 		"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.",
 		"",
 		"<available_skills>",

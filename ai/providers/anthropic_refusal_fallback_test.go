@@ -185,32 +185,34 @@ func TestAnthropicFallbacksOnWire(t *testing.T) {
 		}
 	}
 
-	// The beta rides on the same catalog list, and pi appends it third — after
-	// interleaved thinking, which this model also gets. This request carries no
-	// tools, so the fine-grained beta is out of play; TestAnthropicFallbackBetaOrder
-	// pins the full three-beta string.
-	wantBeta := interleavedThinkingBeta + "," + serverSideFallbackBeta
-	if got := stub.headers.Get("anthropic-beta"); got != wantBeta {
-		t.Fatalf("anthropic-beta = %q, want %q", got, wantBeta)
+	// The beta rides on the same catalog list. Since upstream 4e69b0c28 the
+	// interleaved-thinking beta needs a reasoning model with thinking explicitly
+	// on, and this model is neither, so the fallback beta stands alone; the
+	// request also carries no tools, so the fine-grained beta is out of play.
+	// TestAnthropicFallbackBetaOrder pins the full three-beta string.
+	if got := stub.headers.Get("anthropic-beta"); got != serverSideFallbackBeta {
+		t.Fatalf("anthropic-beta = %q, want %q", got, serverSideFallbackBeta)
 	}
 }
 
 // TestAnthropicFallbackBetaOrder pins the fallback beta's position in the FULL
 // beta list, which no other test reaches: pi pushes fine-grained tool streaming,
-// then interleaved thinking, then the server-side fallback (createClient,
-// upstream ed867e909). The first of those needs both a tool in the context and a
-// model that declares no eager tool-input streaming, so every other fallback test
-// — none of which sends tools — can only pin two of the three.
+// then interleaved thinking, then the server-side fallback (getBetaFeatures,
+// upstream 4e69b0c28). The first needs both a tool in the context and a model
+// that declares no eager tool-input streaming; the second — since 4e69b0c28 —
+// needs a reasoning model asked to think, so this is the one test that arranges
+// all three at once.
 func TestAnthropicFallbackBetaOrder(t *testing.T) {
 	stub := startAnthropicFallbackStub(t, anthropicSSEWithModel)
 	model := anthropicFallbackModel(stub.url, `{"supportsEagerToolInputStreaming":false,"allowedFallbackModels":[
 		{"provider":"anthropic","model":"claude-opus-4-8","cost":{"input":5,"output":25,"cacheRead":0.5,"cacheWrite":6.25}}
 	]}`)
+	model.Reasoning = true
 	req := ai.Context{
 		Messages: []ai.Message{ai.NewUserText("hi", 1)},
 		Tools:    []ai.Tool{{Name: "read", Description: "read a file", Parameters: ai.Object(ai.Prop("p", ai.String()))}},
 	}
-	opts := &ai.SimpleStreamOptions{}
+	opts := &ai.SimpleStreamOptions{Reasoning: ai.ThinkingMedium}
 	opts.APIKey = "k"
 	StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
 

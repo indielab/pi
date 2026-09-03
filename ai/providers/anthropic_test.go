@@ -280,14 +280,14 @@ func TestAnthropicOAuthHeadersAndStealth(t *testing.T) {
 	if got := headers.Get("x-app"); got != "cli" {
 		t.Fatalf("x-app wrong: %q", got)
 	}
-	// anthropic-beta must lead with the OAuth betas in pi's exact order.
+	// anthropic-beta must lead with the OAuth betas in pi's exact order. Since
+	// upstream 4e69b0c28 they are the WHOLE header here: interleaved thinking now
+	// needs a reasoning model with thinking explicitly on, which this is not, and
+	// this model streams tool input eagerly. TestAnthropicInterleavedBetaGate
+	// pins that gate on its own.
 	beta := headers.Get("anthropic-beta")
-	if !strings.HasPrefix(beta, "claude-code-20250219,oauth-2025-04-20") {
+	if beta != "claude-code-20250219,oauth-2025-04-20" {
 		t.Fatalf("oauth betas missing/misordered: %q", beta)
-	}
-	// Interleaved-thinking beta still appended (default on, not adaptive).
-	if !strings.Contains(beta, interleavedThinkingBeta) {
-		t.Fatalf("interleaved beta missing: %q", beta)
 	}
 
 	// Stealth system prompt: first block is the Claude Code identity, then ours.
@@ -382,13 +382,15 @@ func TestAnthropicLongCacheRetentionTTL(t *testing.T) {
 	checkCC("messages[last].content[last]", uc[len(uc)-1].(map[string]any))
 
 	// pi does NOT send any extended-cache anthropic-beta header; the 1h TTL is
-	// carried entirely by cache_control. Only the interleaved-thinking beta is set.
+	// carried entirely by cache_control. This model neither reasons nor was asked
+	// to think, so since upstream 4e69b0c28 it earns no beta at all and the
+	// header is absent — which is the stronger form of the same assertion.
 	beta := headers.Get("anthropic-beta")
 	if strings.Contains(beta, "extended-cache") || strings.Contains(beta, "ttl") {
 		t.Fatalf("unexpected extended-cache beta header (pi emits none): %q", beta)
 	}
-	if beta != interleavedThinkingBeta {
-		t.Fatalf("expected only interleaved beta, got %q", beta)
+	if beta != "" {
+		t.Fatalf("expected no anthropic-beta header, got %q", beta)
 	}
 }
 

@@ -401,3 +401,83 @@ func TestPiMessagesCRLFSeamAcrossReads(t *testing.T) {
 }
 
 func intp(i int) *int { return &i }
+
+// A pi-messages backend that fronts a managed-effort Anthropic model reports the
+// effort the turn actually ran at, and the converter carries it onto the final
+// message so the next request can replay it (upstream 4e69b0c28). An event that
+// omits the field must leave the message's level alone rather than blanking it.
+func TestPiMessagesProviderThinkingLevel(t *testing.T) {
+	cases := []struct {
+		name      string
+		terminal  string
+		wantLevel string
+		wantStop  ai.StopReason
+	}{
+		{
+			name:      "done carries the level",
+			terminal:  `{"type":"done","reason":"stop","usage":` + piMessagesUsageJSON + `,"responseId":"r1","providerThinkingLevel":"xhigh"}`,
+			wantLevel: "xhigh",
+			wantStop:  ai.StopStop,
+		},
+		{
+			name:      "error carries the level",
+			terminal:  `{"type":"error","reason":"error","usage":` + piMessagesUsageJSON + `,"errorMessage":"boom","providerThinkingLevel":"max"}`,
+			wantLevel: "max",
+			wantStop:  ai.StopError,
+		},
+		{
+			name:      "absent leaves it unset",
+			terminal:  `{"type":"done","reason":"stop","usage":` + piMessagesUsageJSON + `}`,
+			wantLevel: "",
+			wantStop:  ai.StopStop,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				io.WriteString(w, piMessagesSSE(`{"type":"start"}`, tc.terminal))
+			}))
+			defer server.Close()
+
+			opts := &PiMessagesOptions{}
+			opts.APIKey = "k"
+			got := StreamPiMessages(context.Background(), piMessagesTestModel(server.URL), piMessagesTestContext(), opts).Result()
+			if got.StopReason != tc.wantStop {
+				t.Fatalf("stopReason = %q, want %q", got.StopReason, tc.wantStop)
+			}
+			if got.ProviderThinkingLevel != tc.wantLevel {
+				t.Fatalf("providerThinkingLevel = %q, want %q", got.ProviderThinkingLevel, tc.wantLevel)
+			}
+		})
+	}
+}
+
+// The pointer on piMessagesEvent.ProviderThinkingLevel exists to keep pi's
+// `if (event.providerThinkingLevel !== undefined)` distinction: an absent field
+// leaves whatever the partial already carries standing, it does not blank it.
+// StreamPiMessages never seeds the partial with a level, so the stream-level
+// cases above cannot tell "left standing" from "blanked to empty"; this pins
+// the distinction where it is observable, on the converter itself.
+func TestPiMessagesAbsentProviderThinkingLevelLeavesExistingLevel(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		terminal string
+	}{
+		{"done", `{"type":"done","reason":"stop","usage":` + piMessagesUsageJSON + `}`},
+		{"error", `{"type":"error","reason":"error","usage":` + piMessagesUsageJSON + `,"errorMessage":"boom"}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := newPiMessagesConverter(piMessagesTestModel("http://unused"))
+			c.partial.ProviderThinkingLevel = "xhigh"
+			var ev piMessagesEvent
+			if err := json.Unmarshal([]byte(tc.terminal), &ev); err != nil {
+				t.Fatal(err)
+			}
+			c.convert(ev)
+			if c.partial.ProviderThinkingLevel != "xhigh" {
+				t.Fatalf("providerThinkingLevel = %q, want the existing %q left standing by an absent field", c.partial.ProviderThinkingLevel, "xhigh")
+			}
+		})
+	}
+}

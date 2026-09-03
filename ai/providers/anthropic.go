@@ -21,8 +21,14 @@ const (
 	fineGrainedToolStreamBeta = "fine-grained-tool-streaming-2025-05-14"
 	interleavedThinkingBeta   = "interleaved-thinking-2025-05-14"
 	serverSideFallbackBeta    = "server-side-fallback-2026-07-01"
-	claudeCodeVersion         = "2.1.251"
-	anthropicDefaultBaseURL   = "https://api.anthropic.com"
+	// The two betas that turn on managed ("mid-conversation") effort: an
+	// effort-only system message per turn, plus the thinking block_binding
+	// controls that let a prefix mismatch drop a block instead of 400ing
+	// (upstream 4e69b0c28).
+	midConvoOutputConfigBeta = "mid-conversation-output-config-2026-07-01"
+	thinkingBindingBeta      = "thinking-binding-controls-2026-08-01"
+	claudeCodeVersion        = "2.1.251"
+	anthropicDefaultBaseURL  = "https://api.anthropic.com"
 )
 
 // claudeCodeTools is the canonical Claude Code 2.x tool-name casing used in
@@ -87,6 +93,14 @@ type anthropicCompat struct {
 	// tool schemas. Default: false.
 	supportsStrictTools    bool
 	supportsToolReferences bool
+	// supportsMidConvoEffort reports whether this exact model transport accepts
+	// effort-only system messages and thinking binding controls (pi
+	// AnthropicMessagesCompat.supportsMidConvoEffort, upstream 4e69b0c28).
+	// Default: false. It is a transport capability, not a preference: when set,
+	// EVERY request on the model is adaptive-thinking with drop_block binding and
+	// carries its per-turn effort in the message list instead of in
+	// output_config, and temperature is never sent.
+	supportsMidConvoEffort bool
 	// allowedFallbackModels are the catalog's permitted server-side fallback
 	// models: what the request's `fallbacks` field lists, what turns the fallback
 	// beta on, and where the local pricing used to cost a response one of them
@@ -151,6 +165,7 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 	applyCompat(o, "forceAdaptiveThinking", &c.forceAdaptiveThinking)
 	applyCompat(o, "supportsStrictTools", &c.supportsStrictTools)
 	applyCompat(o, "supportsToolReferences", &c.supportsToolReferences)
+	applyCompat(o, "supportsMidConvoEffort", &c.supportsMidConvoEffort)
 	applyCompat(o, "allowedFallbackModels", &c.allowedFallbackModels)
 	return c
 }
@@ -435,6 +450,13 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 			Content: ai.ContentList{}, Api: model.Api, Provider: model.Provider, Model: model.ID,
 			StopReason: ai.StopPending, Timestamp: nowMillis(),
 		}
+		// A managed-effort response records the effort it ran at, so the NEXT
+		// request can replay this turn at the same level rather than at the
+		// current one (pi 4e69b0c28). Unmanaged models leave it empty, pi's
+		// `undefined`.
+		if getAnthropicCompat(model).supportsMidConvoEffort {
+			output.ProviderThinkingLevel = anthropicActiveEffort(opts)
+		}
 		fail := func(err error) {
 			if ctx != nil && ctx.Err() != nil {
 				output.StopReason = ai.StopAborted
@@ -485,13 +507,39 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 				fail(perr)
 				return
 			}
-			// pi: any `!== undefined` return replaces the params wholesale.
-			if next != nil {
-				if m, ok := next.(map[string]any); ok {
-					body = m
-				}
+			// pi: any `!== undefined` return replaces the params wholesale —
+			// except `stream`, which is re-forced to true immediately afterwards
+			// (`params = {...next, stream: true}`, upstream 4e69b0c28). A hook
+			// cannot turn a streaming request into a non-streaming one.
+			//
+			// The spread builds a FRESH object, so the map the hook returned stays
+			// the hook's: copying rather than writing through it keeps a hook that
+			// kept a reference (or handed back the very map it was given) from
+			// seeing the request mutate under it. Copying also gives a nil map the
+			// meaning pi gives `{...null, stream: true}` — a body of just the
+			// re-forced flag — instead of panicking on a write to a nil map.
+			if m, ok := next.(map[string]any); ok {
+				overridden := make(map[string]any, len(m)+1)
+				maps.Copy(overridden, m)
+				overridden["stream"] = true
+				body = overridden
 			}
 		}
+		// The beta namespace rewrites a deprecated top-level `output_format` into
+		// `output_config.format` before it looks at anything else, and refuses a
+		// params object carrying both (transformOutputFormat, @anthropic-ai/sdk
+		// resources/beta/messages/messages.js). pi never emits `output_format`, so
+		// only an onPayload hook reaches either path.
+		body, err = transformAnthropicOutputFormat(body)
+		if err != nil {
+			fail(err)
+			return
+		}
+		// The SDK's beta namespace destructures `betas` OUT of the params object
+		// and re-emits it as the per-request `anthropic-beta` header, so it never
+		// reaches the wire body — but it is in the object `onPayload` sees, which
+		// is why buildAnthropicParams puts it there.
+		body, betaHeader := splitAnthropicBetas(body)
 		payload, err := json.Marshal(body)
 		if err != nil {
 			fail(err)
@@ -512,13 +560,26 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 		if baseURL == "" {
 			baseURL = anthropicDefaultBaseURL
 		}
-		url := strings.TrimRight(baseURL, "/") + "/v1/messages"
+		// pi calls `client.beta.messages.create(...)`, and the SDK's beta
+		// namespace posts to `/v1/messages?beta=true` (upstream 4e69b0c28). The
+		// query string is part of the request pi makes; difftest compares bodies
+		// only, so it is pinned by test instead.
+		url := strings.TrimRight(baseURL, "/") + "/v1/messages?beta=true"
 		build := func() (*http.Request, error) {
 			r, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 			if err != nil {
 				return nil, err
 			}
-			applyAnthropicHeaders(r, model, opts, oauth, apiKey, authToken, len(req.Tools) > 0, req.Messages)
+			applyAnthropicHeaders(r, model, opts, oauth, apiKey, authToken, req.Messages)
+			// The betas header is a PER-REQUEST header in the SDK, so it beats
+			// every default header the merge above produced — including one the
+			// consumer spelled differently, and including the empty-string value an
+			// empty `betas` list produces, which REPLACES the inherited header
+			// rather than leaving it standing. Writing it (Set, not Add) after
+			// applyAsDefaultHeaders is what reproduces that precedence.
+			if betaHeader != nil {
+				r.Header.Set("anthropic-beta", *betaHeader)
+			}
 			return r, nil
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, anthropicSDKErrorMessage))
@@ -554,6 +615,11 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 		// requested model, as pi does (anthropic-messages.ts:543).
 		usageModel := model
 
+		// The last input_transformations list the stream reported. Anthropic
+		// resends the whole list rather than a delta, so a later event REPLACES
+		// what an earlier one said — including an empty list, which retracts it.
+		var inputTransformations []anthropicInputTransformation
+
 		sawStart, sawStop := false, false
 		err = iterateAnthropicSSE(resp.Body, ctx, func(ev anthropicStreamEvent) error {
 			switch ev.Type {
@@ -561,6 +627,9 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 				sawStart = true
 				if ev.Message != nil {
 					output.ResponseID = ev.Message.ID
+					if list, ok := parseAnthropicInputTransformations(ev.Message.InputTransformations); ok {
+						inputTransformations = list
+					}
 					// pi eb1f87fa9: the served model replaces the requested one, so a
 					// server-side refusal fallback is visible on the message.
 					output.Model = ev.Message.Model
@@ -574,6 +643,17 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 				}
 			case "content_block_start":
 				if ev.ContentBlock == nil {
+					return nil
+				}
+				// A `fallback` block announces that Anthropic served the request
+				// with a different model. Before any content it is informational
+				// and skipped; after content it means the swap happened mid-output,
+				// which pi refuses rather than stitching two models' text together
+				// (upstream 4e69b0c28).
+				if ev.ContentBlock.Type == "fallback" {
+					if len(builders) > 0 {
+						return fmt.Errorf("Anthropic performed an unsupported mid-output model fallback")
+					}
 					return nil
 				}
 				var b *blockBuilder
@@ -663,6 +743,9 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: idx, ToolCall: &tc, Partial: output.Clone()})
 				}
 			case "message_delta":
+				if list, ok := parseAnthropicInputTransformations(ev.InputTransformations); ok {
+					inputTransformations = list
+				}
 				if ev.Delta != nil && ev.Delta.StopReason != "" {
 					output.RawStopReason = ev.Delta.StopReason
 					sr, errMsg, err := mapAnthropicStopReason(ev.Delta.StopReason, ev.Delta.StopDetails)
@@ -708,6 +791,9 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 			fail(fmt.Errorf("%s", msg))
 			return
 		}
+		// Appended only on a stream that completed successfully — pi's throws for
+		// an aborted/errored turn all fire above this point.
+		appendAnthropicInputTransformationsDiagnostic(output, inputTransformations)
 
 		materialize()
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventDone, Reason: output.StopReason, Message: output})
@@ -755,6 +841,293 @@ func (b *blockBuilder) toContent() ai.Content {
 
 // ---- request building ----
 
+// anthropicActiveEffort is pi's `options?.effort ?? "high"`: the effort a
+// managed-effort turn runs at, and the value the response records so a later
+// turn can replay it.
+func anthropicActiveEffort(opts *AnthropicOptions) string {
+	if opts != nil && opts.Effort != "" {
+		return opts.Effort
+	}
+	return "high"
+}
+
+// isAnthropicEffort reports whether a recorded providerThinkingLevel is a value
+// the Anthropic effort union accepts. Port of pi's isAnthropicEffort: a level
+// from some other provider (or a future one this build does not know) is
+// ignored rather than replayed into a request Anthropic would reject.
+func isAnthropicEffort(value string) bool {
+	switch value {
+	case "low", "medium", "high", "xhigh", "max":
+		return true
+	}
+	return false
+}
+
+// getAnthropicBetaFeatures is pi's getBetaFeatures (upstream 4e69b0c28): the
+// betas that ride in the request body and, via the SDK, in the `anthropic-beta`
+// header. Beta assembly used to live in createClient with a per-auth-branch
+// header; it is now one list computed per request.
+//
+// An `anthropic-beta` header configured on the model or by the consumer REPLACES
+// the computed set rather than joining it — the later source (options) wins, a
+// deletion marker yields nothing at all, and the value is split/trimmed/deduped.
+//
+// Every gate below is per pi, and the auth gate is the sharp one: BOTH
+// "claude-code-20250219" and "oauth-2025-04-20" hang off isOAuthToken together,
+// so an api-key, ANTHROPIC_AUTH_TOKEN, Copilot or Cloudflare-gateway request
+// sends neither.
+// compat is passed in rather than re-decoded: pi reads plain properties here,
+// so a second decode of the raw compat blob would be duplicated per-request work
+// and a second place for the two reads to drift (the same reasoning as
+// buildAnthropicParams' fallbacks list).
+func getAnthropicBetaFeatures(model *ai.Model, req ai.Context, oauth bool, opts *AnthropicOptions, compat anthropicCompat) []string {
+	var optHeaders ai.ProviderHeaders
+	if opts != nil {
+		optHeaders = opts.Headers
+	}
+	var configured *string
+	configuredFound := false
+	for _, headers := range []ai.ProviderHeaders{model.Headers, optHeaders} {
+		// Sorted within one source: a Go map has no key order to reproduce, the
+		// standing tie-break for this divergence class (see headerObject.merge).
+		// It only decides between two spellings inside a single literal.
+		for _, name := range sortedNames(headers) {
+			if strings.EqualFold(name, "anthropic-beta") {
+				configured, configuredFound = headers[name], true
+			}
+		}
+	}
+	if configuredFound {
+		if configured == nil {
+			return nil
+		}
+		var out []string
+		seen := map[string]bool{}
+		for _, feature := range strings.Split(*configured, ",") {
+			feature = strings.TrimSpace(feature)
+			if feature == "" || seen[feature] {
+				continue
+			}
+			seen[feature] = true
+			out = append(out, feature)
+		}
+		return out
+	}
+
+	// The five sources below contribute disjoint literals, so pi's `new Set`
+	// round-trip cannot drop anything here.
+	var features []string
+	if oauth {
+		features = append(features, "claude-code-20250219", "oauth-2025-04-20")
+	}
+	if len(req.Tools) > 0 && !compat.supportsEagerToolInputStreaming {
+		features = append(features, fineGrainedToolStreamBeta)
+	}
+	// Narrowed by 4e69b0c28: interleaved thinking is now asked for only when the
+	// model reasons AND thinking is explicitly on. It used to ride on every
+	// request whose model was not forceAdaptiveThinking.
+	interleaved := true
+	if opts != nil && opts.InterleavedThinking != nil {
+		interleaved = *opts.InterleavedThinking
+	}
+	if model.Reasoning && opts != nil && opts.ThinkingProvided && opts.ThinkingEnabled &&
+		interleaved && !compat.forceAdaptiveThinking {
+		features = append(features, interleavedThinkingBeta)
+	}
+	if compat.usesServerSideFallbackBeta() {
+		features = append(features, serverSideFallbackBeta)
+	}
+	if compat.supportsMidConvoEffort {
+		features = append(features, midConvoOutputConfigBeta, thinkingBindingBeta)
+	}
+	return features
+}
+
+// splitAnthropicBetas reproduces the SDK's `const { betas, ...body } = params`
+// together with the header it derives from them: it returns the body with the
+// key removed and the `anthropic-beta` value to send, nil for "send no header".
+// The body is copied rather than mutated, since after an onPayload override the
+// map belongs to the caller.
+//
+// The presence rule is the SDK's `betas?.toString() != null` (resources/beta/
+// messages/messages.js): only an absent or null `betas` sends nothing. An EMPTY
+// list does not — `[].toString()` is "", which is not null — so it sends a
+// present, empty header, which then deletes any `anthropic-beta` inherited from
+// the default headers. buildAnthropicParams never emits an empty list, so this
+// case belongs to onPayload, which is the surface `betas` is exposed on.
+//
+// Only the `[]string` arm is reachable from the port's own code —
+// buildAnthropicParams writes nothing else — and it is the one difftest's
+// body comparison covers. The rest exist for hook fidelity alone.
+//
+// A hook may hand back any JSON shape, so the value is stringified the way
+// `toString()` would: a list joins with "," (a null element contributing ""), a
+// bare string stands for itself. Any other non-null value still sends a header,
+// rendered Go-side rather than as JavaScript's "[object Object]" — a shape
+// neither pi nor this port ever produces, where only the presence carries over.
+func splitAnthropicBetas(body map[string]any) (map[string]any, *string) {
+	raw, present := body["betas"]
+	if !present {
+		return body, nil
+	}
+	stripped := make(map[string]any, len(body)-1)
+	for k, v := range body {
+		if k != "betas" {
+			stripped[k] = v
+		}
+	}
+	if raw == nil {
+		return stripped, nil
+	}
+	var value string
+	switch v := raw.(type) {
+	case []string:
+		value = strings.Join(v, ",")
+	case string:
+		value = v
+	case []any:
+		parts := make([]string, len(v))
+		for i, item := range v {
+			if item != nil {
+				parts[i] = fmt.Sprint(item)
+			}
+		}
+		value = strings.Join(parts, ",")
+	default:
+		value = fmt.Sprint(raw)
+	}
+	return stripped, &value
+}
+
+// transformAnthropicOutputFormat ports the beta namespace's
+// transformOutputFormat (@anthropic-ai/sdk resources/beta/messages/messages.js),
+// which runs on the params — after onPayload has had them — on the way into the
+// request: a truthy deprecated `output_format` moves to `output_config.format`,
+// and supplying both is an error rather than a silent preference. pi builds
+// neither key for an Anthropic request, so this only ever fires on a hook's
+// params; it returns a modified copy, as the SDK does, and leaves a params
+// object without the deprecated key untouched.
+func transformAnthropicOutputFormat(body map[string]any) (map[string]any, error) {
+	format := body["output_format"]
+	if !jsTruthy(format) {
+		return body, nil
+	}
+	config, _ := body["output_config"].(map[string]any)
+	if jsTruthy(config["format"]) {
+		return nil, fmt.Errorf("Both output_format and output_config.format were provided. " +
+			"Please use only output_config.format (output_format is deprecated).")
+	}
+	out := make(map[string]any, len(body))
+	for k, v := range body {
+		if k != "output_format" {
+			out[k] = v
+		}
+	}
+	merged := make(map[string]any, len(config)+1)
+	maps.Copy(merged, config)
+	merged["format"] = format
+	out["output_config"] = merged
+	return out, nil
+}
+
+// anthropicInputTransformation is one entry of Anthropic's
+// `input_transformations`: what the server dropped or rewrote from the prompt
+// before sampling (pi BetaThinkingDroppedInputTransformation). Every field is
+// optional and pi maps an explicit null to "absent" (`?? undefined`), so an
+// absent, null and present value must stay distinguishable.
+//
+// The fields are `any` rather than `*string` because pi's only guard on the
+// whole value is `Array.isArray`: it reads `.type/.path/.reason` off whatever
+// each entry turns out to be and forwards what it finds into the diagnostic
+// unexamined. A stricter decode here would not merely drop a bad field, it
+// would reject the array — see parseAnthropicInputTransformations.
+type anthropicInputTransformation struct {
+	Type   any
+	Path   any
+	Reason any
+}
+
+// parseAnthropicInputTransformations decodes an `input_transformations` value,
+// reporting whether it was an array — pi's `Array.isArray(...)` guard, which
+// lets a non-array (including null) leave the previous list standing while an
+// empty array retracts it. The field is held as raw JSON so a malformed value
+// costs only itself instead of failing the whole event decode.
+//
+// The guard is `Array.isArray` and nothing else: ANY array is accepted, and an
+// entry that is not an object simply contributes no fields. Refusing a
+// wrong-shaped entry would cost far more than the entry — the event would stop
+// being a replacement and would resurrect the list a previous event set.
+func parseAnthropicInputTransformations(raw json.RawMessage) ([]anthropicInputTransformation, bool) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 || trimmed[0] != '[' {
+		return nil, false
+	}
+	var entries []any
+	if err := json.Unmarshal(trimmed, &entries); err != nil {
+		return nil, false
+	}
+	list := make([]anthropicInputTransformation, len(entries))
+	for i, entry := range entries {
+		obj, ok := entry.(map[string]any)
+		if !ok {
+			continue
+		}
+		list[i] = anthropicInputTransformation{Type: obj["type"], Path: obj["path"], Reason: obj["reason"]}
+	}
+	return list, true
+}
+
+// appendAnthropicInputTransformationsDiagnostic records what the server dropped
+// from the prompt, so a turn whose thinking blocks were silently discarded is
+// visible after the fact (pi's `anthropic_input_transformations` diagnostic).
+// An absent field is omitted rather than written empty, matching pi's
+// `?? undefined` in a JSON payload.
+func appendAnthropicInputTransformationsDiagnostic(output *ai.AssistantMessage, list []anthropicInputTransformation) {
+	if len(list) == 0 {
+		return
+	}
+	details := make([]map[string]any, len(list))
+	for i, transformation := range list {
+		entry := map[string]any{}
+		// `?? undefined` omits only null and absent; a present false, 0 or "" is
+		// kept, and so is a value of the wrong type.
+		if transformation.Type != nil {
+			entry["type"] = transformation.Type
+		}
+		if transformation.Path != nil {
+			entry["path"] = transformation.Path
+		}
+		if transformation.Reason != nil {
+			entry["reason"] = transformation.Reason
+		}
+		details[i] = entry
+	}
+	output.Diagnostics = append(output.Diagnostics, ai.Diagnostic{
+		Type:      "anthropic_input_transformations",
+		Timestamp: nowMillis(),
+		Details:   map[string]any{"transformations": details},
+	})
+}
+
+// insertAnthropicThinkingLevelMessages is pi's insertThinkingLevelMessages: an
+// effort-only system message before every assistant turn that recorded a
+// provider-native level, and one more at the end carrying the effort THIS turn
+// runs at. That trailing message — not output_config — is what sets the current
+// effort on a managed-effort model.
+func insertAnthropicThinkingLevelMessages(messages []map[string]any, levels map[int]string, activeEffort string) []map[string]any {
+	out := make([]map[string]any, 0, len(messages)+len(levels)+1)
+	effortMessage := func(effort string) map[string]any {
+		return map[string]any{"role": "system", "content": []any{}, "output_config": map[string]any{"effort": effort}}
+	}
+	for i, message := range messages {
+		if effort, ok := levels[i]; ok {
+			out = append(out, effortMessage(effort))
+		}
+		out = append(out, message)
+	}
+	return append(out, effortMessage(activeEffort))
+}
+
 func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *AnthropicOptions) (map[string]any, error) {
 	retention := ai.CacheRetention("")
 	var env map[string]string
@@ -795,11 +1168,31 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 		deferredToolNames[normalizeToolName(tool.Name)] = true
 	}
 
+	// A managed-effort model replays each historical turn's own effort, so the
+	// conversion records which converted message each recorded level belongs to.
+	// The provider is passed in only for such a model — pi's
+	// `supportsMidConvoEffort ? model.provider : undefined` — which is also what
+	// switches the recording off entirely for every other model.
+	managedProvider := ""
+	if compat.supportsMidConvoEffort {
+		managedProvider = model.Provider
+	}
+	messages, assistantLevels := convertAnthropicMessages(
+		transformedMessages, oauth, cc, compat.allowEmptySignature, deferredToolNames, normalizeToolName, managedProvider)
+	if compat.supportsMidConvoEffort {
+		messages = insertAnthropicThinkingLevelMessages(messages, assistantLevels, anthropicActiveEffort(opts))
+	}
+
 	params := map[string]any{
 		"model":      model.ID,
-		"messages":   convertAnthropicMessages(transformedMessages, oauth, cc, compat.allowEmptySignature, deferredToolNames, normalizeToolName),
+		"messages":   messages,
 		"max_tokens": maxTokens,
 		"stream":     true,
+	}
+	// `betas` travels in the params object so onPayload observes it; the SDK
+	// lifts it back out into the anthropic-beta header before sending.
+	if betas := getAnthropicBetaFeatures(model, req, oauth, opts, compat); len(betas) > 0 {
+		params["betas"] = betas
 	}
 
 	textBlock := func(text string) map[string]any {
@@ -822,7 +1215,8 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 	// pi: `!options?.thinkingEnabled` — only an explicit thinkingEnabled:true
 	// suppresses temperature; unset (not Provided) behaves like false.
 	thinkingOn := opts != nil && opts.ThinkingProvided && opts.ThinkingEnabled
-	if opts != nil && opts.Temperature != nil && !thinkingOn && compat.supportsTemperature {
+	if opts != nil && opts.Temperature != nil && !thinkingOn &&
+		!compat.supportsMidConvoEffort && compat.supportsTemperature {
 		params["temperature"] = *opts.Temperature
 	}
 
@@ -847,7 +1241,28 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 	// {type:"disabled"} — unless the model's thinkingLevelMap carries an
 	// explicit off:null (present-nil), which marks "disabled" as unsupported
 	// and omits the key too (pi 9ccfcd7c: `thinkingLevelMap?.off !== null`).
-	if model.Reasoning && opts != nil && opts.ThinkingProvided {
+	//
+	// A managed-effort model short-circuits all of that: it is ALWAYS adaptive,
+	// with block_binding so a prefix mismatch drops the offending block instead
+	// of surfacing as a persistent 400, and its output_config effort is the
+	// literal "high" — the per-turn effort rides in the trailing system message
+	// insertAnthropicThinkingLevelMessages appended, not here (upstream
+	// 4e69b0c28). It does not consult model.Reasoning or the thinking tri-state.
+	if compat.supportsMidConvoEffort {
+		display := ""
+		if opts != nil {
+			display = opts.ThinkingDisplay
+		}
+		if display == "" {
+			display = "summarized"
+		}
+		params["thinking"] = map[string]any{
+			"type":          "adaptive",
+			"display":       display,
+			"block_binding": map[string]any{"prefix_mismatch_behavior": "drop_block"},
+		}
+		params["output_config"] = map[string]any{"effort": "high"}
+	} else if model.Reasoning && opts != nil && opts.ThinkingProvided {
 		if opts.ThinkingEnabled {
 			display := opts.ThinkingDisplay
 			if display == "" {
@@ -985,11 +1400,23 @@ func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bo
 	return out, nil
 }
 
-func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheControl, allowEmptySig bool, deferredToolNames map[string]bool, normalizeToolName ai.ToolNameNormalizer) []map[string]any {
+// convertAnthropicMessages converts the transcript to Anthropic message params
+// and, for a managed-effort model, records the provider-native effort each
+// converted assistant message was produced at, keyed by its index in the result.
+// managedProvider is empty for every other model, which switches the recording
+// off — pi passes `undefined` there.
+func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheControl, allowEmptySig bool, deferredToolNames map[string]bool, normalizeToolName ai.ToolNameNormalizer, managedProvider string) ([]map[string]any, map[int]string) {
 	if normalizeToolName == nil {
 		normalizeToolName = func(name string) string { return name }
 	}
-	var params []map[string]any
+	// Seeded non-nil, like pi's `const params: MessageParam[] = []`: a transcript
+	// that converts to nothing must still marshal as `[]`, and a nil slice would
+	// marshal as `null`.
+	params := []map[string]any{}
+	// Left nil until a level is actually recorded: only a managed-effort model
+	// passes a managedProvider, and every other request would otherwise allocate
+	// a map it is guaranteed to leave empty and discard.
+	var assistantLevels map[int]string
 	loadedToolNames := map[string]bool{}
 
 	for i := 0; i < len(transformed); i++ {
@@ -1005,7 +1432,18 @@ func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheCon
 			if len(blocks) == 0 {
 				continue
 			}
+			messageIndex := len(params)
 			params = append(params, map[string]any{"role": "assistant", "content": blocks})
+			// Only a turn this very transport produced may have its effort
+			// replayed: same api, same provider, and a level in Anthropic's own
+			// union. Anything else is another provider's vocabulary.
+			if managedProvider != "" && am.Api == ai.APIAnthropicMessages &&
+				am.Provider == managedProvider && isAnthropicEffort(am.ProviderThinkingLevel) {
+				if assistantLevels == nil {
+					assistantLevels = map[int]string{}
+				}
+				assistantLevels[messageIndex] = am.ProviderThinkingLevel
+			}
 		} else if _, ok := asToolResultMsg(m); ok {
 			// Collect all consecutive toolResult messages (needed for z.ai's
 			// Anthropic endpoint). Reference-bearing results displace their ordinary
@@ -1045,7 +1483,7 @@ func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheCon
 			}
 		}
 	}
-	return params
+	return params, assistantLevels
 }
 
 func convertUserBlocks(content ai.ContentList) []any {
@@ -1198,7 +1636,7 @@ func convertContentBlocks(content ai.ContentList) any {
 	return blocks
 }
 
-func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey, authToken string, hasTools bool, messages []ai.Message) {
+func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey, authToken string, messages []ai.Message) {
 	// pi builds ONE header object per request (mergeClientHeaders,
 	// anthropic-messages.ts at upstream 87af49dec) and hands it to the SDK as
 	// `defaultHeaders`; headerObject is that object, slots and all, so a case
@@ -1225,23 +1663,12 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	applyAttributionDefaults(o.set, model, opts.SessionID)
 
 	compat := getAnthropicCompat(model)
-	var betas []string
-	if hasTools && !compat.supportsEagerToolInputStreaming {
-		betas = append(betas, fineGrainedToolStreamBeta)
-	}
-	interleaved := true
-	if opts.InterleavedThinking != nil {
-		interleaved = *opts.InterleavedThinking
-	}
-	if interleaved && !compat.forceAdaptiveThinking {
-		betas = append(betas, interleavedThinkingBeta)
-	}
-	// pi appends the fallback beta third, and every auth branch below carries the
-	// same list — copilot and OAuth included.
-	if compat.usesServerSideFallbackBeta() {
-		betas = append(betas, serverSideFallbackBeta)
-	}
 
+	// No beta assembly here any more: upstream 4e69b0c28 moved it out of
+	// createClient into getAnthropicBetaFeatures, whose list travels in the
+	// request BODY and is turned back into an `anthropic-beta` header by the
+	// caller — as a per-request header that outranks everything merged below.
+	//
 	// Cloudflare AI Gateway auth is header-owned: pi's resolver returns
 	// cf-aig-authorization plus markers suppressing x-api-key/Authorization, and
 	// no api key at all, so pi's createClient takes its plain api-key branch and
@@ -1260,30 +1687,21 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// Branch order mirrors pi createClient (anthropic-messages.ts): github-copilot,
 	// then the OAuth sniff, then plain api-key auth. The ANTHROPIC_AUTH_TOKEN
 	// bearer path (upstream 24e5cc04) sits ahead of them: it is set only for the
-	// anthropic provider and, like pi's resolve(), sends Authorization: Bearer
-	// with the normal (non-OAuth) betas.
+	// anthropic provider and, like pi's resolve(), sends Authorization: Bearer.
+	// Each branch now contributes auth and identity only — the betas the OAuth
+	// branch used to own are gated on the same `oauth` flag inside
+	// getAnthropicBetaFeatures instead.
 	switch {
 	case authToken != "":
 		o.set("authorization", "Bearer "+authToken)
-		if len(betas) > 0 {
-			o.set("anthropic-beta", strings.Join(betas, ","))
-		}
 	case model.Provider == "github-copilot":
 		o.set("authorization", "Bearer "+branchKey)
-		if len(betas) > 0 {
-			o.set("anthropic-beta", strings.Join(betas, ","))
-		}
 	case oauth:
 		o.set("authorization", "Bearer "+branchKey)
 		o.set("user-agent", "claude-cli/"+claudeCodeVersion)
 		o.set("x-app", "cli")
-		oauthBetas := append([]string{"claude-code-20250219", "oauth-2025-04-20"}, betas...)
-		o.set("anthropic-beta", strings.Join(oauthBetas, ","))
 	default:
 		o.set("x-api-key", branchKey)
-		if len(betas) > 0 {
-			o.set("anthropic-beta", strings.Join(betas, ","))
-		}
 		// pi anthropic.ts:496-497: cacheSessionId is dropped when the effective
 		// cacheRetention is "none", so no session-affinity header is sent.
 		if opts.SessionID != "" && compat.sendSessionAffinityHeaders &&
@@ -1350,9 +1768,11 @@ type anthropicUsage struct {
 		Ephemeral1hInputTokens *int `json:"ephemeral_1h_input_tokens"`
 	} `json:"cache_creation"`
 	// OutputTokensDetails carries the reasoning breakdown on the final
-	// message_delta usage. ThinkingTokens is a subset of OutputTokens. pi reads
-	// this through a narrow cast since the SDK type omits it; we model it
-	// directly and only apply it when present.
+	// message_delta usage. ThinkingTokens is a subset of OutputTokens. pi used to
+	// reach it through a narrow cast because the SDK's Usage type omitted the
+	// field; upstream 4e69b0c28 reads it directly now that the beta types carry
+	// it. The Go port always modelled it directly, so only the reason for doing
+	// so changed — the field is still applied only when present.
 	OutputTokensDetails *struct {
 		ThinkingTokens *int `json:"thinking_tokens"`
 	} `json:"output_tokens_details"`
@@ -1367,6 +1787,10 @@ type anthropicStreamEvent struct {
 		// requested one when a server-side refusal fallback fired.
 		Model string         `json:"model"`
 		Usage anthropicUsage `json:"usage"`
+		// InputTransformations lists what the server dropped or rewrote from the
+		// prompt. Held raw: pi guards it with Array.isArray, so a value of another
+		// shape must be ignored rather than fail the event.
+		InputTransformations json.RawMessage `json:"input_transformations"`
 	} `json:"message"`
 	ContentBlock *struct {
 		Type string `json:"type"`
@@ -1393,6 +1817,9 @@ type anthropicStreamEvent struct {
 		} `json:"stop_details"`
 	} `json:"delta"`
 	Usage *anthropicUsage `json:"usage"`
+	// InputTransformations is the message_delta restatement of the same list;
+	// it REPLACES what message_start reported. See the Message field above.
+	InputTransformations json.RawMessage `json:"input_transformations"`
 }
 
 var anthropicMessageEvents = map[string]bool{
@@ -1517,9 +1944,10 @@ func applyUsage(usage *ai.Usage, u anthropicUsage, isStart bool) {
 			usage.CacheWrite = *u.CacheCreationInputTokens
 		}
 	}
-	// Anthropic reports reasoning tokens in output_tokens_details.thinking_tokens
-	// on the final message_delta usage (a subset of output_tokens). pi only sets
-	// reasoning when the field is present; mirror that (don't overwrite with 0).
+	// Anthropic reports reasoning tokens as a subset of output tokens, in
+	// output_tokens_details.thinking_tokens on the final message_delta usage. pi
+	// only sets reasoning when the field is present; mirror that (don't overwrite
+	// with 0).
 	if u.OutputTokensDetails != nil && u.OutputTokensDetails.ThinkingTokens != nil {
 		usage.Reasoning = *u.OutputTokensDetails.ThinkingTokens
 	}

@@ -132,8 +132,13 @@ func utf16Len(s string) int {
 	return n
 }
 
+// textResult is a tool result that is just text. Details is left nil: pi spells
+// "no details" as `details: undefined` (write.ts:88, ls.ts:135, find.ts:137,
+// grep.ts:258), which JSON.stringify drops from the session entry. An empty map
+// would survive `omitempty` — omitempty elides a nil interface, not a non-nil
+// empty map — and put a `"details":{}` key on the wire that pi never writes.
 func textResult(text string) agent.AgentToolResult {
-	return agent.AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: text}}, Details: map[string]any{}}
+	return agent.AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: text}}}
 }
 
 // ToolNames are the built-in coding tool identifiers.
@@ -456,16 +461,18 @@ func readToolOps(cwd string, custom *ReadOperations) agent.AgentTool {
 				if !processed.Ok {
 					return agent.AgentToolResult{Content: ai.ContentList{ai.TextContent{
 						Text: fmt.Sprintf("Read image file [%s]\n%s", mime, processed.Message),
-					}}, Details: map[string]any{}}, nil
+					}}}, nil
 				}
 				note := fmt.Sprintf("Read image file [%s]", processed.MimeType)
 				if len(processed.Hints) > 0 {
 					note += "\n" + strings.Join(processed.Hints, "\n")
 				}
+				// pi's read never assigns `details` on the image branches
+				// (read.ts:108-131), so it stays undefined and off the wire.
 				return agent.AgentToolResult{Content: ai.ContentList{
 					ai.TextContent{Text: note},
 					ai.ImageContent{Data: encodeBase64(processed.Data), MimeType: processed.MimeType},
-				}, Details: map[string]any{}}, nil
+				}}, nil
 			}
 
 			data, err := ops.ReadFile(ctx, abs)
@@ -580,9 +587,9 @@ func writeToolOps(cwd string, custom *WriteOperations) agent.AgentTool {
 				if err := ops.WriteFile(ctx, abs, content); err != nil {
 					return agent.AgentToolResult{}, err
 				}
-				// pi reports `content.length` — JS string length in UTF-16 code units
-				// (mislabeled "bytes"); match it exactly, not the UTF-8 byte length.
-				return textResult(fmt.Sprintf("Successfully wrote %d bytes to %s", utf16Len(content), path)), nil
+				// pi dropped the count from this message (write.ts:87): it was
+				// reporting `content.length` — UTF-16 code units — as bytes.
+				return textResult("Successfully wrote to " + path), nil
 			})
 		},
 	}

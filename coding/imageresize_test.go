@@ -3,6 +3,7 @@ package coding
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/hex"
 	"image"
 	"image/color"
@@ -79,7 +80,9 @@ func TestExifOrientationApplied(t *testing.T) {
 		}
 	}
 	var jbuf bytes.Buffer
-	jpeg.Encode(&jbuf, img, &jpeg.Options{Quality: 95})
+	if err := jpeg.Encode(&jbuf, img, &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatal(err)
+	}
 	withExif := injectExifOrientation(jbuf.Bytes(), 6)
 
 	if o := jpegOrientation(withExif); o != 6 {
@@ -112,10 +115,7 @@ func TestExifOrientationApplied(t *testing.T) {
 // JPEG is returned unchanged (EXIF intact, not baked), with post-orientation
 // dimensions reported and wasResized=false.
 func TestSmallOrientedImagePassesThrough(t *testing.T) {
-	img := image.NewRGBA(image.Rect(0, 0, 40, 20))
-	var jbuf bytes.Buffer
-	jpeg.Encode(&jbuf, img, &jpeg.Options{Quality: 95})
-	withExif := injectExifOrientation(jbuf.Bytes(), 6)
+	withExif := injectExifOrientation(jpegBytes(t, 40, 20), 6)
 
 	r, ok := resizeImage(withExif, "image/jpeg")
 	if !ok {
@@ -130,6 +130,209 @@ func TestSmallOrientedImagePassesThrough(t *testing.T) {
 	// Orientation 6 swaps dimensions: stored 40x20 → reported 20x40.
 	if r.Width != 20 || r.Height != 40 {
 		t.Fatalf("expected post-orientation dims 20x40, got %dx%d", r.Width, r.Height)
+	}
+}
+
+// TestOrientationAfterNonExifAPP1 is the Go counterpart of pi's "should apply
+// EXIF orientation after an XMP APP1 segment" (upstream c6b00676b): a JPEG whose
+// first APP1 is XMP and whose second APP1 carries the real Exif block must still
+// pick up the orientation, both at the parser and through resizeImage.
+func TestOrientationAfterNonExifAPP1(t *testing.T) {
+	data := injectJpegSegments(jpegBytes(t, 40, 20),
+		app1Segment([]byte("http://ns.adobe.com/xap/1.0/\x00<x:xmpmeta xmlns:x=\"adobe:ns:meta/\"/>")),
+		app1Segment(exifPayload(exifTIFF(6))),
+	)
+
+	if o := jpegOrientation(data); o != 6 {
+		t.Fatalf("orientation after a non-Exif APP1: got %d, want 6", o)
+	}
+
+	r, ok := resizeImage(data, "image/jpeg")
+	if !ok {
+		t.Fatal("resize failed")
+	}
+	// Orientation 6 swaps dimensions: stored 40x20 → reported 20x40.
+	if r.Width != 20 || r.Height != 40 {
+		t.Fatalf("expected post-orientation dims 20x40, got %dx%d", r.Width, r.Height)
+	}
+}
+
+// TestOrientationSkipsFillBytes covers pi's `if (marker === 0xff) { offset++;
+// continue; }` branch: JPEG markers may be preceded by any number of 0xFF fill
+// bytes, and skipping them must not abandon the scan. The odd counts matter —
+// with an even run of fill bytes a two-byte skip would still land on the real
+// marker, so only an odd count distinguishes pi's one-byte skip from any other.
+func TestOrientationSkipsFillBytes(t *testing.T) {
+	for _, fill := range []int{1, 2, 3} {
+		data := injectJpegSegments(jpegBytes(t, 40, 20),
+			bytes.Repeat([]byte{0xFF}, fill), // fill bytes ahead of the APP1 marker
+			app1Segment(exifPayload(exifTIFF(6))),
+		)
+		if o := jpegOrientation(data); o != 6 {
+			t.Fatalf("orientation behind %d fill byte(s): got %d, want 6", fill, o)
+		}
+	}
+}
+
+// TestOrientationRequiresExifNulHeader pins pi's hasExifHeader, which compares
+// all six bytes 45 78 69 66 00 00: an APP1 opening "Exif" but not "Exif\0\0" is
+// NOT an Exif segment, so the scan must walk past it rather than reading the
+// bytes six past its start as a TIFF header. Verified against a transcription of
+// upstream getExifOrientation @ 64eeb82a4 on these exact bytes: pi returns 1.
+func TestOrientationRequiresExifNulHeader(t *testing.T) {
+	data := injectJpegSegments(jpegBytes(t, 40, 20),
+		app1Segment(append([]byte("Exif\xFF\xFF"), exifTIFF(6)...)),
+	)
+	if o := jpegOrientation(data); o != 1 {
+		t.Fatalf("APP1 without the two NUL bytes must not decide the scan: got %d, want 1", o)
+	}
+}
+
+// TestOrientationSegmentLengthOverrun pins the order of pi's findJpegTiffOffset:
+// the Exif header is tested BEFORE the segment length is even read, so an APP1
+// whose declared length runs past the end of the file still decides the answer.
+// Verified against upstream @ 64eeb82a4 on these exact bytes: pi returns 6.
+func TestOrientationSegmentLengthOverrun(t *testing.T) {
+	data := injectJpegSegments(jpegBytes(t, 40, 20),
+		app1SegmentWithLength(exifPayload(exifTIFF(6)), 0xFFFF),
+	)
+	if o := jpegOrientation(data); o != 6 {
+		t.Fatalf("APP1 with an overrunning declared length: got %d, want 6", o)
+	}
+}
+
+// TestOrientationIFDOutsideDeclaredSegment pins that the TIFF walk is bounded by
+// the whole buffer, not by the enclosing APP1: pi's findJpegTiffOffset returns
+// only an offset and readOrientationFromTiff then walks `bytes`. Here the APP1
+// declares just the "Exif\0\0" header plus the 8-byte TIFF header, and the IFD
+// sits past the segment end. Verified against upstream @ 64eeb82a4: pi = 6.
+func TestOrientationIFDOutsideDeclaredSegment(t *testing.T) {
+	const declared = 2 + 6 + 8 // length field + "Exif\0\0" + TIFF header, IFD excluded
+	data := injectJpegSegments(jpegBytes(t, 40, 20),
+		app1SegmentWithLength(exifPayload(exifTIFF(6)), declared),
+	)
+	if o := jpegOrientation(data); o != 6 {
+		t.Fatalf("IFD past the declared segment end: got %d, want 6", o)
+	}
+}
+
+// TestOrientationByteOrderFieldOnlyChecksII pins pi's readOrientationFromTiff,
+// which computes `le = byteOrder === 0x4949` and validates nothing else: "MM"
+// and any other byte-order field alike are read big-endian, and the 0x2A magic
+// is never checked. Verified against upstream @ 64eeb82a4 on these exact bytes:
+// pi returns 6 for both.
+func TestOrientationByteOrderFieldOnlyChecksII(t *testing.T) {
+	for _, byteOrder := range []string{"MM", "XY"} {
+		data := injectJpegSegments(jpegBytes(t, 40, 20),
+			app1Segment(exifPayload(bigEndianTIFF(byteOrder, 6))),
+		)
+		if o := jpegOrientation(data); o != 6 {
+			t.Fatalf("byte-order field %q must be read big-endian: got %d, want 6", byteOrder, o)
+		}
+	}
+}
+
+// TestOrientationIgnoresTIFFMagic pins the other half of readOrientationFromTiff's
+// leniency: bytes 2-3 of the TIFF header (the 0x2A magic) are never read, so a
+// block whose magic is wrong is still parsed. Verified against upstream
+// @ 64eeb82a4 on these exact bytes: pi returns 6.
+func TestOrientationIgnoresTIFFMagic(t *testing.T) {
+	tiff := exifTIFF(6)
+	tiff[2], tiff[3] = 0x00, 0x00 // clobber the 0x2A magic
+	data := injectJpegSegments(jpegBytes(t, 40, 20), app1Segment(exifPayload(tiff)))
+	if o := jpegOrientation(data); o != 6 {
+		t.Fatalf("TIFF magic must not be checked: got %d, want 6", o)
+	}
+}
+
+// TestOrientationEntryTruncatedAtEOF pins readOrientationFromTiff's per-entry
+// bound (`entryPos + 12 > bytes.length` returns 1): an IFD entry that does not
+// fit in the buffer is not read, even when its tag and value bytes happen to be
+// present. Verified against upstream @ 64eeb82a4 on these exact bytes: pi
+// returns 1.
+func TestOrientationEntryTruncatedAtEOF(t *testing.T) {
+	tiff := exifTIFF(6)
+	// Drop the next-IFD offset and the entry's last two value bytes.
+	tiff = tiff[:len(tiff)-6]
+	data := injectJpegSegments([]byte{0xFF, 0xD8}, app1Segment(exifPayload(tiff))) // the segment ends the file
+	if o := jpegOrientation(data); o != 1 {
+		t.Fatalf("Orientation entry running past EOF must not be read: got %d, want 1", o)
+	}
+}
+
+// TestOrientationScanContinuesPastSOSAndEOI pins that pi's marker walk knows
+// nothing about SOS or EOI: it reads the two bytes after any marker as a segment
+// length and keeps going, so an Exif APP1 sitting behind a start-of-scan (or a
+// spuriously length-prefixed EOI) is still found. Verified against upstream
+// @ 64eeb82a4 on these exact bytes: pi returns 6 for both.
+func TestOrientationScanContinuesPastSOSAndEOI(t *testing.T) {
+	scan := []byte{0x00, 0x11, 0x22, 0x33, 0x44, 0x55} // stand-in for entropy-coded data
+	exif := app1Segment(exifPayload(exifTIFF(6)))
+	tests := []struct {
+		name string
+		data []byte
+	}{
+		{"behind SOS", injectJpegSegments([]byte{0xFF, 0xD8},
+			append([]byte{0xFF, 0xDA, 0x00, byte(len(scan) + 2)}, scan...), exif, []byte{0xFF, 0xD9})},
+		{"behind EOI", injectJpegSegments([]byte{0xFF, 0xD8},
+			[]byte{0xFF, 0xD9, 0x00, 0x02}, exif)},
+	}
+	for _, tt := range tests {
+		if o := jpegOrientation(tt.data); o != 6 {
+			t.Errorf("Exif APP1 %s: got %d, want 6", tt.name, o)
+		}
+	}
+}
+
+// TestWebpOrientation covers findWebpTiffOffset: the EXIF chunk is located by
+// walking the RIFF chunks (odd-sized chunks are padded to even), and its payload
+// may or may not carry the "Exif\0\0" prefix ahead of the TIFF header. A chunk
+// whose declared size runs past the end of the file yields 1. Every case was
+// verified against a transcription of upstream @ 64eeb82a4 on these exact bytes.
+func TestWebpOrientation(t *testing.T) {
+	tests := []struct {
+		name string
+		data []byte
+		want int
+	}{
+		{"bare TIFF payload", webpContainer(riffChunk("EXIF", exifTIFF(6))), 6},
+		{
+			"Exif-prefixed payload after an odd-sized chunk",
+			webpContainer(riffChunk("VP8 ", []byte{1, 2, 3}), riffChunk("EXIF", exifPayload(exifTIFF(6)))),
+			6,
+		},
+		{"no EXIF chunk", webpContainer(riffChunk("VP8 ", []byte{1, 2, 3})), 1},
+		// A chunk too small to hold the prefix is read as a bare TIFF block
+		// starting at "Exif\0\0" itself, which yields no orientation.
+		{"declared size below the Exif prefix", webpContainer(riffChunkWithSize("EXIF", exifPayload(exifTIFF(6)), 4)), 1},
+		{"chunk size past end of file", webpContainer([]byte("EXIF\xFF\xFF\x00\x00")), 1},
+		// pi reads the chunk size with JS bitwise ops, i.e. as a SIGNED 32-bit
+		// value: a size with the top bit set is negative, passes the end-of-file
+		// check and (being < 6) selects the bare-TIFF reading of the payload.
+		{"chunk size with the sign bit set", webpContainer(riffChunkWithSize("EXIF", exifTIFF(6), 0xFFFFFFF8)), 6},
+	}
+	for _, tt := range tests {
+		if o := webpOrientation(tt.data); o != tt.want {
+			t.Errorf("webpOrientation(%s): got %d, want %d", tt.name, o, tt.want)
+		}
+		if o := exifOrientationFromBytes(tt.data); o != tt.want {
+			t.Errorf("exifOrientationFromBytes(%s): got %d, want %d", tt.name, o, tt.want)
+		}
+	}
+}
+
+// TestFirstExifSegmentDecides pins pi's findJpegTiffOffset: the FIRST APP1
+// carrying the "Exif\0\0" header wins outright — pi returns that segment's TIFF
+// offset and reads orientation 1 out of it when there is no Orientation tag. It
+// never falls through to a later Exif APP1.
+func TestFirstExifSegmentDecides(t *testing.T) {
+	data := injectJpegSegments(jpegBytes(t, 40, 20),
+		app1Segment(exifPayload(exifTIFF(0))), // Exif APP1 with an empty IFD
+		app1Segment(exifPayload(exifTIFF(6))),
+	)
+
+	if o := jpegOrientation(data); o != 1 {
+		t.Fatalf("first Exif APP1 must decide: got %d, want 1", o)
 	}
 }
 
@@ -164,27 +367,103 @@ func TestReadToolResizesImage(t *testing.T) {
 	}
 }
 
+// exifTIFF builds a minimal little-endian TIFF block. A non-zero orientation
+// gets a single Orientation (0x0112, SHORT) IFD entry; orientation 0 yields an
+// empty IFD, i.e. a valid Exif block that carries no orientation.
+func exifTIFF(orientation int) []byte {
+	tiff := []byte{'I', 'I', 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00} // header, IFD at offset 8
+	if orientation == 0 {
+		tiff = append(tiff, 0x00, 0x00) // 0 entries
+	} else {
+		tiff = append(tiff, 0x01, 0x00) // 1 entry
+		tiff = append(tiff,
+			0x12, 0x01, // tag 0x0112
+			0x03, 0x00, // type SHORT
+			0x01, 0x00, 0x00, 0x00, // count 1
+			byte(orientation), 0x00, 0x00, 0x00, // value
+		)
+	}
+	return append(tiff, 0x00, 0x00, 0x00, 0x00) // next IFD offset = 0
+}
+
+// bigEndianTIFF builds a minimal big-endian TIFF block with a single
+// Orientation entry, under an arbitrary byte-order field ("MM" for a
+// well-formed one).
+func bigEndianTIFF(byteOrder string, orientation int) []byte {
+	tiff := []byte{byteOrder[0], byteOrder[1], 0x00, 0x2A, 0x00, 0x00, 0x00, 0x08} // header, IFD at offset 8
+	tiff = append(tiff, 0x00, 0x01)                                                // 1 entry
+	tiff = append(tiff,
+		0x01, 0x12, // tag 0x0112
+		0x00, 0x03, // type SHORT
+		0x00, 0x00, 0x00, 0x01, // count 1
+		0x00, byte(orientation), 0x00, 0x00, // value
+	)
+	return append(tiff, 0x00, 0x00, 0x00, 0x00) // next IFD offset = 0
+}
+
+// exifPayload prefixes a TIFF block with the "Exif\0\0" APP1 header.
+func exifPayload(tiff []byte) []byte {
+	return append([]byte("Exif\x00\x00"), tiff...)
+}
+
+// app1Segment wraps a payload in a JPEG APP1 (0xFFE1) segment.
+func app1Segment(payload []byte) []byte {
+	return app1SegmentWithLength(payload, len(payload)+2)
+}
+
+// app1SegmentWithLength wraps a payload in an APP1 segment whose declared length
+// need not match the payload, so that the parser's use of the length can be
+// pinned independently of the payload it precedes.
+func app1SegmentWithLength(payload []byte, declared int) []byte {
+	return append([]byte{0xFF, 0xE1, byte(declared >> 8), byte(declared)}, payload...)
+}
+
+// riffChunk builds a RIFF chunk (4-byte id, little-endian size, payload padded
+// to an even length).
+func riffChunk(id string, payload []byte) []byte {
+	return riffChunkWithSize(id, payload, len(payload))
+}
+
+// riffChunkWithSize builds a RIFF chunk whose declared size need not match the
+// payload that follows it.
+func riffChunkWithSize(id string, payload []byte, declared int) []byte {
+	header := append([]byte(id), 0, 0, 0, 0)
+	binary.LittleEndian.PutUint32(header[4:8], uint32(declared))
+	out := append(header, payload...)
+	if len(payload)%2 == 1 {
+		out = append(out, 0x00)
+	}
+	return out
+}
+
+// webpContainer wraps chunks in a RIFF/WEBP container.
+func webpContainer(chunks ...[]byte) []byte {
+	body := append([]byte("WEBP"), bytes.Join(chunks, nil)...)
+	out := append([]byte("RIFF"), 0, 0, 0, 0)
+	binary.LittleEndian.PutUint32(out[4:8], uint32(len(body)))
+	return append(out, body...)
+}
+
+// jpegBytes encodes a blank w×h JPEG for the marker-walking tests.
+func jpegBytes(t *testing.T, w, h int) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	if err := jpeg.Encode(&buf, image.NewRGBA(image.Rect(0, 0, w, h)), &jpeg.Options{Quality: 95}); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
+// injectJpegSegments splices raw segment bytes in right after the JPEG SOI marker.
+func injectJpegSegments(jpegData []byte, segments ...[]byte) []byte {
+	out := append([]byte{0xFF, 0xD8}, bytes.Join(segments, nil)...)
+	return append(out, jpegData[2:]...) // rest of original (after its SOI)
+}
+
 // injectExifOrientation inserts a minimal Exif APP1 segment with the given
 // orientation right after the JPEG SOI marker.
 func injectExifOrientation(jpegData []byte, orientation int) []byte {
-	// TIFF header (little-endian) + 1 IFD entry for Orientation (0x0112, SHORT).
-	tiff := []byte{'I', 'I', 0x2A, 0x00, 0x08, 0x00, 0x00, 0x00} // header, IFD at offset 8
-	tiff = append(tiff, 0x01, 0x00)                              // 1 entry
-	tiff = append(tiff,
-		0x12, 0x01, // tag 0x0112
-		0x03, 0x00, // type SHORT
-		0x01, 0x00, 0x00, 0x00, // count 1
-		byte(orientation), 0x00, 0x00, 0x00, // value
-	)
-	tiff = append(tiff, 0x00, 0x00, 0x00, 0x00) // next IFD offset = 0
-
-	exif := append([]byte("Exif\x00\x00"), tiff...)
-	segLen := len(exif) + 2
-	app1 := []byte{0xFF, 0xE1, byte(segLen >> 8), byte(segLen)}
-	app1 = append(app1, exif...)
-
-	out := append([]byte{0xFF, 0xD8}, app1...) // SOI + APP1
-	return append(out, jpegData[2:]...)        // rest of original (after its SOI)
+	return injectJpegSegments(jpegData, app1Segment(exifPayload(exifTIFF(orientation))))
 }
 
 // TestDecodeNodeBase64MatchesNode locks Go's decoding to Node's

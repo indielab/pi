@@ -1,7 +1,7 @@
 {
   "name": "simple-tool-choice-anthropic-reasoning",
   "note": "e5dde9a76: toolChoice survives the budget-thinking branch of streamSimple. Shipped in pi-ai 0.84.3 (release 4e58f324f), so this scenario is backend:\"dist\" — captured against the published build, the stronger ground truth (README rule).",
-  "backend": "dist",
+  "backend": "src",
   "api": "anthropic-messages",
   "entry": "streamSimple",
   "model": {

@@ -20,7 +20,7 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
   tree was ~2 months behind and read as though a ported change had been
   reverted), and a fresh one is at `origin/main`, which is ahead of the pin.
 - **The authoritative scope boundary is `docs/UPSTREAM.md` -> "The scope
-  boundary" — three PREDICATES, rewritten 2026-08-27. Read it before judging
+  boundary" — the exclusion tests E1 and E3, rewritten 2026-08-27. Read it before judging
   anything.** It replaced an exclusion path-list; the tests beat every list,
   including the tables in this file. Also read "Scope queue" (what is IN scope
   but has no Go base yet) and the "Current pin" table.
@@ -34,14 +34,14 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
 3. **SCOPE** — verdict, one of:
    - `port` — touches behavior we ported.
 
-     **Scope is decided by the three EXCLUSION TESTS in `docs/UPSTREAM.md` ->
+     **Scope is decided by the EXCLUSION TESTS (E1 and E3) in `docs/UPSTREAM.md` ->
      "The scope boundary" (rewritten 2026-08-27). Read them; they are
      authoritative over this table.** A hunk is `n/a` iff one fires; otherwise
      it is IN. The table below is a *derived convenience* — if it and a test
      disagree, the test wins, you port accordingly, and you fix the table in the
      same commit.
 
-     The three tests, in one line each:
+     The tests, in one line each (E2 is NOT one of them):
      - **E1 host surface** — its job ends at presenting to / prompting /
        configuring a human at a terminal, or packaging the Node artifact, **or
        its only consumers are host surface**. Applies to a HUNK, not just a file.
@@ -83,8 +83,8 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      `docs/UPSTREAM.md` → "Scope queue" instead. This is the
      `port-but-CATALOG-ONLY` pattern generalized. The current entries are the
      rows in `docs/UPSTREAM.md` -> "Scope queue" (today: OAuth acquisition,
-     Radius, images, Azure, Vertex, Mistral, session-backends, agent harness) —
-     read them there rather than trusting this sentence, and **open a new row
+     the rows in `docs/UPSTREAM.md` -> "Scope queue") —
+     read them there rather than trusting any list here, and **open a new row
      yourself** when an in-scope change has no Go home. Once an entry's base
      port ships, the entry closes and that tree triages as ordinary `port`.
 
@@ -136,7 +136,7 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
    - `decide` — changes the *boundary* itself. Escalate to the user instead of
      deciding silently.
 
-     **But do not reach for `decide` reflexively.** The three exclusion tests plus
+     **But do not reach for `decide` reflexively.** The exclusion tests plus
      the owner's **standing formula** — full pi SDK functionality as represented
      in Go, close faith to the source architecture, leaning into Go's idioms —
      already answer nearly everything that looks new. Re-asking a settled
@@ -146,16 +146,23 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
        (2026-08-11);
      - a `DRAFT:` subject prefix (2026-08-04);
      - an upstream REVERT, even one removing Go API the port shipped days
-       earlier (2026-08-19, unless a cut tag already published it);
+       earlier (2026-08-19; the "unless a cut tag already published it"
+       carve-out was WITHDRAWN 2026-09-03 — following upstream in deleting
+       published Go API is never an escalation);
      - a pre-existing parity gap inside an already-ported function (2026-08-18);
      - **anything E1 covers** — never escalate on a host hunk (2026-08-27);
      - **whether an SDK adapter is in scope** — it is. A dependency question is
        a `CONSULT` queue row, not a `decide` and never an `n/a` (2026-08-27);
-     - **the agent harness** — FUNDED 2026-08-27 and actively draining as queue
-       entry 8. Carry its deltas as `port-but-QUEUED`; do not re-open the
-       scope question. The only harness matter still open is its SHAPE (see
-       "Harness shape" in `docs/UPSTREAM.md`), which is an owner
-       architecture call, not a per-commit triage question.
+     - **the agent harness** — FUNDED 2026-08-27, and its SHAPE was SETTLED
+       2026-09-03 as a mirror of upstream's layout (`agent/harness/**` grows
+       beside `coding/`; they are not merged, because upstream keeps both forks
+       with zero cross-imports). Not a triage question any more. Carry its
+       deltas as `port-but-QUEUED` against Scope queue entry 8;
+     - **whether following upstream into an API break is allowed** — it is
+       (2026-09-03 mirror ruling). Upstream deletes, we delete;
+     - **whether a construct with no meaning in Go is in scope** — if its whole
+       purpose is absent here (chord's esbuild JS-plugin bundler, e.g.), drop it
+       and say so in the cycle entry. Triage call, not a CONSULT (2026-09-03).
 
      **IN scope but no Go home is NOT a `decide`.** Open a Scope queue row
      instead — the tests already answered scope; only scheduling is open, and
@@ -272,14 +279,19 @@ Specific rulings (from pilot runs — keep appending):
   hunk-reading for it and no escalation — triage the non-host hunks and move on.
   Historically ~47% of mixed commits were mixed *only* because of host content,
   and reading them cost a cycle's attention to reach a foregone `n/a`.
-- **Ask `go.mod`, not the user, about an adapter.** "Would porting this add a
-  `require` line?" is the whole test (E2). Bedrock and codex are the
-  only two that fail it today. A hunk *inside* one of them is still `port` when
+- **E2 is NOT an exclusion.** Resolve a dependency question with the owner's
+  standing formula: first establish what upstream does **at the pin**
+  (`git show <pin>:<path>`) — three of the first three E2 consults rested on a
+  premise already false. If upstream took no dependency, take none; if it took
+  one, take the Go equivalent AND reproduce its containment. Open a `CONSULT`
+  row only for cgo, a lost build target, or a shape change. Never `n/a` it, and
+  never escalate it as a `decide`. (Bedrock's and codex's consults were both
+  ANSWERED 2026-08-31.) A hunk *inside* one of them is still `port` when
   its Go home is a shared/generic function — the 2026-07-21 lesson applies
   unchanged.
-- **A queued tree is `port-but-QUEUED`, never `n/a`.** OAuth acquisition,
-  Radius, images, Azure, Mistral, Vertex, the agent harness and session-backends
-  are IN scope with no Go base yet. Append the delta to its "Scope queue" entry
+- **A queued tree is `port-but-QUEUED`, never `n/a`.** Read the current rows in
+  `docs/UPSTREAM.md` -> "Scope queue"; do not trust an enumeration written here,
+  which has twice gone stale. Append the delta to the matching entry
   in `docs/UPSTREAM.md`. Marking one `n/a` re-creates exactly the drift the
   2026-08-27 rewrite closed.
 - **A new project-local read must carry its gate.** Any change adding a read of

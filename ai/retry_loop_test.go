@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"testing"
 )
 
@@ -79,6 +80,12 @@ func TestRetryAssistantCall(t *testing.T) {
 		if finished != 1 || finalErr != "overloaded" {
 			t.Fatalf("finished=%d finalErr=%q", finished, finalErr)
 		}
+		// The positive counterpart to the absence pin in the abort case below:
+		// an exhausted budget keeps the last error under pi's own key. Without
+		// this, that pin would survive the field losing its key entirely.
+		if raw, present := marshalField(t, got, "errorMessage"); !present || string(raw) != `"overloaded"` {
+			t.Fatalf("errorMessage = %s (present=%v), want \"overloaded\"", raw, present)
+		}
 	})
 
 	t.Run("abort during backoff normalizes to aborted", func(t *testing.T) {
@@ -93,5 +100,28 @@ func TestRetryAssistantCall(t *testing.T) {
 		if calls != 1 {
 			t.Fatalf("aborted during first backoff should call produce once, got %d", calls)
 		}
+		// pi 86bac52f9 destructures errorMessage away rather than setting it to
+		// undefined, so the aborted message carries no errorMessage key at all —
+		// the field is observable in serialized session JSON. Go's omitempty on
+		// the cleared string is the same wire shape; this pins it.
+		if raw, present := marshalField(t, got, "errorMessage"); present {
+			t.Fatalf("errorMessage must be absent on an aborted retry, got %s", raw)
+		}
 	})
+}
+
+// marshalField serializes msg and returns one top-level field of the result,
+// reporting whether the key is there at all.
+func marshalField(t *testing.T, msg *AssistantMessage, key string) (json.RawMessage, bool) {
+	t.Helper()
+	encoded, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	raw, present := fields[key]
+	return raw, present
 }

@@ -2,6 +2,7 @@ package coding
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 )
 
@@ -59,15 +60,19 @@ func BuildSystemPrompt(opts BuildSystemPromptOptions) string {
 	if tools == nil {
 		tools = []string{"read", "bash", "edit", "write"}
 	}
-	hasRead := false
-	for _, t := range tools {
-		if t == "read" {
-			hasRead = true
-		}
+	has := func(name string) bool {
+		return slices.Contains(tools, name)
 	}
+	// Skills are offered as soon as SOME tool can load their files, and the
+	// block names that tool. pi takes the first of ["read", "bash"] present, so
+	// read wins when both are; with neither, the block is dropped entirely
+	// (upstream 1d6dbf9e3).
 	skillsSection := ""
-	if hasRead {
-		skillsSection = FormatSkillsForPrompt(opts.Skills)
+	switch {
+	case has("read"):
+		skillsSection = FormatSkillsForPromptWithTool(opts.Skills, SkillFileReadToolRead)
+	case has("bash"):
+		skillsSection = FormatSkillsForPromptWithTool(opts.Skills, SkillFileReadToolBash)
 	}
 
 	if opts.CustomPrompt != "" {
@@ -99,14 +104,6 @@ func BuildSystemPrompt(opts BuildSystemPromptOptions) string {
 		guidelines = append(guidelines, g)
 	}
 
-	has := func(name string) bool {
-		for _, t := range tools {
-			if t == name {
-				return true
-			}
-		}
-		return false
-	}
 	// File exploration guidelines (system-prompt.ts:104-112). With no dedicated
 	// exploration tool the guideline names whichever shells are active; the
 	// bash-only wording predates powershell and is unchanged (upstream 80e62761f).

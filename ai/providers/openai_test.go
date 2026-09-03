@@ -1716,3 +1716,137 @@ func TestOpenAIToolCallNameNullishCoalescing(t *testing.T) {
 		})
 	}
 }
+
+// TestOpenAIGrammarToolCallStartsWithEmptyArguments pins pi 5c6655e76: a custom
+// (grammar) tool call is now born with `arguments: {}` instead of
+// `{[inputProperty]: ""}`, at both sites that switch a block to the custom-tool
+// shape — the freshly created block, and a later delta that reveals a block
+// already created as an ordinary function call is really a custom one. The
+// placeholder property was visible to anything reading the partial before the
+// first input arrived, which made a call with no input yet indistinguishable
+// from one whose input really was the empty string.
+func TestOpenAIGrammarToolCallStartsWithEmptyArguments(t *testing.T) {
+	tests := []struct {
+		name string
+		// deltas are the tool_call delta objects, one per SSE chunk.
+		deltas []string
+		// inspect names the event whose partial carries the just-switched block,
+		// by type and 1-based occurrence: the start event when the block is
+		// custom from birth, the delta event for the switching chunk otherwise.
+		// Not simply the last event of its type — closing the buffer at
+		// end of stream legitimately materializes {property: ""}.
+		inspect    ai.EventType
+		occurrence int
+	}{
+		{
+			name:       "custom from the first delta",
+			deltas:     []string{`{"index":0,"id":"ctc_1","type":"custom","custom":{"name":"gram","input":"SEL"}}`},
+			inspect:    ai.EventToolCallStart,
+			occurrence: 1,
+		},
+		{
+			// A function delta creates the block with real arguments; the custom
+			// delta that follows switches it and must clear them to {}, not to the
+			// placeholder property.
+			name: "custom revealed by a later delta",
+			deltas: []string{
+				`{"index":0,"id":"ctc_1","type":"function","function":{"name":"gram","arguments":"{\"query\":\"x\"}"}}`,
+				`{"index":0,"custom":{"name":"gram"}}`,
+			},
+			inspect:    ai.EventToolCallDelta,
+			occurrence: 2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sse := ""
+			for _, d := range tt.deltas {
+				sse += `data: {"id":"c1","choices":[{"index":0,"delta":{"tool_calls":[` + d + `]}}]}` + "\n\n"
+			}
+			sse += `data: {"id":"c1","choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}` + "\n\n" +
+				"data: [DONE]\n\n"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				io.WriteString(w, sse)
+			}))
+			defer server.Close()
+
+			model := openAIModel(func(m *ai.Model) {
+				m.BaseURL = server.URL
+				m.Compat = json.RawMessage(`{"supportsOpenAIGrammarTools":true}`)
+			})
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
+			stream := StreamOpenAICompletions(context.Background(), model, req,
+				&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}})
+
+			args, seen := "", 0
+			for ev := range stream.Events() {
+				if ev.Type != tt.inspect {
+					continue
+				}
+				seen++
+				if seen != tt.occurrence {
+					continue
+				}
+				tc, ok := ev.Partial.Content[ev.ContentIndex].(ai.ToolCall)
+				if !ok {
+					t.Fatalf("%s block = %#v", ev.Type, ev.Partial.Content[ev.ContentIndex])
+				}
+				args = mustJSON(t, tc.Arguments)
+			}
+			if seen < tt.occurrence {
+				t.Fatalf("saw %d %s events, want at least %d", seen, tt.inspect, tt.occurrence)
+			}
+			if args != `{}` {
+				t.Fatalf("arguments at %s #%d = %s, want {}", tt.inspect, tt.occurrence, args)
+			}
+		})
+	}
+}
+
+// TestOpenAIStreamSimpleMissingKeySurfacesOnTheStream pins pi 5c6655e76, which
+// removed the eager API-key assertion from streamSimple in the openai-completions
+// and openai-responses adapters. Upstream used to THROW out of streamSimple
+// before a stream existed; the key is now checked once, where the request is
+// built, and a missing one arrives as this stream's terminal error event. The Go
+// port never had the eager check — StreamSimple* only map options and hand off
+// to Stream*, which resolves the key inside the stream goroutine — so this pins
+// behavior the port already had rather than a change.
+func TestOpenAIStreamSimpleMissingKeySurfacesOnTheStream(t *testing.T) {
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	tests := []struct {
+		name   string
+		stream func() *ai.AssistantMessageEventStream
+	}{
+		{
+			name: "openai-completions",
+			stream: func() *ai.AssistantMessageEventStream {
+				model := &ai.Model{ID: "m", Api: ai.APIOpenAICompletions, Provider: "custom", MaxTokens: 16}
+				return StreamSimpleOpenAICompletions(context.Background(), model, req, &ai.SimpleStreamOptions{})
+			},
+		},
+		{
+			name: "openai-responses",
+			stream: func() *ai.AssistantMessageEventStream {
+				model := &ai.Model{ID: "m", Api: ai.APIOpenAIResponses, Provider: "custom", MaxTokens: 16}
+				return StreamSimpleOpenAIResponses(context.Background(), model, req, &ai.SimpleStreamOptions{})
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stream := tt.stream()
+			var types []ai.EventType
+			for ev := range stream.Events() {
+				types = append(types, ev.Type)
+			}
+			if len(types) != 1 || types[0] != ai.EventError {
+				t.Fatalf("events = %v, want a single error event", types)
+			}
+			final := stream.Result()
+			if final.StopReason != ai.StopError || final.ErrorMessage != "No API key for provider: custom" {
+				t.Fatalf("final = stop %s, err %q", final.StopReason, final.ErrorMessage)
+			}
+		})
+	}
+}

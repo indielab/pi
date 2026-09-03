@@ -513,6 +513,13 @@ type Models interface {
 	StreamSimple(ctx context.Context, model *Model, req Context, opts *ModelsSimpleStreamOptions) *AssistantMessageEventStream
 	CompleteSimple(ctx context.Context, model *Model, req Context, opts *ModelsSimpleStreamOptions) *AssistantMessage
 
+	// StreamDeferred redeems a DeferredHandle and returns the events the
+	// redemption produces (pi streamDeferred, upstream b37834b69). It is the
+	// streaming half of the pair FetchDeferred is defined over, for a caller —
+	// a durable runner polling a long submission — that wants to render
+	// progress rather than only the outcome.
+	StreamDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredFetchOptions) *AssistantMessageEventStream
+
 	// FetchDeferred redeems a DeferredHandle through the provider that owns the
 	// model (pi fetchDeferred). Like Complete it returns the final message, and
 	// resolution failures — an unknown provider, one that cannot fetch deferred
@@ -1321,11 +1328,11 @@ func (m *modelsImpl) CompleteSimple(ctx context.Context, model *Model, req Conte
 	return m.StreamSimple(ctx, model, req, opts).Result()
 }
 
-func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredFetchOptions) *AssistantMessage {
+func (m *modelsImpl) StreamDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredFetchOptions) *AssistantMessageEventStream {
 	p := m.GetProvider(model.Provider)
 	fetcher, ok := p.(DeferredFetcher)
 	if !ok {
-		return ErrorStream(model, deferredUnsupported(p, model.Provider)).Result()
+		return ErrorStream(model, deferredUnsupported(p, model.Provider))
 	}
 	var base *ProviderRequestOptions
 	var transforms ModelsRequestTransforms
@@ -1335,14 +1342,22 @@ func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle Def
 	}
 	requestModel, requestOptions, err := m.applyAuth(ctx, model, base, transforms)
 	if err != nil {
-		return ErrorStream(model, err).Result()
+		return ErrorStream(model, err)
 	}
 	deferredOptions := DeferredFetchOptions{}
 	if opts != nil {
 		deferredOptions = opts.DeferredFetchOptions
 	}
 	deferredOptions.ProviderRequestOptions = *requestOptions
-	return fetcher.FetchDeferred(ctx, requestModel, handle, &deferredOptions).Result()
+	return fetcher.FetchDeferred(ctx, requestModel, handle, &deferredOptions)
+}
+
+// FetchDeferred is pi's `streamDeferred(...).result()` (upstream b37834b69) —
+// the same redemption, awaited. Everything it used to do inline now lives in
+// StreamDeferred, so the two cannot disagree about auth or about how a
+// resolution failure is reported.
+func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredFetchOptions) *AssistantMessage {
+	return m.StreamDeferred(ctx, model, handle, opts).Result()
 }
 
 func (m *modelsImpl) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredCancelOptions) error {

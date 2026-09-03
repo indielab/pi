@@ -51,20 +51,25 @@ type piMessagesRewriteImpact struct {
 // pi-messages backend. It is the flattened union of every event variant; the
 // converter reads only the fields its `type` implies. Port of PiMessagesEvent.
 type piMessagesEvent struct {
-	Type         string                   `json:"type"`
-	ContentIndex int                      `json:"contentIndex"`
-	Delta        string                   `json:"delta"`
-	Content      string                   `json:"content"`
-	Signature    *string                  `json:"contentSignature"`
-	Redacted     bool                     `json:"redacted"`
-	ID           string                   `json:"id"`
-	ToolName     string                   `json:"toolName"`
-	ToolCall     *ai.ToolCall             `json:"toolCall"`
-	Reason       ai.StopReason            `json:"reason"`
-	Usage        *ai.Usage                `json:"usage"`
-	ResponseID   string                   `json:"responseId"`
-	ErrorMessage string                   `json:"errorMessage"`
-	Rewrite      *piMessagesRewriteImpact `json:"rewrite"`
+	Type         string        `json:"type"`
+	ContentIndex int           `json:"contentIndex"`
+	Delta        string        `json:"delta"`
+	Content      string        `json:"content"`
+	Signature    *string       `json:"contentSignature"`
+	Redacted     bool          `json:"redacted"`
+	ID           string        `json:"id"`
+	ToolName     string        `json:"toolName"`
+	ToolCall     *ai.ToolCall  `json:"toolCall"`
+	Reason       ai.StopReason `json:"reason"`
+	Usage        *ai.Usage     `json:"usage"`
+	ResponseID   string        `json:"responseId"`
+	// ProviderThinkingLevel is the effort the upstream provider actually ran the
+	// turn at, forwarded so the next request can replay it. A pointer because pi
+	// only copies it when the field is present: an absent one leaves the
+	// message's own level standing rather than blanking it.
+	ProviderThinkingLevel *string                  `json:"providerThinkingLevel"`
+	ErrorMessage          string                   `json:"errorMessage"`
+	Rewrite               *piMessagesRewriteImpact `json:"rewrite"`
 }
 
 // piMessagesResponseError is a non-2xx HTTP failure carrying redacted diagnostic
@@ -229,6 +234,9 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEve
 			c.partial.Usage = *ev.Usage
 		}
 		c.partial.ResponseID = ev.ResponseID
+		if ev.ProviderThinkingLevel != nil {
+			c.partial.ProviderThinkingLevel = *ev.ProviderThinkingLevel
+		}
 		appendPiMessagesRewriteDiagnostic(c.partial, ev.Rewrite)
 		return ai.AssistantMessageEvent{Type: ai.EventDone, Reason: ev.Reason, Message: c.partial}
 	case "error":
@@ -238,6 +246,9 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEve
 		}
 		c.partial.ErrorMessage = ev.ErrorMessage
 		c.partial.ResponseID = ev.ResponseID
+		if ev.ProviderThinkingLevel != nil {
+			c.partial.ProviderThinkingLevel = *ev.ProviderThinkingLevel
+		}
 		appendPiMessagesRewriteDiagnostic(c.partial, ev.Rewrite)
 		return ai.AssistantMessageEvent{Type: ai.EventError, Reason: ev.Reason, Error: c.partial}
 	case "start":

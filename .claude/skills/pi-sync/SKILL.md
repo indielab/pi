@@ -65,12 +65,43 @@ but no Go home yet" is a Scope queue row, not a `decide`.
 ## 4. Final gate
 - `gofmt -l` clean, `go build ./... && go vet ./...`,
   `go test -race ./... -count=1` green.
-- If anything under `ai/providers/openai*.go` changed: re-run the 6-scenario
-  request diff (see pi-parity-review §3) — must be 6/6.
+- If the change touches any provider request building: `difftest/run.sh` must
+  exit 0 (every scenario PASS or KNOWN). Exit 1 = a FAIL **or a DARK run that
+  never reached the scenarios** — a run that aborts in the pi capture or the Go
+  build prints no scenario tally and is not a result. Exit 3 = a stale baseline
+  entry to retire. See pi-parity-review §3.
+- `GOOS=windows go build ./... && GOOS=windows go vet ./...`. Unconditional, not
+  gated on a `//go:build windows` file changing: the two constrained files are
+  called from unconstrained code, so an ordinary `coding/` rename breaks the
+  cross-target build while touching no constrained file.
+- Every behaviour change is observed red for a **behavioural** reason before it
+  ships. A compile-error red proves only that a symbol moved; re-engineer the
+  test until it fails by asserting. Label a characterization test as such.
 
 ## 5. Record + ship
-- Fill ledger rows (status, Go commit, notes). Move the **Current pin** to the
-  new upstream sha; note the date and the new npm version if it changed.
+- **A cycle entry is the COMMIT MESSAGE, not a ledger section.** Anything
+  durable — a ruling, a deliberate divergence, a known-debt item, a tripwire, a
+  convention — goes into `docs/UPSTREAM.md`'s permanent sections (`### Rulings`,
+  `## Divergences`, `## Open re-judgements`, `## Known parity debt`,
+  `## Conventions`, `## Scope queue`) as a **row**. Git holds the narrative; the
+  ledger holds what binds. **Do not append per-cycle sections** — that practice
+  grew the ledger to 8,917 lines before it was cut back on 2026-09-03, and it
+  will regrow if this rule is ignored.
+- Move the **Current pin** to the new upstream sha; note the date and the new
+  npm version if it changed.
+- Re-pin the differential harness: set `PI_UPSTREAM_SHA` in
+  `difftest/config.env` to the new pin (and `PI_NPM_VERSION` if a release was
+  crossed), re-run `difftest/run.sh`, and retire any entry reporting FIXED.
+- A cycle with **zero upstream drift is not a no-op cycle.** Reconcile the port's
+  own `git log` since the last ledger entry against the Scope queue and the
+  rulings before triaging: slices drain between cycles, and out-of-cycle commits
+  answer consults, open or close rows, and fix ledger bugs.
+- Every finding filed by `pi-go-review` / `pi-parity-review` is handed to
+  separate agents instructed to **REFUTE** it; only survivors are fixed. (Filed
+  vs survived: 9→4, 15→2, and on 2026-09-02 it caught a proposed test that would
+  have pinned a real parity defect green.) Known artifact, not a finding: the pin
+  and the cycle's divergence records are written at stage 5, after the gates run
+  at stage 3, so a reviewer reading the mid-cycle diff correctly sees them stale.
 - Commit the ledger update; push everything to
   `https://github.com/sky-valley/pi.git main` (HTTPS — SSH signing is not
   available to automation on this machine).
@@ -121,10 +152,14 @@ but no Go home yet" is a Scope queue row, not a `decide`.
   to UPSTREAM.md.
 
 ## Hard rules
-- Anything that would change the **public Go API** or one of the three scope
-  EXCLUSION TESTS in `docs/UPSTREAM.md` -> "The scope boundary" → escalate,
-  don't ship. Moving a path is not a boundary change when a test already covers
-  it; changing what a test SAYS is.
+- **A public Go API break that FOLLOWS upstream is not an escalation — ship it.**
+  (2026-09-03 governing ruling: upstream deletes, we delete; no shims, no
+  deprecation window, no keeping a symbol because a tag published it. Do not open
+  a `decide` to ask whether breaking is acceptable.) Escalate only an API change
+  the port would be making under its own steam.
+- Anything that changes what an EXCLUSION TEST **SAYS** (E1 or E3 in
+  `docs/UPSTREAM.md` -> "The scope boundary") → escalate, don't ship. Moving a
+  path is not a boundary change when a test already covers it.
 - A port without a test does not ship. A parity divergence "fixed" by editing
   the assertion to match our output does not ship — goldens come from pi.
 - If the cycle can't finish (e.g. blocked on a decision), ship the completed

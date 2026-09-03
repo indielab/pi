@@ -1,7 +1,7 @@
 {
   "name": "refusal-fallbacks-anthropic-chain",
   "note": "ed867e909: a single permitted fallback in compat.allowedFallbackModels -> fallbacks:[{model}] on the wire, with provider and cost stripped by pi's explicit .map(f => ({model: f.model})). The caller-facing refusalFallbacks option this scenario used to drive was deleted at this sha. Shipped in pi-ai 0.84.3 (release 4e58f324f), so this scenario is backend:\"dist\" — captured against the published build, the stronger ground truth (README rule).",
-  "backend": "dist",
+  "backend": "src",
   "api": "anthropic-messages",
   "entry": "streamSimple",
   "model": {

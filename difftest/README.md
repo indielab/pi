@@ -48,11 +48,20 @@ silently passed.)
 
 ## The four states, and the exit-code contract
 
-A runner that can never exit 0 is a broken instrument. Three scenarios fail on
-one known, escalated, pre-existing divergence (tool-call argument key order),
-and if that permanently pinned the exit code at 1, the exit code would carry no
-information and the next NEW regression would hide inside the noise — reviewers
-would learn to read "3 FAIL" as normal.
+A runner that can never exit 0 is a broken instrument. When a known,
+escalated, pre-existing divergence makes scenarios fail, that would permanently
+pin the exit code at 1, the exit code would carry no information, and the next
+NEW regression would hide inside the noise — reviewers would learn to read
+"3 FAIL" as normal. (The baseline is currently EMPTY: `known-divergences.json`
+holds no entries and the suite is 51 PASS / 0 KNOWN / 0 FAIL.)
+
+**A run that never reaches the scenarios is DARK, not FAIL, and never PASS.**
+`run.sh` executes the pi capture and the Go driver in one shot each *before* the
+scenario list, and each aborts with **exit 1** — the same status `classify.py`
+returns for "any FAIL" — while printing no scenario tally. Zero compared
+scenarios is not a result. A slice that DELETES or RENAMES exported `ai` surface
+must build `difftest/port` before any harness result from it is trusted; the pi
+arm fails the same way on a stale npm cache or a failed `git archive`.
 
 So every scenario lands in exactly one of four states:
 
@@ -268,7 +277,12 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 
 The `backend` column above is a snapshot. Scenarios flip `src` -> `dist` as releases
 ship the surface they cover, so re-read `scenarios/*.json` rather than this table when
-the distinction matters. As of pi-ai 0.84.3 the suite is 49 `dist` + 0 `src` — fully dist-backed.
+the distinction matters. As of 2026-09-03 the suite is 51 scenarios, 37 `dist` + 14
+`src`: the two Responses compat scenarios (unreleased `supportsMaxOutputTokens`) and
+all twelve `anthropic-messages` scenarios, which went `src` when the port took
+upstream `4e69b0c28` — the beta-namespace migration moves `betas` out of the body,
+and pi-ai 0.84.4 predates it. They flip back to `dist` at the first release that
+contains it.
 
 ## Adding a scenario
 

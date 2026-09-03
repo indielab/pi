@@ -24,9 +24,27 @@ const (
 // struct (Go has no discriminated unions) carrying the union of fields used by
 // the variants documented in pi's AssistantMessageEvent.
 //
-// Streams emit "start" before partial updates, then terminate with either
-// "done" (final successful message) or "error" (final message with stopReason
-// "error"/"aborted" and ErrorMessage).
+// The protocol (pi types.ts AssistantMessageEvent, rewritten by 5c6655e76):
+// a successful stream emits "start" before any partial update and terminates
+// with "done". A stream may terminate directly with "error" when request setup
+// fails before generation starts — no "start" at all; after "start", failures
+// also terminate with "error" (final message with stopReason "error"/"aborted"
+// and ErrorMessage). Updates and "done" never appear before "start".
+//
+// Text and thinking blocks are empty when their *_start event is emitted and
+// grow only through their *_delta events until the authoritative *_end.
+// Redacted thinking may be complete at start and emit no deltas. A streaming
+// tool call starts with EMPTY arguments and emits its full raw JSON through
+// toolcall_delta; a provider that starts with complete arguments must emit a
+// cumulative delta prefix that parses to those arguments before any later
+// argument delta.
+//
+// Divergence: pi's `partial` is one shared live message that every event points
+// at, so a consumer that buffers events and reads `partial` afterwards sees the
+// final state. Port emitters pass a snapshot taken when the event was pushed
+// (AssistantMessage.Clone), which is what makes buffered consumption and
+// cross-goroutine reads safe here. Live-consuming code sees the same values on
+// both sides; only a deferred read differs.
 type AssistantMessageEvent struct {
 	Type EventType `json:"type"`
 	// ContentIndex is set for per-block events (text/thinking/toolcall). pi marks

@@ -154,8 +154,10 @@ HOW TO FIX — pick one, in this order of preference
        widen it into a no-op.
 
 DECISION RECORD
-    docs/UPSTREAM.md, "Drift at last sync check (2026-08-04)" ->
-    "Harness rebuilt — and it immediately found a model-visible divergence".
+    docs/UPSTREAM.md -> "Rulings", the CBOR decoder order-preservation ruling
+    ("Do NOT make the CBOR decoder order-preserving"). The cycle narrative that
+    originally carried this record was cut on 2026-09-03; see git history for
+    "Drift at last sync check (2026-08-04)".
     Commits b2684ea (provider request bodies) and d2d267e (protocol wire) fixed
     the SEND direction; the receive direction was deliberately left unfixed, and
     this test is what makes leaving it safe.`)

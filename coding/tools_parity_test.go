@@ -1,31 +1,104 @@
 package coding
 
 import (
+	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/sky-valley/pi/agent"
+	"github.com/sky-valley/pi/ai"
 )
 
 // ---------------------------------------------------------------------------
-// write: exact success string (bytes, pi write.ts:222)
+// write: exact success string (countless, pi write.ts:87)
 // ---------------------------------------------------------------------------
 
-func TestWriteSuccessByteCount(t *testing.T) {
+func TestWriteSuccessMessage(t *testing.T) {
 	dir := t.TempDir()
-	// pi reports JS `content.length` (UTF-16 code units), mislabeled "bytes".
-	// "héllo" = 5 code units (é is one BMP unit), NOT 6 UTF-8 bytes; "🎈x" = 3
-	// (the balloon is an astral pair = 2 units).
-	r, err := run(t, writeTool(dir), map[string]any{"path": "f.txt", "content": "héllo"})
-	if err != nil {
+	// pi dropped the count entirely (upstream e583b290a): it reported JS
+	// `content.length` — UTF-16 code units — mislabeled as bytes. The remaining
+	// message is path-only, and pi's result carries `details: undefined`
+	// (write.ts:88), so the count cannot come back through the details channel
+	// either. "héllo" is 5 code units / 6 UTF-8 bytes, "🎈x" is 3 code units /
+	// 5 UTF-8 bytes: no spelling of a length may appear for either.
+	for _, tc := range []struct{ path, content string }{
+		{"f.txt", "héllo"},
+		{"sub/g.txt", "🎈x"},
+	} {
+		r, err := run(t, writeTool(dir), map[string]any{"path": tc.path, "content": tc.content})
+		if err != nil {
+			t.Fatalf("write %s: %v", tc.path, err)
+		}
+		if got, want := resultText(r), "Successfully wrote to "+tc.path; got != want {
+			t.Fatalf("write success string\n got: %q\nwant: %q", got, want)
+		}
+		if r.Details != nil {
+			t.Fatalf("write details = %#v, want nil (pi write.ts:88 `details: undefined`)", r.Details)
+		}
+		// "Successfully wrote to" is only true if the bytes actually landed.
+		got, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(tc.path)))
+		if err != nil {
+			t.Fatalf("read back %s: %v", tc.path, err)
+		}
+		if string(got) != tc.content {
+			t.Fatalf("file contents\n got: %q\nwant: %q", got, tc.content)
+		}
+	}
+}
+
+// A detail-less tool result must leave `details` off the wire entirely: pi sets
+// `details: undefined` (write.ts:88, ls.ts:135, find.ts:137, grep.ts:258) or
+// never assigns it at all (read.ts:108, both image branches), and JSON.stringify
+// drops the key from the session entry and the server bridge. Go's `omitempty`
+// elides a nil interface but not a non-nil empty map, so an empty map here would
+// serialize as `"details":{}` — a key pi never writes.
+func TestDetaillessToolResultOmitsDetailsOnTheWire(t *testing.T) {
+	dir := t.TempDir()
+	empty := filepath.Join(dir, "emptydir")
+	if err := os.MkdirAll(empty, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if got, want := resultText(r), "Successfully wrote 5 bytes to f.txt"; got != want {
-		t.Fatalf("write success string\n got: %q\nwant: %q", got, want)
+	corrupt := minimalPNG()
+	for i := len(corrupt) - 20; i < len(corrupt)-8; i++ {
+		corrupt[i] ^= 0xFF // valid PNG header, undecodable pixels: processing fails
 	}
-	r2, _ := run(t, writeTool(dir), map[string]any{"path": "g.txt", "content": "🎈x"})
-	if got, want := resultText(r2), "Successfully wrote 3 bytes to g.txt"; got != want {
-		t.Fatalf("astral write success string\n got: %q\nwant: %q", got, want)
+	if err := os.WriteFile(filepath.Join(dir, "ok.png"), minimalPNG(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "broken.png"), corrupt, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name string
+		tool agent.AgentTool
+		args map[string]any
+	}{
+		{"write", writeTool(dir), map[string]any{"path": "f.txt", "content": "hi"}},
+		{"ls-empty", lsTool(dir), map[string]any{"path": "emptydir"}},
+		{"find-none", findTool(dir), map[string]any{"pattern": "*.nomatch"}},
+		{"grep-none", grepTool(dir), map[string]any{"pattern": "nomatchanywhere"}},
+		{"read-image", readTool(dir), map[string]any{"path": "ok.png"}},
+		{"read-image-omitted", readTool(dir), map[string]any{"path": "broken.png"}},
+	} {
+		r, err := run(t, tc.tool, tc.args)
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if r.Details != nil {
+			t.Errorf("%s: details = %#v, want nil (pi leaves it undefined)", tc.name, r.Details)
+		}
+		raw, err := json.Marshal(ai.ToolResultMessage{
+			ToolCallID: "1", ToolName: tc.name, Content: r.Content, Details: r.Details,
+		})
+		if err != nil {
+			t.Fatalf("%s: %v", tc.name, err)
+		}
+		if bytes.Contains(raw, []byte(`"details"`)) {
+			t.Errorf("%s: result carries a details key pi omits: %s", tc.name, raw)
+		}
 	}
 }
 

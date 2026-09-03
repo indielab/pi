@@ -2130,12 +2130,15 @@ data: [DONE]
 }
 
 // TestResponsesGrammarSeededInput: output_item.added may carry a non-empty
-// `input`, which pi seeds the tool-call arguments with (`item.input || ""`)
-// while leaving the delta buffer empty — so the first emitted delta re-emits the
-// seed together with the first streamed chunk.
+// `input`. pi 5c6655e76 stopped seeding the tool-call arguments with it —
+// the block starts at `arguments: {}` like every other custom tool call — and
+// instead replays the seed as a toolcall_delta pushed immediately AFTER
+// toolcall_start. So a consumer sees the seed as streamed input rather than as
+// arguments that were already there when the block appeared, and the first
+// streamed chunk after it is a delta of its own.
 //
-// Expectation captured from pi 0.82.0 (dist/api/openai-responses.js) driven over
-// a local SSE server: deltas were ["{\"query\":\"SELECT 1", "\"}"].
+// Before 5c6655e76 the seed was folded into the first streamed delta
+// (deltas were ["{\"query\":\"SELECT 1", "\"}"]).
 func TestResponsesGrammarSeededInput(t *testing.T) {
 	sse := `data: {"type":"response.created","response":{"id":"r1"}}
 
@@ -2151,7 +2154,7 @@ data: [DONE]
 
 `
 	deltas, final := runResponsesGrammarSSE(t, sse)
-	assertDeltas(t, deltas, []string{`{"query":"SELECT 1`, `"}`})
+	assertDeltas(t, deltas, []string{`{"query":"SEL`, `ECT 1`, `"}`})
 	assertGrammarArgs(t, final, "query", "SELECT 1")
 }
 
@@ -2180,19 +2183,127 @@ data: [DONE]
 	assertGrammarArgs(t, final, "query", "SELECT 2")
 }
 
-func runResponsesGrammarSSE(t *testing.T, sse string) ([]string, *ai.AssistantMessage) {
+// TestResponsesGrammarSeedOrder pins the ORDER pi 5c6655e76 introduced: the
+// seed carried on output_item.added is pushed as a toolcall_delta after the
+// toolcall_start event, never folded into the start event's arguments. The
+// start event must therefore show `{}` — a block whose input has not been
+// reported yet — and the seed must arrive as the delta that follows it.
+func TestResponsesGrammarSeedOrder(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r1"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":"SEL"}}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":"SEL"}}
+
+data: {"type":"response.completed","response":{"id":"r1","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}
+
+data: [DONE]
+
+`
+	assertToolCallTrace(t, grammarToolCallTrace(t, sse), []grammarToolCallEvent{
+		{typ: ai.EventToolCallStart, index: 0, blocks: `[{}]`},
+		{typ: ai.EventToolCallDelta, index: 0, delta: `{"query":"SEL`, blocks: `[{"query":"SEL"}]`},
+		{typ: ai.EventToolCallDelta, index: 0, delta: `"}`, blocks: `[{"query":"SEL"}]`},
+	})
+}
+
+// TestResponsesGrammarEmptySeedIsNotAppended pins the guard on the seed replay.
+// pi's is a JS truthiness check (`if (item.input)`, shared:525), so an item that
+// arrives with no input and one that arrives with "" both push nothing AND leave
+// the block's arguments at `{}` — appending "" would emit no delta but would
+// still write `{"query":""}` onto the block, which the next event to carry a
+// partial reports. Two seedless items followed by a seeded one put exactly that
+// window under an event.
+func TestResponsesGrammarEmptySeedIsNotAppended(t *testing.T) {
+	item := func(outputIndex int, id, input string) string {
+		return fmt.Sprintf(
+			`data: {"type":"response.output_item.added","output_index":%d,"item":{"type":"custom_tool_call","id":%q,"call_id":"c_%s","name":"gram"%s}}`,
+			outputIndex, id, id, input)
+	}
+	sse := `data: {"type":"response.created","response":{"id":"r1"}}` + "\n\n" +
+		item(0, "absent", ``) + "\n\n" +
+		item(1, "empty", `,"input":""`) + "\n\n" +
+		item(2, "seeded", `,"input":"SEL"`) + "\n\n" +
+		`data: {"type":"response.completed","response":{"id":"r1","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}` + "\n\n" +
+		"data: [DONE]\n\n"
+
+	// The third start is the observation point: its partial carries all three
+	// blocks, and the two seedless ones must still read `{}`.
+	assertToolCallTrace(t, grammarToolCallTrace(t, sse), []grammarToolCallEvent{
+		{typ: ai.EventToolCallStart, index: 0, blocks: `[{}]`},
+		{typ: ai.EventToolCallStart, index: 1, blocks: `[{},{}]`},
+		{typ: ai.EventToolCallStart, index: 2, blocks: `[{},{},{}]`},
+		{typ: ai.EventToolCallDelta, index: 2, delta: `{"query":"SEL`, blocks: `[{},{},{"query":"SEL"}]`},
+	})
+}
+
+// grammarToolCallEvent is one tool-call event of a grammar stream: its type and
+// content index, its delta, and the arguments of EVERY tool-call block in the
+// partial it carried — the arguments of a block other than the event's own are
+// how a stray write between two events becomes observable.
+type grammarToolCallEvent struct {
+	typ    ai.EventType
+	index  int
+	delta  string
+	blocks string
+}
+
+// grammarToolCallTrace streams sse and records every tool-call event with the
+// state of the whole partial it was pushed with.
+func grammarToolCallTrace(t *testing.T, sse string) []grammarToolCallEvent {
+	t.Helper()
+	var trace []grammarToolCallEvent
+	for ev := range runResponsesGrammarStream(t, sse).Events() {
+		switch ev.Type {
+		case ai.EventToolCallStart, ai.EventToolCallDelta:
+			args := []map[string]any{}
+			for i, block := range ev.Partial.Content {
+				tc, ok := block.(ai.ToolCall)
+				if !ok {
+					t.Fatalf("%s block %d = %#v", ev.Type, i, block)
+				}
+				args = append(args, tc.Arguments)
+			}
+			trace = append(trace, grammarToolCallEvent{
+				typ: ev.Type, index: ev.ContentIndex, delta: ev.Delta, blocks: mustJSON(t, args),
+			})
+		}
+	}
+	return trace
+}
+
+func assertToolCallTrace(t *testing.T, got, want []grammarToolCallEvent) {
+	t.Helper()
+	if len(got) != len(want) {
+		t.Fatalf("tool call events = %+v, want %+v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("tool call event %d = %+v, want %+v", i, got[i], want[i])
+		}
+	}
+}
+
+// runResponsesGrammarStream streams sse through the responses adapter against a
+// model with grammar tools enabled, and returns the live event stream.
+func runResponsesGrammarStream(t *testing.T, sse string) *ai.AssistantMessageEventStream {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
 		io.WriteString(w, sse)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	model := grammarResponsesModel(`{"supportsOpenAIGrammarTools":true}`)
 	model.BaseURL = server.URL
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
-	stream := StreamOpenAIResponses(context.Background(), model, req,
+	return StreamOpenAIResponses(context.Background(), model, req,
 		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
+}
+
+func runResponsesGrammarSSE(t *testing.T, sse string) ([]string, *ai.AssistantMessage) {
+	t.Helper()
+	stream := runResponsesGrammarStream(t, sse)
 
 	var deltas []string
 	for ev := range stream.Events() {
@@ -2374,7 +2485,7 @@ func TestResponsesNamespaceDroppedAcrossProviderAndApi(t *testing.T) {
 // DELIBERATE DIVERGENCE, pinned so it cannot drift silently: pi guards on
 // `namespace !== undefined`, so a provider-sent empty string replays there as
 // `"namespace": ""`. Go models the field as a plain string (the ThoughtSignature
-// precedent) and drops it. Recorded in docs/UPSTREAM.md; see the 2026-08-08 entry.
+// precedent) and drops it. Recorded in docs/UPSTREAM.md -> "Divergences" as D21.
 func TestResponsesEmptyNamespaceDroppedDivergence(t *testing.T) {
 	model := reasoningModel()
 	req := ai.Context{Messages: []ai.Message{
@@ -2431,5 +2542,82 @@ func TestResponsesNamespaceReplayedForDeferredTool(t *testing.T) {
 	}
 	if fc["namespace"] != "mcp_math" {
 		t.Fatalf("deferred-tool namespace = %v, want mcp_math", fc["namespace"])
+	}
+}
+
+// TestResponsesStopReasonWithoutErrorMessageOmitsTheField pins pi 1a7bc80e7:
+// when the mapped stop reason carries no error message, upstream now DELETES
+// output.errorMessage instead of assigning undefined, because the field is
+// observable in serialized session JSON. Go's omitempty on the cleared string
+// is the same wire shape, so this pins behavior the port already had.
+func TestResponsesStopReasonWithoutErrorMessageOmitsTheField(t *testing.T) {
+	const usage = `"usage":{"input_tokens":1,"output_tokens":1}`
+	completed := `data: {"type":"response.completed","response":{"id":"r1","status":"completed",` + usage + `}}`
+	tests := []struct {
+		name string
+		// terminal is the terminal event (or events) the stream ends with.
+		terminal string
+		wantStop ai.StopReason
+	}{
+		{
+			name:     "completed",
+			terminal: completed,
+			wantStop: ai.StopStop,
+		},
+		{
+			// A length stop is the case that shows the difference: it is a
+			// non-stop reason that still has nothing to say about an error.
+			name:     "incomplete on max_output_tokens",
+			terminal: `data: {"type":"response.incomplete","response":{"id":"r1","status":"incomplete","incomplete_details":{"reason":"max_output_tokens"},` + usage + `}}`,
+			wantStop: ai.StopLength,
+		},
+		{
+			// The one input where upstream's `delete output.errorMessage` and
+			// the assignment it replaced part company: a message that was
+			// already set. Only a second terminal event reaches it — the
+			// finalize block runs once per terminal event and neither pi nor
+			// the port stops after the first (shared:743) — so a content-filtered
+			// incomplete followed by a completed must end with the message
+			// CLEARED, not carried into a successful done.
+			name: "a later terminal event clears an earlier error message",
+			terminal: `data: {"type":"response.incomplete","response":{"id":"r1","status":"incomplete","incomplete_details":{"reason":"content_filter"},` + usage + `}}` +
+				"\n\n" + completed,
+			wantStop: ai.StopStop,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sse := `data: {"type":"response.created","response":{"id":"r1"}}` + "\n\n" +
+				`data: {"type":"response.output_item.added","output_index":0,"item":{"type":"message","id":"msg_1"}}` + "\n\n" +
+				`data: {"type":"response.output_text.delta","output_index":0,"delta":"hi"}` + "\n\n" +
+				tt.terminal + "\n\n" +
+				"data: [DONE]\n\n"
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				io.WriteString(w, sse)
+			}))
+			defer server.Close()
+
+			model := reasoningModel()
+			model.BaseURL = server.URL
+			final := StreamOpenAIResponses(context.Background(), model,
+				ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+				&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
+
+			if final.StopReason != tt.wantStop {
+				t.Fatalf("stopReason = %s (err %q), want %s", final.StopReason, final.ErrorMessage, tt.wantStop)
+			}
+			encoded, err := json.Marshal(final)
+			if err != nil {
+				t.Fatalf("marshal: %v", err)
+			}
+			var fields map[string]json.RawMessage
+			if err := json.Unmarshal(encoded, &fields); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			if raw, present := fields["errorMessage"]; present {
+				t.Fatalf("errorMessage must be absent, got %s", raw)
+			}
+		})
 	}
 }

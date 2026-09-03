@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -344,5 +345,70 @@ func TestFauxProviderRedeemsWithSubmissionOptions(t *testing.T) {
 	if submissionResponses != afterSubmission {
 		t.Errorf("the submission's OnResponse fired %d extra times during redemption",
 			submissionResponses-afterSubmission)
+	}
+}
+
+// TestFauxAssistantMessageOmitsUnsetOptionalFields pins pi 86bac52f9: a faux
+// assistant message must not carry deferred/errorMessage/responseId keys it was
+// never given. Upstream stopped assigning `undefined` and spreads them
+// conditionally instead, because an explicit `"errorMessage": undefined`
+// survives into serialized session JSON as a present-but-empty field. The Go
+// port answers the same question with omitempty on the zero value, so this is a
+// regression pin on the serialized shape rather than a change.
+func TestFauxAssistantMessageOmitsUnsetOptionalFields(t *testing.T) {
+	msg := FauxAssistantMessage(ai.ContentList{FauxText("hi")}, ai.StopStop)
+	encoded, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, key := range []string{"deferred", "errorMessage", "responseId"} {
+		if raw, present := fields[key]; present {
+			t.Errorf("%s must be absent, got %s", key, raw)
+		}
+	}
+	if string(fields["stopReason"]) != `"stop"` {
+		t.Errorf("stopReason = %s, want \"stop\"", fields["stopReason"])
+	}
+}
+
+// TestFauxAssistantMessageKeepsSetOptionalFields is the other half of the pin
+// above. Absence assertions alone are satisfied by a field that no longer
+// serializes at all, so they would survive dropping the key (`json:"-"`) — the
+// same session-file regression seen from the other side. A message that DOES
+// carry the three fields must still write them under pi's own key names
+// (types.ts:434,440,441: responseId, deferred, errorMessage).
+func TestFauxAssistantMessageKeepsSetOptionalFields(t *testing.T) {
+	msg := FauxAssistantMessage(ai.ContentList{FauxText("hi")}, ai.StopError)
+	msg.ErrorMessage = "boom"
+	msg.ResponseID = "resp_1"
+	msg.Deferred = &ai.DeferredHandle{Provider: "faux", ModelID: "faux-1", Api: "faux", ID: "def_1"}
+
+	encoded, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(encoded, &fields); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for key, want := range map[string]string{
+		"errorMessage": `"boom"`,
+		"responseId":   `"resp_1"`,
+	} {
+		if got := string(fields[key]); got != want {
+			t.Errorf("%s = %s, want %s", key, got, want)
+		}
+	}
+	var handle ai.DeferredHandle
+	if raw, present := fields["deferred"]; !present {
+		t.Errorf("deferred must be present when the message carries a handle")
+	} else if err := json.Unmarshal(raw, &handle); err != nil {
+		t.Errorf("deferred: %v", err)
+	} else if handle.ID != "def_1" {
+		t.Errorf("deferred.id = %q, want def_1", handle.ID)
 	}
 }

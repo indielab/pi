@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
@@ -91,6 +92,22 @@ type openAICompletionsCompat struct {
 	// ChatTemplateArgs carries the ordered args sent as `chat_template_args`
 	// when ThinkingFormat is "baseten" (pi: compat.chatTemplateArgs).
 	ChatTemplateArgs []chatTemplateKwarg
+	// VLLMPriority is the vLLM scheduler priority sent as the top-level
+	// `priority` request field (pi OpenAICompletionsCompat.vllmPriority,
+	// upstream 256f63024). Lower values are handled earlier; the server default
+	// is 0, and the field only means anything when vLLM runs with
+	// `--scheduling-policy priority`. detectCompat never produces one and the
+	// generated catalog never sets it, so the field is omitted unless a model's
+	// compat asks for it. A pointer because 0 is a meaningful value — the
+	// highest priority — not "off".
+	VLLMPriority *float64
+	// HasVLLMPriority records that model.compat carried a vllmPriority key at
+	// all, which for this one key is not the same as carrying a value. pi reads
+	// it BARE — `vllmPriority: model.compat.vllmPriority`, the only key in
+	// getCompat with no `??` fallback — and gates the wire field on
+	// `!== undefined`. An explicit JSON null therefore rides as `"priority":null`
+	// where a `??` key would have fallen through to its default.
+	HasVLLMPriority bool
 }
 
 // detectOpenAICompat infers compatibility settings from provider + baseUrl,
@@ -211,6 +228,19 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	}
 	if raw, ok := o.value("chatTemplateArgs"); ok {
 		c.ChatTemplateArgs = parseChatTemplateValues(raw)
+	}
+	// vllmPriority is read bare, not through applyCompat: applyCompat implements
+	// `??`, which folds an explicit null into "absent". That is right for every
+	// other key here and wrong for this one — pi has no `??` on it and sends
+	// whatever is not undefined — so read the key itself and keep present-null
+	// distinguishable from missing. A value of the wrong type still leaves both
+	// fields unset, per D3.
+	if raw, present := o["vllmPriority"]; present {
+		if isJSONNull(raw) {
+			c.HasVLLMPriority = true
+		} else if v := new(float64); json.Unmarshal(raw, v) == nil {
+			c.VLLMPriority, c.HasVLLMPriority = v, true
+		}
 	}
 	return c
 }

@@ -39,6 +39,41 @@ func TestNewSessionCollectsPromptGuidelines(t *testing.T) {
 	}
 }
 
+// A session whose only file-reading tool is bash still gets its skills, with
+// the block telling the model to load them with bash (upstream 1d6dbf9e3).
+// This is the wiring half: NewSession → resolveTools → BuildSystemPrompt.
+func TestNewSessionBashOnlyKeepsSkills(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+	skillDir := filepath.Join(cwd, ".pi", "skills", "demo-skill")
+	if err := os.MkdirAll(skillDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: demo-skill\ndescription: Demo skill for tests\n---\nbody\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+	s := NewSession(SessionOptions{
+		Model:        reg.GetModel(),
+		Cwd:          cwd,
+		ToolNames:    []string{"bash"},
+		TrustProject: true,
+	})
+	prompt := s.Agent.State().SystemPrompt
+
+	if !strings.Contains(prompt, "<name>demo-skill</name>") {
+		t.Fatalf("bash-only session dropped its skills:\n%s", prompt)
+	}
+	if !strings.Contains(prompt, "Use bash to load a skill's file when the task matches its description.") {
+		t.Fatalf("bash-only session should name bash as the skill file reader:\n%s", prompt)
+	}
+	if strings.Contains(prompt, "Use the read tool to load a skill's file") {
+		t.Fatalf("bash-only session must not name the absent read tool:\n%s", prompt)
+	}
+}
+
 // TestNewSessionCustomPromptStillAssembles locks I2: a custom SystemPrompt
 // still gets project context files, skills, date, and cwd appended (pi
 // system-prompt.ts:53-80), in pi's order — and never the docs block or the

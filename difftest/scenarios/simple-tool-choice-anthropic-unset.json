@@ -1,7 +1,7 @@
 {
   "name": "simple-tool-choice-anthropic-unset",
   "note": "Baseline: neither toolChoice nor refusalFallbacks set on the simple path -> neither key on the wire. Shipped in pi-ai 0.84.3 (release 4e58f324f), so this scenario is backend:\"dist\" — captured against the published build, the stronger ground truth (README rule).",
-  "backend": "dist",
+  "backend": "src",
   "api": "anthropic-messages",
   "entry": "streamSimple",
   "model": {

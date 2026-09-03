@@ -277,13 +277,18 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 		// startGrammarBuffer switches a block to the custom-tool (grammar) shape.
 		// The "input" fallback should never be taken; it only gives a made-up tool
 		// we know nothing about somewhere to stash its input.
+		//
+		// The arguments start EMPTY, not at {property: ""} (pi 5c6655e76): until
+		// the first input arrives there is nothing to report, and the placeholder
+		// made a call with no input yet read exactly like one whose input was the
+		// empty string. The property appears with the first appendGrammarInput.
 		startGrammarBuffer := func(b *blockBuilder) {
 			property, ok := grammarProps[b.toolName]
 			if !ok {
 				property = "input"
 			}
 			b.grammar = newGrammarInputBuffer(property)
-			b.args = map[string]any{property: ""}
+			b.args = map[string]any{}
 			b.partialJSON.Reset()
 		}
 		// grammarInput is the raw input accumulated on a custom tool call so far.
@@ -972,6 +977,18 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 	// swallowed a choice the caller had asked for on purpose.
 	if opts.ToolChoice != nil {
 		params["tool_choice"] = opts.ToolChoice
+	}
+
+	// vLLM scheduler priority (pi 256f63024). Sent whenever compat carried the
+	// key, 0 included: pi's guard is `!== undefined`, and 0 is vLLM's own
+	// default rather than an "unset" sentinel. An explicit null is carried too,
+	// as `"priority":null` — see HasVLLMPriority.
+	if compat.HasVLLMPriority {
+		var priority any
+		if compat.VLLMPriority != nil {
+			priority = *compat.VLLMPriority
+		}
+		params["priority"] = priority
 	}
 
 	// pi computes both once here, before the thinking-format dispatch: the

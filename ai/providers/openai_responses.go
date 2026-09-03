@@ -499,10 +499,19 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 		}
 		// createSlot appends a new block for item and records the slot with its
 		// stable contentIndex, emitting the matching *_start event. Returns nil
-		// for item types that have no streaming block.
-		createSlot := func(outputIndex int, item responsesItem) *responsesOutputSlot {
+		// for item types that have no streaming block. The error is a custom
+		// tool call's seeded input failing to synthesize a JSON delta. No seed
+		// can actually fail it — the buffer it appends to was created two lines
+		// above, so neither the closed nor the monotonicity check can trip — but
+		// the synthesizer is the same one the streaming path uses, where both
+		// can, and the only alternative to propagating its error here is
+		// dropping it on the floor.
+		createSlot := func(outputIndex int, item responsesItem) (*responsesOutputSlot, error) {
 			var b *blockBuilder
 			var startEvent ai.EventType
+			// seed is the input a custom_tool_call item already carries, replayed
+			// as a delta once the start event is out (see below).
+			seed := ""
 			switch item.Type {
 			case "reasoning":
 				b = &blockBuilder{kind: "thinking"}
@@ -525,32 +534,40 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				if !ok {
 					property = "input"
 				}
-				// pi seeds the slot with `item.input || ""`; the buffer itself
-				// deliberately starts empty so the first delta re-emits the seed.
-				var seed string
+				// The block starts with EMPTY arguments even when the item already
+				// carries input (pi 5c6655e76): the input it came with is replayed
+				// as a delta below, so a consumer sees it stream in rather than
+				// finding it already present on the block it was just told about.
 				if item.Input != nil {
 					seed = *item.Input
 				}
 				b = &blockBuilder{
 					kind: "toolCall", toolID: item.CallID + "|" + item.ID, toolName: item.Name,
 					toolNamespace: item.Namespace,
-					args:          map[string]any{property: seed}, grammar: newGrammarInputBuffer(property),
+					args:          map[string]any{}, grammar: newGrammarInputBuffer(property),
 				}
 				startEvent = ai.EventToolCallStart
 			default:
-				return nil
+				return nil, nil
 			}
 			builders = append(builders, b)
 			slot := &responsesOutputSlot{block: b, contentIndex: len(builders) - 1}
 			outputSlots[outputIndex] = slot
 			materialize()
 			stream.Push(ai.AssistantMessageEvent{Type: startEvent, ContentIndex: slot.contentIndex, Partial: output.Clone()})
-			return slot
+			// Strictly after the start event, and only for a non-empty seed (pi
+			// guards on truthiness, so an item.input of "" pushes nothing).
+			if seed != "" {
+				if err := appendGrammarInput(slot, seed, false); err != nil {
+					return nil, err
+				}
+			}
+			return slot, nil
 		}
 		// getOrCreateSlot returns the existing slot for outputIndex or creates one.
-		getOrCreateSlot := func(outputIndex int, item responsesItem) *responsesOutputSlot {
+		getOrCreateSlot := func(outputIndex int, item responsesItem) (*responsesOutputSlot, error) {
 			if slot := outputSlots[outputIndex]; slot != nil {
-				return slot
+				return slot, nil
 			}
 			return createSlot(outputIndex, item)
 		}
@@ -667,7 +684,9 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				if ev.Item == nil {
 					return nil
 				}
-				createSlot(ev.OutputIndex, *ev.Item)
+				if _, cerr := createSlot(ev.OutputIndex, *ev.Item); cerr != nil {
+					return cerr
+				}
 			case "response.reasoning_summary_text.delta":
 				slot := getSlot(ev.OutputIndex, "thinking")
 				if slot == nil {
@@ -755,7 +774,10 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				// getOrCreateSlot mirrors pi's new design: a done without a
 				// prior added still materializes the block (and its *_start
 				// event) before finalizing (port of 8c9dbffa).
-				slot := getOrCreateSlot(ev.OutputIndex, *ev.Item)
+				slot, cerr := getOrCreateSlot(ev.OutputIndex, *ev.Item)
+				if cerr != nil {
+					return cerr
+				}
 				switch {
 				case ev.Item.Type == "reasoning" && slot != nil && slot.block.kind == "thinking":
 					summaryText := joinPartsText(ev.Item.Summary, "\n\n")

@@ -402,10 +402,14 @@ func resolveLsOperations(ops *LsOperations) LsOperations {
 
 // --- the bridge: an ExecutionEnv can back the coding-agent seams ---
 //
-// This is what shape (b) means in practice (see docs/UPSTREAM.md "Harness
-// shape"): the port carries ONE set of tools, and pi's two injection designs —
-// coding-agent's narrow per-tool Operations and the harness's broad
-// ExecutionEnv — meet here instead of being duplicated into two tool trees.
+// pi has two injection designs for the same tools — coding-agent's narrow
+// per-tool Operations and the harness's broad ExecutionEnv — and they meet
+// here rather than being duplicated into two tool trees.
+//
+// NOTE (2026-09-03): this bridge predates the mirror ruling, which grows
+// agent/harness/** beside coding/ (see docs/UPSTREAM.md "Harness shape"). The
+// ExecutionEnv half of it relocates to agent/harness at that point; these
+// seven Env*Operations bridges are what absorbs the break.
 
 // EnvReadOperations backs the read tool with an ExecutionEnv.
 func EnvReadOperations(env ExecutionEnv) ReadOperations {

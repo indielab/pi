@@ -391,8 +391,8 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 		turnPrefix = messages[cp.turnStartIndex:cp.firstKeptIndex]
 	}
 
-	// Generate summaries (pi compact, compaction.ts:747-815). pi runs the two
-	// split-turn summaries in parallel; we run them sequentially (same output).
+	// Generate summaries (pi compact, compaction.ts:747-815). Sequential, as
+	// upstream is since f58c1156.
 	var newSummary string
 	if cp.isSplitTurn && len(turnPrefix) > 0 {
 		historyResult := "No prior history."
@@ -572,9 +572,11 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 	// Avoid cache writes for one-off summaries (pi 9b3a2059): retention "none".
 	// Reuse caller-supplied routing when available; callers without a session
 	// ID, including branch summaries, receive a fresh routing ID (pi
-	// `options.sessionId ?? uuidv7()`, upstream 58302d34e).
+	// `options.sessionId ?? uuidv7()`, upstream 58302d34e). pi throws here on
+	// generator exhaustion; the Must form panics for the same reason, because
+	// completeSummarization's (string, bool) return has nowhere to carry it.
 	if sessionID == "" {
-		sessionID = uuidv7()
+		sessionID = mustUUIDv7()
 	}
 	requestModel := s.summarizationRequestModel(ctx)
 	opts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{

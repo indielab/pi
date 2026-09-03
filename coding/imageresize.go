@@ -471,100 +471,159 @@ func exifOrientationFromBytes(data []byte) int {
 	return 1
 }
 
-// jpegOrientation extracts the EXIF orientation (1-8) from a JPEG, or 1 if absent.
+// jpegOrientation extracts the EXIF orientation (1-8) from a JPEG, or 1 if
+// absent.
 func jpegOrientation(data []byte) int {
-	if len(data) < 4 || data[0] != 0xFF || data[1] != 0xD8 {
+	off := findJpegTiffOffset(data)
+	if off < 0 {
 		return 1
 	}
-	i := 2
-	for i+4 <= len(data) {
-		if data[i] != 0xFF {
-			break
+	return tiffOrientation(data, off)
+}
+
+// findJpegTiffOffset walks the JPEG marker segments and returns the offset of
+// the TIFF header carried by the first APP1 with an "Exif\0\0" header, or -1.
+// It mirrors pi's findJpegTiffOffset, leniency included:
+//
+//   - fill bytes (extra 0xFF ahead of a marker) are skipped one at a time;
+//   - APP1 segments that are not EXIF — XMP, most commonly — are scanned past
+//     rather than ending the scan;
+//   - the Exif header is tested BEFORE the segment length is read, so an APP1
+//     whose declared length overruns the file still decides the answer;
+//   - the first Exif APP1 decides outright, even when its TIFF block carries no
+//     Orientation tag;
+//   - the walk does not stop at SOS/EOI: it keeps reading whatever bytes sit in
+//     the entropy-coded scan data as a marker and a length, which terminates the
+//     scan on the first non-0xFF byte it lands on.
+func findJpegTiffOffset(data []byte) int {
+	for off := 2; off < len(data)-1; {
+		if data[off] != 0xFF {
+			return -1
 		}
-		marker := data[i+1]
-		if marker == 0xD9 || marker == 0xDA { // EOI or SOS
-			break
-		}
-		segLen := int(binary.BigEndian.Uint16(data[i+2 : i+4]))
-		if segLen < 2 || i+2+segLen > len(data) {
-			break
+		marker := data[off+1]
+		if marker == 0xFF { // fill byte: a marker may be preceded by any number of them
+			off++
+			continue
 		}
 		if marker == 0xE1 { // APP1
-			seg := data[i+4 : i+2+segLen]
-			if o, ok := exifOrientation(seg); ok {
-				return o
+			segStart := off + 4
+			if segStart+6 > len(data) {
+				return -1
+			}
+			if hasExifHeader(data[segStart:]) {
+				return segStart + 6
 			}
 		}
-		i += 2 + segLen
+		if off+4 > len(data) {
+			return -1
+		}
+		off += 2 + int(binary.BigEndian.Uint16(data[off+2:off+4]))
 	}
-	return 1
+	return -1
 }
+
+var exifHeader = []byte("Exif\x00\x00")
+
+// hasExifHeader reports whether b opens with the "Exif\0\0" APP1 header.
+func hasExifHeader(b []byte) bool { return bytes.HasPrefix(b, exifHeader) }
 
 // webpOrientation reads orientation from a WebP EXIF chunk (mirrors pi's
 // findWebpTiffOffset + readOrientationFromTiff).
 func webpOrientation(data []byte) int {
-	off := 12
-	for off+8 <= len(data) {
+	off := findWebpTiffOffset(data)
+	if off < 0 {
+		return 1
+	}
+	return tiffOrientation(data, off)
+}
+
+// findWebpTiffOffset returns the offset of the TIFF header in the WebP EXIF
+// chunk, or -1. Mirrors pi's findWebpTiffOffset, whose chunk size is assembled
+// with JS bitwise operators and is therefore a SIGNED 32-bit value: a size with
+// the top bit set is negative, so an EXIF chunk declaring one passes the
+// end-of-file check and is read as a bare TIFF block (it is < 6). The one place
+// this port parts from pi is a negative size on a chunk it has to walk past:
+// pi moves the offset backwards there and can spin forever, so the walk stops
+// instead (see docs/UPSTREAM.md, Divergences).
+func findWebpTiffOffset(data []byte) int {
+	for off := 12; off+8 <= len(data); {
 		chunkID := string(data[off : off+4])
-		chunkSize := int(binary.LittleEndian.Uint32(data[off+4 : off+8]))
+		chunkSize := int(int32(binary.LittleEndian.Uint32(data[off+4 : off+8])))
 		dataStart := off + 8
 		if chunkID == "EXIF" {
 			if dataStart+chunkSize > len(data) {
-				return 1
+				return -1
 			}
-			tiff := data[dataStart:]
-			if chunkSize >= 6 && len(tiff) >= 6 && string(tiff[0:6]) == "Exif\x00\x00" {
-				tiff = tiff[6:]
+			// Some WebP files prefix the TIFF header with "Exif\0\0".
+			if chunkSize >= 6 && hasExifHeader(data[dataStart:]) {
+				return dataStart + 6
 			}
-			if o, ok := tiffOrientation(tiff); ok {
-				return o
+			return dataStart
+		}
+		if chunkSize < 0 {
+			return -1
+		}
+		off = dataStart + chunkSize + chunkSize%2 // RIFF chunks are padded to even size
+	}
+	return -1
+}
+
+// tiffOrientation reads the Orientation tag (0x0112) out of the TIFF header at
+// tiffStart, returning 1 when there is none — pi's readOrientationFromTiff makes
+// no distinction between "no orientation" and "malformed", and neither does
+// this. Its leniency is deliberate and load-bearing for parity: only "II"
+// selects little-endian (every other byte-order field, well-formed or not, is
+// read big-endian), the 0x2A magic is not checked, and the IFD walk is bounded
+// by the whole buffer rather than by the enclosing JPEG segment or WebP chunk,
+// so an IFD that lies outside its own segment is still read.
+func tiffOrientation(data []byte, tiffStart int) int {
+	if tiffStart+8 > len(data) {
+		return 1
+	}
+	le := data[tiffStart] == 'I' && data[tiffStart+1] == 'I'
+	// JS reads an out-of-range index as undefined, which its bitwise operators
+	// coerce to 0; byteAt reproduces that, and keeps every read below in bounds
+	// for the offsets pi is willing to compute (they can even be negative — see
+	// read32).
+	byteAt := func(pos int) int {
+		if pos < 0 || pos >= len(data) {
+			return 0
+		}
+		return int(data[pos])
+	}
+	read16 := func(pos int) int {
+		if le {
+			return byteAt(pos) | byteAt(pos+1)<<8
+		}
+		return byteAt(pos)<<8 | byteAt(pos+1)
+	}
+	// pi's read32 is JS-signed in the little-endian branch (`b3 << 24` overflows
+	// into the sign bit) and explicitly unsigned in the big-endian one.
+	read32 := func(pos int) int {
+		if le {
+			u := uint32(byteAt(pos+3))<<24 | uint32(byteAt(pos+2))<<16 | uint32(byteAt(pos+1))<<8 | uint32(byteAt(pos))
+			return int(int32(u))
+		}
+		return int(uint32(byteAt(pos))<<24 | uint32(byteAt(pos+1))<<16 | uint32(byteAt(pos+2))<<8 | uint32(byteAt(pos+3)))
+	}
+
+	ifdStart := tiffStart + read32(tiffStart+4)
+	if ifdStart+2 > len(data) {
+		return 1
+	}
+	for n, count := 0, read16(ifdStart); n < count; n++ {
+		entry := ifdStart + 2 + n*12
+		if entry+12 > len(data) {
+			return 1
+		}
+		if read16(entry) == 0x0112 { // Orientation
+			if v := read16(entry + 8); v >= 1 && v <= 8 {
+				return v
 			}
 			return 1
 		}
-		off = dataStart + chunkSize + (chunkSize % 2)
 	}
 	return 1
-}
-
-func exifOrientation(seg []byte) (int, bool) {
-	if len(seg) < 14 || string(seg[0:6]) != "Exif\x00\x00" {
-		return 1, false
-	}
-	return tiffOrientation(seg[6:])
-}
-
-// tiffOrientation reads the Orientation tag (0x0112) from a TIFF header.
-func tiffOrientation(tiff []byte) (int, bool) {
-	if len(tiff) < 8 {
-		return 1, false
-	}
-	var bo binary.ByteOrder
-	switch {
-	case string(tiff[0:2]) == "II":
-		bo = binary.LittleEndian
-	case string(tiff[0:2]) == "MM":
-		bo = binary.BigEndian
-	default:
-		return 1, false
-	}
-	ifdOff := int(bo.Uint32(tiff[4:8]))
-	if ifdOff+2 > len(tiff) {
-		return 1, false
-	}
-	count := int(bo.Uint16(tiff[ifdOff : ifdOff+2]))
-	p := ifdOff + 2
-	for n := 0; n < count && p+12 <= len(tiff); n++ {
-		tag := bo.Uint16(tiff[p : p+2])
-		if tag == 0x0112 { // Orientation
-			val := int(bo.Uint16(tiff[p+8 : p+10]))
-			if val >= 1 && val <= 8 {
-				return val, true
-			}
-			return 1, false
-		}
-		p += 12
-	}
-	return 1, false
 }
 
 // applyOrientation rotates/flips img per the EXIF orientation value (1-8),

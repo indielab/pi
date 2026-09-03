@@ -292,3 +292,49 @@ func keysOf(m map[string]any) []string {
 	}
 	return out
 }
+
+// TestOpenAICompatVLLMPriority ports pi's openai-completions-vllm-priority.test.ts
+// (upstream 256f63024): compat.vllmPriority rides as the top-level `priority`
+// request field, and no field is sent when it is unset. The check is
+// `!== undefined`, so an explicit 0 — vLLM's own server default, and the
+// highest priority — must still be sent.
+func TestOpenAICompatVLLMPriority(t *testing.T) {
+	req := ai.Context{SystemPrompt: "sys", Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	model := func(compat string) *ai.Model {
+		m := &ai.Model{ID: "gpt-4o-mini", Api: ai.APIOpenAICompletions, Provider: "openai", MaxTokens: 2048}
+		if compat != "" {
+			m.Compat = json.RawMessage(compat)
+		}
+		return m
+	}
+
+	body := captureOpenAIBody(t, model(`{"vllmPriority":10}`), req, nil)
+	if body["priority"] != float64(10) {
+		t.Fatalf("priority = %#v, want 10", body["priority"])
+	}
+
+	body = captureOpenAIBody(t, model(`{"vllmPriority":0}`), req, nil)
+	if got, ok := body["priority"]; !ok || got != float64(0) {
+		t.Fatalf("priority = %#v (present=%v), want 0", got, ok)
+	}
+
+	// An explicit null is PRESENT, not absent. vllmPriority is the one key
+	// getCompat reads bare (`vllmPriority: model.compat.vllmPriority`, no `??`),
+	// so pi's `compat.vllmPriority !== undefined` guard passes on null and the
+	// body carries `"priority":null`. Every other compat key resolves through
+	// `??`, where null falls through to the default instead.
+	body = captureOpenAIBody(t, model(`{"vllmPriority":null}`), req, nil)
+	if got, ok := body["priority"]; !ok || got != nil {
+		t.Fatalf("priority = %#v (present=%v), want an explicit null", got, ok)
+	}
+
+	body = captureOpenAIBody(t, model(""), req, nil)
+	if got, ok := body["priority"]; ok {
+		t.Fatalf("priority must be absent without compat.vllmPriority, got %#v", got)
+	}
+
+	body = captureOpenAIBody(t, model(`{"supportsStore":false}`), req, nil)
+	if got, ok := body["priority"]; ok {
+		t.Fatalf("priority must be absent when a sibling compat key is set, got %#v", got)
+	}
+}

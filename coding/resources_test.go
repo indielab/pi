@@ -130,15 +130,98 @@ func TestSystemPromptIncludesContextAndSkills(t *testing.T) {
 	}
 }
 
-func TestSkillsExcludedWithoutReadTool(t *testing.T) {
-	p := BuildSystemPrompt(BuildSystemPromptOptions{
-		SelectedTools: []string{"bash"}, // no read tool
-		ToolSnippets:  ToolSnippets,
-		Cwd:           "/proj",
-		Skills:        []Skill{{Name: "demo", Description: "d", FilePath: "x"}},
-	})
-	if strings.Contains(p, "available_skills") {
-		t.Fatalf("skills should be excluded without read tool: %q", p)
+// The exported skills formatter is SDK surface (pi index.ts exports
+// formatSkillsForPrompt), so both arms of its fileReadTool argument are pinned
+// here byte-for-byte, and the one-argument form must stay on pi's default.
+func TestFormatSkillsForPromptWithToolBothArms(t *testing.T) {
+	skills := []Skill{
+		{Name: "demo", Description: "d", FilePath: "/proj/.pi/skills/demo/SKILL.md"},
+		{Name: "hidden", Description: "no", FilePath: "x", DisableModelInvocation: true},
+	}
+	block := func(instruction string) string {
+		return "\n\nThe following skills provide specialized instructions for specific tasks.\n" +
+			instruction + "\n" +
+			"When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.\n" +
+			"\n<available_skills>\n  <skill>\n    <name>demo</name>\n    <description>d</description>\n" +
+			"    <location>/proj/.pi/skills/demo/SKILL.md</location>\n  </skill>\n</available_skills>"
+	}
+	wantRead := block("Use the read tool to load a skill's file when the task matches its description.")
+	wantBash := block("Use bash to load a skill's file when the task matches its description.")
+
+	if got := FormatSkillsForPromptWithTool(skills, SkillFileReadToolRead); got != wantRead {
+		t.Fatalf("read arm:\n got %q\nwant %q", got, wantRead)
+	}
+	if got := FormatSkillsForPromptWithTool(skills, SkillFileReadToolBash); got != wantBash {
+		t.Fatalf("bash arm:\n got %q\nwant %q", got, wantBash)
+	}
+	// pi's default argument: formatSkillsForPrompt(skills) is the read arm, and
+	// so is the Go zero value of the tool type.
+	if got := FormatSkillsForPrompt(skills); got != wantRead {
+		t.Fatalf("default arm:\n got %q\nwant %q", got, wantRead)
+	}
+	if got := FormatSkillsForPromptWithTool(skills, SkillFileReadTool("")); got != wantRead {
+		t.Fatalf("zero-value arm:\n got %q\nwant %q", got, wantRead)
+	}
+	// No visible skills stays empty on either arm.
+	hiddenOnly := []Skill{{Name: "hidden", Description: "no", FilePath: "x", DisableModelInvocation: true}}
+	if got := FormatSkillsForPromptWithTool(hiddenOnly, SkillFileReadToolBash); got != "" {
+		t.Fatalf("hidden-only skills should render nothing, got %q", got)
+	}
+}
+
+// Upstream 1d6dbf9e3 inverted this test's original premise: a bash-only tool
+// set no longer drops skills, it switches the block's instruction to bash.
+// pi picks the first of ["read", "bash"] present in the tool set — read wins
+// when both are — and omits the block only when neither is active.
+func TestSkillsPromptFollowsFileReadTool(t *testing.T) {
+	const (
+		readLine = "Use the read tool to load a skill's file when the task matches its description."
+		bashLine = "Use bash to load a skill's file when the task matches its description."
+	)
+	build := func(tools ...string) string {
+		return BuildSystemPrompt(BuildSystemPromptOptions{
+			SelectedTools: tools,
+			ToolSnippets:  ToolSnippets,
+			Cwd:           "/proj",
+			Skills:        []Skill{{Name: "demo", Description: "d", FilePath: "x"}},
+		})
+	}
+
+	for _, tc := range []struct {
+		name  string
+		tools []string
+		// want is the instruction line the skills block must carry; empty
+		// means the block must not appear at all.
+		want string
+	}{
+		{name: "bash only", tools: []string{"bash"}, want: bashLine},
+		{name: "read only", tools: []string{"read"}, want: readLine},
+		{name: "read wins over bash", tools: []string{"bash", "read"}, want: readLine},
+		{name: "neither", tools: []string{"edit", "write"}},
+		{name: "no tools at all", tools: []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			p := build(tc.tools...)
+			if tc.want == "" {
+				if strings.Contains(p, "available_skills") {
+					t.Fatalf("skills must be omitted without a file-reading tool: %q", p)
+				}
+				return
+			}
+			if !strings.Contains(p, "<name>demo</name>") {
+				t.Fatalf("skills block missing: %q", p)
+			}
+			if !strings.Contains(p, tc.want) {
+				t.Fatalf("skills block missing %q: %q", tc.want, p)
+			}
+			other := readLine
+			if tc.want == readLine {
+				other = bashLine
+			}
+			if strings.Contains(p, other) {
+				t.Fatalf("skills block carries the wrong instruction %q: %q", other, p)
+			}
+		})
 	}
 }
 

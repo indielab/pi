@@ -49,67 +49,319 @@ func genID() string {
 	return hex.EncodeToString(b)
 }
 
-// uuidv7 mirrors pi's uuidv7 (packages/agent/.../uuid.ts): a time-ordered v7
-// UUID (version nibble 7, RFC-4122 variant) in canonical 8-4-4-4-12 form.
-func uuidv7() string {
-	var random [16]byte
-	_, _ = rand.Read(random[:])
-	ts := time.Now().UnixMilli()
+const (
+	// maxUUIDv7Timestamp is pi's MAX_UUID_V7_TIMESTAMP: the largest millisecond
+	// timestamp a v7 UUID's 48-bit time field can carry.
+	maxUUIDv7Timestamp = int64(0xffffffffffff)
+	// maxUUIDv7Sequence is pi's MAX_SEQUENCE: the ceiling of the 41-bit counter
+	// packed into bytes 6-11.
+	maxUUIDv7Sequence = uint64(1)<<41 - 1
+)
 
-	uuidMu.Lock()
-	if ts > uuidLastTimestamp {
-		uuidSequence = uint32(random[6])<<24 | uint32(random[7])<<16 | uint32(random[8])<<8 | uint32(random[9])
-		uuidLastTimestamp = ts
-	} else {
-		uuidSequence++
-		if uuidSequence == 0 {
-			uuidLastTimestamp++
-		}
+// uuidv7Now mirrors pi's uuidv7() (packages/ai/src/utils/uuid.ts) with no
+// argument: a time-ordered v7 UUID (version nibble 7, RFC-4122 variant) in
+// canonical 8-4-4-4-12 form, stamped with the wall clock — never earlier than
+// the last clock-stamped id, so a clock that steps backwards cannot un-order
+// ids.
+//
+// It returns an error exactly where pi throws its RangeError and no id can be
+// produced: a system clock outside [1970-01-01, +10889] (unrepresentable in 48
+// bits — a machine whose RTC has been reset to a pre-1970 date reaches this)
+// or the process's 41-bit sequence exhausted. Both mean the generator cannot
+// mint a valid, unique id at all; the alternative would be silently emitting
+// duplicate session ids. The counter is seeded with 40 random bits, so
+// exhaustion needs upwards of 2^40 ids from one process; restarting the
+// process reseeds it.
+func uuidv7Now() (string, error) {
+	return nextUUIDv7(nil)
+}
+
+// mustUUIDv7 is the panicking convenience form of uuidv7Now, for the one caller
+// that cannot yet propagate an error (compaction.go's per-request routing
+// session id). Every caller that returns an error uses uuidv7Now instead, and
+// so should any new one.
+func mustUUIDv7() string {
+	id, err := uuidv7Now()
+	if err != nil {
+		panic(err)
 	}
-	seq := uuidSequence
-	last := uuidLastTimestamp
-	uuidMu.Unlock()
+	return id
+}
+
+// uuidv7At mirrors pi's uuidv7(timestampMs): a v7 UUID carrying timestampMs
+// verbatim, for "follower" ids that must sort at a known point in time. Unlike
+// uuidv7Now it does not advance — or read — the clock-stamped high-water mark,
+// so a follower id cannot drag ordinary ids forward.
+func uuidv7At(timestampMs int64) (string, error) {
+	return nextUUIDv7(&timestampMs)
+}
+
+// nextUUIDv7 is the shared generator. A nil timestampMs is pi's
+// `timestampMs === undefined`: read the clock, and floor the result at (and
+// store it as) the clock-stamped high-water mark.
+//
+// Go has no BigInt, and none is needed: the sequence is 41 bits and the
+// timestamp 48, both of which fit a uint64/int64 exactly.
+func nextUUIDv7(timestampMs *int64) (string, error) {
+	clockStamped := timestampMs == nil
+	requested := uuidNow()
+	if !clockStamped {
+		requested = *timestampMs
+	}
+	if requested < 0 || requested > maxUUIDv7Timestamp {
+		return "", fmt.Errorf(
+			"UUIDv7 timestamp must be an integer between 0 and %d, got %d: pass a Unix time in milliseconds (a value outside that range does not fit a v7 UUID's 48-bit time field)",
+			maxUUIDv7Timestamp, requested)
+	}
+
+	var random [16]byte
+	uuidRandom(random[:])
+	// Seed 40 of the 41 counter bits from random bytes 1-5, leaving at least
+	// 2^40 ordered values before exhaustion. Those bytes are then overwritten by
+	// the timestamp; the tail bytes 12-15 stay fresh on every id.
+	seed := uint64(random[1])<<32 |
+		uint64(random[2])<<24 |
+		uint64(random[3])<<16 |
+		uint64(random[4])<<8 |
+		uint64(random[5])
+
+	seq, effective, err := reserveUUIDv7(seed, requested, clockStamped)
+	if err != nil {
+		return "", err
+	}
 
 	var b [16]byte
-	b[0] = byte(last >> 40)
-	b[1] = byte(last >> 32)
-	b[2] = byte(last >> 24)
-	b[3] = byte(last >> 16)
-	b[4] = byte(last >> 8)
-	b[5] = byte(last)
-	b[6] = 0x70 | byte((seq>>28)&0x0f)
-	b[7] = byte((seq >> 20) & 0xff)
-	b[8] = 0x80 | byte((seq>>14)&0x3f)
-	b[9] = byte((seq >> 6) & 0xff)
-	b[10] = byte((seq&0x3f)<<2) | (random[10] & 0x03)
-	b[11] = random[11]
-	b[12] = random[12]
-	b[13] = random[13]
-	b[14] = random[14]
-	b[15] = random[15]
+	ts := uint64(effective)
+	for i := 0; i < 6; i++ {
+		b[i] = byte(ts >> ((5 - i) * 8))
+	}
+	b[6] = 0x70 | byte((seq>>37)&0x0f)
+	b[7] = byte((seq >> 29) & 0xff)
+	b[8] = 0x80 | byte((seq>>23)&0x3f)
+	b[9] = byte((seq >> 15) & 0xff)
+	b[10] = byte((seq >> 7) & 0xff)
+	b[11] = byte((seq&0x7f)<<1) | (random[11] & 0x01)
+	copy(b[12:], random[12:])
 
+	h := hex.EncodeToString(b[:])
+	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32], nil
+}
+
+// reserveUUIDv7 advances the process-wide generator state under uuidMu and
+// hands back the sequence value and effective timestamp for one id. seed
+// supplies the 40 random bits used the first (and only) time the counter is
+// seeded. Keeping the whole critical section in one function means the unlock
+// is a single defer rather than one per exit path.
+func reserveUUIDv7(seed uint64, requestedMs int64, clockStamped bool) (seq uint64, effectiveMs int64, err error) {
+	uuidMu.Lock()
+	defer uuidMu.Unlock()
+
+	effectiveMs = requestedMs
+	if clockStamped {
+		if effectiveMs < uuidLastOrdinaryTimestamp {
+			effectiveMs = uuidLastOrdinaryTimestamp
+		}
+		uuidLastOrdinaryTimestamp = effectiveMs
+	}
+	switch {
+	case !uuidSequenceSeeded:
+		uuidSequence = seed
+		uuidSequenceSeeded = true
+	case uuidSequence == maxUUIDv7Sequence:
+		return 0, 0, fmt.Errorf(
+			"UUIDv7 generator sequence exhausted after %d ids: restart the process to reseed the counter",
+			maxUUIDv7Sequence)
+	default:
+		uuidSequence++
+	}
+	return uuidSequence, effectiveMs, nil
+}
+
+var (
+	uuidMu sync.Mutex
+	// uuidLastOrdinaryTimestamp is pi's lastOrdinaryTimestamp, starting below
+	// every valid timestamp so the first clock-stamped id is never floored.
+	uuidLastOrdinaryTimestamp int64 = -1
+	// uuidSequence is pi's module-scoped `sequence`; uuidSequenceSeeded stands
+	// in for its `undefined` state, which a uint64 cannot express (0 is a
+	// reachable seed).
+	uuidSequence       uint64
+	uuidSequenceSeeded bool
+
+	// uuidNow and uuidRandom are the generator's clock and randomness. They are
+	// vars because that is the only seam pi's own tests use: uuid.test.ts drives
+	// the clock-rollback floor with vi.setSystemTime and pins which random byte
+	// reaches which uuid byte with vi.stubGlobal("crypto", ...). Production code
+	// must never reassign them.
+	uuidNow    = func() int64 { return time.Now().UnixMilli() }
+	uuidRandom = func(b []byte) { _, _ = rand.Read(b) }
+)
+
+// randomUUIDv4 returns a canonical random (version 4, RFC-4122 variant) UUID —
+// node's randomUUID(), which is what pi's session-manager mints.
+func randomUUIDv4() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	b[6] = 0x40 | b[6]&0x0f
+	b[8] = 0x80 | b[8]&0x3f
 	h := hex.EncodeToString(b[:])
 	return h[0:8] + "-" + h[8:12] + "-" + h[12:16] + "-" + h[16:20] + "-" + h[20:32]
 }
 
-var (
-	uuidMu            sync.Mutex
-	uuidLastTimestamp int64
-	uuidSequence      uint32
-)
-
-// genEntryID returns an 8-hex-char entry id not already present in used (pi's
-// generateId: randomUUID().slice(0,8), collision-checked, full-uuid fallback).
-// pi slices a v4 UUID (fully random first 8 chars); genID() yields the same
-// 8-random-hex-char shape, so we reuse it.
-func genEntryID(used map[string]bool) string {
+// genEntryID returns an 8-hex-char entry id for which taken reports false
+// (pi's generateId, session-manager.ts:221-228: randomUUID().slice(0,8),
+// collision-checked against a `{ has(id) }`, with a full randomUUID() as the
+// after-100-collisions fallback). pi slices a v4 UUID (fully random first 8
+// chars); genID() yields the same 8-random-hex-char shape, so we reuse it.
+func genEntryID(taken func(id string) bool) string {
 	for i := 0; i < 100; i++ {
 		id := genID()
-		if !used[id] {
+		if !taken(id) {
 			return id
 		}
 	}
-	return uuidv7()
+	return randomUUIDv4()
+}
+
+// readSessionEntries decodes a session file's JSONL lines into raw entries —
+// malformed lines skipped, as pi's parseSessionEntryLine does — and brings them
+// to CurrentSessionVersion in memory (pi migrateToCurrentVersion,
+// session-manager.ts:281-291). migrated reports whether any migration ran; pi
+// rewrites the file whenever it did (_loadEntries → _rewriteFile), which is the
+// caller's decision here because the read-only loaders never write.
+//
+// Numbers are kept as json.Number so a rewrite reproduces every value verbatim
+// rather than through float64. A line is one JSON value and nothing else:
+// JSON.parse throws on trailing bytes, so a line carrying two entries fused
+// together (an unterminated tail plus a later append, issue #8345) is dropped
+// whole rather than resurrecting its first entry as an orphan.
+func readSessionEntries(data []byte) (entries []map[string]any, migrated bool) {
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		dec := json.NewDecoder(strings.NewReader(line))
+		dec.UseNumber()
+		var entry map[string]any
+		if dec.Decode(&entry) != nil || entry == nil || dec.InputOffset() != int64(len(line)) {
+			continue
+		}
+		entries = append(entries, entry)
+	}
+	return entries, migrateSessionEntries(entries)
+}
+
+// sessionHeader returns the first session entry, pi's
+// `entries.find((e) => e.type === "session")`, or nil when the file has none.
+func sessionHeader(entries []map[string]any) map[string]any {
+	for _, e := range entries {
+		if e["type"] == "session" {
+			return e
+		}
+	}
+	return nil
+}
+
+// migrateSessionEntries runs pi's migrations in place and reports whether any
+// applied. As in pi's _loadEntries the migration is gated on a session header
+// (a headerless entry list is not a session file and is left alone), the
+// header's missing version means 1 (`header?.version ?? 1`: v1 files predate
+// the field), and files at or beyond CurrentSessionVersion are untouched.
+func migrateSessionEntries(entries []map[string]any) bool {
+	header := sessionHeader(entries)
+	if header == nil {
+		return false
+	}
+	version := 1
+	if v, ok := header["version"].(json.Number); ok {
+		if n, err := v.Int64(); err == nil {
+			version = int(n)
+		}
+	}
+	if version >= CurrentSessionVersion {
+		return false
+	}
+	if version < 2 {
+		migrateSessionV1ToV2(entries)
+	}
+	if version < 3 {
+		migrateSessionV2ToV3(entries)
+	}
+	return true
+}
+
+// migrateSessionV1ToV2 ports pi's migrateV1ToV2 (session-manager.ts:231-257):
+// v1 files are linear and carry no id/parentId, so every entry gets a fresh
+// entry id chained to the one before it, and a compaction's firstKeptEntryIndex
+// — an index into the file including the header — becomes the id of that entry.
+func migrateSessionV1ToV2(entries []map[string]any) {
+	taken := map[string]bool{}
+	var prevID any // nil: the first entry's parentId is null
+	for _, e := range entries {
+		if e["type"] == "session" {
+			e["version"] = 2
+			continue
+		}
+		id := genEntryID(func(id string) bool { return taken[id] })
+		taken[id] = true
+		e["id"] = id
+		e["parentId"] = prevID
+		prevID = id
+
+		if e["type"] != "compaction" {
+			continue
+		}
+		idx, ok := e["firstKeptEntryIndex"].(json.Number)
+		if !ok {
+			continue
+		}
+		if i, err := idx.Int64(); err == nil && i >= 0 && i < int64(len(entries)) {
+			if target := entries[i]; target["type"] != "session" {
+				if targetID, ok := target["id"].(string); ok {
+					e["firstKeptEntryId"] = targetID
+				}
+			}
+		}
+		delete(e, "firstKeptEntryIndex")
+	}
+}
+
+// migrateSessionV2ToV3 ports pi's migrateV2ToV3 (session-manager.ts:260-275):
+// the hookMessage role was renamed custom.
+func migrateSessionV2ToV3(entries []map[string]any) {
+	for _, e := range entries {
+		if e["type"] == "session" {
+			e["version"] = 3
+			continue
+		}
+		if e["type"] != "message" {
+			continue
+		}
+		if msg, ok := e["message"].(map[string]any); ok && msg["role"] == "hookMessage" {
+			msg["role"] = "custom"
+		}
+	}
+}
+
+// rewriteSessionFile replaces path's contents with entries, one JSON object per
+// line (pi _rewriteFile, session-manager.ts:990-1000: open "w", write every
+// entry). It runs only after a migration, so the file is already known to be a
+// pi session.
+func rewriteSessionFile(path string, entries []map[string]any) error {
+	var buf strings.Builder
+	for _, e := range entries {
+		line, err := json.Marshal(e)
+		if err != nil {
+			return fmt.Errorf("cannot re-encode migrated session entry for %s: %w", path, err)
+		}
+		buf.Write(line)
+		buf.WriteByte('\n')
+	}
+	if err := os.WriteFile(path, []byte(buf.String()), 0o644); err != nil {
+		return fmt.Errorf("cannot rewrite migrated session file: %w (check that %s is writable, or resume a different session)", err, path)
+	}
+	return nil
 }
 
 func isoNow() string {
@@ -161,7 +413,10 @@ func StartSession(cwd string, model *ai.Model, thinkingLevel ...string) (*Sessio
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	id := uuidv7()
+	id, err := uuidv7Now()
+	if err != nil {
+		return nil, err
+	}
 	ts := isoNow()
 	fileTS := strings.NewReplacer(":", "-", ".", "-").Replace(ts)
 	path := filepath.Join(dir, fileTS+"_"+id+".jsonl")
@@ -193,40 +448,42 @@ func StartSession(cwd string, model *ai.Model, thinkingLevel ...string) (*Sessio
 }
 
 // ResumeSession opens an existing session file for appending, porting pi's
-// SessionManager.setSessionFile resume semantics (session-manager.ts:792-822):
-// entries load from the file, the leaf is the file's last entry (new entries
-// branch from it), and the manager is marked flushed so every subsequent entry
-// appends to the file immediately (no withhold-until-assistant buffering).
+// SessionManager.setSessionFile resume semantics (session-manager.ts:898-954):
+// entries load from the file and are migrated to the current version (a v1/v2
+// file is rewritten in place, as pi's _loadEntries does), the leaf is the
+// file's last entry (new entries branch from it), and the manager is marked
+// flushed so every subsequent entry appends to the file immediately (no
+// withhold-until-assistant buffering).
 func ResumeSession(path string) (*SessionRecorder, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	entries, migrated := readSessionEntries(data)
 	var id, lastID string
 	byID := map[string]bool{}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, e := range entries {
+		entryID, _ := e["id"].(string)
+		if e["type"] == "session" {
+			if id == "" { // pi: entries.find(e => e.type === "session")
+				id = entryID
+			}
 			continue
 		}
-		var head struct {
-			Type string `json:"type"`
-			ID   string `json:"id"`
-		}
-		if json.Unmarshal([]byte(line), &head) != nil {
-			continue
-		}
-		if head.Type == "session" {
-			id = head.ID
-			continue
-		}
-		if head.ID != "" {
-			byID[head.ID] = true
-			lastID = head.ID
+		if entryID != "" {
+			byID[entryID] = true
+			lastID = entryID
 		}
 	}
 	if id == "" {
 		return nil, fmt.Errorf("not a pi session file (no session header): %s", path)
+	}
+	// Both writes below happen only AFTER the session header validates — pi
+	// never writes to a file that is not a pi session.
+	if migrated {
+		if err := rewriteSessionFile(path, entries); err != nil {
+			return nil, err
+		}
 	}
 	f, err := os.OpenFile(path, os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
@@ -234,13 +491,12 @@ func ResumeSession(path string) (*SessionRecorder, error) {
 	}
 	// Repair an unterminated tail (pi 0b5ee5d8b, issue #8345): a file whose last
 	// line has no trailing newline would have the next appended entry fused onto
-	// it, losing both. pi repairs inside its shared loader, but only AFTER the
-	// session header validates — a file that is not a pi session is never written
-	// to. The port keeps that ordering by repairing below the header check above;
-	// the read-only loaders (readSessionInfo, LoadSessionMessages,
-	// LoadSessionTree) split on "\n" and already tolerate an unterminated tail,
-	// so appending is the only path where the corruption can occur.
-	if len(data) > 0 && data[len(data)-1] != '\n' {
+	// it, losing both. pi repairs inside its shared loader, but only after the
+	// header check; the port keeps that ordering. The read-only loaders
+	// (readSessionInfo, LoadSessionMessages, LoadSessionTree) split on "\n" and
+	// already tolerate an unterminated tail, so appending is the only path where
+	// the corruption can occur. A rewritten file is newline-terminated already.
+	if !migrated && len(data) > 0 && data[len(data)-1] != '\n' {
 		if _, err := f.WriteString("\n"); err != nil {
 			f.Close()
 			return nil, err
@@ -324,7 +580,7 @@ func isAssistantEntry(entry map[string]any) bool {
 }
 
 func (r *SessionRecorder) appendEntry(entry map[string]any) string {
-	id := genEntryID(r.byID)
+	id := genEntryID(func(id string) bool { return r.byID[id] })
 	r.byID[id] = true
 	entry["id"] = id
 	if r.lastID == "" {

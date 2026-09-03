@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/sky-valley/pi/agent"
@@ -52,16 +51,20 @@ type SessionTree struct {
 	LeafID string
 }
 
-// LoadSessionTree parses a JSONL session file into its entry tree.
+// LoadSessionTree parses a JSONL session file into its entry tree. A v1/v2
+// file is migrated in memory first (pi migrateToCurrentVersion via
+// readSessionEntries); unlike pi's SessionManager this read-only loader never
+// rewrites the file — ResumeSession, the append path, does.
 func LoadSessionTree(path string) (*SessionTree, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+	entries, _ := readSessionEntries(data)
 	t := &SessionTree{byID: map[string]*SessionEntry{}, children: map[string][]*SessionEntry{}}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	for _, entry := range entries {
+		line, err := json.Marshal(entry)
+		if err != nil {
 			continue
 		}
 		var head struct {
@@ -81,7 +84,7 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			CustomType       string            `json:"customType"`
 			Content          json.RawMessage   `json:"content"`
 		}
-		if json.Unmarshal([]byte(line), &head) != nil {
+		if json.Unmarshal(line, &head) != nil {
 			continue
 		}
 		if head.Type == "session" {

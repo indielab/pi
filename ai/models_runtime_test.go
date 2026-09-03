@@ -1541,3 +1541,61 @@ func headerValue(t *testing.T, headers ProviderHeaders, name string) string {
 	}
 	return *value
 }
+
+// StreamDeferred is the streaming form of redeeming a handle, and FetchDeferred
+// is defined as `streamDeferred(...).result()` (upstream b37834b69). Callers
+// that want the events — a durable runner rendering progress while it polls —
+// must be able to observe them, and both entry points must apply auth and
+// refuse an incapable provider identically, since one is now built on the other.
+func TestModelsStreamDeferred(t *testing.T) {
+	var cancelled []DeferredHandle
+	var cancelOpts []*DeferredCancelOptions
+	m := modelsWithEnv(map[string]string{"K": "key"}, nil)
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:     "deferrer",
+		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("deferrer", "K")},
+		Models: []*Model{{Provider: "deferrer", ID: "m", Api: "api-a"}},
+		API:    ptrStreams(deferredStreams(&cancelled, &cancelOpts)),
+	}))
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:     "plain",
+		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("plain", "K")},
+		Models: []*Model{{Provider: "plain", ID: "m", Api: "api-a"}},
+		API:    ptrStreams(capture(new(*Model), new(*StreamOptions))),
+	}))
+
+	handle := DeferredHandle{Provider: "deferrer", ModelID: "m", Api: "api-a", ID: "resp-1"}
+	stream := m.StreamDeferred(context.Background(), m.GetModel("deferrer", "m"), handle, nil)
+
+	// The events, not just the final message: that is the whole point of the
+	// entry point b37834b69 added.
+	sawDone := false
+	for event := range stream.Events() {
+		if event.Type == EventDone {
+			sawDone = true
+			if text := event.Message.Content[0].(TextContent).Text; text != "resp-1:key" {
+				t.Fatalf("done message = %q, want the handle id and the resolved api key", text)
+			}
+		}
+	}
+	if !sawDone {
+		t.Fatalf("StreamDeferred produced no done event")
+	}
+
+	// Resolution failures still arrive in-band on the stream, as they do on the
+	// FetchDeferred path built over it.
+	res := m.StreamDeferred(context.Background(), m.GetModel("plain", "m"), handle, nil).Result()
+	if res.StopReason != StopError || !strings.Contains(res.ErrorMessage, "does not support deferred responses") {
+		t.Fatalf("unsupported provider must fail in-band, got %q", res.ErrorMessage)
+	}
+	// FetchDeferred is defined over StreamDeferred, so the two cannot report a
+	// resolution failure differently — not by stop reason, not by message.
+	fetched := m.FetchDeferred(context.Background(), m.GetModel("plain", "m"), handle, nil)
+	if fetched.StopReason != res.StopReason || fetched.ErrorMessage != res.ErrorMessage {
+		t.Fatalf("FetchDeferred reported (%q, %q), StreamDeferred reported (%q, %q); want the same failure", fetched.StopReason, fetched.ErrorMessage, res.StopReason, res.ErrorMessage)
+	}
+	res = m.StreamDeferred(context.Background(), &Model{Provider: "nope", ID: "m"}, handle, nil).Result()
+	if !strings.Contains(res.ErrorMessage, "Unknown provider") {
+		t.Fatalf("unknown provider should say so, got %q", res.ErrorMessage)
+	}
+}
