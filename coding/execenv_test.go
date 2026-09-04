@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -281,6 +282,45 @@ func TestLocalEnvExec(t *testing.T) {
 	})
 	if err != nil || res.Stdout != "explicit" {
 		t.Fatalf("explicit env must win, got %q (%v)", res.Stdout, err)
+	}
+}
+
+// A process killed by a signal reports pi's conventional 128 + signal number,
+// not success and not Go's -1 (upstream c2d3dc55b, pi#8992). Skipped on
+// Windows exactly as upstream skips it on win32.
+//
+// The command signals `$$` — the shell we wait on — rather than its process
+// group, so this exercises the wait status of the child itself and never
+// touches killProcessTree, which only runs when the context cancels. SIGKILL
+// pins upstream's own golden of 137; SIGTERM is here so the assertion is the
+// 128 + signum arithmetic rather than a single memorized constant.
+func TestLocalEnvExecSignalKilledExitCode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("POSIX signals; upstream skips this case on win32")
+	}
+	if _, _, _, err := getShellConfig(); err != nil {
+		t.Skipf("no shell available: %v", err)
+	}
+	env := NewLocalEnv(t.TempDir())
+
+	tests := []struct {
+		name    string
+		command string
+		want    int
+	}{
+		{name: "SIGKILL", command: "kill -9 $$", want: 128 + 9},
+		{name: "SIGTERM", command: "kill -15 $$", want: 128 + 15},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			res, err := env.Exec(context.Background(), tt.command, nil)
+			if err != nil {
+				t.Fatalf("a signal-killed command is a result, not an error: %v", err)
+			}
+			if res.ExitCode != tt.want {
+				t.Fatalf("ExitCode = %d, want %d", res.ExitCode, tt.want)
+			}
+		})
 	}
 }
 

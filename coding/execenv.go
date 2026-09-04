@@ -382,7 +382,7 @@ func (e *LocalEnv) Exec(ctx context.Context, command string, options *ShellExecO
 		if errors.As(runErr, &exitErr) {
 			// A command that ran and failed is a result, not an error — pi
 			// reports exitCode in the success arm of its Result.
-			result.ExitCode = exitErr.ExitCode()
+			result.ExitCode = exitCode(exitErr.ProcessState)
 			return result, nil
 		}
 		return result, runErr
@@ -393,6 +393,31 @@ func (e *LocalEnv) Exec(ctx context.Context, command string, options *ShellExecO
 // Cleanup implements Shell. LocalEnv holds no shell resources between calls —
 // every Exec starts and reaps its own process — so there is nothing to release.
 func (e *LocalEnv) Cleanup() error { return nil }
+
+// exitCode renders a finished process's wait status the way pi does (upstream
+// c2d3dc55b, pi#8992):
+//
+//	code ?? (exitSignal ? 128 + signals[exitSignal] : 1)
+//
+// A process killed by a signal — the OOM killer, say — has no exit code of its
+// own, so it takes the conventional 128 + signal number rather than being
+// mistaken for a clean exit. Node reports that case as a null code plus a
+// signal name; Go folds both into (*os.ProcessState).ExitCode, which returns
+// -1 when the process was signalled, hence the explicit second look.
+//
+// The trailing 1 is pi's "neither code nor signal" fallback. Here it is only
+// the default the compiler requires: this runs on an *exec.ExitError, so the
+// process has certainly exited, and an exited process's status is either an
+// exit code or a terminating signal.
+func exitCode(state *os.ProcessState) int {
+	if code := state.ExitCode(); code >= 0 {
+		return code
+	}
+	if signal, ok := exitSignalNumber(state); ok {
+		return 128 + signal
+	}
+	return 1
+}
 
 // execEnviron builds the child environment from pi's inheritEnv/env pair:
 // inherit by default, with explicit entries overriding inherited ones.
