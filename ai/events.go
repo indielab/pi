@@ -24,20 +24,31 @@ const (
 // struct (Go has no discriminated unions) carrying the union of fields used by
 // the variants documented in pi's AssistantMessageEvent.
 //
-// The protocol (pi types.ts AssistantMessageEvent, rewritten by 5c6655e76):
-// a successful stream emits "start" before any partial update and terminates
-// with "done". A stream may terminate directly with "error" when request setup
-// fails before generation starts — no "start" at all; after "start", failures
-// also terminate with "error" (final message with stopReason "error"/"aborted"
-// and ErrorMessage). Updates and "done" never appear before "start".
+// The protocol (pi types.ts AssistantMessageEvent, rewritten by 5c6655e76 and
+// amended by 8b5899dce): a successful stream emits "start" before any partial
+// update and terminates with "done". A stream may terminate directly with
+// "error" when request setup fails before generation starts — no "start" at
+// all; after "start", failures also terminate with "error" (final message with
+// stopReason "error"/"aborted" and ErrorMessage). Updates and "done" never
+// appear before "start".
+//
+// pi adds one clause the port renders differently: "Direct streamSimple() calls
+// throw synchronously when request auth is missing." Under G3 (ai/stream.go:90)
+// this port raises no setup failure out of band — a StreamSimple* call whose
+// request auth is missing returns a stream carrying exactly that one terminal
+// "error" event and no "start". What the port does keep from the eager throw is
+// its precedence: the auth failure preempts every other setup failure on the
+// StreamSimple path.
 //
 // Text and thinking blocks are empty when their *_start event is emitted and
 // grow only through their *_delta events until the authoritative *_end.
-// Redacted thinking may be complete at start and emit no deltas. A streaming
-// tool call starts with EMPTY arguments and emits its full raw JSON through
-// toolcall_delta; a provider that starts with complete arguments must emit a
-// cumulative delta prefix that parses to those arguments before any later
-// argument delta.
+// Redacted thinking may be complete at start and emit no deltas. Tool-call
+// arguments at toolcall_start are provider-specific; toolcall_delta carries
+// subsequent JSON updates. (Until 8b5899dce the contract was stricter — a tool
+// call had to start EMPTY and stream its full raw JSON, and a provider holding
+// complete arguments owed a cumulative delta prefix that parsed to them. The
+// relaxation only widens what a provider may emit; a provider that still starts
+// empty stays conformant.)
 //
 // Divergence: pi's `partial` is one shared live message that every event points
 // at, so a consumer that buffers events and reads `partial` afterwards sees the

@@ -52,6 +52,24 @@ func StreamSimpleGoogle(ctx context.Context, model *ai.Model, req ai.Context, op
 		g.StreamOptions = opts.StreamOptions
 		g.ToolChoice = string(opts.ToolChoice)
 	}
+	// pi asserts the api key at the very top of streamSimple, ahead of the base
+	// options and of everything StreamGoogle does (upstream 8b5899dce):
+	//
+	//	const apiKey = options?.apiKey;
+	//	if (!apiKey) throw new Error(`No API key for provider: ${model.provider}`);
+	//
+	// A plain check, with none of the header escape hatches the anthropic and
+	// openai adapters grant — do not unify them. Upstream raises it by throwing;
+	// under G3 (ai/stream.go:90) the port renders that as the stream's single
+	// terminal error event. What carries over is the PRECEDENCE: an eager throw
+	// preempts every other setup failure on this path — the thinking-level
+	// mapping below, and inside StreamGoogle the custom-fetch guard that
+	// deliberately precedes its own in-stream key check. That in-stream ordering
+	// is pi's for the full Stream path, which 8b5899dce did not touch, so it
+	// stays exactly as it is.
+	if g.APIKey == "" {
+		return ai.ErrorStream(model, fmt.Errorf("No API key for provider: %s", model.Provider))
+	}
 	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens),
 	// samplingParams = model defaults with the request's merged over them. Google
 	// ignores samplingParams when building its body, exactly like pi.

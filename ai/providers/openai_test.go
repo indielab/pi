@@ -1717,15 +1717,18 @@ func TestOpenAIToolCallNameNullishCoalescing(t *testing.T) {
 	}
 }
 
-// TestOpenAIGrammarToolCallStartsWithEmptyArguments pins pi 5c6655e76: a custom
-// (grammar) tool call is now born with `arguments: {}` instead of
-// `{[inputProperty]: ""}`, at both sites that switch a block to the custom-tool
-// shape — the freshly created block, and a later delta that reveals a block
-// already created as an ordinary function call is really a custom one. The
-// placeholder property was visible to anything reading the partial before the
-// first input arrived, which made a call with no input yet indistinguishable
-// from one whose input really was the empty string.
-func TestOpenAIGrammarToolCallStartsWithEmptyArguments(t *testing.T) {
+// TestOpenAIGrammarToolCallStartsWithEmptyInputProperty pins pi 8b5899dce,
+// which REVERSED 5c6655e76: a custom (grammar) tool call is born with
+// `arguments: {[inputProperty]: ""}` again, not `{}`, at both sites that switch
+// a block to the custom-tool shape — the freshly created block, and a later
+// delta that reveals a block already created as an ordinary function call is
+// really a custom one. Consumers read the partial's arguments by property, so
+// the property has to be present (as the empty string) from the toolcall_start
+// event onwards rather than appearing with the first input delta.
+//
+// The property is the grammar tool's single required string property, falling
+// back to "input" for a custom call naming a tool the request never declared.
+func TestOpenAIGrammarToolCallStartsWithEmptyInputProperty(t *testing.T) {
 	tests := []struct {
 		name string
 		// deltas are the tool_call delta objects, one per SSE chunk.
@@ -1733,21 +1736,24 @@ func TestOpenAIGrammarToolCallStartsWithEmptyArguments(t *testing.T) {
 		// inspect names the event whose partial carries the just-switched block,
 		// by type and 1-based occurrence: the start event when the block is
 		// custom from birth, the delta event for the switching chunk otherwise.
-		// Not simply the last event of its type — closing the buffer at
-		// end of stream legitimately materializes {property: ""}.
+		// Not simply the last event of its type — a later input delta
+		// legitimately fills the property in.
 		inspect    ai.EventType
 		occurrence int
+		// want is the arguments JSON the inspected event must carry.
+		want string
 	}{
 		{
 			name:       "custom from the first delta",
 			deltas:     []string{`{"index":0,"id":"ctc_1","type":"custom","custom":{"name":"gram","input":"SEL"}}`},
 			inspect:    ai.EventToolCallStart,
 			occurrence: 1,
+			want:       `{"query":""}`,
 		},
 		{
 			// A function delta creates the block with real arguments; the custom
-			// delta that follows switches it and must clear them to {}, not to the
-			// placeholder property.
+			// delta that follows switches it and must replace them with the
+			// placeholder property, not clear them to {}.
 			name: "custom revealed by a later delta",
 			deltas: []string{
 				`{"index":0,"id":"ctc_1","type":"function","function":{"name":"gram","arguments":"{\"query\":\"x\"}"}}`,
@@ -1755,6 +1761,16 @@ func TestOpenAIGrammarToolCallStartsWithEmptyArguments(t *testing.T) {
 			},
 			inspect:    ai.EventToolCallDelta,
 			occurrence: 2,
+			want:       `{"query":""}`,
+		},
+		{
+			// pi's `grammarToolInputProperties.get(name) ?? "input"`: a made-up
+			// custom tool still gets somewhere to stash its input.
+			name:       "unknown custom tool falls back to input",
+			deltas:     []string{`{"index":0,"id":"ctc_1","type":"custom","custom":{"name":"ghost","input":"SEL"}}`},
+			inspect:    ai.EventToolCallStart,
+			occurrence: 1,
+			want:       `{"input":""}`,
 		},
 	}
 	for _, tt := range tests {
@@ -1797,56 +1813,109 @@ func TestOpenAIGrammarToolCallStartsWithEmptyArguments(t *testing.T) {
 			if seen < tt.occurrence {
 				t.Fatalf("saw %d %s events, want at least %d", seen, tt.inspect, tt.occurrence)
 			}
-			if args != `{}` {
-				t.Fatalf("arguments at %s #%d = %s, want {}", tt.inspect, tt.occurrence, args)
+			if args != tt.want {
+				t.Fatalf("arguments at %s #%d = %s, want %s", tt.inspect, tt.occurrence, args, tt.want)
 			}
 		})
 	}
 }
 
-// TestOpenAIStreamSimpleMissingKeySurfacesOnTheStream pins pi 5c6655e76, which
-// removed the eager API-key assertion from streamSimple in the openai-completions
-// and openai-responses adapters. Upstream used to THROW out of streamSimple
-// before a stream existed; the key is now checked once, where the request is
-// built, and a missing one arrives as this stream's terminal error event. The Go
-// port never had the eager check — StreamSimple* only map options and hand off
-// to Stream*, which resolves the key inside the stream goroutine — so this pins
-// behavior the port already had rather than a change.
+// TestOpenAIStreamSimpleMissingKeySurfacesOnTheStream pins pi 8b5899dce, which
+// restored the eager API-key assertion at the top of streamSimple in the
+// openai-completions and openai-responses adapters:
+//
+//	getClientApiKey(model.provider, options?.apiKey, options?.headers);
+//
+// a call kept only for its throw. Upstream raises it SYNCHRONOUSLY, before a
+// stream exists. Under the port's G3 ruling (ai/stream.go:90) a setup failure pi
+// throws is rendered as a terminal "error" event on the returned stream instead,
+// so StreamSimple* keeps its single return value; what carries over from the
+// eager throw is its PRECEDENCE — a missing key preempts every other setup
+// failure on the path, and still arrives as one terminal error event with no
+// "start" before it.
+//
+// The precedence sub-case supplies a tool whose grammar config is unusable.
+// Grammar tools resolve before the request body (openai.go:145,
+// openai_responses.go:312), so with a key present that request fails with the
+// grammar message — asserted here as a control, so the precedence assertion
+// cannot pass vacuously. Without a key the key error must win.
 func TestOpenAIStreamSimpleMissingKeySurfacesOnTheStream(t *testing.T) {
-	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	tests := []struct {
+	// badGrammarTool asks for grammar-constrained sampling without offering any
+	// variant the provider could use, which fails grammarToolInputProperties.
+	badGrammarTool := ai.Tool{
+		Name: "bad", Description: "bad tool",
+		Parameters:          ai.Object(ai.Prop("query", ai.String())),
+		ConstrainedSampling: &ai.ConstrainedSamplingConfig{Type: ai.ConstrainedSamplingGrammar},
+	}
+	const grammarErr = `Tool "bad" cannot use grammar constrained sampling: no supported grammar variant was provided.`
+
+	apis := []struct {
 		name   string
-		stream func() *ai.AssistantMessageEventStream
+		api    ai.Api
+		stream func(*ai.Model, ai.Context, *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream
+	}{
+		{name: "openai-completions", api: ai.APIOpenAICompletions, stream: func(m *ai.Model, req ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			return StreamSimpleOpenAICompletions(context.Background(), m, req, o)
+		}},
+		{name: "openai-responses", api: ai.APIOpenAIResponses, stream: func(m *ai.Model, req ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			return StreamSimpleOpenAIResponses(context.Background(), m, req, o)
+		}},
+	}
+	scenarios := []struct {
+		name string
+		req  ai.Context
+		// control is the error the same request reports when a key IS supplied,
+		// empty when nothing else can fail before the request goes out.
+		control string
 	}{
 		{
-			name: "openai-completions",
-			stream: func() *ai.AssistantMessageEventStream {
-				model := &ai.Model{ID: "m", Api: ai.APIOpenAICompletions, Provider: "custom", MaxTokens: 16}
-				return StreamSimpleOpenAICompletions(context.Background(), model, req, &ai.SimpleStreamOptions{})
-			},
+			name: "no other setup failure",
+			req:  ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
 		},
 		{
-			name: "openai-responses",
-			stream: func() *ai.AssistantMessageEventStream {
-				model := &ai.Model{ID: "m", Api: ai.APIOpenAIResponses, Provider: "custom", MaxTokens: 16}
-				return StreamSimpleOpenAIResponses(context.Background(), model, req, &ai.SimpleStreamOptions{})
-			},
+			name:    "preempts a grammar tool failure",
+			req:     ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{badGrammarTool}},
+			control: grammarErr,
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			stream := tt.stream()
-			var types []ai.EventType
-			for ev := range stream.Events() {
-				types = append(types, ev.Type)
-			}
-			if len(types) != 1 || types[0] != ai.EventError {
-				t.Fatalf("events = %v, want a single error event", types)
-			}
-			final := stream.Result()
-			if final.StopReason != ai.StopError || final.ErrorMessage != "No API key for provider: custom" {
-				t.Fatalf("final = stop %s, err %q", final.StopReason, final.ErrorMessage)
-			}
-		})
+
+	// drain returns the event types seen and the final message.
+	drain := func(stream *ai.AssistantMessageEventStream) ([]ai.EventType, *ai.AssistantMessage) {
+		var types []ai.EventType
+		for ev := range stream.Events() {
+			types = append(types, ev.Type)
+		}
+		return types, stream.Result()
+	}
+
+	for _, api := range apis {
+		for _, sc := range scenarios {
+			t.Run(api.name+"/"+sc.name, func(t *testing.T) {
+				newModel := func() *ai.Model {
+					return &ai.Model{
+						ID: "m", Api: api.api, Provider: "custom", MaxTokens: 16,
+						Compat: json.RawMessage(`{"supportsOpenAIGrammarTools":true}`),
+					}
+				}
+
+				if sc.control != "" {
+					// Control: with a key, the other setup failure is reachable.
+					_, final := drain(api.stream(newModel(), sc.req, &ai.SimpleStreamOptions{
+						StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}},
+					}))
+					if final.ErrorMessage != sc.control {
+						t.Fatalf("with a key: error = %q, want %q (the precedence check would be vacuous)", final.ErrorMessage, sc.control)
+					}
+				}
+
+				types, final := drain(api.stream(newModel(), sc.req, &ai.SimpleStreamOptions{}))
+				if len(types) != 1 || types[0] != ai.EventError {
+					t.Fatalf("events = %v, want a single error event", types)
+				}
+				if final.StopReason != ai.StopError || final.ErrorMessage != "No API key for provider: custom" {
+					t.Fatalf("final = stop %s, err %q", final.StopReason, final.ErrorMessage)
+				}
+			})
+		}
 	}
 }

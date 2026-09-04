@@ -287,6 +287,37 @@ func getCacheControl(model *ai.Model, retention ai.CacheRetention, env map[strin
 
 func isOAuthToken(apiKey string) bool { return strings.Contains(apiKey, "sk-ant-oat") }
 
+// hasAnthropicAuthHeader reports whether the request headers already carry the
+// credential, which is the escape hatch in pi's assertRequestAuth
+// (anthropic-messages.ts:301, upstream 129eb460c):
+//
+//	if (apiKey) return;
+//	if (hasHeader(headers, "authorization") || hasHeader(headers, "x-api-key")
+//	    || hasHeader(headers, "cf-aig-authorization")) return;
+//	throw new Error(`No API key for provider: ${provider}`);
+//
+// This is header-OWNED auth: pi's resolver hands the adapter an Authorization
+// bearer for ANTHROPIC_AUTH_TOKEN and a cf-aig-authorization for a Cloudflare AI
+// Gateway credential, with no apiKey at all, and a consumer may pass any of the
+// three itself. Only these three names count, and only for this API — the openai
+// adapters take two (clientAPIKey) and google takes none, so the three gates stay
+// separate.
+//
+// pi's hasHeader lowercases the name it compares and requires `value !== null &&
+// value.trim().length > 0`, so a deletion marker (nil here) and a blank value are
+// not credentials.
+func hasAnthropicAuthHeader(headers ai.ProviderHeaders) bool {
+	for name, value := range headers {
+		switch strings.ToLower(name) {
+		case "authorization", "x-api-key", "cf-aig-authorization":
+			if value != nil && strings.TrimSpace(*value) != "" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // StreamSimpleAnthropic maps unified reasoning to AnthropicOptions then streams.
 func StreamSimpleAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 	var base ai.StreamOptions
@@ -480,7 +511,21 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 		if model.Provider == "anthropic" && apiKey == "" {
 			authToken = ai.ProviderEnvValue(ai.AnthropicAuthTokenEnv, opts.Env)
 		}
-		if apiKey == "" && authToken == "" {
+		// pi's gate is assertRequestAuth (see hasAnthropicAuthHeader): the api key,
+		// or the credential already sitting in a request header. Upstream 8b5899dce
+		// re-attached that same assertion eagerly at the top of streamSimple, where
+		// it throws before a stream exists; under G3 (ai/stream.go:90) the port
+		// renders a thrown setup failure as the stream's single terminal error
+		// event, and this gate is the first thing on both the Stream and the
+		// StreamSimple path — so the eager assertion's PRECEDENCE is already what
+		// the port has, and only its acceptance set had to be widened.
+		//
+		// The authToken arm is the port's own, and has no counterpart in pi's
+		// adapter: pi resolves ANTHROPIC_AUTH_TOKEN one layer up into the
+		// Authorization header the arm above accepts, whereas this adapter reads
+		// the env value directly so the compat path (ai.StreamSimple, which leaves
+		// APIKey empty for it) authenticates too.
+		if apiKey == "" && authToken == "" && !hasAnthropicAuthHeader(opts.Headers) {
 			fail(fmt.Errorf("No API key for provider: %s", model.Provider))
 			return
 		}
@@ -1677,9 +1722,15 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// branchKey — the credential the branches below may emit — is empty, which
 	// is what pi's createClient sees. The OAuth sniff is unaffected: the caller
 	// computed `oauth` from the real apiKey and already excludes this provider.
+	// The bundle is built only from a real key. pi's resolver returns it when it
+	// HAS a gateway credential; with none it returns nothing and the request is
+	// header-owned, so there is no bearer to send and no x-api-key/Authorization
+	// to suppress. Since 8b5899dce widened the gate to accept header-owned auth,
+	// an empty key reaches here, and building the bundle from it would synthesize
+	// `cf-aig-authorization: "Bearer "` — a credential pi never emits.
 	branchKey := apiKey
 	var providerAuthHeaders ai.ProviderHeaders
-	if model.Provider == "cloudflare-ai-gateway" {
+	if model.Provider == "cloudflare-ai-gateway" && apiKey != "" {
 		providerAuthHeaders = cloudflareAIGatewayAuthHeaders(apiKey)
 		branchKey = ""
 	}
@@ -1695,13 +1746,26 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	case authToken != "":
 		o.set("authorization", "Bearer "+authToken)
 	case model.Provider == "github-copilot":
-		o.set("authorization", "Bearer "+branchKey)
+		// pi: `authToken: apiKey ?? null`. No key means no Authorization header
+		// at all — the request rides on whatever header owns its auth — not an
+		// empty bearer.
+		if branchKey != "" {
+			o.set("authorization", "Bearer "+branchKey)
+		}
 	case oauth:
 		o.set("authorization", "Bearer "+branchKey)
 		o.set("user-agent", "claude-cli/"+claudeCodeVersion)
 		o.set("x-app", "cli")
 	default:
-		o.set("x-api-key", branchKey)
+		// pi hands the SDK `apiKey: apiKey ?? null`, and a null one sends no
+		// x-api-key — its "API key or header-owned auth" branch. A key that
+		// reaches createClient is never the empty string (assertRequestAuth
+		// rejects a falsy one unless a header carries the credential), so an
+		// empty branchKey here is pi's null: emit nothing and let the header
+		// that authorized the request do the work.
+		if branchKey != "" {
+			o.set("x-api-key", branchKey)
+		}
 		// pi anthropic.ts:496-497: cacheSessionId is dropped when the effective
 		// cacheRetention is "none", so no session-affinity header is sent.
 		if opts.SessionID != "" && compat.sendSessionAffinityHeaders &&

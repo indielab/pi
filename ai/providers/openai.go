@@ -278,17 +278,18 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 		// The "input" fallback should never be taken; it only gives a made-up tool
 		// we know nothing about somewhere to stash its input.
 		//
-		// The arguments start EMPTY, not at {property: ""} (pi 5c6655e76): until
-		// the first input arrives there is nothing to report, and the placeholder
-		// made a call with no input yet read exactly like one whose input was the
-		// empty string. The property appears with the first appendGrammarInput.
+		// The arguments start at {property: ""}, not empty (pi 8b5899dce, which
+		// reversed 5c6655e76): consumers read a partial tool call's arguments by
+		// property, so the property is present — holding the empty string — from
+		// the toolcall_start event onwards rather than materializing with the
+		// first appendGrammarInput.
 		startGrammarBuffer := func(b *blockBuilder) {
 			property, ok := grammarProps[b.toolName]
 			if !ok {
 				property = "input"
 			}
 			b.grammar = newGrammarInputBuffer(property)
-			b.args = map[string]any{}
+			b.args = map[string]any{property: ""}
 			b.partialJSON.Reset()
 		}
 		// grammarInput is the raw input accumulated on a custom tool call so far.

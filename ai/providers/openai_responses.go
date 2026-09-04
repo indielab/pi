@@ -499,19 +499,10 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 		}
 		// createSlot appends a new block for item and records the slot with its
 		// stable contentIndex, emitting the matching *_start event. Returns nil
-		// for item types that have no streaming block. The error is a custom
-		// tool call's seeded input failing to synthesize a JSON delta. No seed
-		// can actually fail it — the buffer it appends to was created two lines
-		// above, so neither the closed nor the monotonicity check can trip — but
-		// the synthesizer is the same one the streaming path uses, where both
-		// can, and the only alternative to propagating its error here is
-		// dropping it on the floor.
-		createSlot := func(outputIndex int, item responsesItem) (*responsesOutputSlot, error) {
+		// for item types that have no streaming block.
+		createSlot := func(outputIndex int, item responsesItem) *responsesOutputSlot {
 			var b *blockBuilder
 			var startEvent ai.EventType
-			// seed is the input a custom_tool_call item already carries, replayed
-			// as a delta once the start event is out (see below).
-			seed := ""
 			switch item.Type {
 			case "reasoning":
 				b = &blockBuilder{kind: "thinking"}
@@ -534,40 +525,36 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				if !ok {
 					property = "input"
 				}
-				// The block starts with EMPTY arguments even when the item already
-				// carries input (pi 5c6655e76): the input it came with is replayed
-				// as a delta below, so a consumer sees it stream in rather than
-				// finding it already present on the block it was just told about.
+				// The input the item already carries is present on the block the
+				// start event announces (pi 8b5899dce, reverting 5c6655e76's
+				// replay-as-a-delta). pi writes `item.input || ""`, so the property
+				// is there even for an item that carries no input at all. Only the
+				// JSON delta buffer stays empty: the first delta synthesized after
+				// this opens the object and carries the initial input with it.
+				input := ""
 				if item.Input != nil {
-					seed = *item.Input
+					input = *item.Input
 				}
 				b = &blockBuilder{
 					kind: "toolCall", toolID: item.CallID + "|" + item.ID, toolName: item.Name,
 					toolNamespace: item.Namespace,
-					args:          map[string]any{}, grammar: newGrammarInputBuffer(property),
+					args:          map[string]any{property: input}, grammar: newGrammarInputBuffer(property),
 				}
 				startEvent = ai.EventToolCallStart
 			default:
-				return nil, nil
+				return nil
 			}
 			builders = append(builders, b)
 			slot := &responsesOutputSlot{block: b, contentIndex: len(builders) - 1}
 			outputSlots[outputIndex] = slot
 			materialize()
 			stream.Push(ai.AssistantMessageEvent{Type: startEvent, ContentIndex: slot.contentIndex, Partial: output.Clone()})
-			// Strictly after the start event, and only for a non-empty seed (pi
-			// guards on truthiness, so an item.input of "" pushes nothing).
-			if seed != "" {
-				if err := appendGrammarInput(slot, seed, false); err != nil {
-					return nil, err
-				}
-			}
-			return slot, nil
+			return slot
 		}
 		// getOrCreateSlot returns the existing slot for outputIndex or creates one.
-		getOrCreateSlot := func(outputIndex int, item responsesItem) (*responsesOutputSlot, error) {
+		getOrCreateSlot := func(outputIndex int, item responsesItem) *responsesOutputSlot {
 			if slot := outputSlots[outputIndex]; slot != nil {
-				return slot, nil
+				return slot
 			}
 			return createSlot(outputIndex, item)
 		}
@@ -684,9 +671,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				if ev.Item == nil {
 					return nil
 				}
-				if _, cerr := createSlot(ev.OutputIndex, *ev.Item); cerr != nil {
-					return cerr
-				}
+				createSlot(ev.OutputIndex, *ev.Item)
 			case "response.reasoning_summary_text.delta":
 				slot := getSlot(ev.OutputIndex, "thinking")
 				if slot == nil {
@@ -774,10 +759,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 				// getOrCreateSlot mirrors pi's new design: a done without a
 				// prior added still materializes the block (and its *_start
 				// event) before finalizing (port of 8c9dbffa).
-				slot, cerr := getOrCreateSlot(ev.OutputIndex, *ev.Item)
-				if cerr != nil {
-					return cerr
-				}
+				slot := getOrCreateSlot(ev.OutputIndex, *ev.Item)
 				switch {
 				case ev.Item.Type == "reasoning" && slot != nil && slot.block.kind == "thinking":
 					summaryText := joinPartsText(ev.Item.Summary, "\n\n")

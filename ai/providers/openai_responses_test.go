@@ -2129,17 +2129,13 @@ data: [DONE]
 	}
 }
 
-// TestResponsesGrammarSeededInput: output_item.added may carry a non-empty
-// `input`. pi 5c6655e76 stopped seeding the tool-call arguments with it —
-// the block starts at `arguments: {}` like every other custom tool call — and
-// instead replays the seed as a toolcall_delta pushed immediately AFTER
-// toolcall_start. So a consumer sees the seed as streamed input rather than as
-// arguments that were already there when the block appeared, and the first
-// streamed chunk after it is a delta of its own.
-//
-// Before 5c6655e76 the seed was folded into the first streamed delta
-// (deltas were ["{\"query\":\"SELECT 1", "\"}"]).
-func TestResponsesGrammarSeededInput(t *testing.T) {
+// TestResponsesGrammarInitialInput: output_item.added may carry a non-empty
+// `input`. pi 8b5899dce reverted 5c6655e76 and put that input back ON the block
+// the toolcall_start event announces (`arguments: { [inputProperty]: input }`),
+// deleting the follow-up replay delta. Only the JSON delta buffer stays empty,
+// so the first streamed chunk after the start opens the synthesized object and
+// carries the initial input along with it.
+func TestResponsesGrammarInitialInput(t *testing.T) {
 	sse := `data: {"type":"response.created","response":{"id":"r1"}}
 
 data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":"SEL"}}
@@ -2154,7 +2150,7 @@ data: [DONE]
 
 `
 	deltas, final := runResponsesGrammarSSE(t, sse)
-	assertDeltas(t, deltas, []string{`{"query":"SEL`, `ECT 1`, `"}`})
+	assertDeltas(t, deltas, []string{`{"query":"SELECT 1`, `"}`})
 	assertGrammarArgs(t, final, "query", "SELECT 1")
 }
 
@@ -2183,12 +2179,13 @@ data: [DONE]
 	assertGrammarArgs(t, final, "query", "SELECT 2")
 }
 
-// TestResponsesGrammarSeedOrder pins the ORDER pi 5c6655e76 introduced: the
-// seed carried on output_item.added is pushed as a toolcall_delta after the
-// toolcall_start event, never folded into the start event's arguments. The
-// start event must therefore show `{}` — a block whose input has not been
-// reported yet — and the seed must arrive as the delta that follows it.
-func TestResponsesGrammarSeedOrder(t *testing.T) {
+// TestResponsesGrammarInitialInputOnStartEvent pins what pi 8b5899dce restored:
+// the input carried on output_item.added is folded INTO the start event's
+// arguments, and no delta replays it afterwards. The start event must therefore
+// show `{"query":"SEL"}`, and the only delta on this stream is the one the
+// terminal output_item.done synthesizes — which, because the JSON buffer was
+// never advanced by the initial input, opens and closes the object in one go.
+func TestResponsesGrammarInitialInputOnStartEvent(t *testing.T) {
 	sse := `data: {"type":"response.created","response":{"id":"r1"}}
 
 data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":"SEL"}}
@@ -2201,20 +2198,17 @@ data: [DONE]
 
 `
 	assertToolCallTrace(t, grammarToolCallTrace(t, sse), []grammarToolCallEvent{
-		{typ: ai.EventToolCallStart, index: 0, blocks: `[{}]`},
-		{typ: ai.EventToolCallDelta, index: 0, delta: `{"query":"SEL`, blocks: `[{"query":"SEL"}]`},
-		{typ: ai.EventToolCallDelta, index: 0, delta: `"}`, blocks: `[{"query":"SEL"}]`},
+		{typ: ai.EventToolCallStart, index: 0, blocks: `[{"query":"SEL"}]`},
+		{typ: ai.EventToolCallDelta, index: 0, delta: `{"query":"SEL"}`, blocks: `[{"query":"SEL"}]`},
 	})
 }
 
-// TestResponsesGrammarEmptySeedIsNotAppended pins the guard on the seed replay.
-// pi's is a JS truthiness check (`if (item.input)`, shared:525), so an item that
-// arrives with no input and one that arrives with "" both push nothing AND leave
-// the block's arguments at `{}` — appending "" would emit no delta but would
-// still write `{"query":""}` onto the block, which the next event to carry a
-// partial reports. Two seedless items followed by a seeded one put exactly that
-// window under an event.
-func TestResponsesGrammarEmptySeedIsNotAppended(t *testing.T) {
+// TestResponsesGrammarMissingInputStartsEmpty pins pi's `item.input || ""`
+// (shared:506): the input property is present on the start event's arguments
+// even when the item carries no input at all, and an absent `input` field is
+// indistinguishable from `""` here. The old seed replay's truthiness guard
+// (5c6655e76) is gone with it, so there is no delta after any of these starts.
+func TestResponsesGrammarMissingInputStartsEmpty(t *testing.T) {
 	item := func(outputIndex int, id, input string) string {
 		return fmt.Sprintf(
 			`data: {"type":"response.output_item.added","output_index":%d,"item":{"type":"custom_tool_call","id":%q,"call_id":"c_%s","name":"gram"%s}}`,
@@ -2228,14 +2222,69 @@ func TestResponsesGrammarEmptySeedIsNotAppended(t *testing.T) {
 		"data: [DONE]\n\n"
 
 	// The third start is the observation point: its partial carries all three
-	// blocks, and the two seedless ones must still read `{}`.
+	// blocks, and the two inputless ones must read `{"query":""}`.
 	assertToolCallTrace(t, grammarToolCallTrace(t, sse), []grammarToolCallEvent{
-		{typ: ai.EventToolCallStart, index: 0, blocks: `[{}]`},
-		{typ: ai.EventToolCallStart, index: 1, blocks: `[{},{}]`},
-		{typ: ai.EventToolCallStart, index: 2, blocks: `[{},{},{}]`},
-		{typ: ai.EventToolCallDelta, index: 2, delta: `{"query":"SEL`, blocks: `[{},{},{"query":"SEL"}]`},
+		{typ: ai.EventToolCallStart, index: 0, blocks: `[{"query":""}]`},
+		{typ: ai.EventToolCallStart, index: 1, blocks: `[{"query":""},{"query":""}]`},
+		{typ: ai.EventToolCallStart, index: 2, blocks: `[{"query":""},{"query":""},{"query":"SEL"}]`},
 	})
 }
+
+// TestResponsesGrammarInitialInputThenDeltas mirrors pi's own oracle for
+// 8b5899dce — constrained-sampling.test.ts "starts custom Responses tool calls
+// with their initial input": an item arriving with input "a" followed by a
+// delta "b" and a done of "abc" must start at {property: "a"}, end at
+// {property: "abc"}, and still emit deltas that concatenate into that same
+// object. The initial input is on the start event AND inside the first delta,
+// because the delta buffer opens only when the first delta is synthesized.
+func TestResponsesGrammarInitialInputThenDeltas(t *testing.T) {
+	sse := `data: {"type":"response.created","response":{"id":"r1"}}
+
+data: {"type":"response.output_item.added","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":"a"}}
+
+data: {"type":"response.custom_tool_call_input.delta","output_index":0,"delta":"b"}
+
+data: {"type":"response.custom_tool_call_input.done","output_index":0,"input":"abc"}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"custom_tool_call","id":"ctc_item","call_id":"ctc_call","name":"gram","input":"abc"}}
+
+data: {"type":"response.completed","response":{"id":"r1","status":"completed","usage":{"input_tokens":1,"output_tokens":1}}}
+
+data: [DONE]
+
+`
+	trace := grammarToolCallTrace(t, sse)
+	if len(trace) == 0 || trace[0].typ != ai.EventToolCallStart || trace[0].blocks != `[{"query":"a"}]` {
+		t.Fatalf("first tool call event = %+v, want a start carrying {\"query\":\"a\"}", trace)
+	}
+	var joined strings.Builder
+	for _, ev := range trace[1:] {
+		if ev.typ != ai.EventToolCallDelta {
+			t.Fatalf("event after the start = %+v, want a delta", ev)
+		}
+		joined.WriteString(ev.delta)
+	}
+	if got := joined.String(); got != `{"query":"abc"}` {
+		t.Fatalf("joined deltas = %s, want {\"query\":\"abc\"}", got)
+	}
+
+	final := runResponsesGrammarStream(t, sse).Result()
+	if final.StopReason != ai.StopToolUse {
+		t.Fatalf("stop reason = %s, want toolUse", final.StopReason)
+	}
+	tc, ok := final.Content[0].(ai.ToolCall)
+	if !ok || tc.ID != "ctc_call|ctc_item" || tc.Name != "gram" || mustJSON(t, tc.Arguments) != `{"query":"abc"}` {
+		t.Fatalf("final tool call = %#v", final.Content)
+	}
+}
+
+// The Responses half of pi 8b5899dce's restored eager `getClientApiKey` is
+// covered by the apis x scenarios table in
+// TestOpenAIStreamSimpleMissingKeySurfacesOnTheStream (openai_test.go), whose
+// {openai-responses, "preempts a grammar tool failure"} cell asserts this exact
+// precedence against the same control. Upstream has one oracle here
+// (8b5899dce:packages/ai/test/pre-generation-error.test.ts), so this file keeps
+// none of its own.
 
 // grammarToolCallEvent is one tool-call event of a grammar stream: its type and
 // content index, its delta, and the arguments of EVERY tool-call block in the
