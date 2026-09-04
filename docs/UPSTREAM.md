@@ -1361,6 +1361,20 @@ their review agents died on the credit limit. Both are green and their goldens
 were captured from upstream under node, but neither has had an adversarial pass.
 Review them before building on them.
 
+**A test went silently vacuous and was caught by hand, not by the gate.** S31a
+dropped the `assertCases` section from `protocol/testdata/upstream_framing.json`
+because upstream deleted `assertCompleteFrame` — but
+`TestAssertCompleteFrameMatchesUpstream` still existed and now iterated an empty
+slice, so it PASSED while pinning nothing. The Go `AssertCompleteFrame` is still
+live (`protocol/codec.go` calls it on every encode). Fixed: the section is
+restored and **frozen at `96317e50b`** (the last sha that had the upstream
+function, so it can never be regenerated), `gen-framing.ts` says so, and the test
+now `t.Fatal`s on an empty section — verified by dropping the section and
+watching it go red. **The general rule this is an instance of: when upstream
+deletes the source of a golden the port still uses, the golden is frozen with its
+provenance sha and the test grows an emptiness guard. A table-driven test whose
+table can become empty is not a test.**
+
 **Recorded surviving mutations** (tests that stay green under a mutated shipped
 code, each verified by running it): `IsServerID` accepts a wrong variant nibble
 `c` and a wrong version nibble `5` (only `7` is tested);

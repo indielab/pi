@@ -302,8 +302,25 @@ func TestFrameOptionRangeErrorsAreTyped(t *testing.T) {
 	}
 }
 
+// TestAssertCompleteFrameMatchesUpstream pins AssertCompleteFrame against
+// vectors captured from upstream's assertCompleteFrame.
+//
+// Upstream DELETED assertCompleteFrame in the 2026-09-03 rewrite, so
+// gen-framing.ts can no longer emit this section and the vectors are FROZEN at
+// the last sha that had it (96317e50b). The Go function is still live —
+// codec.go calls it on every encode — so the vectors keep their value as a
+// regression pin even though they can no longer be regenerated. The emptiness
+// guard below is load-bearing: dropping the section from the JSON would
+// otherwise leave this test iterating nothing and passing, which is exactly
+// what happened when the section was first removed.
 func TestAssertCompleteFrameMatchesUpstream(t *testing.T) {
-	for _, vector := range loadFraming(t).AssertCases {
+	cases := loadFraming(t).AssertCases
+	if len(cases) == 0 {
+		t.Fatal("assertCases is empty: this test pins AssertCompleteFrame and cannot vacate silently. " +
+			"The section is frozen at 96317e50b because upstream deleted assertCompleteFrame; " +
+			"restore it from git rather than removing the test, or delete AssertCompleteFrame and this test together.")
+	}
+	for _, vector := range cases {
 		err := AssertCompleteFrame(mustHex(t, vector.Hex), nil)
 		if vector.OK {
 			if err != nil {

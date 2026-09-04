@@ -188,5 +188,31 @@
 			"frames": [],
 			"error": "Frame length 16 exceeds configured limit of 8"
 		}
+	],
+	"assertCases": [
+		{
+			"hex": "",
+			"ok": false,
+			"error": "Frame does not contain a complete length prefix"
+		},
+		{
+			"hex": "000000",
+			"ok": false,
+			"error": "Frame does not contain a complete length prefix"
+		},
+		{
+			"hex": "0000000161",
+			"ok": true
+		},
+		{
+			"hex": "000000016162",
+			"ok": false,
+			"error": "Frame must contain exactly one complete payload"
+		},
+		{
+			"hex": "0000000200",
+			"ok": false,
+			"error": "Frame must contain exactly one complete payload"
+		}
 	]
 }

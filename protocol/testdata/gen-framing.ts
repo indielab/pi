@@ -1,4 +1,12 @@
 // Emits FrameDecoder behaviour vectors from the real upstream implementation.
+//
+// NOTE: upstream deleted assertCompleteFrame in the 2026-09-03 rewrite, so this
+// script no longer emits the "assertCases" section. That section in
+// upstream_framing.json is FROZEN at 96317e50b (the last sha that had the
+// function) and must be preserved when regenerating — the Go AssertCompleteFrame
+// is still live and TestAssertCompleteFrameMatchesUpstream still pins it.
+// Regenerate with: node gen-framing.ts > out.json, then merge, keeping
+// assertCases. The test fails loudly if the section goes missing.
 import { encodeFrame, FrameDecoder } from "./framing.ts";
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
