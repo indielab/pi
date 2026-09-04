@@ -1,5 +1,5 @@
 // Emits FrameDecoder behaviour vectors from the real upstream implementation.
-import { assertCompleteFrame, encodeFrame, FrameDecoder } from "./framing.ts";
+import { encodeFrame, FrameDecoder } from "./framing.ts";
 
 const hex = (b: Uint8Array) => Buffer.from(b).toString("hex");
 const bytes = (h: string) => Uint8Array.from(Buffer.from(h, "hex"));
@@ -61,14 +61,4 @@ const cases = [
 	decoderCase("push_after_failure", ["00000010", "61"], { maxFrameLength: 8 }),
 ];
 
-// assertCompleteFrame acceptance.
-const assertCases = ["", "000000", "0000000161", "000000016162", "0000000200"].map((h) => {
-	try {
-		assertCompleteFrame(bytes(h));
-		return { hex: h, ok: true };
-	} catch (error) {
-		return { hex: h, ok: false, error: (error as Error).message };
-	}
-});
-
-console.log(JSON.stringify({ stream: hex(stream), splits, drip, cases, assertCases }, null, "\t"));
+console.log(JSON.stringify({ stream: hex(stream), splits, drip, cases }, null, "\t"));

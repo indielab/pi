@@ -1,5 +1,7 @@
 package protocol
 
+import "github.com/sky-valley/pi/internal/jsonstrict"
+
 // Union decoding. pi discriminates each union with a literal property and lets
 // TypeBox's Check walk every arm; Go dispatches on the same property and
 // decodes exactly one arm. Rejecting an unknown tag here is what keeps an
@@ -14,10 +16,11 @@ func init() {
 	registerUnion(decodeServerEvent)
 	registerUnion(decodeClientMessage)
 	registerUnion(decodeServerMessage)
+	registerUnion(decodeRpcTarget) // v8, protocol.go
 }
 
 func decodeContent(value any) (Content, error) {
-	tag, _, err := discriminant(value, "type")
+	tag, _, err := jsonstrict.Discriminant(value, "type")
 	if err != nil {
 		return nil, err
 	}
@@ -36,7 +39,7 @@ func decodeContent(value any) (Content, error) {
 }
 
 func decodeTranscriptItem(value any) (TranscriptItem, error) {
-	tag, _, err := discriminant(value, "role")
+	tag, _, err := jsonstrict.Discriminant(value, "role")
 	if err != nil {
 		return nil, err
 	}
@@ -53,7 +56,7 @@ func decodeTranscriptItem(value any) (TranscriptItem, error) {
 }
 
 func decodeTranscriptProgress(value any) (TranscriptProgress, error) {
-	tag, _, err := discriminant(value, "type")
+	tag, _, err := jsonstrict.Discriminant(value, "type")
 	if err != nil {
 		return nil, err
 	}
@@ -72,7 +75,7 @@ func decodeTranscriptProgress(value any) (TranscriptProgress, error) {
 }
 
 func decodeCommand(value any) (Command, error) {
-	tag, _, err := discriminant(value, "command")
+	tag, _, err := jsonstrict.Discriminant(value, "command")
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +104,7 @@ func decodeCommand(value any) (Command, error) {
 }
 
 func decodeCommandResult(value any) (CommandResult, error) {
-	tag, _, err := discriminant(value, "command")
+	tag, _, err := jsonstrict.Discriminant(value, "command")
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +121,7 @@ func decodeCommandResult(value any) (CommandResult, error) {
 }
 
 func decodeServerEvent(value any) (ServerEvent, error) {
-	tag, _, err := discriminant(value, "type")
+	tag, _, err := jsonstrict.Discriminant(value, "type")
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +140,7 @@ func decodeServerEvent(value any) (ServerEvent, error) {
 }
 
 func decodeClientMessage(value any) (ClientMessage, error) {
-	tag, _, err := discriminant(value, "type")
+	tag, _, err := jsonstrict.Discriminant(value, "type")
 	if err != nil {
 		return nil, err
 	}
@@ -152,7 +155,7 @@ func decodeClientMessage(value any) (ClientMessage, error) {
 }
 
 func decodeServerMessage(value any) (ServerMessage, error) {
-	tag, _, err := discriminant(value, "type")
+	tag, _, err := jsonstrict.Discriminant(value, "type")
 	if err != nil {
 		return nil, err
 	}

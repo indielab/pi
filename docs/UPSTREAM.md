@@ -1306,7 +1306,7 @@ Drain order is value-first, not size-first. Sizes are upstream source lines at
 | 10 | **Codex adapter** | 2,228 LOC | ~3 + consult | **CONSULT ANSWERED (2026-08-31) — NO DEPENDENCY REQUIRED TO SHIP.** Upstream takes no third-party package here (`node:zlib` builtin, `globalThis.WebSocket`), and the consult's premise — "zstd decompression" — does not exist: it is request-body compression only, SSE-path only, with a `return null` fallback to plain JSON. **zstd: take nothing**, mirroring upstream's own null-compression branch. **WebSocket: deferred to the WS slice**, pre-decided as `github.com/coder/websocket` in the **root** module (not a submodule — see the ruling). Ship SSE first; an SSE-only adapter is an upstream-defined runtime state, not a parity gap. **Blocked on entry 1** — Codex is OAuth-only and the port's OAuth seams have zero implementers. Back in scope 2026-08-27. | **1** — `a63fb12c1` (2026-09-01: the same `utils/node-http-proxy.ts` `NO_PROXY` rewrite; `openai-codex-responses.ts:972` is the file's other importer. Shares the delta with entry 9 — **the two entries do not sum**, it is one upstream change landing in whichever adapter ships first) |
 | 8 | **Agent harness + search** | 10,273 LOC src (+5,733 LOC upstream test) | see below | **FUNDED 2026-08-27** — the owner ruled it in. Active drain, not a parked item. **Shape not yet fixed:** the harness is a parallel implementation of surface `coding/` already has, so the estimate depends on the shape chosen — see "Harness shape" below. Backlog: **11** against its own tree (12 minus `e7fb8eb2a`, reassigned to entry 7) — of which 3 are already satisfied in `coding/` and 3 are upstream dead code, leaving **4** load-bearing. See "Harness delta" below. **Slice 8b SHIPPED 2026-08-28** (`b677517`, `ce76e94`, `cd0e3b9`, `1f49233`), and the re-measure split it into **8b-i** (`ExecutionEnv`, harness source, 7 symbols closed) and **8b-ii** (the seven `*Operations` seams, coding-agent source, invisible to this entry's counter) — 8b-ii ships with a named remainder. The entry stays open on 8c and 8d, and the backlog count is unaffected because 8b was a base-port slice rather than one of the deferred commits. | 11 |
 
-| 11 | **The 2026-09-03 architecture migration** — `packages/chord` (new published package, 39 files), `packages/protocol`/`client`/`server` rebuilt on service-addressed routing, `packages/agent` grown into the durable-drive harness (214 files), `coding-agent/src/experimental/**` (~8k LOC) | see map | **OPENED 2026-09-03** under the mirror ruling. Carries the ~50 in-scope commits of the dev-branch fast-forward that are not Phase 0 fixes, **and the eleven deletions**: `protocol/schemas.go`, `server/{protocol,sessions,snapshots}.go`, `server/internal/servertest/service.go`, `client/{session_handle,state}.go`, `coding/{remotesession,transcript}.go`, `ai/providers/cloudflare_gateway_binding.go` die with their upstream sources. Zero new root-module dependencies — every candidate (esbuild, json-patch, go-diff, uuid, sqlx, migrate, fxamacker/cbor, x/sync) was argued down to stdlib; `modernc.org/sqlite` goes in a `backends/sqlite` submodule. Order: chord → protocol → (server+client ∥ agent/harness) → experimental → sqlite. **Chord's `bundler.ts` + `node/bundle*.ts` are NOT mirrored** (JS facet bundling has no Go subject — owner, 2026-09-03). The pin sha advances when this drains. | — |
+| 11 | **The 2026-09-03 architecture migration** — `packages/chord` (new published package, 39 files), `packages/protocol`/`client`/`server` rebuilt on service-addressed routing, `packages/agent` grown into the durable-drive harness (214 files), `coding-agent/src/experimental/**` (~8k LOC) | see map | **OPENED 2026-09-03** under the mirror ruling. Carries the ~50 in-scope commits of the dev-branch fast-forward that are not Phase 0 fixes, **and the eleven deletions**: `protocol/schemas.go`, `server/{protocol,sessions,snapshots}.go`, `server/internal/servertest/service.go`, `client/{session_handle,state}.go`, `coding/{remotesession,transcript}.go`, `ai/providers/cloudflare_gateway_binding.go` die with their upstream sources. Zero new root-module dependencies — every candidate (esbuild, json-patch, go-diff, uuid, sqlx, migrate, fxamacker/cbor, x/sync) was argued down to stdlib; `modernc.org/sqlite` goes in a `backends/sqlite` submodule. Order: chord → protocol → (server+client ∥ agent/harness) → experimental → sqlite. **Chord's `bundler.ts` + `node/bundle*.ts` are NOT mirrored** (JS facet bundling has no Go subject — owner, 2026-09-03). **Strict-decoder boundary, settled 2026-09-03 (standing formula, not an owner call):** the any-tree strict decoder in `protocol/decode.go`+`unions.go` moves to `internal/jsonstrict`, imported by BOTH `protocol/` and `chord/`; upstream's own `boundary.test.ts` permits `node:` builtins and an `internal/` package is the Go analogue. Layering stays upstream's — `protocol` → `chord`, never the reverse — and `chord.IsValue` does not accept `cbor.OrderedObject`. The pin sha advances when this drains. | — |
 | 12 | **`SessionManager` / `AgentSession` base port** — `core/session-manager.ts` (1,746 LOC), `core/agent-session.ts` (3,524 LOC) | ~6 as hunk-ports, ~16 as base ports | **OPENED 2026-09-03.** The port has no `SessionManager`: `SessionRecorder` is an append-only writer keyed to a file, `SessionTree` a read-only parser; there are **no label entries** (`grep -c label` across `coding/session*.go` = 0), no `createBranchedSession` fork writer, no `inMemory` constructor, no read-side version migration. `coding/session.go` has `WaitForIdle` but no `IsIdle` and no compaction/branch-summary abort controllers. | **4** — `2631b25c3` (preserve compaction boundary when forking: `firstKeptEntryId` re-chained through removed labels), `2b768ba42` (`inMemory(cwd, options, entries)` + `_loadEntries`), `bea67d90d` (abort cancels compaction + branch summary; `isIdle` includes compacting), `e266507b6` (drop duplicate `auto_retry_end` event type) |
 | 13 | **Edit-tool result `details`** — `core/tools/edit-diff.ts` (structured diff + unified patch + `firstChangedLine`) | ~1 | **OPENED 2026-09-03.** pi's edit returns `details: {diff, patch, firstChangedLine}` (`core/tools/edit.ts:211`); the Go edit tool returns a bare `textResult("Successfully replaced %d block(s) in %s.")` with no details (`coding/tools.go`). Surfaced while auditing every `Details` site during the write-tool port. Not a one-liner: it lands a new structured payload on the session entry and the server bridge, so it carries its own goldens. Slice: port `edit-diff.ts` as `coding/editdiff.go` with parity tests against pi's diff/patch text, then wire it into the edit result. The ~500-line matching/apply engine is byte-identical between upstream's two forks, so it is shared (`internal/`), not duplicated. | — |
 
@@ -1315,6 +1315,58 @@ in the root module. Entry 8's shape was settled 2026-09-03 (mirror; see
 "Harness shape"), and its work is now sequenced inside entry 11. Entry 11 is
 the spine: ~77 slices on its critical path, with Phase 0's independent fixes
 already shipped ahead of it.
+
+### Open findings — chord + protocol v8, carried to the next cycle (2026-09-04)
+
+Ported and green, but with **verified findings not yet closed** because the
+session ran out of credits mid-review. Nothing here is a regression: every slice
+is additive, the full gate is green (`go build`/`vet`/`test ./...` + the
+`GOOS=windows` cross-target pass), and no existing behaviour changed. These are
+the next cycle's first work, ahead of new slices.
+
+**S10 `chord/delta` tracker — NEEDS-FIX, four wire-visible/behavioural items.**
+1. **Integral segment on a MAP container stays `Index`.** `State.At("o").Set(5, 2)`
+   emits `["s",["o",5],2]` where pi emits `["s",["o","5"],2]` (Go probe vs node).
+   `Index(5)` and `Key("5")` are also distinct keys in `dirtyNode.children`, so
+   `Set(5,3); Set("5",4)` emits TWO ops for one property. pi's applier coerces, so
+   a replica converges — but the bytes are not pi's, and the byte-golden claim
+   breaks for any producer spelling an object key as an int. Fix: `normSeg`
+   coerces `Index` → `Key(strconv.Itoa)` when the container is a map, mirroring
+   JS's property key always being a string.
+2. **`json.Number` is invisible to `same()`/`number()`** though `path.go`'s
+   `integer()` already admits it. `Set("count", json.Number("1"))` over an equal
+   `json.Number("1")` marks dirty and flushes an op (pi: none); an `Unshift` on a
+   `json.Number` array flushes four ops instead of pi's one splice, because
+   `diffArray`'s prefix/suffix scan never matches. Replica correct, bytes wrong.
+3. **Object diff ORDER within a batch** differs for a replaced object with several
+   changed string-keyed members (integer-like keys already match JS's rule). A Go
+   map has no insertion order; `TestTrackObjectDiffOrder` pins the port's own
+   chosen order, not a pi golden — unavoidable, and stated as such.
+4. **Empty-slice identity:** `Set("xs", Get("xs"))` on an empty array marks the
+   path dirty (pi: false). No wire effect — `Flush` still emits `[]` — only
+   `Dirty()` lies. Fix: compare slice identity by data pointer + len, not `&x[0]`.
+   Plus one surviving mutation that is NOT equivalent: `SetLen(0)` marking
+   `markArrayDiff` instead of `markArrayReplace` changes the flushed op.
+
+**S28 `protocol` v8 envelopes — NEEDS-FIX, one behavioural item.** With a
+`maxFrameLength` above 16MB, a valid frame whose opaque payload exceeds 16MB is
+accepted upstream but refused by the port on both paths, poisoning the inbound
+decoder. Reproduced at 40MB/17MB. Unreachable at the default 16MB limit. Fix:
+`requireOpaqueJSON` re-decodes the span with `cbor.Decode(raw, nil)` — bound that
+re-decode by the item's own length instead, since the span was already read under
+the frame's limits.
+
+**S11 (`chord/delta` codec) and S31a (protocol v8 goldens) shipped UNREVIEWED** —
+their review agents died on the credit limit. Both are green and their goldens
+were captured from upstream under node, but neither has had an adversarial pass.
+Review them before building on them.
+
+**Recorded surviving mutations** (tests that stay green under a mutated shipped
+code, each verified by running it): `IsServerID` accepts a wrong variant nibble
+`c` and a wrong version nibble `5` (only `7` is tested);
+`AttachmentEnvelope.Validate` skips `Attachment.Validate`; `ServiceMode.validate`
+accepts `""`; `ServiceValueError.Unwrap` returns nil; two `cbor` RawItem bounds
+(`MaxByteLength` bypass on the write path, depth accept-at-limit).
 
 ### Catalog regen checklist
 
@@ -1779,6 +1831,86 @@ the state at that event. Live-consuming code observes identical values; only a
 deferred read differs. Deliberate: events cross goroutines here, and a shared
 mutable message would make every consumer a data race. Recorded in the
 `AssistantMessageEvent` doc comment (`ai/events.go`).
+
+### chord (ported 2026-09-03, upstream `packages/chord` at `64eeb82a4`)
+
+Recorded by the porters and re-verified by independent reviewers, several by
+running pi under node against the Go function on identical inputs. Layering:
+`chord/` imports nothing from this module except `internal/jsonstrict`;
+`chord.IsValue` does not accept `cbor.OrderedObject`. Not mirrored: `bundler.ts`
+and `node/bundle*.ts` (JS facet bundling; no Go subject).
+
+**D26 — chord core.** Context: chord defines NO Context type, no BACKGROUND_CONTEXT/TODO_CONTEXT, no withAbortSignal/withCancel/withoutAbortSignal/awaitWithContext. Upstream's src/context/index.ts is a TypeScript reimplementation of Go's context (README: "a Go-like context system"); the mirror is context.Context + typed keys. Key[T] is a pointer identity (upstream Symbol), Key.Value returns (T, bool) (upstream T | undefined), WithValue is a generic free function over context.WithValue so T binds at both ends. The upstream toString assertions ("[Context BACKGROUND_CONTEXT].WithValue(first)...") are context-implementation internals and are not mirrored; Key.String() returns its name so Go's own ctx.String() reads sensibly.
+
+**D27 — chord core.** DefineService panics on an invalid ID instead of returning an error. A service token is a declaration (package-level var, like every upstream call site `const Models = defineService<Models>("test.models")`), so a bad ID is a programming error caught at init — the regexp.MustCompile / http.Handle idiom, not a runtime error path. Messages are upstream's verbatim with a "chord: " prefix.
+
+**D28 — chord core.** defineService's `{local: true}` overload becomes a second constructor, DefineLocalService[T]; Go cannot express upstream's RemoteServiceContract<T> compile-time JSON check, so the doc says the wire layer checks values as they cross.
+
+**D29 — chord core.** Service[T] is a comparable value type (id + local), not an object identity: two definitions of the same ID compare equal. Upstream's provider/instance tables key on service.id (instances.ts, host.ts), so this is the identity that matters; T is a phantom type parameter.
+
+**D30 — chord core.** IsValue: no ancestors/visited set — the 512 depth cap terminates a Go cycle, and reflect.Value.Pointer is unsound for slices sharing a backing array. Every Go numeric kind is a number (JS has one number type); only finite floats pass; []byte is rejected (upstream rejects Uint8Array; encoding/json would base64 it); structs are rejected as class instances; pointers/funcs/chans/complex have no JSON form; any string-kind map key is an object key. Go has no undefined, so upstream's `{omitted: undefined}` case is pinned as an object holding a non-JSON member (a func).
+
+**D31 — chord core.** Value is `type Value = any` (alias), so a decoded tree already is one; IsValue is the contract check. Upstream JsonRepresentation<T> is a type-level mapping with no Go form and is not mirrored.
+
+**D32 — chord core.** Errors: RemoteServiceError.Error() returns the message alone (upstream Error.message); the `name = "RemoteServiceError"` field has no Go analogue — the type is the name. IsRemoteServiceErrorCode takes a string, not unknown: a non-string peer value is already not a string. Constants are named ServiceNotAllowed etc. (the code strings' own prefix), following protocol's ProtocolErrorCode style; RemoteServiceErrorCodes is a slice var, not a readonly tuple.
+
+**D33 — chord core.** internal/jsonstrict: the package-global registry/field-cache/maxSafeInteger of protocol/decode.go became a per-package `*Decoder` value with Tag and Root fields, so protocol (`cbor`, root "message") and chord (`json`) own independent union tables. RegisterUnion/DecodeMember are generic free functions taking the decoder because Go methods cannot have type parameters. protocol.ValidationError and protocol.Validator are now type aliases of jsonstrict.Error/Validator: every `*protocol.ValidationError` construction, errors.As and type assertion in protocol/client/server compiles and behaves unchanged. One message text changed, in a developer-facing (never wire) error for a mis-declared Go field: "protocol objects have string keys" → "objects have string keys", because the package no longer knows it serves the protocol; no test pinned it.
+
+**D34 — chord core.** Not created, by ruling: no Go counterparts for src/bundler.ts, src/node/*.
+
+**D35 — chord/delta.** `chord/delta` — a path segment that is neither a string nor an integral number (null, bool, object, 1.5) is refused by ParseOp/ParseWireOp/Path.UnmarshalJSON as an ErrInvalidOp-wrapped shape error; upstream's assertSafePath throws UnsafePathError(seg) for it. Both refuse before any walk; only the error class differs, because such a value is not a Seg in Go (Seg is sealed to Key and Index). A negative or unsafely large integer IS an Index, decodes, and fails Validate as *UnsafePathError exactly as upstream.
+
+**D36 — chord/delta.** `chord/delta` — an integral number of any magnitude parses (Number.isInteger(1e300) is true): a "t" count and "p" index/remove saturate to math.MaxInt, and apply clamps them against the value's length, so the outcome equals pi's slice(1e300) / splice(0, 1e300) / splice(1e300, 0, x) (truncate-all, remove-all, append). Two residuals: (1) an Index beyond 2^53 is refused by Path.Validate as *UnsafePathError — pi's own class when the parent is an array (assertIndexInRange), but where the parent is an OBJECT pi writes the property spelled by String(n) ("1e+300") and Go refuses instead, since no double spells that address exactly and an int cannot spell "1e+300"; (2) a "#" id beyond 2^53 is refused (ErrInvalidOp) where pi's decoder would define it — pi's encoder counts ids up from 0 and can never emit one. A saturated count re-marshals as 9223372036854775807, not 1e300; no pi producer emits either.
+
+**D37 — chord/delta.** `chord/delta` — Path.String/PathError text escape U+2028/U+2029 as  /  (Go's encoder) where JSON.stringify writes the raw characters. The codec dictionary key stays injective and the wire bytes decode identically; only error text differs.
+
+**D38 — chord/delta.** `chord/delta` — ApplyImmutable runs op.Validate before any walk, as Apply does; upstream's applyImmutable runs copyContainers first, so a reserved first segment or a string-spelled index ON THE PATH surfaces there as PathError (hasOwn fails) rather than UnsafePathError. Verified under node: applyImmutable({}, [["s",["__proto__","w"],1]]) → pi PathError ["__proto__"], Go *UnsafePathError; applyImmutable({xs:[{a:1}]}, [["s",["xs","5","a"],2]]) → pi PathError, Go *UnsafePathError (pi's mutable apply agrees with Go). Both terminate the stream; validate-first is kept deliberately.
+
+**D39 — chord/delta.** `chord/delta` — Apply[[]any](nil, []Op{Splice{...}}) splices an empty array and returns the items where pi's apply(undefined, [p]) throws PathError []: a nil Go slice is a legitimate empty array (and a Replace could carry one). Apply[any](nil, …) and a nil map root DO fail as pi does. A stream missing its base batch is therefore caught by an any- or map-typed replica but absorbed by a []any-typed one.
+
+**D40 — chord/delta.** `chord/delta` — (1) upstream splits inserts into 10,000-element splice(...items) calls because a JS spread is bounded by the engine's argument-count limit; slices.Insert takes any count (pinned by the 300,000-item case). (2) upstream writes with Object.defineProperty and reads with Object.hasOwn so an inherited accessor never runs; a Go map has no prototype, so m[k] = v is the whole story; ReservedSegments are still refused because a Go producer's ops reach TypeScript replicas. (3) a "t" that splits a surrogate pair leaves U+FFFD where pi holds a lone low surrogate no Go string can carry; U+FFFD is what encoding/json makes of that value crossing the wire, so later counts agree (one unit either way).
+
+**D41 — chord/delta.** `chord/delta` — overlap counts scan, probe and result in UTF-16 code units, pi's unit and the unit a "t" count carries; the search runs on bytes with the head/tail boundaries translated, and the pair-splitting cuts pi's units produce (a head ending in a lone high surrogate, a tail opening with a lone low one) are reproduced by a same-high-surrogate check on the following rune and by starting the tail after the split pair. 32 inputs pinned against pi under node, including those cuts. The two sides can only differ on strings one of them cannot hold: a Go string with invalid UTF-8 (each bad byte counts one unit) or a pi string with a lone surrogate — neither is a JSON value.
+
+**D42 — chord/core.** IsValue rejects a fixed-size [N]byte as well as []byte. Upstream's only oracle is the Uint8Array case, which maps to []byte; a Go [N]byte has no upstream counterpart (encoding/json would write it as a number array, not base64). The port treats every byte container as a binary blob rather than an array; unreachable from the wire, no test pins it either way, so the reviewer's narrowing mutation survives by design rather than by gap.
+
+**D43 — chord/core.** When protocol/decode.go's strict decoder was extracted into internal/jsonstrict, the developer-facing error for a Go map field declared with a non-string key type dropped the word "protocol" because the package no longer knows which wire it serves. It never reaches the wire and no test pinned it; describe() with Root="message" still yields protocol's exact former strings for every wire-reachable error.
+
+### chord wire types + protocol raw-span (ported 2026-09-03/04, reviewed FAITHFUL)
+
+**D44 — chord/types+wire.** Containers are generic over the op grammar — ServiceMemberSnapshot[O], ServiceInstanceSnapshot[O], ServiceSubscriptionSnapshot[O], ServiceProviderUpdate[O] with O ∈ {delta.Op, delta.WireOp} — where upstream spells each shape twice (X and WireX). Upstream's own walkers are already parametrized by the op validator (assertSubscriptionSnapshot(value, assertOp)); in Go the field's op type selects it through the jsonstrict union table. The Wire* names survive as generic type aliases (go 1.26) so pi's index.ts names all resolve. The seal methods take O (member(O), update(O)) so that a StateUpdate[delta.Op] does NOT satisfy ServiceProviderUpdate[delta.WireOp] — a marker without O would let the two grammars mix at interface level, which delta went to lengths to prevent. Consequence: the op-free arms (MethodSnapshot, UnavailableUpdate, ClosedUpdate) are generic too; pinned by TestSealsBindToOneGrammar and mutation M3.
+
+**D45 — chord/types+wire.** Unions are sealed interfaces with per-arm structs (MethodSnapshot/StateSnapshot; StateUpdate/UnavailableUpdate/ReplacedUpdate/SpawnedUpdate/ClosedUpdate; CatalogueCall/SubscribeCall/UnsubscribeCall) rather than kind-tagged structs; the discriminator ("kind"/"type") is the Go type, emitted first by each arm's MarshalJSON and stripped from the tree before jsonstrict fills the arm.
+
+**D46 — chord/types+wire.** createServiceCatalogueCall/SubscribeCall/UnsubscribeCall became a Call() method on the sealed ServiceControlCall arms (encode direction); decodeServiceControlCall → DecodeServiceControlCall(call) (ServiceControlCall, bool), false where upstream returns undefined (ordinary or malformed control call, provider's to refuse). Bytes of all three encodings confirmed against wire.ts under node.
+
+**D47 — chord/types+wire.** Parse failures are *ServiceValueError{What, Err}: What is upstream's description verbatim ("service call", "service catalogue", "service subscription snapshot", "service provider update"), Err the jsonstrict or delta rule that failed with its path ("instance.members[0]: ...", "ops[0]: ..."). Messages are lowercase Go style and carry the fix, per the errors-carry-resolution-hints rule; upstream throws TypeError("Invalid <description>") with no detail. Verified the text never crosses the wire: server.ts catches parseServiceCall and answers a fixed "Invalid service call". Residual: jsonstrict's prefixError flattens nested errors into a new *jsonstrict.Error, so errors.Is(err, delta.ErrInvalidOp) does not hold through a parser (the op's text is preserved); fixing that is internal/jsonstrict's, outside this slice.
+
+**D48 — chord/types+wire.** Numbers: parsers take envelope trees (float64/int64), as upstream's do; a Go int in a hand-built map is not a wire number. jsonstrict refuses integers beyond Number.MAX_SAFE_INTEGER where pi's Number.isInteger accepts 1e300 for sequence/generation — unreachable from any pi producer (both count up from 0/1), same class as D36's residual.
+
+**D49 — chord/types+wire.** DecodeServiceControlCall reads the mode argument as either a string or a ServiceMode-typed value (a Go caller building Args by hand; identical JSON). Upstream compares strings only.
+
+**D50 — chord/types+wire.** Nil slices are empty arrays: Members/Instances/Ops/Args marshal as [] and validate as empty (matching delta's Splice{Items: nil} → []); parsed values are always non-nil (pinned by TestParsedValuesAreComplete). Upstream has no nil/empty distinction.
+
+**D51 — chord/types+wire.** Validate is complete for a Go-built value (walks address, members, instances, ops) so a provider can check what it publishes with one call; jsonstrict therefore validates nested structs twice (once as it fills them, once from the parent) — cheap, kept for the API.
+
+**D52 — chord/types+wire.** types.go mirrors only the value/wire types of src/types.ts (ServiceMode, catalogue entry, address, snapshots, updates, ServiceCall). The runtime interfaces there — ReplicatedState/MutableReplicatedState, ServiceSpawner, RemoteServices, ServiceSubscription, RemoteServiceTransport, RemoteServiceBinding(+Options), FacetEnvironment/Facet/FacetHost/FacetLoader/LoadedFacets/FacetOptions/RemoteServiceSource, ReplicatedStateDelivery — hinge on generic methods (use<T>) and the Promise/undefined-vs-null result mapping, which are design decisions of the consumer/provider/state/facet slices; left to them rather than pre-committed here. No Context/JsonRepresentation types per D26/D31.
+
+**D53 — chord/types+wire.** service-wire.test.ts cases 4-7 exercise createServiceStateEncoder/Decoder (state-codec.ts) and createRemoteServiceEndpoint (provider.ts), neither in this slice's files; their wire shapes are pinned here as parse/marshal goldens and the behaviours (dictionary reset, per-member isolation, keyed codec lifecycle incl. the "Unknown service state" throw, endpoint dispose) are those slices' to port.
+
+**D54 — chord/types+wire.** marshalJSON (compact, SetEscapeHTML(false), as JSON.stringify writes) is a second copy of delta's unexported helper; chord and delta are separate packages and the helper is six lines.
+
+**D55 — chord/wire (reviewer, cosmetic-class).** Go refuses an integral number above Number.MAX_SAFE_INTEGER where pi accepts it. Confirmed under node: parseServiceProviderUpdate({sequence:1e300}) and {instance:{generation:9007199254740992}} are accepted by pi and rejected by Go ('must be an integer'); 9007199254740991 is accepted by both. Unreachable from any pi producer (sequence and generation count up from 0/1), same class as ledger D36; the porter lists it in divergences. Needs a ledger entry, not a code change.
+
+**D56 — protocol/cbor RawItem.** RawItem / DecodeRaw have no upstream counterpart: pi never needs them because a JS object preserves insertion order through decode→re-encode. They are the Go representation of upstream's opaque JsonValue relay guarantee, per the S27 design decision; documented as such in the RawItem doc comment. The UPSTREAM.md ruling 'Do NOT make the CBOR decoder order-preserving' still holds — the decoder still yields map[string]any for every map; spans are captured as bytes, not as an ordered container.
+
+**D57 — protocol/cbor RawItem.** Encode validates a RawItem (one complete readable item under the encoder's limits at its depth) before writing it verbatim. Upstream has no such path to mirror; the check follows this package's existing rule (buildStructLayout, encodeOrderedObject duplicate keys) that Encode must not produce bytes its own Decode refuses, and matters more here because a peer's message decoder fails permanently on its first bad frame. Cost is one readItem pass over the payload bytes on the send path.
+
+**D58 — protocol/cbor RawItem.** Capture is top-level-key only (depth 0 map entries), which is all upstream's envelopes need (`call`, `result`, `update` are envelope-level). A general path-based designation was not built.
+
+**D59 — protocol/cbor RawItem.** Goldens live inline in raw_test.go (hex constants) rather than as protocol/cbor/testdata/*.json plus a gen-*.ts script, because testdata/ was outside this slice's file allowance. The generating script is reproduced in the test's header comment and kept at scratchpad/gen-raw.ts; it imports upstream's packages/protocol/src/cbor/index.ts directly from ~/.cache/pi-upstream at 64eeb82a4. If the orchestrator prefers the testdata convention, moving the seven vectors into testdata/upstream_raw.json + gen-raw.ts is a mechanical follow-up.
+
+**D60 — protocol/cbor RawItem (reviewer).** RawItem relay is byte-exact even for maps with integer-like keys authored out of JS enumeration order; a Node peer relaying the same frame re-emits integer-like keys first. The Go port is strictly more faithful to the wire than pi is to itself. Interop-safe (CBOR maps are order-independent; pi's decoder accepts any order) and no wire a Node peer produces can exhibit it, so no change is warranted — recorded so nobody 'fixes' it toward JS semantics.
 
 ## Open re-judgements
 

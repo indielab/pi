@@ -10,6 +10,9 @@ type reader struct {
 	bytes  []byte
 	offset int
 	opts   resolved
+	// rawKeys names the top-level map entries whose values are captured as
+	// RawItem spans rather than decoded (see DecodeRaw).
+	rawKeys []string
 }
 
 func (r *reader) readByte() (byte, error) {
@@ -182,7 +185,12 @@ func (r *reader) readItem(depth int) (any, error) {
 			if _, duplicate := result[key]; duplicate {
 				return nil, &Error{Msg: "CBOR map contains a duplicate key"}
 			}
-			value, err := r.readItem(depth + 1)
+			var value any
+			if r.captures(key, depth) {
+				value, err = r.readRawItem(depth + 1)
+			} else {
+				value, err = r.readItem(depth + 1)
+			}
 			if err != nil {
 				return nil, err
 			}
@@ -237,6 +245,10 @@ func (r *reader) readSimple(additional byte) (any, error) {
 // lossless in the other direction, because Encode writes any integral float as
 // a CBOR integer.
 func Decode(b []byte, opts *Options) (any, error) {
+	return decode(b, opts, nil)
+}
+
+func decode(b []byte, opts *Options, rawKeys []string) (any, error) {
 	r, err := resolveOptions(opts)
 	if err != nil {
 		return nil, err
@@ -244,7 +256,7 @@ func Decode(b []byte, opts *Options) (any, error) {
 	if len(b) > r.maxByteLength {
 		return nil, cborErrf("CBOR byte length exceeds configured limit of %d", r.maxByteLength)
 	}
-	reader := &reader{bytes: b, opts: r}
+	reader := &reader{bytes: b, opts: r, rawKeys: rawKeys}
 	value, err := reader.readItem(0)
 	if err != nil {
 		return nil, err

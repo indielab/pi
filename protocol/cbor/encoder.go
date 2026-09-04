@@ -152,6 +152,12 @@ func (e *encoder) encode(v reflect.Value, depth int) error {
 		defer e.leave(key)
 		return e.encodeOrderedObject(v.Interface().(OrderedObject), depth)
 	}
+	// A RawItem is a byte slice by construction but already-encoded CBOR on
+	// the wire, so it too is recognised before the kind switch would wrap it
+	// in a byte string.
+	if v.Type() == rawItemType {
+		return e.encodeRawItem(v.Bytes(), depth)
+	}
 
 	switch v.Kind() {
 	case reflect.Interface:
