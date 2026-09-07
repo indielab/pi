@@ -91,10 +91,11 @@ but no Go home yet" is a Scope queue row, not a `decide`.
   npm version if it changed.
 - **The pin can be REVIEW-complete rather than PORT-complete.** Read the pin cell,
   not just the sha: when it says so, the cycle's drift is
-  `<pin>..origin/main` **PLUS** the Scope queue rows named there (today entries
-  11, 12, 13). Advancing the sha never discharges a queue row — only shipping the
-  work does. Compute drift from both or you will report a clean slate over
-  unported changes.
+  `<pin>..origin/main` **PLUS** the Scope queue rows named there. Read the rows
+  from the pin cell itself rather than trusting a count written here — this
+  parenthetical has already gone stale once. Advancing the sha never discharges a
+  queue row — only shipping the work does. Compute drift from both or you will
+  report a clean slate over unported changes.
 - Re-pin the differential harness: set `PI_UPSTREAM_SHA` in
   `difftest/config.env` to the new pin (and `PI_NPM_VERSION` if a release was
   crossed), re-run `difftest/run.sh`, and retire any entry reporting FIXED.
