@@ -277,12 +277,12 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 
 The `backend` column above is a snapshot. Scenarios flip `src` -> `dist` as releases
 ship the surface they cover, so re-read `scenarios/*.json` rather than this table when
-the distinction matters. As of 2026-09-03 the suite is 51 scenarios, 37 `dist` + 14
-`src`: the two Responses compat scenarios (unreleased `supportsMaxOutputTokens`) and
-all twelve `anthropic-messages` scenarios, which went `src` when the port took
-upstream `4e69b0c28` — the beta-namespace migration moves `betas` out of the body,
-and pi-ai 0.84.4 predates it. They flip back to `dist` at the first release that
-contains it.
+the distinction matters. **As of 2026-09-07 the suite is 51 scenarios, all 51 `dist`.**
+pi-ai 0.85.1 shipped both of the surfaces that were holding scenarios on `src` —
+`supportsMaxOutputTokens` (the two Responses compat scenarios) and `4e69b0c28`'s
+beta-namespace migration (all twelve `anthropic-messages` scenarios, whose `betas`
+now leaves the body) — so every scenario is once again checked against the published
+build rather than against TypeScript source.
 
 ## Adding a scenario
 

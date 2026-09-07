@@ -1,7 +1,7 @@
 {
   "name": "responses-max-output-tokens-unsupported",
   "note": "Upstream b8b873b98 (Go f57c288): compat.supportsMaxOutputTokens gates max_output_tokens on openai-responses. With the flag false and options.maxTokens set, the key must be ABSENT from the request body — Codex-protocol gateways 400 on it. Requires PI_UPSTREAM_SHA >= b8b873b98 (the flag does not exist at earlier shas, where max_output_tokens would still be emitted -> false FAIL). backend:\"src\" because pi-ai 0.84.4 predates b8b873b98 and cannot contain the flag; flip to \"dist\" once a release ships it (README rule). The default (true) arm is already covered by every other dist-backed openai-responses scenario, which all set maxTokens and emit max_output_tokens.",
-  "backend": "src",
+  "backend": "dist",
   "api": "openai-responses",
   "entry": "streamSimple",
   "model": {

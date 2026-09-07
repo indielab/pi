@@ -1,7 +1,7 @@
 {
   "name": "responses-compat-malformed-key",
   "note": "PRE-EXISTING PORT DIVERGENCE, surfaced by the b8b873b98 port (2026-09-02) and recorded in docs/UPSTREAM.md. A compat blob carrying one type-mismatched key alongside a valid one: pi resolves each compat key independently (openai-responses.ts getCompat, `model.compat?.supportsMaxOutputTokens ?? true`), so the string-typed supportsToolSearch cannot disturb the explicit supportsMaxOutputTokens:false and pi OMITS max_output_tokens. The Go port decodes the whole blob into one struct, so json.Unmarshal fails and getResponsesCompat's early return discards EVERY override, restoring the default true and EMITTING max_output_tokens:1024. Port-wide, not specific to this flag — it applies to every Responses compat key and predates this cycle. Tracked as KNOWN debt, not a fresh mismatch; when compat decoding is made per-key the runner reports FIXED and forces this entry to be retired. Requires PI_UPSTREAM_SHA >= b8b873b98 for the supportsMaxOutputTokens half; backend:\"src\" because pi-ai 0.84.4 predates the flag entirely. Flip to \"dist\" once a release ships it (README rule).",
-  "backend": "src",
+  "backend": "dist",
   "api": "openai-responses",
   "entry": "streamSimple",
   "model": {

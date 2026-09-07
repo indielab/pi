@@ -120,12 +120,14 @@ Current working directory: /proj
 // assembly branches: with bash active and read absent the skills block stays in
 // the prompt and its second line names bash instead of the read tool.
 //
-// The change is UNRELEASED (npm 0.84.4 predates it — `grep -rl "Use bash to
-// load a skill" ~/.cache/pi-npm/0.84.4` returns nothing), so the expected bytes
-// were captured by running upstream's own buildSystemPrompt at 64eeb82a4 under
-// Node type-stripping, not transcribed from the diff. Only the three pi
-// documentation paths differ from that capture, because the Go call injects
-// fixed paths where pi resolved its own install.
+// The expected bytes were originally captured by running upstream's own
+// buildSystemPrompt at 64eeb82a4 under Node type-stripping, because the change
+// was unreleased at the time. It SHIPPED in pi 0.85.1, and the golden has since
+// been re-verified against the published build — `formatSkillsForPrompt` in
+// node_modules/@earendil-works/pi-coding-agent/dist/core/skills.js emits these
+// exact lines in this order for fileReadTool != "read". Only the three pi
+// documentation paths differ, because the Go call injects fixed paths where pi
+// resolved its own install.
 func TestBashOnlySkillsPromptGolden(t *testing.T) {
 	skills := []Skill{{Name: "demo", Description: "d", FilePath: "/proj/.pi/skills/demo/SKILL.md"}}
 
