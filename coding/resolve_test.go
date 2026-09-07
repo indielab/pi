@@ -237,13 +237,15 @@ func TestDefaultModelPerProviderOpenAI(t *testing.T) {
 // sort — and clones its contextWindow/maxTokens (196608/32768) instead of
 // qwen3.7-max's (1000000/131072), which changes the emitted max_tokens and the
 // context clamp. "radius" is absent from the catalog, so it is inert, but it is
-// carried for faithfulness. Values taken from pi 0.83.0's model-resolver.
+// carried for faithfulness; upstream 9767ba275 moved it from "auto" to
+// "balanced" once Radius models are selected after catalog discovery. The
+// qwen-token-plan values are pi 0.83.0's model-resolver.
 func TestDefaultModelPerProviderQwenTokenPlanAndRadius(t *testing.T) {
 	cases := map[string]string{
 		"qwen-token-plan":            "qwen3.7-max",
 		"qwen-token-plan-cn":         "qwen3.7-max",
 		"qwen-token-plan-individual": "qwen3.8-max",
-		"radius":                     "auto",
+		"radius":                     "balanced",
 	}
 	for provider, want := range cases {
 		t.Run(provider, func(t *testing.T) {
