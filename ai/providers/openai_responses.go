@@ -34,7 +34,11 @@ type responsesCompat struct {
 	SupportsDeveloperRole bool
 	// SessionAffinityFormat selects the session-affinity header shape (pi
 	// SessionAffinityFormat). Auto-detected from provider/baseURL.
-	SessionAffinityFormat      string
+	SessionAffinityFormat string
+	// SupportsLongCacheRetention reports whether the provider supports long
+	// prompt cache retention. Upstream 17de82d7b: this is spelled
+	// `prompt_cache_options.ttl: "30m"` on GPT-5.6+ and
+	// `prompt_cache_retention: "24h"` on earlier models. Default: true.
 	SupportsLongCacheRetention bool
 	// SupportsStrictMode reports whether the provider supports strict
 	// JSON-schema function tools. Default: false; the generated OpenAI models
@@ -50,7 +54,7 @@ type responsesCompat struct {
 	SupportsAdditionalTools bool
 	SupportsToolSearch      bool
 	// SupportsExplicitPromptCacheMode reports whether the model accepts
-	// `prompt_cache_options` (OpenAI GPT-5.6+ explicit prompt caching). Older
+	// `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching). Older
 	// OpenAI models reject the parameter. Default: false.
 	SupportsExplicitPromptCacheMode bool
 	// SupportsMaxOutputTokens reports whether the provider accepts the
@@ -926,15 +930,24 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 	if retention != ai.CacheNone && opts.SessionID != "" {
 		params["prompt_cache_key"] = clampPromptCacheKey(opts.SessionID)
 	}
-	// pi sets prompt_cache_retention independent of sessionId (openai-responses.ts:239).
-	if retention == ai.CacheLong && compat.SupportsLongCacheRetention {
+	// pi getPromptCacheRetention (openai-responses.ts) sets prompt_cache_retention
+	// independent of sessionId. Upstream 17de82d7b added the explicit-mode
+	// exclusion: a GPT-5.6+ model expresses long retention through
+	// prompt_cache_options instead, and must not send both.
+	if retention == ai.CacheLong && compat.SupportsLongCacheRetention && !compat.SupportsExplicitPromptCacheMode {
 		params["prompt_cache_retention"] = "24h"
 	}
-	// Upstream 241431c6: models with explicit prompt caching must be told to stop
-	// caching implicitly when the caller asked for no retention at all (write
-	// compaction / branch summaries must not poison the session cache).
-	if retention == ai.CacheNone && compat.SupportsExplicitPromptCacheMode {
-		params["prompt_cache_options"] = map[string]any{"mode": "explicit"}
+	// pi getPromptCacheOptions (upstream 17de82d7b), for models that accept
+	// prompt_cache_options at all. "none" tells a model with implicit caching to
+	// stop (upstream 241431c6 — write compaction and branch summaries must not
+	// poison the session cache); "long" is how those models spell 24h retention.
+	if compat.SupportsExplicitPromptCacheMode {
+		switch {
+		case retention == ai.CacheNone:
+			params["prompt_cache_options"] = map[string]any{"mode": "explicit"}
+		case retention == ai.CacheLong && compat.SupportsLongCacheRetention:
+			params["prompt_cache_options"] = map[string]any{"ttl": "30m"}
+		}
 	}
 	// pi `if (options?.maxTokens && compat.supportsMaxOutputTokens)` — JS
 	// truthiness, so 0 is omitted. pi then floors the value at 16 (Math.max)

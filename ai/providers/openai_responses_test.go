@@ -1752,22 +1752,34 @@ func TestResponsesCacheRetentionWithoutSessionID(t *testing.T) {
 	}
 }
 
-// Upstream 241431c6: `prompt_cache_options: {mode: "explicit"}` is emitted only
-// when cacheRetention is "none" AND compat.supportsExplicitPromptCacheMode.
-// Expectations captured from pi 0.82.0 (dist/api/openai-responses.js onPayload).
-func TestResponsesExplicitPromptCacheMode(t *testing.T) {
-	explicitCompat := json.RawMessage(`{"supportsExplicitPromptCacheMode":true}`)
+// Upstream 17de82d7b coupled the two prompt-cache params, so they are pinned
+// together. `supportsExplicitPromptCacheMode` (GPT-5.6+) now OWNS long
+// retention: such a model expresses it as `prompt_cache_options: {ttl: "30m"}`
+// and must NOT also send `prompt_cache_retention: "24h"`, which older models
+// still use. `{mode: "explicit"}` (upstream 241431c6) is unchanged — retention
+// "none" on an explicit-cache model, so write compaction and branch summaries
+// do not poison the session cache. supportsLongCacheRetention defaults to true.
+func TestResponsesPromptCacheParams(t *testing.T) {
+	explicit := json.RawMessage(`{"supportsExplicitPromptCacheMode":true}`)
+	explicitNoLong := json.RawMessage(`{"supportsExplicitPromptCacheMode":true,"supportsLongCacheRetention":false}`)
+	noLong := json.RawMessage(`{"supportsLongCacheRetention":false}`)
 	tests := []struct {
-		name      string
-		compat    json.RawMessage
-		retention ai.CacheRetention
-		want      bool
+		name          string
+		compat        json.RawMessage
+		retention     ai.CacheRetention
+		wantRetention string // "" = param absent
+		wantOptions   string // "" = param absent
 	}{
-		{"unset compat, none", nil, ai.CacheNone, false},
-		{"explicit compat, none", explicitCompat, ai.CacheNone, true},
-		{"explicit compat, short", explicitCompat, "", false},
-		{"explicit compat, long", explicitCompat, ai.CacheLong, false},
-		{"compat false, none", json.RawMessage(`{"supportsExplicitPromptCacheMode":false}`), ai.CacheNone, false},
+		{"default compat, none", nil, ai.CacheNone, "", ""},
+		{"default compat, short", nil, "", "", ""},
+		{"default compat, long", nil, ai.CacheLong, `"24h"`, ""},
+		{"explicit, none", explicit, ai.CacheNone, "", `{"mode":"explicit"}`},
+		{"explicit, short", explicit, "", "", ""},
+		{"explicit, long", explicit, ai.CacheLong, "", `{"ttl":"30m"}`},
+		{"explicit without long support, long", explicitNoLong, ai.CacheLong, "", ""},
+		{"explicit without long support, none", explicitNoLong, ai.CacheNone, "", `{"mode":"explicit"}`},
+		{"no long support, long", noLong, ai.CacheLong, "", ""},
+		{"explicit false, none", json.RawMessage(`{"supportsExplicitPromptCacheMode":false}`), ai.CacheNone, "", ""},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1776,16 +1788,25 @@ func TestResponsesExplicitPromptCacheMode(t *testing.T) {
 			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 			body := mustBuildResponsesParams(t, model, req,
 				&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{SessionID: "sess-1", CacheRetention: tc.retention}})
-			got, has := body["prompt_cache_options"]
-			if has != tc.want {
-				t.Fatalf("prompt_cache_options present=%v want %v (value %#v)", has, tc.want, got)
+
+			check := func(param, want string) {
+				t.Helper()
+				got, has := body[param]
+				if want == "" {
+					if has {
+						t.Fatalf("%s must be absent, got %#v", param, got)
+					}
+					return
+				}
+				if !has {
+					t.Fatalf("%s missing, want %s", param, want)
+				}
+				if diff := gotWantJSON(t, got, want); diff != "" {
+					t.Fatal(diff)
+				}
 			}
-			if !tc.want {
-				return
-			}
-			if diff := gotWantJSON(t, got, `{"mode":"explicit"}`); diff != "" {
-				t.Fatal(diff)
-			}
+			check("prompt_cache_retention", tc.wantRetention)
+			check("prompt_cache_options", tc.wantOptions)
 		})
 	}
 }
