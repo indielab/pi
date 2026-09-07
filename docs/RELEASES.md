@@ -20,7 +20,7 @@ captured from. The commit-by-commit triage/port ledger lives in
 
 | Version | Date | Commit | Upstream pin | npm catalog | Headline |
 |---|---|---|---|---|---|
-| [`v0.85.21`](#v08521) | 2026-09-07 | `e204bf1` | `9767ba275` | pi-ai 0.85.1 | Two releases crossed (v0.85.0, v0.85.1) — catalog regen 563,988→592,846 B, 1290→1354 models across an unchanged 39 providers (+92/−28, 86 changed), draining the catalog-only queue 7→0; **built-in tools now prefer strict sampling by default** (the `PI_EXPERIMENTAL` gate is gone upstream, so read/bash/powershell/edit/write carry `json_schema`/`prefer` on every request); GPT-5.6+ models express long prompt caching as `prompt_cache_options: {ttl:"30m"}` and no longer also send `prompt_cache_retention: "24h"`; default Radius model `auto`→`balanced`; `:max` fixed as a valid thinking level (a missed half of upstream `fbdd46389` — `--model …:max` had been resolving to a bogus custom model id); differential harness re-pinned and **51/51 `dist`-backed for the first time since 0.84.2**, at 51 PASS / 0 KNOWN / 0 FAIL |
+| [`v0.85.21`](#v08521) | 2026-09-07 | `e204bf1` | `9767ba275` | pi-ai 0.85.1 | Two releases crossed (v0.85.0, v0.85.1) — catalog regen 563,988→592,846 B, 1290→1354 models across an unchanged 39 providers (+92/−28, 86 changed), draining the catalog-only queue 7→0; **built-in tools now prefer strict sampling by default** (the `PI_EXPERIMENTAL` gate is gone upstream, so read/bash/powershell/edit/write carry `json_schema`/`prefer` on every request); GPT-5.6+ models express long prompt caching as `prompt_cache_options: {ttl:"30m"}` and no longer also send `prompt_cache_retention: "24h"`; default Radius model `auto`→`balanced`; `:max` fixed as a valid thinking level (a missed half of upstream `fbdd46389` — `--model …:max` had been resolving to a bogus custom model id); **`coding.GetExperimentalToolSampling()` removed (sanctioned API break)**; differential harness re-pinned and **51/51 `dist`-backed for the first time since 0.84.2**, at 51 PASS / 0 KNOWN / 0 FAIL. First tag since `v0.84.20`, so it also publishes the 09-01→09-04 cycles — chord delta/core, protocol v8, Phase 0 parity ports, per-key compat decode |
 | [`v0.84.20`](#v08420) | 2026-08-29 | `886ece5` | `853a80d26` | pi-ai 0.84.4 | Release v0.84.4 crossed — catalog regen 558,804→563,988 B, 1312→1290 models across an unchanged 39 providers (+57/−79, 227 changed) with no schema drift at any level, draining the whole three-item generator queue; the agent loop now prepares each turn immediately before its request rather than right after the previous one, so `ShouldStopAfterTurn` runs first on the completed turn, preparation no longer fires after a final turn, and steering typed during a long preparation reaches the turn it was typed for; two exported hooks gain the doc comments their changed contract needs; differential harness re-pinned and green at 49 PASS / 0 KNOWN / 0 FAIL on the new 0.84.4 dist |
 | [`v0.84.19`](#v08419) | 2026-08-25 | `2f4e336` | `a79b37334` | pi-ai 0.84.3 | Release v0.84.3 crossed — catalog regen 536,642→558,804 B, 1267→1312 models, draining the whole eight-item generator queue and activating `allowedFallbackModels` (0→2) for the first time; PowerShell joins the built-in tools (opt-in, not default-active) on a shared shell-tool factory, moving the bash `command` schema description to "Shell command to execute"; OpenRouter `reasoning_details` deltas now concatenate into logical entries; `tool_choice` is omitted when a request carries no tools; the image MIME detector joins the public API; differential harness fully dist-backed again at 49 PASS / 0 KNOWN / 0 FAIL |
 | [`v0.84.18`](#v08418) | 2026-08-15 | `3c909e6` | `086c32e74` | pi-ai 0.84.2 | Release v0.84.2 crossed — the catalog regen (536,642 B, 1220→1267 models) drains the entire four-item generator queue: DeepSeek `max_tokens` field, `supportsStrictMode` on 34 cloudflare-ai-gateway models, deepseek-v4-flash low thinking level, and the KimiCLI/1.5 static headers gone; Google MAX_TOKENS stops with tool calls keep `length` instead of being clobbered to `toolUse`; Z.AI Coding Plan defaults glm-5.1→glm-5.3 plus a new every-default-resolves-in-catalog guard test; differential harness fully dist-backed for the first time — all 21 scenarios against the published 0.84.2 build, 21/21 PASS with an empty known-divergence baseline |
@@ -90,6 +90,32 @@ covering test looped over six levels where upstream loops over seven, so it
 pinned the omission instead of catching it; and because it only walked the
 custom-id path — where a missing level is indistinguishable from a real custom
 id — it could not have caught this at all. Both were fixed.
+
+**Breaking change.** `coding.GetExperimentalToolSampling()` is **removed**. It
+returned the strict-sampling config only when `PI_EXPERIMENTAL=1` and nil
+otherwise; upstream deleted both it and the constant behind it, and the mirror
+ruling is that upstream deletes, we delete — no shim, no deprecation window.
+Migration: if you called it to mirror the gate, drop the call, because the
+built-in tools now carry that config unconditionally. If you wanted the value
+itself, construct it — `&ai.ConstrainedSamplingConfig{Type:
+ai.ConstrainedSamplingJSONSchema, Strict: ai.ConstrainedSamplingPrefer}`.
+`AreExperimentalFeaturesEnabled()` is unaffected and still exported.
+
+Nothing else left the public surface. `protocol.ValidationError` and
+`protocol.Validator` moved to `internal/jsonstrict` during the 2026-09-03
+layering work but remain as type aliases with the same shape, so
+`&protocol.ValidationError{Msg: …}` and `protocol.Validator` still compile —
+verified against this tag, not assumed.
+
+**This tag rolls up more than its own cycle.** It is the first release since
+`v0.84.20` (2026-08-29), and no tag was cut on 2026-09-01, 09-02, 09-03 or 09-04
+because none of those cycles crossed an npm bump. So `v0.85.21` also publishes
+25 commits of earlier work: the `chord` delta + core layers and protocol v8
+envelopes (both additive, beside v1), the Phase 0 parity ports, per-key compat
+key resolution, the `supportsMaxOutputTokens` gate, the preflight-abort fix, and
+the three answered dependency consults (Bedrock, Codex, session-backends) with
+their mechanically-enforced dependency policy test. Those are described in
+`UPSTREAM.md` and in their own commits; this entry covers the 09-07 cycle.
 
 The differential harness is **51/51 `dist`-backed for the first time since the
 0.84.2 era**: 0.85.1 shipped both surfaces that had been holding 14 scenarios on
