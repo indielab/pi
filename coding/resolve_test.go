@@ -1,6 +1,7 @@
 package coding
 
 import (
+	"sort"
 	"strings"
 	"testing"
 
@@ -32,17 +33,35 @@ func TestResolveModelOpenRouterSlashedID(t *testing.T) {
 // matches within that provider, the full input falls back to a raw model id
 // across all models (pi: "openai/gpt-4o:extended" style openrouter ids).
 func TestResolveModelProviderPrefixFallsBackToFullID(t *testing.T) {
-	r, err := ResolveModelPattern("anthropic/claude-opus-4.8-fast")
+	// "anthropic" is a known provider but has no "claude-opus-4.8-fast" model, so
+	// the full input falls back to a raw model id across all providers, landing on
+	// the sole copy (pi's registry .find() lands on the same one).
+	//
+	// The HOST of that copy is catalog churn, not behaviour: npm 0.80.7 dropped
+	// the original fixture (vercel-ai-gateway/anthropic/claude-3.5-haiku), and
+	// 0.85.1 dropped openrouter's copy of this one, moving it to
+	// vercel-ai-gateway. So the expected provider is derived from the catalog and
+	// the sole-copy precondition is asserted rather than assumed — that
+	// precondition is what makes the fallback deterministic, and it is the thing
+	// worth pinning.
+	const id = "anthropic/claude-opus-4.8-fast"
+	var hosts []string
+	for _, provider := range ai.GetProviders() {
+		if ai.GetModel(provider, id) != nil {
+			hosts = append(hosts, provider)
+		}
+	}
+	sort.Strings(hosts)
+	if len(hosts) != 1 {
+		t.Fatalf("fixture %q is hosted by %v, want exactly one provider; re-point it", id, hosts)
+	}
+
+	r, err := ResolveModelPattern(id)
 	if err != nil {
 		t.Fatal(err)
 	}
-	// "anthropic" is a known provider but has no "claude-opus-4.8-fast" model, so
-	// the full input falls back to a raw model id across all providers; that id is
-	// hosted solely under openrouter, so the fallback resolves there (pi's registry
-	// .find() lands on the same sole copy). npm 0.80.7 dropped the previous fixture
-	// (vercel-ai-gateway/anthropic/claude-3.5-haiku); re-point on catalog churn.
-	if string(r.Model.Provider) != "openrouter" || r.Model.ID != "anthropic/claude-opus-4.8-fast" {
-		t.Fatalf("expected openrouter fallback for full id, got %s/%s", r.Model.Provider, r.Model.ID)
+	if string(r.Model.Provider) != hosts[0] || r.Model.ID != id {
+		t.Fatalf("expected %s/%s fallback for full id, got %s/%s", hosts[0], id, r.Model.Provider, r.Model.ID)
 	}
 }
 

@@ -1811,6 +1811,56 @@ func TestResponsesPromptCacheParams(t *testing.T) {
 	}
 }
 
+// The same split, driven by the REAL catalog rather than hand-built compat —
+// upstream's cache-retention test pins exactly this pair (17de82d7b). gpt-4o-mini
+// carries no explicit-cache compat and keeps "24h"; gpt-6-astra arrived with the
+// 0.85.1 regen carrying supportsExplicitPromptCacheMode and takes ttl "30m". A
+// regen that changes either model's compat fails here.
+func TestResponsesPromptCacheParamsFromCatalog(t *testing.T) {
+	tests := []struct {
+		modelID       string
+		wantRetention string
+		wantOptions   string
+	}{
+		{"gpt-4o-mini", `"24h"`, ""},
+		{"gpt-6-astra", "", `{"ttl":"30m"}`},
+	}
+	for _, tc := range tests {
+		t.Run(tc.modelID, func(t *testing.T) {
+			model := ai.GetModel("openai", tc.modelID)
+			if model == nil {
+				t.Fatalf("catalog has no openai/%s", tc.modelID)
+			}
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+			body := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{
+				StreamOptions: ai.StreamOptions{SessionID: "session-2", CacheRetention: ai.CacheLong},
+			})
+			if got := body["prompt_cache_key"]; got != "session-2" {
+				t.Errorf("prompt_cache_key = %#v, want session-2", got)
+			}
+			for _, p := range []struct{ param, want string }{
+				{"prompt_cache_retention", tc.wantRetention},
+				{"prompt_cache_options", tc.wantOptions},
+			} {
+				got, has := body[p.param]
+				if p.want == "" {
+					if has {
+						t.Errorf("%s must be absent, got %#v", p.param, got)
+					}
+					continue
+				}
+				if !has {
+					t.Errorf("%s missing, want %s", p.param, p.want)
+					continue
+				}
+				if diff := gotWantJSON(t, got, p.want); diff != "" {
+					t.Error(diff)
+				}
+			}
+		})
+	}
+}
+
 // gotWantJSON renders got as JSON and compares it byte-for-byte with want.
 func gotWantJSON(t *testing.T, got any, want string) string {
 	t.Helper()

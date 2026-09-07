@@ -477,19 +477,22 @@ func TestAnthropicUsageModelLeavesCatalogModelAlone(t *testing.T) {
 // TestAnthropicCatalogFallbacksAreLive pins the 0.84.3 activation: until that
 // regen the embedded catalog carried zero allowedFallbackModels, so every rule
 // above was exercised only against hand-built compat and the whole feature was
-// dormant in practice. The catalog now ships them for exactly two anthropic
-// models, and this test drives the REAL catalog compat onto the wire rather than
-// re-asserting the JSON — a regen that drops the field, reshapes the entries, or
-// breaks the decode fails here even though every other test in this file passes.
+// dormant in practice. This test drives the REAL catalog compat onto the wire
+// rather than re-asserting the JSON — a regen that drops the field, reshapes the
+// entries, or breaks the decode fails here even though every other test in this
+// file passes.
+//
+// The 0.85.1 regen dropped claude-opus-5's chain (it was the sole fallback to
+// claude-opus-4-8); claude-fable-5 keeps both of its entries. The exact set is
+// deliberately hard-coded: the point is to notice when a regen changes it.
 func TestAnthropicCatalogFallbacksAreLive(t *testing.T) {
 	ai.LoadBuiltinModels()
 	models := ai.BuiltinModels().GetModels("anthropic")
 
-	// Exactly the two models the 0.84.3 catalog gives fallbacks to, and the
-	// order of each one's list, which is the order Anthropic receives.
+	// Exactly the models the 0.85.1 catalog gives fallbacks to, and the order of
+	// each one's list, which is the order Anthropic receives.
 	want := map[string][]string{
 		"claude-fable-5": {"claude-opus-4-8", "claude-opus-5"},
-		"claude-opus-5":  {"claude-opus-4-8"},
 	}
 
 	got := map[string]*ai.Model{}
