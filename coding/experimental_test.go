@@ -42,35 +42,83 @@ func TestAreExperimentalFeaturesEnabled(t *testing.T) {
 	}
 }
 
-// Port of experimental-tool-strict-mode.test.ts (upstream 7915cdac6): the
-// built-in read/bash/edit/write tools carry strict-prefer constrained sampling
-// only under PI_EXPERIMENTAL=1, and the gate never touches their parameters.
-func TestExperimentalStrictBuiltInTools(t *testing.T) {
-	// t.Setenv registers the restore before the variable is removed to
-	// exercise the truly-unset case.
-	t.Setenv("PI_EXPERIMENTAL", "")
-	if err := os.Unsetenv("PI_EXPERIMENTAL"); err != nil {
-		t.Fatal(err)
-	}
-	normalTools := CreateCodingTools(t.TempDir())
-	t.Setenv("PI_EXPERIMENTAL", "1")
-	experimentalTools := CreateCodingTools(t.TempDir())
-
+// Port of builtin-tool-strict-mode.test.ts (upstream fcff255b0, which replaced
+// experimental-tool-strict-mode.test.ts): the built-in read/bash/powershell/
+// edit/write tools prefer strict constrained sampling by DEFAULT, whatever
+// PI_EXPERIMENTAL says, while grep/find/ls stay unconstrained. Strictness is a
+// provider-side conversion, so it must never touch the execution schema.
+//
+// Upstream's two remaining cases have no Go home and are deliberately not
+// ported: the wrapToolDefinition opt-out and the extension re-registration case
+// are both extension surface (E1).
+func TestBuiltInToolsPreferStrictSampling(t *testing.T) {
+	strict := map[string]bool{"read": true, "bash": true, "powershell": true, "edit": true, "write": true}
+	unconstrained := map[string]bool{"grep": true, "find": true, "ls": true}
 	want := &ai.ConstrainedSamplingConfig{
 		Type: ai.ConstrainedSamplingJSONSchema, Strict: ai.ConstrainedSamplingPrefer,
 	}
-	for i, tool := range experimentalTools {
-		if cs := tool.ConstrainedSampling; cs == nil || *cs != *want {
-			t.Fatalf("tool %s must prefer strict sampling in experimental mode: %#v", tool.Name, cs)
-		}
-		gotParams, _ := json.Marshal(tool.Parameters)
-		wantParams, _ := json.Marshal(normalTools[i].Parameters)
-		if string(gotParams) != string(wantParams) {
-			t.Fatalf("tool %s parameters must not change:\n got: %s\nwant: %s", tool.Name, gotParams, wantParams)
-		}
-		if normalTools[i].ConstrainedSampling != nil {
-			t.Fatalf("tool %s must not constrain sampling outside experimental mode: %#v",
-				normalTools[i].Name, normalTools[i].ConstrainedSampling)
-		}
+
+	for _, experimental := range []string{"unset", "0", "1"} {
+		t.Run("PI_EXPERIMENTAL="+experimental, func(t *testing.T) {
+			// t.Setenv registers the restore before the variable is removed to
+			// exercise the truly-unset case.
+			t.Setenv("PI_EXPERIMENTAL", "")
+			if experimental == "unset" {
+				if err := os.Unsetenv("PI_EXPERIMENTAL"); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				t.Setenv("PI_EXPERIMENTAL", experimental)
+			}
+
+			tools := CreateAllTools(t.TempDir())
+			seen := map[string]bool{}
+			for _, tool := range tools {
+				seen[tool.Name] = true
+				switch {
+				case strict[tool.Name]:
+					if cs := tool.ConstrainedSampling; cs == nil || *cs != *want {
+						t.Errorf("tool %s must prefer strict sampling by default: %#v", tool.Name, cs)
+					}
+				case unconstrained[tool.Name]:
+					if cs := tool.ConstrainedSampling; cs != nil {
+						t.Errorf("tool %s must stay unconstrained: %#v", tool.Name, cs)
+					}
+				default:
+					t.Errorf("tool %s is in neither bucket; update this test", tool.Name)
+				}
+			}
+			for name := range strict {
+				if !seen[name] {
+					t.Errorf("CreateAllTools omitted strict tool %s", name)
+				}
+			}
+
+			// Strictness is a provider-side conversion, not a change to the
+			// execution schema.
+			required := func(name string) []string {
+				tool, err := CreateTool(name, t.TempDir())
+				if err != nil {
+					t.Fatal(err)
+				}
+				var schema struct {
+					Required []string `json:"required"`
+				}
+				raw, err := json.Marshal(tool.Parameters)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if err := json.Unmarshal(raw, &schema); err != nil {
+					t.Fatal(err)
+				}
+				return schema.Required
+			}
+			if got := required("read"); len(got) != 1 || got[0] != "path" {
+				t.Errorf("read.required = %v, want [path]", got)
+			}
+			if got := required("bash"); len(got) != 1 || got[0] != "command" {
+				t.Errorf("bash.required = %v, want [command]", got)
+			}
+		})
 	}
 }

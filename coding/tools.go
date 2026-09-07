@@ -157,6 +157,17 @@ var ToolSnippets = map[string]string{
 	"web_fetch":  "Fetch a web URL and return readable text",
 }
 
+// preferStrictToolSampling is pi's inlined `{type: "json_schema", strict:
+// "prefer"}` on the built-in read/bash/powershell/edit/write definitions
+// (upstream fcff255b0). pi dropped PREFER_STRICT_TOOL_SAMPLING and the
+// PI_EXPERIMENTAL gate that fed it, making strict sampling the default; the
+// port keeps one shared value rather than repeating the literal at each site,
+// which is the same bytes on the wire. Nothing mutates it.
+var preferStrictToolSampling = &ai.ConstrainedSamplingConfig{
+	Type:   ai.ConstrainedSamplingJSONSchema,
+	Strict: ai.ConstrainedSamplingPrefer,
+}
+
 // CreateTool builds a single built-in tool by name, rooted at cwd. The bash
 // tool built this way exposes no PI_* session metadata: there is no session to
 // read it from, matching pi's `exposeSessionEnvironment && ctx` guard when the
@@ -432,7 +443,7 @@ func readToolOps(cwd string, custom *ReadOperations) agent.AgentTool {
 			ai.Opt("offset", ai.Integer("Line number to start reading from (1-indexed)")),
 			ai.Opt("limit", ai.Integer("Maximum number of lines to read")),
 		),
-		ConstrainedSampling: GetExperimentalToolSampling(),
+		ConstrainedSampling: preferStrictToolSampling,
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			path := argStr(params, "path")
 			abs := resolveReadPath(path, cwd)
@@ -575,7 +586,7 @@ func writeToolOps(cwd string, custom *WriteOperations) agent.AgentTool {
 			ai.Prop("path", ai.String("Path to the file to write (relative or absolute)")),
 			ai.Prop("content", ai.String("Content to write to the file")),
 		),
-		ConstrainedSampling: GetExperimentalToolSampling(),
+		ConstrainedSampling: preferStrictToolSampling,
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			path := argStr(params, "path")
 			content := argStr(params, "content")
@@ -625,7 +636,7 @@ func editToolOps(cwd string, custom *EditOperations) agent.AgentTool {
 			ai.Prop("path", ai.String("Path to the file to edit (relative or absolute)")),
 			ai.Prop("edits", ai.ArrayOf(editObjSchema, "One or more targeted replacements. Each edit is matched against the original file, not incrementally. Do not include overlapping or nested edits. If two changes touch the same block or nearby lines, merge them into one edit instead.")),
 		),
-		ConstrainedSampling: GetExperimentalToolSampling(),
+		ConstrainedSampling: preferStrictToolSampling,
 		// The harness runs PrepareArguments before schema validation (loop.go),
 		// matching pi's prepareArguments hook (edit.ts:307).
 		PrepareArguments: prepareEditArguments,
@@ -898,7 +909,7 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 			ai.Prop("command", ai.String("Shell command to execute")),
 			ai.Opt("timeout", ai.Number("Timeout in seconds (optional, no default timeout)")),
 		),
-		ConstrainedSampling: GetExperimentalToolSampling(),
+		ConstrainedSampling: preferStrictToolSampling,
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			command := config.commandPrefix + argStr(params, "command")
 			// pi resolveTimeoutMs (bash.ts) validates the timeout before spawning:
