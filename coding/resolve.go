@@ -61,9 +61,12 @@ var defaultModelPerProvider = map[string]string{
 	"xiaomi-token-plan-sgp":      "mimo-v2.5-pro",
 }
 
-// validThinkingLevels mirrors pi's VALID_THINKING_LEVELS (cli/args.ts:57).
+// validThinkingLevels mirrors pi's VALID_THINKING_LEVELS (cli/args.ts). "max"
+// arrived upstream with fbdd46389; the port took that commit's ai-side half
+// (ai.ThinkingMax) and missed this list, so every ":max" spec fell through to
+// the custom-id fallback with the suffix still glued to the model id.
 var validThinkingLevels = map[string]bool{
-	"off": true, "minimal": true, "low": true, "medium": true, "high": true, "xhigh": true,
+	"off": true, "minimal": true, "low": true, "medium": true, "high": true, "xhigh": true, "max": true,
 }
 
 // ResolvedModel is the result of resolving a model spec.

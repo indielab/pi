@@ -187,8 +187,10 @@ func TestResolveModelCustomIDFallbackThinkingOffKeepsReasoningFalse(t *testing.T
 }
 
 // All valid thinking levels work in the fallback path (upstream test parity).
+// The list is pi's VALID_THINKING_LEVELS in full — seven levels, "max"
+// included (cli/args.ts, and model-resolver.test.ts loops the same seven).
 func TestResolveModelCustomIDFallbackAllLevels(t *testing.T) {
-	for _, level := range []string{"off", "minimal", "low", "medium", "high", "xhigh"} {
+	for _, level := range []string{"off", "minimal", "low", "medium", "high", "xhigh", "max"} {
 		r, err := ResolveModelPattern("anthropic/my-custom-model-id:" + level)
 		if err != nil {
 			t.Fatal(err)
@@ -199,6 +201,32 @@ func TestResolveModelCustomIDFallbackAllLevels(t *testing.T) {
 		if r.ThinkingLevel != level {
 			t.Fatalf("level %s: fallback thinking level wrong: %q", level, r.ThinkingLevel)
 		}
+	}
+}
+
+// A ":max" suffix on a REAL catalog model resolves to that model at level
+// "max", rather than being glued onto the id as a custom-model fallback. The
+// all-levels test above only exercises the custom-id path, so it cannot catch a
+// level missing from validThinkingLevels: an unrecognised suffix looks the same
+// as a custom id there. This is the path upstream's model-resolver.test.ts
+// covers and the one a user hits with `--model anthropic/claude-opus-4-8:max`.
+func TestResolveModelRealModelMaxThinkingLevel(t *testing.T) {
+	const id = "claude-opus-4-8"
+	if ai.GetModel("anthropic", id) == nil {
+		t.Skipf("catalog has no anthropic/%s; re-point this fixture", id)
+	}
+	r, err := ResolveModelPattern("anthropic/" + id + ":max")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Model.ID != id {
+		t.Errorf("model id = %q, want %q (the :max suffix must be parsed off, not glued on)", r.Model.ID, id)
+	}
+	if r.ThinkingLevel != "max" {
+		t.Errorf("thinking level = %q, want max", r.ThinkingLevel)
+	}
+	if r.Warning != "" {
+		t.Errorf("unexpected warning %q — the model resolved, so nothing is custom", r.Warning)
 	}
 }
 
