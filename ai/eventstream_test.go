@@ -3,6 +3,7 @@ package ai
 import (
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestEventStreamOrderingAndResult(t *testing.T) {
@@ -137,5 +138,43 @@ func TestEventStreamConcurrentConsumers(t *testing.T) {
 	wg.Wait()
 	if total != 5050 {
 		t.Fatalf("sum across consumers = %d, want 5050", total)
+	}
+}
+
+// TestEventStreamDeliversToWaitersInRegistrationOrder mirrors pi's "delivers
+// events to waiting consumers in registration order" (upstream b2602be77,
+// packages/ai/test/event-stream.test.ts). pi's push hands each event DIRECTLY to
+// the longest-waiting consumer, dequeued from its `waiting` FIFO and bypassing
+// the event queue entirely, so the consumer that registered first receives the
+// first event.
+func TestEventStreamDeliversToWaitersInRegistrationOrder(t *testing.T) {
+	s := NewEventStream(
+		func(int) bool { return false },
+		func(i int) int { return i },
+	)
+
+	got := make([]int, 2)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	register := func(idx int) {
+		go func() {
+			defer wg.Done()
+			v, _ := s.Next()
+			got[idx] = v
+		}()
+	}
+
+	// Stagger registration so "first" and "second" are unambiguous.
+	register(0)
+	time.Sleep(50 * time.Millisecond)
+	register(1)
+	time.Sleep(50 * time.Millisecond)
+
+	s.Push(1)
+	s.Push(2)
+	wg.Wait()
+
+	if got[0] != 1 || got[1] != 2 {
+		t.Fatalf("delivery to waiters = first:%d second:%d, want first:1 second:2", got[0], got[1])
 	}
 }
