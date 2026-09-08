@@ -267,3 +267,51 @@ func eq(a, b []string) bool {
 	}
 	return true
 }
+
+// TestBuildContextKeepsAnEarlierCompactionInTheKeptRange pins pi's projection of
+// a session compacted TWICE, where the second compaction's kept range still
+// contains the first compaction entry.
+//
+// Upstream buildContextEntries (session-manager.ts:426-453 @ 96617628e) selects
+// the LATEST compaction on the path, then pushes every entry from
+// firstKeptEntryId up to it — an earlier compaction entry inside that range
+// included — and sessionEntryToContextMessages (:403-406) projects ANY entry of
+// type "compaction" to a compactionSummary user message, not only the latest
+// one. So the earlier summary still reaches the model.
+//
+// Reachable in ordinary use: a second /compact takes its boundary from the
+// PREVIOUS compaction's firstKeptEntryIndex (compaction.ts:768-772), an index
+// strictly before that compaction's own, so C1 routinely lands inside C2's kept
+// range. Surfaced by upstream 9211da172's session-format.md rewrite, which made
+// the multi-compaction case explicit ("If one or more CompactionEntry values are
+// on the path, uses the latest one").
+func TestBuildContextKeepsAnEarlierCompactionInTheKeptRange(t *testing.T) {
+	path := writeSessionLines(t, []string{
+		`{"type":"session","version":3,"id":"0190aaaa-bbbb-7ccc-8ddd-eeeeffff0000","timestamp":"2026-01-01T00:00:00.000Z","cwd":"/p"}`,
+		`{"type":"message","id":"e1","parentId":null,"timestamp":"2026-01-01T00:00:01.000Z","message":{"role":"user","content":[{"type":"text","text":"old"}],"timestamp":1}}`,
+		`{"type":"message","id":"e2","parentId":"e1","timestamp":"2026-01-01T00:00:02.000Z","message":{"role":"user","content":[{"type":"text","text":"kept-start"}],"timestamp":2}}`,
+		`{"type":"compaction","id":"c1","parentId":"e2","timestamp":"2026-01-01T00:00:03.000Z","summary":"SUMMARY-ONE","firstKeptEntryId":"e2","tokensBefore":100}`,
+		`{"type":"message","id":"e3","parentId":"c1","timestamp":"2026-01-01T00:00:04.000Z","message":{"role":"user","content":[{"type":"text","text":"after-c1"}],"timestamp":3}}`,
+		`{"type":"compaction","id":"c2","parentId":"e3","timestamp":"2026-01-01T00:00:05.000Z","summary":"SUMMARY-TWO","firstKeptEntryId":"e2","tokensBefore":200}`,
+		`{"type":"message","id":"e4","parentId":"c2","timestamp":"2026-01-01T00:00:06.000Z","message":{"role":"user","content":[{"type":"text","text":"after-c2"}],"timestamp":4}}`,
+	})
+
+	tree, err := LoadSessionTree(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := userTexts(tree.BuildContext().Messages)
+
+	if len(got) != 5 {
+		t.Fatalf("want 5 messages (latest summary, kept tail incl. the earlier summary, post-compaction tail), got %d: %v", len(got), got)
+	}
+	if !strings.Contains(got[0], "SUMMARY-TWO") {
+		t.Errorf("first message = %q, want the latest compaction's summary", got[0])
+	}
+	if !strings.Contains(got[2], "SUMMARY-ONE") {
+		t.Errorf("message[2] = %q, want the earlier compaction's summary — pi projects every compaction entry in the kept range, not just the latest", got[2])
+	}
+	if !eq([]string{got[1], got[3], got[4]}, []string{"U:kept-start", "U:after-c1", "U:after-c2"}) {
+		t.Errorf("kept tail = %v, want kept-start / after-c1 / after-c2", []string{got[1], got[3], got[4]})
+	}
+}

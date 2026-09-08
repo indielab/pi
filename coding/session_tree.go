@@ -237,6 +237,12 @@ func (t *SessionTree) BuildContext(leafID ...string) BranchContext {
 			if e.Summary != "" {
 				ctx.Messages = append(ctx.Messages, branchSummaryMessage(e.Summary, entryMillis(e.Timestamp)))
 			}
+		case "compaction":
+			// An EARLIER compaction sitting inside the latest one's kept range
+			// still contributes its summary: pi's sessionEntryToContextMessages
+			// (session-manager.ts:403-406) projects any "compaction" entry, not
+			// only the one buildContextEntries selected.
+			ctx.Messages = append(ctx.Messages, compactionSummaryMessage(e.Summary, entryMillis(e.Timestamp)))
 		}
 	}
 
