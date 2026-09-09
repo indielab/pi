@@ -1,6 +1,7 @@
 package coding
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"io"
@@ -61,6 +62,9 @@ type FileSystem interface {
 	JoinPath(ctx context.Context, parts []string) (string, error)
 	// ReadTextFile reads a whole UTF-8 file.
 	ReadTextFile(ctx context.Context, path string) (string, error)
+	// OpenTextLineReader opens a UTF-8 text file for pull-based line reading.
+	// The caller owns the returned reader and must Close it.
+	OpenTextLineReader(ctx context.Context, path string) (TextLineReader, error)
 	// ReadTextLines reads UTF-8 lines, stopping once maxLines have been read.
 	// A maxLines of 0 or less means "no limit".
 	ReadTextLines(ctx context.Context, path string, maxLines int) ([]string, error)
@@ -181,15 +185,44 @@ func (e *LocalEnv) ReadTextFile(ctx context.Context, path string) (string, error
 	return string(data), nil
 }
 
-// ReadTextLines implements FileSystem.
-func (e *LocalEnv) ReadTextLines(ctx context.Context, path string, maxLines int) ([]string, error) {
-	text, err := e.ReadTextFile(ctx, path)
+// OpenTextLineReader implements FileSystem.
+func (e *LocalEnv) OpenTextLineReader(ctx context.Context, path string) (TextLineReader, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	f, err := os.Open(e.resolve(path))
 	if err != nil {
 		return nil, err
 	}
-	lines := splitLines(text)
-	if maxLines > 0 && len(lines) > maxLines {
-		lines = lines[:maxLines]
+	return newTextLineReader(f), nil
+}
+
+// ReadTextLines implements FileSystem.
+//
+// Rebuilt on OpenTextLineReader by upstream 3e4bc2680, and rebuilt on it here
+// for the same two reasons: it stops reading at maxLines instead of pulling the
+// whole file into memory first, and it counts lines the way pi's reader does.
+// The old implementation split the whole text on "\n", which appended a phantom
+// empty element for every newline-terminated file.
+func (e *LocalEnv) ReadTextLines(ctx context.Context, path string, maxLines int) ([]string, error) {
+	reader, err := e.OpenTextLineReader(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+
+	var lines []string
+	for maxLines <= 0 || len(lines) < maxLines {
+		line, err := reader.ReadLine(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		// pi keeps only the text: a torn final record is still a line here, and
+		// it is the JSONL reader's job to drop it (that is what Terminated is for).
+		lines = append(lines, line.Text)
 	}
 	return lines, nil
 }
@@ -450,9 +483,88 @@ type writerFunc func(p []byte) (int, error)
 
 func (f writerFunc) Write(p []byte) (int, error) { return f(p) }
 
-// splitLines splits on "\n", matching how the read tool and pi both count
-// lines. A trailing newline yields a final empty element, as in pi.
-func splitLines(text string) []string { return strings.Split(text, "\n") }
-
 // LocalEnv satisfies the full ExecutionEnv contract.
 var _ ExecutionEnv = (*LocalEnv)(nil)
+
+// TextLine is one UTF-8 line read from a text file (pi TextLine,
+// packages/agent/src/harness/types.ts at 3e4bc2680).
+type TextLine struct {
+	Text string
+	// Terminated reports whether the line ended with "\n". A reader that is
+	// reconstructing records uses it to discard a torn final one.
+	Terminated bool
+}
+
+// TextLineReader is a pull-based UTF-8 line reader that preserves final-line
+// termination (pi TextLineReader).
+//
+// pi's readLine returns `Result<TextLine | undefined, FileError>` and signals
+// exhaustion with `undefined`; the Go rendering of "no more lines" is io.EOF,
+// and pi's `close(context): Promise<void>` — documented as best-effort and
+// forbidden to throw — is an ordinary io.Closer here. Closing twice is a no-op
+// and the returned error is informational: the file is released either way.
+type TextLineReader interface {
+	ReadLine(ctx context.Context) (TextLine, error)
+	Close() error
+}
+
+// textLineReader is the strict-LF reader pi introduced in 3e4bc2680, whose
+// comment explains the strictness: Node's readline cannot report whether its
+// final line was newline-terminated, so it cannot be used to reconstruct
+// records. It splits on "\n" ONLY and does not strip a "\r", which is pi's
+// behavior since that commit.
+type textLineReader struct {
+	source io.ReadCloser
+	reader *bufio.Reader
+	closed bool
+}
+
+// newTextLineReader takes an io.ReadCloser rather than an *os.File so that a
+// non-local FileSystem implementation can reuse the reader over whatever it
+// reads from — the same reason pi's lives on the FileSystem capability rather
+// than inside its Node env.
+func newTextLineReader(source io.ReadCloser) TextLineReader {
+	// pi reads in 64 KiB chunks; matching the size keeps the syscall pattern
+	// recognisable when the two are compared side by side.
+	return &textLineReader{source: source, reader: bufio.NewReaderSize(source, 64*1024)}
+}
+
+// ReadLine returns the next line, or io.EOF once the file is exhausted.
+func (r *textLineReader) ReadLine(ctx context.Context) (TextLine, error) {
+	if err := ctx.Err(); err != nil {
+		return TextLine{}, err
+	}
+	if r.closed {
+		return TextLine{}, errors.New("read line: reader is closed; open a new one with OpenTextLineReader")
+	}
+	text, err := r.reader.ReadString('\n')
+	switch {
+	case err == nil:
+		return TextLine{Text: decodeUTF8(strings.TrimSuffix(text, "\n")), Terminated: true}, nil
+	case errors.Is(err, io.EOF) && text != "":
+		// pi: the final chunk with no newline is a line, flagged unterminated.
+		return TextLine{Text: decodeUTF8(text)}, nil
+	case errors.Is(err, io.EOF):
+		return TextLine{}, io.EOF
+	default:
+		return TextLine{}, err
+	}
+}
+
+// Close releases the open file. It is best-effort, as pi's is: it never panics
+// and is safe to call more than once.
+func (r *textLineReader) Close() error {
+	if r.closed {
+		return nil
+	}
+	r.closed = true
+	return r.source.Close()
+}
+
+// decodeUTF8 mirrors the TextDecoder pi decodes each chunk with: it is
+// non-fatal, so malformed or truncated input becomes U+FFFD rather than an
+// error or a raw byte. Go strings hold arbitrary bytes and would carry the
+// invalid ones through, which is the one place this reader would otherwise
+// hand a caller different characters than pi does. Valid input is returned
+// unchanged and unallocated.
+func decodeUTF8(text string) string { return strings.ToValidUTF8(text, "\uFFFD") }

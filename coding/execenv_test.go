@@ -3,6 +3,7 @@ package coding
 import (
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -52,14 +53,32 @@ func (f *fakeEnv) ReadTextFile(ctx context.Context, path string) (string, error)
 	data, err := f.ReadBinaryFile(ctx, path)
 	return string(data), err
 }
-func (f *fakeEnv) ReadTextLines(ctx context.Context, path string, maxLines int) ([]string, error) {
+func (f *fakeEnv) OpenTextLineReader(ctx context.Context, path string) (TextLineReader, error) {
 	text, err := f.ReadTextFile(ctx, path)
 	if err != nil {
 		return nil, err
 	}
-	lines := strings.Split(text, "\n")
-	if maxLines > 0 && len(lines) > maxLines {
-		lines = lines[:maxLines]
+	return newTextLineReader(io.NopCloser(strings.NewReader(text))), nil
+}
+
+// Shares the real reader, so the double cannot drift from LocalEnv on the
+// line-counting question this file pins.
+func (f *fakeEnv) ReadTextLines(ctx context.Context, path string, maxLines int) ([]string, error) {
+	reader, err := f.OpenTextLineReader(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	defer reader.Close()
+	var lines []string
+	for maxLines <= 0 || len(lines) < maxLines {
+		line, err := reader.ReadLine(ctx)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		lines = append(lines, line.Text)
 	}
 	return lines, nil
 }
@@ -331,4 +350,194 @@ func slicesContains(haystack []string, needle string) bool {
 		}
 	}
 	return false
+}
+
+// pi's harness readTextLines yields one entry per LINE: a newline-terminated
+// file ends after its last line, with no phantom empty entry. Both of pi's
+// implementations agree on that — the readline loop it used through
+// `96617628e`, and the strict-LF `NodeTextLineReader` that replaced it in
+// `3e4bc2680` (packages/agent/src/harness/env/nodejs.ts).
+//
+// The port had reused splitLines here, whose trailing-empty element is the
+// READ TOOL's line counting (`content.split("\n")`), not readTextLines'. The
+// two are different functions and the shared helper hid it.
+func TestLocalEnvReadTextLinesHasNoPhantomTrailingLine(t *testing.T) {
+	dir := t.TempDir()
+	env := NewLocalEnv(dir)
+	ctx := context.Background()
+	if err := env.WriteFile(ctx, "f.txt", []byte("one\ntwo\n")); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := env.ReadTextLines(ctx, "f.txt", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 2 || lines[0] != "one" || lines[1] != "two" {
+		t.Fatalf("ReadTextLines = %#v, want [one two]", lines)
+	}
+}
+
+// The counterpart: an unterminated final line is still a line.
+func TestLocalEnvReadTextLinesKeepsUnterminatedFinalLine(t *testing.T) {
+	dir := t.TempDir()
+	env := NewLocalEnv(dir)
+	ctx := context.Background()
+	if err := env.WriteFile(ctx, "f.txt", []byte("one\ntwo")); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := env.ReadTextLines(ctx, "f.txt", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(lines) != 2 || lines[1] != "two" {
+		t.Fatalf("ReadTextLines = %#v, want [one two]", lines)
+	}
+}
+
+// Transliterated from pi's own packages/agent/test/harness/text-line-reader.test.ts
+// at 3e4bc2680 — the commit that introduced the reader. The cases pi chose are
+// the contract: what counts as a line, what "terminated" means, and how the
+// decoder behaves at a chunk boundary and on malformed input.
+func TestTextLineReaderMatchesPiContract(t *testing.T) {
+	dir := t.TempDir()
+	env := NewLocalEnv(dir)
+	ctx := context.Background()
+
+	read := func(t *testing.T, content []byte) []TextLine {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, "text.txt"), content, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		reader, err := env.OpenTextLineReader(ctx, "text.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer reader.Close()
+		var lines []TextLine
+		for {
+			line, err := reader.ReadLine(ctx)
+			if errors.Is(err, io.EOF) {
+				return lines
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines = append(lines, line)
+		}
+	}
+
+	t.Run("unicode, blank lines and a torn final line", func(t *testing.T) {
+		got := read(t, []byte("hé🙂\n\n\n終\ntorn"))
+		want := []TextLine{
+			{Text: "hé🙂", Terminated: true},
+			{Text: "", Terminated: true},
+			{Text: "", Terminated: true},
+			{Text: "終", Terminated: true},
+			{Text: "torn", Terminated: false},
+		}
+		if len(got) != len(want) {
+			t.Fatalf("got %#v, want %#v", got, want)
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Fatalf("line %d = %#v, want %#v", i, got[i], want[i])
+			}
+		}
+	})
+
+	t.Run("empty file", func(t *testing.T) {
+		if got := read(t, nil); len(got) != 0 {
+			t.Fatalf("got %#v, want no lines", got)
+		}
+	})
+
+	t.Run("multibyte split across the 64 KiB chunk boundary", func(t *testing.T) {
+		first := strings.Repeat("a", 64*1024-1) + "🙂" + strings.Repeat("é", 40_000)
+		got := read(t, []byte(first+"\n終"))
+		if len(got) != 2 || got[0].Text != first || !got[0].Terminated {
+			t.Fatalf("first line did not survive the chunk boundary (len %d)", len(got))
+		}
+		if got[1] != (TextLine{Text: "終"}) {
+			t.Fatalf("second line = %#v, want {終 false}", got[1])
+		}
+	})
+
+	// pi decodes with a non-fatal TextDecoder, so a bad byte and a truncated
+	// sequence each become U+FFFD rather than reaching the caller raw.
+	t.Run("malformed and incomplete UTF-8 are replaced", func(t *testing.T) {
+		got := read(t, []byte{0xff, 0x0a, 0xe2, 0x82})
+		want := []TextLine{{Text: "�", Terminated: true}, {Text: "�"}}
+		if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+			t.Fatalf("got %#v, want %#v", got, want)
+		}
+	})
+
+	// pi: "\r" is NOT stripped -- the reader is strict-LF by design, because
+	// Node's readline could not report final-line termination.
+	t.Run("a CR is part of the line", func(t *testing.T) {
+		got := read(t, []byte("one\r\ntwo\r\n"))
+		if len(got) != 2 || got[0].Text != "one\r" || got[1].Text != "two\r" {
+			t.Fatalf("got %#v, want the CRs preserved", got)
+		}
+	})
+}
+
+// pi: a pre-aborted context must not consume the buffered line, and close is
+// idempotent while a read after close is an error.
+func TestTextLineReaderCancellationAndClose(t *testing.T) {
+	dir := t.TempDir()
+	env := NewLocalEnv(dir)
+	ctx := context.Background()
+	if err := os.WriteFile(filepath.Join(dir, "text.txt"), []byte("one\ntwo\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	reader, err := env.OpenTextLineReader(ctx, "text.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if line, err := reader.ReadLine(ctx); err != nil || line.Text != "one" {
+		t.Fatalf("first line = %#v, %v", line, err)
+	}
+
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if _, err := reader.ReadLine(cancelled); !errors.Is(err, context.Canceled) {
+		t.Fatalf("a cancelled context must fail the read, got %v", err)
+	}
+	if line, err := reader.ReadLine(ctx); err != nil || line.Text != "two" {
+		t.Fatalf("the cancelled read must not consume a line: got %#v, %v", line, err)
+	}
+
+	if err := reader.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := reader.Close(); err != nil {
+		t.Fatalf("close must be idempotent, got %v", err)
+	}
+	if _, err := reader.ReadLine(ctx); err == nil {
+		t.Fatal("a read after close must fail")
+	}
+}
+
+// A missing file is an error at open, not at the first read.
+func TestTextLineReaderMissingFile(t *testing.T) {
+	env := NewLocalEnv(t.TempDir())
+	if _, err := env.OpenTextLineReader(context.Background(), "missing.txt"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("opening a missing file = %v, want os.ErrNotExist", err)
+	}
+}
+
+// maxLines stops the read; pi's loop does the same rather than reading the
+// whole file and truncating.
+func TestLocalEnvReadTextLinesStopsAtMaxLines(t *testing.T) {
+	dir := t.TempDir()
+	env := NewLocalEnv(dir)
+	ctx := context.Background()
+	if err := env.WriteFile(ctx, "f.txt", []byte("one\ntwo\nthree\nfour\n")); err != nil {
+		t.Fatal(err)
+	}
+	lines, err := env.ReadTextLines(ctx, "f.txt", 2)
+	if err != nil || len(lines) != 2 || lines[1] != "two" {
+		t.Fatalf("ReadTextLines(maxLines=2) = %#v, %v", lines, err)
+	}
 }
