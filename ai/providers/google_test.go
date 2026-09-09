@@ -389,8 +389,11 @@ func googleStreamWithFinish(t *testing.T, finish string) *ai.AssistantMessage {
 // TestGoogleFinishReasonSafety mirrors pi's google-raw-stop-reason.test.ts. Since
 // d7b02636 a terminal error names the provider's own finish reason instead of the
 // generic "An unknown error occurred".
+//
+// TOO_MANY_TOOL_CALLS joined pi's error-mapped set in upstream 4a6ed0194, which
+// rode in with the @google/genai 1.52.0 -> 2.21.0 bump.
 func TestGoogleFinishReasonSafety(t *testing.T) {
-	for _, finish := range []string{"SAFETY", "MALFORMED_FUNCTION_CALL"} {
+	for _, finish := range []string{"SAFETY", "MALFORMED_FUNCTION_CALL", "TOO_MANY_TOOL_CALLS"} {
 		t.Run(finish, func(t *testing.T) {
 			final := googleStreamWithFinish(t, finish)
 			if final.StopReason != ai.StopError {

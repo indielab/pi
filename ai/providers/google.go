@@ -1026,7 +1026,8 @@ func googleTools(tools []ai.Tool, useParameters, supportsStrictMode bool) ([]any
 // mapGoogleStopReason maps a Gemini FinishReason to our StopReason, returning a
 // non-nil error only for a truly-unknown reason (pi mapStopReason throws via the
 // exhaustive-never check). Known safety/recitation/malformed reasons map to error
-// without throwing — pi later surfaces them as "An unknown error occurred".
+// without throwing — pi surfaces them as "Provider stopped with: <reason>"
+// (d7b02636).
 func mapGoogleStopReason(reason string) (ai.StopReason, error) {
 	switch reason {
 	case "STOP":
@@ -1047,6 +1048,7 @@ func mapGoogleStopReason(reason string) (ai.StopReason, error) {
 		"LANGUAGE",
 		"MALFORMED_FUNCTION_CALL",
 		"UNEXPECTED_TOOL_CALL",
+		"TOO_MANY_TOOL_CALLS",
 		"NO_IMAGE":
 		return ai.StopError, nil
 	default:
