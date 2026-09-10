@@ -85,10 +85,17 @@ type anthropicCompat struct {
 	supportsEagerToolInputStreaming bool
 	supportsLongCacheRetention      bool
 	sendSessionAffinityHeaders      bool
-	supportsCacheControlOnTools     bool
-	supportsTemperature             bool
-	allowEmptySignature             bool
-	forceAdaptiveThinking           bool
+	// sessionAffinityFormat selects the session-affinity header name (pi
+	// AnthropicMessagesCompat.sessionAffinityFormat, upstream bbb61e34a).
+	// "openrouter" sends x-session-id; EVERY other value, "" (pi's undefined)
+	// included, sends x-session-affinity. Unlike the completions compat this is
+	// a single literal upstream, not the three-member format union — it selects
+	// a name, and it is never a second enable switch.
+	sessionAffinityFormat       string
+	supportsCacheControlOnTools bool
+	supportsTemperature         bool
+	allowEmptySignature         bool
+	forceAdaptiveThinking       bool
 	// supportsStrictTools reports whether the provider accepts Anthropic strict
 	// tool schemas. Default: false.
 	supportsStrictTools    bool
@@ -139,16 +146,26 @@ type anthropicFallbackWire struct {
 }
 
 func getAnthropicCompat(model *ai.Model) anthropicCompat {
-	// pi 6184307c: no provider/baseUrl auto-detection — OpenAI-standard
-	// defaults, with fireworks / cloudflare-ai-gateway-anthropic values supplied
-	// explicitly by the catalog (model.compat). sendSessionAffinityHeaders
-	// defaults to false.
+	// pi 6184307c removed provider/baseUrl auto-detection here, and bbb61e34a
+	// brought it back for the two session-affinity keys ALONE: OpenRouter
+	// defaults to sending, under its own header name. Every other default stays
+	// OpenAI-standard, with fireworks / cloudflare-ai-gateway-anthropic values
+	// supplied explicitly by the catalog (model.compat), and
+	// sendSessionAffinityHeaders still defaults to false everywhere else.
+	isOpenRouter := model.Provider == "openrouter" || strings.Contains(model.BaseURL, "openrouter.ai")
 	c := anthropicCompat{
 		supportsEagerToolInputStreaming: true,
 		supportsLongCacheRetention:      true,
+		sendSessionAffinityHeaders:      isOpenRouter,
 		supportsCacheControlOnTools:     true,
 		supportsTemperature:             true,
 		supportsToolReferences:          defaultSupportsToolReferences(model),
+	}
+	// pi's `?? (isOpenRouter ? "openrouter" : undefined)`: off OpenRouter the
+	// format stays unset, which is why sessionAffinityFormatFor is not reused —
+	// its "openai" would name a format this adapter does not have.
+	if isOpenRouter {
+		c.sessionAffinityFormat = sessionAffinityOpenRouter
 	}
 
 	// Each key is resolved on its own, as pi's `model.compat?.<key> ?? default`
@@ -159,6 +176,7 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 	applyCompat(o, "supportsEagerToolInputStreaming", &c.supportsEagerToolInputStreaming)
 	applyCompat(o, "supportsLongCacheRetention", &c.supportsLongCacheRetention)
 	applyCompat(o, "sendSessionAffinityHeaders", &c.sendSessionAffinityHeaders)
+	applyCompat(o, "sessionAffinityFormat", &c.sessionAffinityFormat)
 	applyCompat(o, "supportsCacheControlOnTools", &c.supportsCacheControlOnTools)
 	applyCompat(o, "supportsTemperature", &c.supportsTemperature)
 	applyCompat(o, "allowEmptySignature", &c.allowEmptySignature)
@@ -1767,10 +1785,16 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 			o.set("x-api-key", branchKey)
 		}
 		// pi anthropic.ts:496-497: cacheSessionId is dropped when the effective
-		// cacheRetention is "none", so no session-affinity header is sent.
+		// cacheRetention is "none", so no session-affinity header is sent under
+		// either name.
 		if opts.SessionID != "" && compat.sendSessionAffinityHeaders &&
 			resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone {
-			o.set("x-session-affinity", opts.SessionID)
+			// One name or the other, never both (pi bbb61e34a).
+			if compat.sessionAffinityFormat == sessionAffinityOpenRouter {
+				o.set("x-session-id", opts.SessionID)
+			} else {
+				o.set("x-session-affinity", opts.SessionID)
+			}
 		}
 	}
 

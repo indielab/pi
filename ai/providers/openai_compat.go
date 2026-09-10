@@ -16,7 +16,9 @@ const (
 )
 
 // sessionAffinityFormatFor is pi's `isOpenRouter ? "openrouter" : "openai"`
-// default, shared by the completions and responses providers.
+// default, shared by the completions and responses providers. It is NOT the
+// anthropic-messages default: there the alternative to "openrouter" is pi's
+// undefined, and "openai" would give the legacy name a meaning it lacks.
 func sessionAffinityFormatFor(isOpenRouter bool) string {
 	if isOpenRouter {
 		return sessionAffinityOpenRouter
@@ -67,7 +69,10 @@ type openAICompletionsCompat struct {
 	// ThinkingTokenBudgetField: "thinking_token_budget" (vLLM). Prefer the field
 	// name (pi types.ts:607-608, upstream b23741269). Default: false.
 	SupportsThinkingTokenBudget bool
-	SendSessionAffinityHeaders  bool
+	// SendSessionAffinityHeaders reports whether to send session-affinity data
+	// from StreamOptions.SessionID. Default: true for OpenRouter endpoints,
+	// false otherwise (pi bbb61e34a).
+	SendSessionAffinityHeaders bool
 	// DeferredToolsMode selects a provider-specific deferred-tool serialization
 	// (pi OpenAICompletionsCompat.deferredToolsMode). "kimi" withholds tools
 	// introduced by a tool result's addedToolNames from the top-level tools
@@ -180,7 +185,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		ZaiToolStream:                               false,
 		ThinkingTokenBudgetField:                    "",
 		SupportsThinkingTokenBudget:                 false,
-		SendSessionAffinityHeaders:                  false,
+		SendSessionAffinityHeaders:                  isOpenRouter,
 		DeferredToolsMode:                           "",
 		SessionAffinityFormat:                       sessionAffinityFormatFor(isOpenRouter),
 		CacheControlFormat:                          cacheControlFormat,
