@@ -2,6 +2,8 @@ package ai
 
 import (
 	"context"
+	"math"
+	"math/bits"
 	"time"
 )
 
@@ -14,15 +16,71 @@ import (
 // additions are ported to mirror pi's SDK structure).
 
 // RetryPolicy is bounded retry with exponential backoff
-// (baseDelayMs * 2^(attempt-1)). Mirrors pi's RetryPolicy / settings.retry.
+// (baseDelayMs * 2^(attempt-1)), capped at MaxAgentDelayMs. Mirrors pi's
+// RetryPolicy / settings.retry.
 type RetryPolicy struct {
 	Enabled bool
 	// MaxRetries is the max retry attempts (0 = no retries). The initial call
 	// never counts as a retry.
 	MaxRetries int
 	// BaseDelayMs is the base backoff; the per-attempt delay is
-	// BaseDelayMs * 2^(attempt-1).
+	// BaseDelayMs * 2^(attempt-1), before MaxAgentDelayMs caps it.
 	BaseDelayMs int
+	// MaxAgentDelayMs caps each computed backoff. Nil takes
+	// DefaultMaxAgentRetryDelayMs; a zero value is a real cap of zero, not
+	// "disabled" — pi's `?? DEFAULT_MAX_AGENT_RETRY_DELAY_MS` falls back on
+	// undefined/null only, and upstream pins retryDelayMs({baseDelayMs: 2000,
+	// maxAgentDelayMs: 0}, 5) === 0. That is the OPPOSITE of
+	// ProviderRequestOptions.MaxRetryDelayMs, whose zero DISABLES its cap: the
+	// two are different mechanisms that happen to share a 60s default. This one
+	// clamps a locally computed backoff; that one rejects an over-long
+	// server-requested Retry-After.
+	MaxAgentDelayMs *int
+}
+
+// DefaultMaxAgentRetryDelayMs is pi's DEFAULT_MAX_AGENT_RETRY_DELAY_MS: the cap
+// applied to an agent-level retry backoff when the policy leaves it unset.
+const DefaultMaxAgentRetryDelayMs = 60_000
+
+// RetryDelayMs is pi's retryDelayMs: the backoff for one attempt, capped.
+//
+// pi computes baseDelayMs * 2^max(0, attempt-1), saturates a result that is not
+// a safe integer to Number.MAX_SAFE_INTEGER, then takes the minimum against the
+// cap. The floor on the exponent matters here for a second reason: Go panics on
+// a negative shift count where JS would compute a fraction, and this is an
+// exported helper whose callers choose their own attempt numbering.
+//
+// The saturation step is pi's guard against an unrepresentable delay, and Go
+// needs it for the same reason in a different arithmetic: an int shift wraps
+// silently, and a wrapped-negative delay makes time.NewTimer fire immediately —
+// turning the backoff into a hot loop. Saturating to math.MaxInt where pi
+// saturates to 2^53-1 is indistinguishable through the cap that follows.
+func RetryDelayMs(policy RetryPolicy, attempt int) int {
+	maxDelayMs := DefaultMaxAgentRetryDelayMs
+	if policy.MaxAgentDelayMs != nil {
+		maxDelayMs = *policy.MaxAgentDelayMs
+	}
+	delayMs := shiftSaturating(policy.BaseDelayMs, attempt-1)
+	if delayMs > maxDelayMs {
+		return maxDelayMs
+	}
+	return delayMs
+}
+
+// shiftSaturating returns base * 2^shift, saturating to math.MaxInt on overflow
+// rather than wrapping. A negative shift is pi's Math.max(0, attempt-1).
+func shiftSaturating(base, shift int) int {
+	if shift <= 0 || base == 0 {
+		return base
+	}
+	if shift >= bits.UintSize {
+		return math.MaxInt
+	}
+	shifted := base << uint(shift)
+	if shifted>>uint(shift) != base {
+		return math.MaxInt
+	}
+	return shifted
 }
 
 // RetryCallbacks are the optional hooks pi's retryAssistantCall emits around
@@ -121,7 +179,7 @@ func RetryAssistantCall(ctx context.Context, produce func() *AssistantMessage, p
 		if errorMessage == "" {
 			errorMessage = "Unknown error"
 		}
-		delayMs := policy.BaseDelayMs << (attempt - 1)
+		delayMs := RetryDelayMs(*policy, attempt)
 		callbacks.scheduled(attempt, maxAttempts, delayMs, errorMessage)
 
 		// Normalize aborts during retry backoff to the same AssistantMessage shape
