@@ -389,11 +389,8 @@ func googleStreamWithFinish(t *testing.T, finish string) *ai.AssistantMessage {
 // TestGoogleFinishReasonSafety mirrors pi's google-raw-stop-reason.test.ts. Since
 // d7b02636 a terminal error names the provider's own finish reason instead of the
 // generic "An unknown error occurred".
-//
-// TOO_MANY_TOOL_CALLS joined pi's error-mapped set in upstream 4a6ed0194, which
-// rode in with the @google/genai 1.52.0 -> 2.21.0 bump.
 func TestGoogleFinishReasonSafety(t *testing.T) {
-	for _, finish := range []string{"SAFETY", "MALFORMED_FUNCTION_CALL", "TOO_MANY_TOOL_CALLS"} {
+	for _, finish := range []string{"SAFETY", "MALFORMED_FUNCTION_CALL"} {
 		t.Run(finish, func(t *testing.T) {
 			final := googleStreamWithFinish(t, finish)
 			if final.StopReason != ai.StopError {
@@ -421,13 +418,24 @@ func TestGoogleRawStopReasonPreservedOnStop(t *testing.T) {
 	}
 }
 
+// TestGoogleFinishReasonUnknownFails pins the exhaustive-switch fallthrough: pi's
+// mapStopReason throws "Unhandled stop reason: <reason>" and the stream ends in
+// error. TOO_MANY_TOOL_CALLS is on that path since upstream 71dca871b dropped it
+// from the error-mapped set (it had joined in 4a6ed0194).
 func TestGoogleFinishReasonUnknownFails(t *testing.T) {
-	final := googleStreamWithFinish(t, "TOTALLY_NEW_REASON")
-	if final.StopReason != ai.StopError {
-		t.Fatalf("unknown finishReason should be error, got %s", final.StopReason)
-	}
-	if !strings.Contains(final.ErrorMessage, "Unhandled stop reason: TOTALLY_NEW_REASON") {
-		t.Fatalf("unknown finishReason message wrong: %q", final.ErrorMessage)
+	for _, finish := range []string{"TOTALLY_NEW_REASON", "TOO_MANY_TOOL_CALLS"} {
+		t.Run(finish, func(t *testing.T) {
+			final := googleStreamWithFinish(t, finish)
+			if final.StopReason != ai.StopError {
+				t.Fatalf("unknown finishReason should be error, got %s", final.StopReason)
+			}
+			if final.RawStopReason != finish {
+				t.Fatalf("rawStopReason = %q, want %q", final.RawStopReason, finish)
+			}
+			if !strings.Contains(final.ErrorMessage, "Unhandled stop reason: "+finish) {
+				t.Fatalf("unknown finishReason message wrong: %q", final.ErrorMessage)
+			}
+		})
 	}
 }
 
