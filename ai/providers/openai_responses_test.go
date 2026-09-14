@@ -1244,21 +1244,28 @@ func TestResponsesCloudflareMissingEnvFailsStream(t *testing.T) {
 	}
 }
 
-// D7a: HTTP errors use pi's Responses format — formatOpenAIResponsesError
-// wrapping the openai SDK APIError message (`${status} ${msg}`).
+// responsesHTTPError streams against a server that answers status/body for the
+// given provider id and returns the terminal ErrorMessage.
+func responsesHTTPError(t *testing.T, provider string, status int, body string) string {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(status)
+		io.WriteString(w, body)
+	}))
+	defer server.Close()
+	m := *reasoningModel()
+	m.Provider = provider
+	m.BaseURL = server.URL
+	final := StreamOpenAIResponses(context.Background(), &m, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
+	return final.ErrorMessage
+}
+
+// D7a: HTTP errors use pi's Responses format — formatProviderError over the
+// openai SDK APIError message (`${status} ${msg}`), under an "OpenAI API error"
+// prefix for the openai provider.
 func TestResponsesHTTPErrorFormat(t *testing.T) {
-	run := func(status int, body string) string {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(status)
-			io.WriteString(w, body)
-		}))
-		defer server.Close()
-		m := *reasoningModel()
-		m.BaseURL = server.URL
-		final := StreamOpenAIResponses(context.Background(), &m, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-			&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
-		return final.ErrorMessage
-	}
+	run := func(status int, body string) string { return responsesHTTPError(t, "openai", status, body) }
 	if got := run(429, `{"error":{"message":"slow down"}}`); got != "OpenAI API error (429): 429 slow down" {
 		t.Errorf("json error body: %q", got)
 	}
@@ -1270,6 +1277,25 @@ func TestResponsesHTTPErrorFormat(t *testing.T) {
 	}
 	if got := run(400, `{"error":"boom"}`); got != `OpenAI API error (400): 400 "boom"` {
 		t.Errorf("string error field: %q", got)
+	}
+}
+
+// TestResponsesHTTPErrorNamesProvider mirrors upstream 0c7bb7c5c (#9298): an
+// OpenAI-compatible Responses provider's HTTP error is labelled with its own
+// provider id — `${model.provider === "openai" ? "OpenAI" : model.provider} API
+// error` — so a Grok 403 no longer reads as an OpenAI error.
+func TestResponsesHTTPErrorNamesProvider(t *testing.T) {
+	cases := []struct{ provider, want string }{
+		{"xai", "xai API error (403): 403 blocked"},
+		{"opencode", "opencode API error (403): 403 blocked"},
+		{"openai", "OpenAI API error (403): 403 blocked"},
+	}
+	for _, c := range cases {
+		t.Run(c.provider, func(t *testing.T) {
+			if got := responsesHTTPError(t, c.provider, 403, `{"error":{"message":"blocked"}}`); got != c.want {
+				t.Fatalf("error message = %q, want %q", got, c.want)
+			}
+		})
 	}
 }
 

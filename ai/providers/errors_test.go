@@ -82,7 +82,11 @@ func TestOpenAISDKErrorMessage(t *testing.T) {
 			t.Errorf("openaiSDKErrorMessage(%d, %q) = %q want %q", c.status, c.body, got, c.want)
 		}
 	}
-	if got := formatResponsesHTTPError(429, []byte(`{"error":{"message":"slow down"}}`)).Error(); got != "OpenAI API error (429): 429 slow down" {
+	if got := formatResponsesHTTPError("openai", 429, []byte(`{"error":{"message":"slow down"}}`)).Error(); got != "OpenAI API error (429): 429 slow down" {
 		t.Errorf("formatResponsesHTTPError = %q", got)
+	}
+	// Upstream 0c7bb7c5c: every other provider is labelled by its own id.
+	if got := formatResponsesHTTPError("xai", 403, []byte(`{"error":{"message":"blocked"}}`)).Error(); got != "xai API error (403): 403 blocked" {
+		t.Errorf("formatResponsesHTTPError(xai) = %q", got)
 	}
 }

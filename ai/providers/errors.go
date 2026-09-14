@@ -63,12 +63,19 @@ func formatProviderError(label string, status int, body []byte) error {
 }
 
 // formatResponsesHTTPError ports the error message pi's OpenAI Responses
-// provider surfaces for a non-2xx HTTP response: formatOpenAIResponsesError
-// (openai-responses.ts:55-69) wraps the openai SDK's APIError, whose own
-// message is `${status} ${msg}` (openai@6 core/error.ts makeMessage), giving
-// e.g. `OpenAI API error (429): 429 slow down`.
-func formatResponsesHTTPError(status int, body []byte) error {
-	return fmt.Errorf("OpenAI API error (%d): %s", status, openaiSDKErrorMessage(status, body))
+// provider surfaces for a non-2xx HTTP response (openai-responses.ts:198-201):
+// formatProviderError over the openai SDK's APIError, whose own message is
+// `${status} ${msg}` (openai@6 core/error.ts makeMessage), under a prefix that
+// names the provider -- "OpenAI" for provider "openai", the provider id verbatim
+// otherwise (upstream 0c7bb7c5c, #9298: a Grok 403 used to read as an OpenAI
+// error). E.g. `OpenAI API error (429): 429 slow down`, `xai API error (403):
+// 403 blocked`.
+func formatResponsesHTTPError(provider string, status int, body []byte) error {
+	label := provider
+	if provider == "openai" {
+		label = "OpenAI"
+	}
+	return fmt.Errorf("%s API error (%d): %s", label, status, openaiSDKErrorMessage(status, body))
 }
 
 // openaiSDKErrorMessage replicates openai SDK APIError.makeMessage plus the

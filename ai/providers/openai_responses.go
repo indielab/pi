@@ -413,7 +413,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			data, _ := io.ReadAll(resp.Body)
-			fail(formatResponsesHTTPError(resp.StatusCode, data))
+			fail(formatResponsesHTTPError(model.Provider, resp.StatusCode, data))
 			return
 		}
 
