@@ -46,16 +46,25 @@ func TestFormatProviderErrorTruncation(t *testing.T) {
 	}
 }
 
-// TestOpenAISDKErrorMessageTruncation locks the cap on the openai-responses
-// path: the body-derived msg is capped before the "<status> " prefix is added.
-func TestOpenAISDKErrorMessageTruncation(t *testing.T) {
+// TestOpenAISDKErrorMessageNotCapped: the openai SDK's message is never capped.
+// pi's 4000-unit cap belongs to the BODY half of normalizeProviderError
+// (error-body.ts extractBody), which formatResponsesHTTPError applies when the
+// stringified `error` object replaces the message. Measured: oracle rows
+// str-error-long (message path, untruncated) and obj-long-message (body path,
+// truncated) in testdata/httperror/pi-ai-0.85.1.json.
+func TestOpenAISDKErrorMessageNotCapped(t *testing.T) {
 	long := strings.Repeat("y", 5000)
-	got := openaiSDKErrorMessage(429, []byte(`{"error":{"message":"`+long+`"}}`))
-	if !strings.HasPrefix(got, "429 "+strings.Repeat("y", 4000)+"...") {
-		t.Errorf("openaiSDKErrorMessage not capped at body: prefix=%q", got[:30])
+	if got, want := openaiSDKErrorMessage(429, []byte(`{"error":"`+long+`"}`)), `429 "`+long+`"`; got != want {
+		t.Errorf("string error capped: len %d want %d", len(got), len(want))
 	}
-	if !strings.HasSuffix(got, "... [truncated 1000 chars]") {
-		t.Errorf("openaiSDKErrorMessage suffix=%q", got[len(got)-40:])
+	if got, want := openaiSDKErrorMessage(429, []byte(`{"error":{"message":"`+long+`"}}`)), "429 "+long; got != want {
+		t.Errorf("message capped: len %d want %d", len(got), len(want))
+	}
+	// Body path: `{"message":"` is 12 units, so 3988 of the 5000 survive the cap.
+	got := formatResponsesHTTPError("openai", 429, []byte(`{"error":{"message":"`+long+`"}}`)).Error()
+	want := `OpenAI API error (429): {"message":"` + strings.Repeat("y", 3988) + "... [truncated 1014 chars]"
+	if got != want {
+		t.Errorf("body path cap: got len %d, want len %d", len(got), len(want))
 	}
 }
 
@@ -68,25 +77,34 @@ func TestOpenAISDKErrorMessage(t *testing.T) {
 		want   string
 	}{
 		{429, `{"error":{"message":"slow down"}}`, "429 slow down"},
-		{400, `{"error":{"message":{"k":1}}}`, `400 {"k":1}`},   // non-string message → JSON.stringify(message)
-		{400, `{"error":{"code":"bad"}}`, `400 {"code":"bad"}`}, // no message → JSON.stringify(error)
-		{400, `{"error":"boom"}`, `400 "boom"`},                 // string error → JSON.stringify(error)
-		{400, `{"error":""}`, "400 status code (no body)"},      // falsy error, JSON body → no message
-		{400, `{"detail":"x"}`, "400 status code (no body)"},    // JSON body without error field
-		{500, "plain text", "500 plain text"},                   // non-JSON body → raw text
-		{503, "", "503 status code (no body)"},                  // empty body
-		{503, "   ", "503    "},                                 // whitespace body isn't valid JSON → raw text
+		{400, `{"error":{"message":{"z":"</s","a":1}}}`, `400 {"z":"</s","a":1}`},                        // non-string message → JSON.stringify(message), JS key order and escaping
+		{429, "\xEF\xBB\xBF" + `{"error":{"message":"bom"}}`, "429 bom"},                                 // fetch's text() strips a leading BOM before the client parses
+		{400, `{"error":{"code":"bad"}}`, `400 {"code":"bad"}`},                                          // no message → JSON.stringify(error)
+		{400, `{"error":{"type":"zeta","code":"alpha"}}`, `400 {"type":"zeta","code":"alpha"}`},          // JSON.stringify keeps key order
+		{400, `{"error":{"z":"</s\u2028","a":"\u0001"}}`, "400 {\"z\":\"</s\u2028\",\"a\":\"\\u0001\"}"}, // and JS escaping: U+2028 and `<` literal, U+0001 escaped
+		{400, `{"error":{"message":"a</b\u2028\u0001\"q\""}}`, "400 a</b\u2028\u0001\"q\""},              // a string message is used raw
+		{400, `{"error":"boom"}`, `400 "boom"`},                                                          // string error → JSON.stringify(error)
+		{400, `{"error":""}`, "400 status code (no body)"},                                               // falsy error, JSON body → no message
+		{400, `{"detail":"x"}`, "400 status code (no body)"},                                             // JSON body without error field
+		{500, "plain text", "500 plain text"},                                                            // non-JSON body → raw text
+		{503, "", "503 status code (no body)"},                                                           // empty body
+		{503, "   ", "503    "},                                                                          // whitespace body isn't valid JSON → raw text
 	}
 	for _, c := range cases {
 		if got := openaiSDKErrorMessage(c.status, []byte(c.body)); got != c.want {
 			t.Errorf("openaiSDKErrorMessage(%d, %q) = %q want %q", c.status, c.body, got, c.want)
 		}
 	}
-	if got := formatResponsesHTTPError("openai", 429, []byte(`{"error":{"message":"slow down"}}`)).Error(); got != "OpenAI API error (429): 429 slow down" {
+	// The `error` object replaces the SDK message (pi's messageCarriesBody=false
+	// path); a string `error` keeps it. Both measured in testdata/httperror.
+	if got := formatResponsesHTTPError("openai", 429, []byte(`{"error":{"message":"slow down"}}`)).Error(); got != `OpenAI API error (429): {"message":"slow down"}` {
 		t.Errorf("formatResponsesHTTPError = %q", got)
 	}
+	if got := formatResponsesHTTPError("openai", 400, []byte(`{"error":"boom"}`)).Error(); got != `OpenAI API error (400): 400 "boom"` {
+		t.Errorf("formatResponsesHTTPError(string error) = %q", got)
+	}
 	// Upstream 0c7bb7c5c: every other provider is labelled by its own id.
-	if got := formatResponsesHTTPError("xai", 403, []byte(`{"error":{"message":"blocked"}}`)).Error(); got != "xai API error (403): 403 blocked" {
+	if got := formatResponsesHTTPError("xai", 403, []byte(`{"error":{"message":"blocked"}}`)).Error(); got != `xai API error (403): {"message":"blocked"}` {
 		t.Errorf("formatResponsesHTTPError(xai) = %q", got)
 	}
 }

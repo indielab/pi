@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -1261,12 +1263,58 @@ func responsesHTTPError(t *testing.T, provider string, status int, body string) 
 	return final.ErrorMessage
 }
 
-// D7a: HTTP errors use pi's Responses format — formatProviderError over the
-// openai SDK APIError message (`${status} ${msg}`), under an "OpenAI API error"
-// prefix for the openai provider.
+// httpErrorOracleRow is one row of pi's own errorMessage for a non-2xx body,
+// captured from the published build by testdata/httperror/capture.mjs. Goldens
+// come from pi, never from what the porter believed.
+type httpErrorOracleRow struct {
+	Name         string            `json:"name"`
+	Status       int               `json:"status"`
+	Body         string            `json:"body"`
+	ErrorMessage map[string]string `json:"errorMessage"`
+}
+
+func loadHTTPErrorOracle(t *testing.T) []httpErrorOracleRow {
+	t.Helper()
+	data, err := os.ReadFile(filepath.Join("testdata", "httperror", "pi-ai-0.85.1.json"))
+	if err != nil {
+		t.Fatalf("read oracle: %v", err)
+	}
+	var doc struct {
+		Rows []httpErrorOracleRow `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		t.Fatalf("decode oracle: %v", err)
+	}
+	if len(doc.Rows) == 0 {
+		t.Fatal("oracle has no rows")
+	}
+	return doc.Rows
+}
+
+// TestResponsesHTTPErrorMatchesPi drives every captured body through the
+// adapter and compares the terminal ErrorMessage with pi's byte for byte. pi's
+// composition (openai-responses.ts catch -> error-body.ts): the openai SDK's
+// APIError message is `${status} ${msg}`; when the body's `error` member is a
+// non-empty JSON object, its JSON.stringify form (capped at 4000 UTF-16 units)
+// REPLACES that message unless the message already contains it.
+func TestResponsesHTTPErrorMatchesPi(t *testing.T) {
+	for _, row := range loadHTTPErrorOracle(t) {
+		t.Run(row.Name, func(t *testing.T) {
+			want := row.ErrorMessage["openai-responses"]
+			if got := responsesHTTPError(t, "openai", row.Status, row.Body); got != want {
+				t.Fatalf("error message = %q, want pi's %q", got, want)
+			}
+		})
+	}
+}
+
+// D7a: four readable rows of the oracle above. pi's Responses shape is
+// `<label> API error (<status>): <tail>`, the tail being the stringified
+// `error` object when the body has one and the SDK's `${status} ${msg}`
+// otherwise.
 func TestResponsesHTTPErrorFormat(t *testing.T) {
 	run := func(status int, body string) string { return responsesHTTPError(t, "openai", status, body) }
-	if got := run(429, `{"error":{"message":"slow down"}}`); got != "OpenAI API error (429): 429 slow down" {
+	if got := run(429, `{"error":{"message":"slow down"}}`); got != `OpenAI API error (429): {"message":"slow down"}` {
 		t.Errorf("json error body: %q", got)
 	}
 	if got := run(500, "oops"); got != "OpenAI API error (500): 500 oops" {
@@ -1280,15 +1328,16 @@ func TestResponsesHTTPErrorFormat(t *testing.T) {
 	}
 }
 
-// TestResponsesHTTPErrorNamesProvider mirrors upstream 0c7bb7c5c (#9298): an
-// OpenAI-compatible Responses provider's HTTP error is labelled with its own
-// provider id — `${model.provider === "openai" ? "OpenAI" : model.provider} API
-// error` — so a Grok 403 no longer reads as an OpenAI error.
+// TestResponsesHTTPErrorNamesProvider mirrors upstream 0c7bb7c5c (#9298): the
+// label is `${model.provider === "openai" ? "OpenAI" : model.provider}`, so a
+// Grok 403 no longer reads as an OpenAI error. The rule is source-only until
+// the next release (the 0.85.1 build labels every provider "OpenAI"), so the
+// label is asserted here and the tail is the oracle's obj-message row.
 func TestResponsesHTTPErrorNamesProvider(t *testing.T) {
 	cases := []struct{ provider, want string }{
-		{"xai", "xai API error (403): 403 blocked"},
-		{"opencode", "opencode API error (403): 403 blocked"},
-		{"openai", "OpenAI API error (403): 403 blocked"},
+		{"xai", `xai API error (403): {"message":"blocked"}`},
+		{"opencode", `opencode API error (403): {"message":"blocked"}`},
+		{"openai", `OpenAI API error (403): {"message":"blocked"}`},
 	}
 	for _, c := range cases {
 		t.Run(c.provider, func(t *testing.T) {
