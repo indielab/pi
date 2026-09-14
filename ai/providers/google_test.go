@@ -389,8 +389,12 @@ func googleStreamWithFinish(t *testing.T, finish string) *ai.AssistantMessage {
 // TestGoogleFinishReasonSafety mirrors pi's google-raw-stop-reason.test.ts. Since
 // d7b02636 a terminal error names the provider's own finish reason instead of the
 // generic "An unknown error occurred".
+//
+// TOO_MANY_TOOL_CALLS joined pi's error-mapped set in upstream 4a6ed0194 (the
+// @google/genai 1.52.0 -> 2.21.0 bump); 71dca871b dropped it and ceea48f5d
+// reverted that drop three days later.
 func TestGoogleFinishReasonSafety(t *testing.T) {
-	for _, finish := range []string{"SAFETY", "MALFORMED_FUNCTION_CALL"} {
+	for _, finish := range []string{"SAFETY", "MALFORMED_FUNCTION_CALL", "TOO_MANY_TOOL_CALLS"} {
 		t.Run(finish, func(t *testing.T) {
 			final := googleStreamWithFinish(t, finish)
 			if final.StopReason != ai.StopError {
@@ -419,11 +423,12 @@ func TestGoogleRawStopReasonPreservedOnStop(t *testing.T) {
 }
 
 // TestGoogleFinishReasonUnknownFails pins the exhaustive-switch fallthrough: pi's
-// mapStopReason throws "Unhandled stop reason: <reason>" and the stream ends in
-// error. TOO_MANY_TOOL_CALLS is on that path since upstream 71dca871b dropped it
-// from the error-mapped set (it had joined in 4a6ed0194).
+// mapStopReason throws "Unhandled stop reason: <reason>" and the catch in
+// google-generative-ai.ts lands error.message verbatim in errorMessage (a plain
+// Error carries no status, so formatProviderError adds nothing), which is why the
+// message is asserted byte-for-byte.
 func TestGoogleFinishReasonUnknownFails(t *testing.T) {
-	for _, finish := range []string{"TOTALLY_NEW_REASON", "TOO_MANY_TOOL_CALLS"} {
+	for _, finish := range []string{"TOTALLY_NEW_REASON"} {
 		t.Run(finish, func(t *testing.T) {
 			final := googleStreamWithFinish(t, finish)
 			if final.StopReason != ai.StopError {
@@ -432,8 +437,8 @@ func TestGoogleFinishReasonUnknownFails(t *testing.T) {
 			if final.RawStopReason != finish {
 				t.Fatalf("rawStopReason = %q, want %q", final.RawStopReason, finish)
 			}
-			if !strings.Contains(final.ErrorMessage, "Unhandled stop reason: "+finish) {
-				t.Fatalf("unknown finishReason message wrong: %q", final.ErrorMessage)
+			if want := "Unhandled stop reason: " + finish; final.ErrorMessage != want {
+				t.Fatalf("error message = %q, want %q", final.ErrorMessage, want)
 			}
 		})
 	}

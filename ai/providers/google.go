@@ -1048,8 +1048,7 @@ func mapGoogleStopReason(reason string) (ai.StopReason, error) {
 		"LANGUAGE",
 		"MALFORMED_FUNCTION_CALL",
 		"UNEXPECTED_TOOL_CALL",
-		// TOO_MANY_TOOL_CALLS is deliberately absent: upstream 71dca871b dropped
-		// it from this set, so pi's exhaustive switch throws on it.
+		"TOO_MANY_TOOL_CALLS",
 		"NO_IMAGE":
 		return ai.StopError, nil
 	default:
