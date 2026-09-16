@@ -60,6 +60,13 @@ func TestFindSessionByIDReadsOnlyTheFirstEntry(t *testing.T) {
 	writeSessionFile(t, dir, "b.jsonl", sessionMessageLine, sessionHeaderLine("late", cwd))
 	skipped := writeSessionFile(t, dir, "c.jsonl", "", "   ", "not json", `null`, `0`, `""`, `false`, sessionHeaderLine("after-noise", cwd))
 	writeSessionFile(t, dir, "d.jsonl", `"a string entry"`, sessionHeaderLine("after-scalar", cwd))
+	// JSON.parse accepts 1e309 (as Infinity, truthy): a non-object first entry
+	// that decides the file is not a session, and a valid value inside a header.
+	writeSessionFile(t, dir, "e.jsonl", `1e309`, sessionHeaderLine("after-infinity", cwd))
+	bigMeta := writeSessionFile(t, dir, "f.jsonl", `{"type":"session","id":"big-meta","cwd":`+fmt.Sprintf("%q", cwd)+`,"meta":1e309}`)
+	// A line carrying two fused values is one JSON.parse SyntaxError, i.e. a
+	// malformed line to skip -- not a header followed by junk.
+	afterFused := writeSessionFile(t, dir, "g.jsonl", sessionHeaderLine("fused", cwd)+`{"type":"message"}`, sessionHeaderLine("after-fused", cwd))
 
 	if got, ok := FindSessionByID(cwd, "first", ""); !ok || got != first {
 		t.Fatalf("header id: got %q, %v; want %q, true", got, ok, first)
@@ -75,6 +82,18 @@ func TestFindSessionByIDReadsOnlyTheFirstEntry(t *testing.T) {
 	}
 	if got, ok := FindSessionByID(cwd, "after-scalar", ""); ok {
 		t.Fatalf("a truthy non-object first entry decides the file is not a session, found %q", got)
+	}
+	if got, ok := FindSessionByID(cwd, "after-infinity", ""); ok {
+		t.Fatalf("1e309 is Infinity to JSON.parse, a truthy first entry that decides the file is not a session, found %q", got)
+	}
+	if got, ok := FindSessionByID(cwd, "big-meta", ""); !ok || got != bigMeta {
+		t.Fatalf("an out-of-range number inside the header must not make it malformed: got %q, %v; want %q, true", got, ok, bigMeta)
+	}
+	if got, ok := FindSessionByID(cwd, "fused", ""); ok {
+		t.Fatalf("a line with trailing bytes after the value is malformed, not a header, found %q", got)
+	}
+	if got, ok := FindSessionByID(cwd, "after-fused", ""); !ok || got != afterFused {
+		t.Fatalf("the header after a fused line: got %q, %v; want %q, true", got, ok, afterFused)
 	}
 }
 
@@ -155,6 +174,12 @@ func TestFindSessionByIDFiltersByCwdInACustomDirectory(t *testing.T) {
 	if got, ok := FindSessionByID(projectB, "no-cwd", sessionDir); ok {
 		t.Fatalf("a header without a cwd never passes the cwd filter, got %q", got)
 	}
+	// cwd "." resolves to the test process's directory, and so would an empty
+	// header cwd under filepath.Abs; only pi's explicit empty-cwd rejection
+	// keeps this header out.
+	if got, ok := FindSessionByID(".", "no-cwd", sessionDir); ok {
+		t.Fatalf("a header without a cwd must not match the process cwd, got %q", got)
+	}
 
 	defaultDir := DefaultSessionDir(projectA)
 	elsewhere := writeSessionFile(t, defaultDir, "elsewhere.jsonl", sessionHeaderLine("elsewhere-id", projectB))
@@ -174,6 +199,7 @@ func TestFindSessionByIDIsBestEffort(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeSessionFile(t, dir, "corrupt.jsonl", "{not json at all")
+	writeSessionFile(t, dir, "notes.txt", sessionHeaderLine("txt-id", cwd))
 	want := writeSessionFile(t, dir, "real.jsonl", sessionHeaderLine("real-id", cwd))
 
 	if got, ok := FindSessionByID(cwd, "real-id", ""); !ok || got != want {
@@ -181,6 +207,9 @@ func TestFindSessionByIDIsBestEffort(t *testing.T) {
 	}
 	if got, ok := FindSessionByID(cwd, "real-id", filepath.Join(cwd, "does-not-exist")); ok {
 		t.Fatalf("a missing directory has no sessions, found %q", got)
+	}
+	if got, ok := FindSessionByID(cwd, "txt-id", ""); ok {
+		t.Fatalf("only *.jsonl files are sessions, found %q", got)
 	}
 }
 

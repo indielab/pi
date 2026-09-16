@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -739,16 +740,33 @@ const (
 // a literal null, false, 0 or "" is skipped like a blank line while any other
 // non-object value counts as a parsed non-header entry.
 func parseSessionHeaderCandidate(line []byte) (header *sessionFileHeader, decided bool) {
-	if len(bytes.TrimSpace(line)) == 0 {
+	line = bytes.TrimSpace(line)
+	if len(line) == 0 {
 		return nil, false
 	}
+	// Decode as readSessionEntries does: UseNumber keeps a literal outside
+	// float64 range as the value JSON.parse would produce (±Infinity, truthy)
+	// rather than a malformed line, and the offset guard rejects trailing bytes
+	// the way JSON.parse does (a fused line, issue #8345). encoding/json's
+	// 10000-level nesting cap has no JSON.parse counterpart; a deeper line is
+	// malformed here only.
+	dec := json.NewDecoder(bytes.NewReader(line))
+	dec.UseNumber()
 	var v any
-	if json.Unmarshal(line, &v) != nil {
+	if dec.Decode(&v) != nil || dec.InputOffset() != int64(len(line)) {
 		return nil, false
 	}
 	switch v {
-	case nil, false, float64(0), "":
+	case nil, false, "":
 		return nil, false
+	}
+	if n, ok := v.(json.Number); ok {
+		// JS falsiness for numbers: 0, -0 and 0e5 are all 0; an out-of-range
+		// literal parses to ±Inf with ErrRange and is truthy.
+		if f, err := strconv.ParseFloat(string(n), 64); err == nil && f == 0 {
+			return nil, false
+		}
+		return nil, true
 	}
 	obj, ok := v.(map[string]any)
 	if !ok {
