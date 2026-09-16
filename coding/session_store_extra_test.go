@@ -432,7 +432,7 @@ func TestStartedUnusedSessionAbsentFromDisk(t *testing.T) {
 	if _, err := os.Stat(rec.Path()); !os.IsNotExist(err) {
 		t.Fatalf("session file should not exist yet, stat err=%v", err)
 	}
-	if infos := ListSessions(cwd); len(infos) != 0 {
+	if infos := ListSessions(cwd, ""); len(infos) != 0 {
 		t.Fatalf("ListSessions should be empty, got %+v", infos)
 	}
 
@@ -448,7 +448,7 @@ func TestStartedUnusedSessionAbsentFromDisk(t *testing.T) {
 			t.Fatalf("flushed file missing %q:\n%s", want, data)
 		}
 	}
-	if infos := ListSessions(cwd); len(infos) != 1 {
+	if infos := ListSessions(cwd, ""); len(infos) != 1 {
 		t.Fatalf("ListSessions should now show 1 session, got %+v", infos)
 	}
 }

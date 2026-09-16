@@ -85,7 +85,7 @@ func main() {
 	// session's saved model/thinking level can be restored (pi createAgentSession
 	// restores both from the session context).
 	if resumePath == "" && continueLatest {
-		if latest, ok := coding.LatestSession(cwd); ok {
+		if latest, ok := coding.LatestSession(cwd, ""); ok {
 			resumePath = latest.Path
 		}
 	}
@@ -314,7 +314,7 @@ func listModels(args []string) {
 
 func listSessions() {
 	cwd, _ := os.Getwd()
-	infos := coding.ListSessions(cwd)
+	infos := coding.ListSessions(cwd, "")
 	if len(infos) == 0 {
 		fmt.Println("No sessions for this directory.")
 		return

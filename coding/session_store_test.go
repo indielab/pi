@@ -47,7 +47,7 @@ func TestSessionPersistenceRoundTrip(t *testing.T) {
 	}
 
 	// List + reload.
-	infos := ListSessions(cwd)
+	infos := ListSessions(cwd, "")
 	if len(infos) != 1 || infos[0].Messages < 2 {
 		t.Fatalf("unexpected session list: %+v", infos)
 	}
@@ -89,7 +89,7 @@ func TestResumeContinuesConversation(t *testing.T) {
 			return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "second reply"}}, ai.StopStop)
 		},
 	})
-	latest, ok := LatestSession(cwd)
+	latest, ok := LatestSession(cwd, "")
 	if !ok {
 		t.Fatal("no latest session found")
 	}

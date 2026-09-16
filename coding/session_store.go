@@ -648,9 +648,12 @@ func (r *SessionRecorder) Close() error {
 	return nil
 }
 
-// ListSessions returns stored sessions for cwd, newest first.
-func ListSessions(cwd string) []SessionInfo {
-	dir := DefaultSessionDir(cwd)
+// ListSessions returns stored sessions for cwd, newest first (pi
+// SessionManager.list). sessionDir "" means the default directory for cwd; in
+// an explicit directory that is not the default, only sessions recorded for
+// cwd are listed.
+func ListSessions(cwd, sessionDir string) []SessionInfo {
+	dir, filterCwd, resolvedCwd := sessionListingDir(cwd, sessionDir)
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return nil
@@ -660,9 +663,11 @@ func ListSessions(cwd string) []SessionInfo {
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
-		if info, ok := readSessionInfo(filepath.Join(dir, e.Name())); ok {
-			infos = append(infos, info)
+		info, ok := readSessionInfo(filepath.Join(dir, e.Name()))
+		if !ok || (filterCwd && !sessionCwdMatches(info.Cwd, resolvedCwd)) {
+			continue
 		}
+		infos = append(infos, info)
 	}
 	sort.Slice(infos, func(i, j int) bool { return infos[i].Timestamp > infos[j].Timestamp })
 	return infos
@@ -876,9 +881,10 @@ func LoadSessionMessages(path string) ([]agent.AgentMessage, error) {
 	return tree.BuildContext().Messages, nil
 }
 
-// LatestSession returns the most recent stored session for cwd, if any.
-func LatestSession(cwd string) (SessionInfo, bool) {
-	infos := ListSessions(cwd)
+// LatestSession returns the most recent stored session for cwd, if any;
+// sessionDir is as for ListSessions.
+func LatestSession(cwd, sessionDir string) (SessionInfo, bool) {
+	infos := ListSessions(cwd, sessionDir)
 	if len(infos) == 0 {
 		return SessionInfo{}, false
 	}

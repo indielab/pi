@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -168,5 +169,46 @@ func TestFindSessionByIDIsBestEffort(t *testing.T) {
 	}
 	if got, ok := FindSessionByID(cwd, "real-id", filepath.Join(cwd, "does-not-exist")); ok {
 		t.Fatalf("a missing directory has no sessions, found %q", got)
+	}
+}
+
+// pi's list() shares findById's prologue: an explicit directory that is not
+// cwd's default lists only the sessions recorded for cwd (a header without a
+// cwd never matches), and the default directory -- implicit or explicit -- is
+// never filtered.
+func TestListSessionsFiltersByCwdInACustomDirectory(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	projectA := filepath.Join(root, "project-a")
+	projectB := filepath.Join(root, "project-b")
+	sessionDir := filepath.Join(root, "sessions")
+	writeSessionFile(t, sessionDir, "a.jsonl", sessionHeaderLine("a-id", projectA), sessionMessageLine)
+	writeSessionFile(t, sessionDir, "b.jsonl", sessionHeaderLine("b-id", projectB), sessionMessageLine)
+	writeSessionFile(t, sessionDir, "no-cwd.jsonl", `{"type":"session","id":"no-cwd"}`)
+	ids := func(infos []SessionInfo) []string {
+		var out []string
+		for _, info := range infos {
+			out = append(out, info.ID)
+		}
+		return out
+	}
+
+	if got := ids(ListSessions(projectA, sessionDir)); !reflect.DeepEqual(got, []string{"a-id"}) {
+		t.Fatalf("ListSessions(projectA, custom) = %v; want [a-id]", got)
+	}
+	if got := ids(ListSessions(projectB, sessionDir)); !reflect.DeepEqual(got, []string{"b-id"}) {
+		t.Fatalf("ListSessions(projectB, custom) = %v; want [b-id]", got)
+	}
+	if latest, ok := LatestSession(projectB, sessionDir); !ok || latest.ID != "b-id" {
+		t.Fatalf("LatestSession(projectB, custom) = %+v, %v; want b-id", latest, ok)
+	}
+
+	defaultDir := DefaultSessionDir(projectA)
+	writeSessionFile(t, defaultDir, "elsewhere.jsonl", sessionHeaderLine("elsewhere-id", projectB), sessionMessageLine)
+	if got := ids(ListSessions(projectA, "")); !reflect.DeepEqual(got, []string{"elsewhere-id"}) {
+		t.Fatalf("ListSessions(projectA, default) = %v; want [elsewhere-id]", got)
+	}
+	if got := ids(ListSessions(projectA, defaultDir)); !reflect.DeepEqual(got, []string{"elsewhere-id"}) {
+		t.Fatalf("ListSessions(projectA, explicit default) = %v; want [elsewhere-id]", got)
 	}
 }

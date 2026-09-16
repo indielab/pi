@@ -380,7 +380,7 @@ func liveMemoryResume(t *testing.T, model *ai.Model, key string) {
 	rec.Close()
 
 	// Brand-new Session, load history from the persisted file.
-	latest, ok := LatestSession(cwd)
+	latest, ok := LatestSession(cwd, "")
 	if !ok {
 		t.Fatal("no persisted session found")
 	}
