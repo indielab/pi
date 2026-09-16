@@ -673,44 +673,50 @@ func ListSessions(cwd, sessionDir string) []SessionInfo {
 	return infos
 }
 
+// readSessionInfo builds a SessionInfo from a session file the way pi's
+// buildSessionInfo does (session-manager.ts:688-770): the first parsed entry
+// must be the header — a file whose first entry is anything else is not a
+// session — and only that header's id, cwd and timestamp are read; a
+// session-typed line further down is transcript content. Messages are counted
+// after the header. pi lists a header that has no string id with an undefined
+// id; the port has always dropped such a file, since nothing can address it.
 func readSessionInfo(path string) (SessionInfo, bool) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return SessionInfo{}, false
 	}
 	info := SessionInfo{Path: path}
-	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	headerSeen := false
+	for _, line := range bytes.Split(data, []byte("\n")) {
+		if !headerSeen {
+			h, decided := parseSessionHeaderCandidate(line)
+			if !decided {
+				continue
+			}
+			if h == nil {
+				return SessionInfo{}, false
+			}
+			info.ID, info.Cwd, info.Timestamp = h.id, h.cwd, h.timestamp
+			headerSeen = true
 			continue
 		}
-		var head struct {
-			Type      string `json:"type"`
-			ID        string `json:"id"`
-			Cwd       string `json:"cwd"`
-			Timestamp string `json:"timestamp"`
+		var entry struct {
+			Type string `json:"type"`
 		}
-		if json.Unmarshal([]byte(line), &head) != nil {
-			continue
-		}
-		switch head.Type {
-		case "session":
-			info.ID = head.ID
-			info.Cwd = head.Cwd
-			info.Timestamp = head.Timestamp
-		case "message":
+		if json.Unmarshal(bytes.TrimSpace(line), &entry) == nil && entry.Type == "message" {
 			info.Messages++
 		}
 	}
-	return info, info.ID != ""
+	return info, headerSeen
 }
 
 // sessionFileHeader is the part of a session file's first entry that
-// discovery reads (pi SessionHeader, session-manager.ts:32). cwd is "" when
-// the header carries no string cwd.
+// discovery and listing read (pi SessionHeader, session-manager.ts:32). cwd
+// and timestamp are "" when the header carries no string value for them.
 type sessionFileHeader struct {
-	id  string
-	cwd string
+	id        string
+	cwd       string
+	timestamp string
 }
 
 const (
@@ -755,6 +761,9 @@ func parseSessionHeaderCandidate(line []byte) (header *sessionFileHeader, decide
 	h := &sessionFileHeader{id: id}
 	if cwd, ok := obj["cwd"].(string); ok {
 		h.cwd = cwd
+	}
+	if ts, ok := obj["timestamp"].(string); ok {
+		h.timestamp = ts
 	}
 	return h, true
 }

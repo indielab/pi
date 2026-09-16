@@ -224,3 +224,37 @@ func TestListSessionsFiltersByCwdInACustomDirectory(t *testing.T) {
 		t.Fatalf("ListSessions(projectA, explicit default) = %v; want [elsewhere-id]", got)
 	}
 }
+
+// pi's list() decides a file the way findById does (buildSessionInfo): the
+// first parsed entry must be the header, so a file whose first entry is a
+// message is not listed even if a header appears later, and a session-typed
+// line after the header is transcript content — the listing reports the
+// header's id and cwd, never a later line's, and agrees with FindSessionByID.
+func TestListSessionsDecidesByTheFirstParsedEntry(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	root := t.TempDir()
+	cwd := filepath.Join(root, "project")
+	other := filepath.Join(root, "other")
+	dir := DefaultSessionDir(cwd)
+	writeSessionFile(t, dir, "message-first.jsonl", sessionMessageLine, sessionHeaderLine("late", cwd))
+	writeSessionFile(t, dir, "two-headers.jsonl", sessionHeaderLine("first", cwd), sessionMessageLine, sessionHeaderLine("second", other), sessionMessageLine)
+
+	infos := ListSessions(cwd, "")
+	if len(infos) != 1 || infos[0].ID != "first" || infos[0].Cwd != cwd || infos[0].Messages != 2 {
+		t.Fatalf("ListSessions = %+v; want the single two-headers session as id first, cwd %q, 2 messages", infos, cwd)
+	}
+	if got, ok := FindSessionByID(cwd, "first", ""); !ok || got != infos[0].Path {
+		t.Fatalf("FindSessionByID(first) = %q, %v; want the listed path %q", got, ok, infos[0].Path)
+	}
+
+	// The cwd filter reads the same header cwd as pi's: the later line's cwd
+	// (other) must not make the file a session of `other`.
+	sessionDir := filepath.Join(root, "sessions")
+	writeSessionFile(t, sessionDir, "two-headers.jsonl", sessionHeaderLine("first", cwd), sessionMessageLine, sessionHeaderLine("second", other))
+	if got := ListSessions(other, sessionDir); len(got) != 0 {
+		t.Fatalf("ListSessions(other, custom) = %+v; want none", got)
+	}
+	if got := ListSessions(cwd, sessionDir); len(got) != 1 || got[0].ID != "first" {
+		t.Fatalf("ListSessions(cwd, custom) = %+v; want [first]", got)
+	}
+}
