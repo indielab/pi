@@ -1,10 +1,13 @@
 package coding
 
 import (
+	"bufio"
+	"bytes"
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -695,6 +698,169 @@ func readSessionInfo(path string) (SessionInfo, bool) {
 		}
 	}
 	return info, info.ID != ""
+}
+
+// sessionFileHeader is the part of a session file's first entry that
+// discovery reads (pi SessionHeader, session-manager.ts:32). cwd is "" when
+// the header carries no string cwd.
+type sessionFileHeader struct {
+	id  string
+	cwd string
+}
+
+const (
+	// sessionHeaderReadBufferSize and maxSessionHeaderScanBytes are pi's
+	// SESSION_HEADER_READ_BUFFER_SIZE and MAX_SESSION_HEADER_SCAN_BYTES
+	// (session-manager.ts:492-494): header discovery reads 4 KiB at a time and
+	// gives up after 1 MiB, bounding the work per file while still allowing
+	// large cwd and custom metadata fields.
+	sessionHeaderReadBufferSize = 4096
+	maxSessionHeaderScanBytes   = 1024 * 1024
+)
+
+// parseSessionHeaderCandidate inspects one physical line while looking for a
+// file's first parsed entry (pi parseSessionHeaderCandidate). decided is
+// false for a blank or malformed line, which the scan skips; when decided,
+// header is nil for a parsed non-header entry, meaning the file is not a
+// session.
+//
+// pi parses the line with JSON.parse and then tests the value's truthiness, so
+// a literal null, false, 0 or "" is skipped like a blank line while any other
+// non-object value counts as a parsed non-header entry.
+func parseSessionHeaderCandidate(line []byte) (header *sessionFileHeader, decided bool) {
+	if len(bytes.TrimSpace(line)) == 0 {
+		return nil, false
+	}
+	var v any
+	if json.Unmarshal(line, &v) != nil {
+		return nil, false
+	}
+	switch v {
+	case nil, false, float64(0), "":
+		return nil, false
+	}
+	obj, ok := v.(map[string]any)
+	if !ok {
+		return nil, true
+	}
+	id, ok := obj["id"].(string)
+	if obj["type"] != "session" || !ok {
+		return nil, true
+	}
+	h := &sessionFileHeader{id: id}
+	if cwd, ok := obj["cwd"].(string); ok {
+		h.cwd = cwd
+	}
+	return h, true
+}
+
+// readSessionHeader returns the header of the session file at path, reading
+// only as far as the first parsed entry (pi readSessionHeader). It returns
+// (nil, nil) when that entry is not a session header, and an error when the
+// file cannot be read or nothing is decided within maxSessionHeaderScanBytes.
+func readSessionHeader(path string) (*sessionFileHeader, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	limited := &io.LimitedReader{R: f, N: maxSessionHeaderScanBytes}
+	br := bufio.NewReaderSize(limited, sessionHeaderReadBufferSize)
+	for {
+		line, err := br.ReadBytes('\n')
+		if err == nil {
+			if h, decided := parseSessionHeaderCandidate(line[:len(line)-1]); decided {
+				return h, nil
+			}
+			continue
+		}
+		if err != io.EOF {
+			return nil, err
+		}
+		// EOF from the limited reader: either the file ended or the scan limit
+		// did. pi probes one more byte so a final header that ends exactly at
+		// the limit without a newline is still allowed; any further byte means
+		// the header exceeds the bounded scan.
+		if limited.N == 0 {
+			var probe [1]byte
+			n, perr := f.Read(probe[:])
+			if n > 0 {
+				return nil, fmt.Errorf("session header exceeds %d-byte scan limit: %s", maxSessionHeaderScanBytes, path)
+			}
+			if perr != nil && perr != io.EOF {
+				return nil, perr
+			}
+		}
+		h, _ := parseSessionHeaderCandidate(line)
+		return h, nil
+	}
+}
+
+// readSessionHeaderForDiscovery is readSessionHeader for directory scans (pi
+// readSessionHeaderForDiscovery): discovery is best-effort, so an unreadable
+// or oversized file is simply not a session, and one corrupt file must not
+// hide the others.
+func readSessionHeaderForDiscovery(path string) *sessionFileHeader {
+	h, err := readSessionHeader(path)
+	if err != nil {
+		return nil
+	}
+	return h
+}
+
+// sessionListingDir resolves the directory a discovery call scans and whether
+// its matches are filtered to cwd — the prologue pi's SessionManager.list and
+// findById share. sessionDir "" means the default per-cwd directory. An
+// explicit directory that is not the default holds sessions from many working
+// directories, so matches are filtered to those whose header cwd is cwd.
+func sessionListingDir(cwd, sessionDir string) (dir string, filterCwd bool, resolvedCwd string) {
+	resolvedCwd, _ = filepath.Abs(cwd)
+	defaultDir := DefaultSessionDir(cwd)
+	if sessionDir == "" {
+		return defaultDir, false, resolvedCwd
+	}
+	return sessionDir, sessionDir != defaultDir, resolvedCwd
+}
+
+// sessionCwdMatches reports whether a header cwd names resolvedCwd (pi
+// sessionCwdMatches). Paths are compared textually after resolution, so a
+// working directory reached through a symlink matches only the spelling it
+// was recorded under.
+func sessionCwdMatches(cwd, resolvedCwd string) bool {
+	if cwd == "" {
+		return false
+	}
+	abs, err := filepath.Abs(cwd)
+	return err == nil && abs == resolvedCwd
+}
+
+// FindSessionByID returns the path of the stored session whose header id is
+// id, reading headers only — never transcript bodies (pi
+// SessionManager.findById). sessionDir "" means the default directory for
+// cwd; in an explicit directory that is not the default, only a session
+// recorded for cwd matches. Discovery is best-effort like ListSessions: an
+// unreadable directory or file yields no match rather than an error.
+func FindSessionByID(cwd, id, sessionDir string) (string, bool) {
+	dir, filterCwd, resolvedCwd := sessionListingDir(cwd, sessionDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", false
+	}
+	for _, e := range entries {
+		if !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		h := readSessionHeaderForDiscovery(path)
+		if h == nil || h.id != id {
+			continue
+		}
+		if filterCwd && !sessionCwdMatches(h.cwd, resolvedCwd) {
+			continue
+		}
+		return path, true
+	}
+	return "", false
 }
 
 // LoadSessionMessages reconstructs the LLM message transcript from a session
