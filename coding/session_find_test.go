@@ -106,6 +106,15 @@ func TestFindSessionByIDBoundsTheHeaderScan(t *testing.T) {
 	write("over-limit.jsonl", maxSessionHeaderScanBytes-len(sessionHeaderLine("over-limit", cwd))+1, false)
 	write("far-over.jsonl", maxSessionHeaderScanBytes, true)
 	small := write("small.jsonl", 0, true)
+	// A header line that keeps going past the limit is rejected even though
+	// the bytes inside the limit parse on their own (trailing whitespace is
+	// valid JSON): pi decides by the physical line, and a line that has not
+	// ended by the limit is over it.
+	runsPast := sessionHeaderLine("runs-past", cwd)
+	if err := os.WriteFile(filepath.Join(dir, "runs-past.jsonl"),
+		[]byte(runsPast+strings.Repeat(" ", maxSessionHeaderScanBytes-len(runsPast)+1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
 
 	if got, ok := FindSessionByID(cwd, "at-limit", ""); !ok || got != atLimit {
 		t.Fatalf("header ending exactly at the scan limit: got %q, %v; want %q, true", got, ok, atLimit)
@@ -118,6 +127,9 @@ func TestFindSessionByIDBoundsTheHeaderScan(t *testing.T) {
 	}
 	if got, ok := FindSessionByID(cwd, "small", ""); !ok || got != small {
 		t.Fatalf("oversized neighbours must not hide a session: got %q, %v; want %q, true", got, ok, small)
+	}
+	if got, ok := FindSessionByID(cwd, "runs-past", ""); ok {
+		t.Fatalf("a header line still open at the scan limit must not be found, got %q", got)
 	}
 }
 
