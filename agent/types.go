@@ -9,10 +9,12 @@ import (
 	"github.com/sky-valley/pi/ai"
 )
 
-// AgentMessage is a message in the agent transcript. The three ai message types
-// (UserMessage, AssistantMessage, ToolResultMessage) satisfy it; apps may add
-// custom UI-only message types that implement ai.Message (MessageRole) and are
-// filtered out by ConvertToLlm before reaching the provider.
+// AgentMessage is a message in the agent transcript. The four ai message types
+// (SystemMessage, UserMessage, AssistantMessage, ToolResultMessage) satisfy it;
+// apps may add custom UI-only message types that implement ai.Message
+// (MessageRole) and are filtered out by ConvertToLlm before reaching the
+// provider. System messages in the transcript carry the prompt and the tool
+// declarations.
 type AgentMessage = ai.Message
 
 // ToolExecutionMode controls how a batch of tool calls is executed.
@@ -104,11 +106,16 @@ func (t AgentTool) asAITool() ai.Tool {
 	}
 }
 
-// AgentContext is the snapshot passed into the low-level loop.
+// AgentContext is the snapshot passed into the low-level loop. It has no
+// system prompt: the transcript's system messages carry the prompt and the
+// tools declared to the model (upstream 9e05370b2).
 type AgentContext struct {
-	SystemPrompt string
-	Messages     []AgentMessage
-	Tools        []AgentTool
+	// Messages is the transcript visible to the model.
+	Messages []AgentMessage
+	// Tools are the tools available for execution in this run. Before each
+	// provider request the loop declares any difference from the tools the
+	// transcript declares with a system message.
+	Tools []AgentTool
 }
 
 // ---------------------------------------------------------------------------
@@ -170,16 +177,23 @@ type ShouldStopAfterTurnContext struct {
 // AgentLoopTurnUpdate replaces runtime state before the next provider request.
 // A nil field leaves the loop's current value in place (pi's `?? current`).
 type AgentLoopTurnUpdate struct {
-	Context       *AgentContext
-	Model         *ai.Model
+	// Context is the context for the next provider request.
+	Context *AgentContext
+	// Messages are appended before the next provider request, ahead of any
+	// queued steering or follow-up messages, with the normal message_start and
+	// message_end events.
+	Messages []AgentMessage
+	// Model is the model for the next provider request.
+	Model *ai.Model
+	// ThinkingLevel is the thinking level for the next provider request.
 	ThinkingLevel *ThinkingLevel
 }
 
 // applyTo folds a PrepareNextTurn snapshot into the loop's live state
-// (agent-loop.ts:178-192). ThinkingLevel is the one field whose absent and
-// "off" cases differ: absent keeps the current reasoning level, "off" clears
-// it.
-func (u *AgentLoopTurnUpdate) applyTo(current *AgentContext, config *AgentLoopConfig) {
+// (agent-loop.ts:184-197) and returns the messages it prepared for the next
+// request. ThinkingLevel is the one field whose absent and "off" cases differ:
+// absent keeps the current reasoning level, "off" clears it.
+func (u *AgentLoopTurnUpdate) applyTo(current *AgentContext, config *AgentLoopConfig) []AgentMessage {
 	if u.Context != nil {
 		*current = *u.Context
 	}
@@ -193,6 +207,7 @@ func (u *AgentLoopTurnUpdate) applyTo(current *AgentContext, config *AgentLoopCo
 			config.Reasoning = ThinkingLevel(*u.ThinkingLevel)
 		}
 	}
+	return u.Messages
 }
 
 // AgentLoopConfig configures a single agent loop run.
@@ -219,8 +234,11 @@ type AgentLoopConfig struct {
 
 	ToolExecution ToolExecutionMode
 
-	// ConvertToLlm maps the agent transcript to provider messages before each call.
-	// Must not return an error for runtime issues; return a safe fallback.
+	// ConvertToLlm maps the agent transcript to provider messages before each
+	// call: each AgentMessage becomes a SystemMessage, UserMessage,
+	// AssistantMessage or ToolResultMessage, and messages the model cannot
+	// understand (UI-only notifications) are dropped. Must not return an error
+	// for runtime issues; return a safe fallback.
 	ConvertToLlm func(messages []AgentMessage) []ai.Message
 	// TransformContext optionally rewrites the transcript before ConvertToLlm.
 	TransformContext func(ctx context.Context, messages []AgentMessage) []AgentMessage
@@ -240,9 +258,9 @@ type AgentLoopConfig struct {
 	// immediately before the next turn starts — so it does not run after a final
 	// or terminating turn, and it runs after ShouldStopAfterTurn has declined to
 	// stop (upstream 56700d42e). Return replacement context/model/thinking state
-	// to affect that turn, or nil to keep the current ones. Preparation may be
-	// long-running (compaction); steering queued while it runs is picked up
-	// before the turn starts.
+	// or messages to append to affect that turn, or nil to keep the current
+	// ones. Preparation may be long-running (compaction); steering queued while
+	// it runs is picked up before the turn starts.
 	PrepareNextTurn     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
 	GetSteeringMessages func() []AgentMessage
 	GetFollowUpMessages func() []AgentMessage
@@ -274,7 +292,9 @@ type AgentEvent struct {
 
 	// AgentEnd: full new-message list for the run.
 	Messages []AgentMessage
-	// TurnEnd / Message*: the relevant message.
+	// TurnEnd / Message*: the relevant message. Message lifecycle events are
+	// emitted for system, user, assistant and tool-result messages;
+	// MessageUpdate only for a streaming assistant message.
 	Message AgentMessage
 	// TurnEnd: tool results from the turn.
 	ToolResults []ai.ToolResultMessage

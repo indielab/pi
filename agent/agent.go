@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 
 	"github.com/sky-valley/pi/ai"
@@ -15,11 +16,20 @@ var defaultModel = &ai.Model{
 
 // AgentState is the public, mutable state of an Agent.
 type AgentState struct {
+	// SystemPrompt is the current system prompt, replayed from the transcript's
+	// system messages: State derives it, and nothing reads it back. To change
+	// the prompt, append a system message with Content or Sections. In
+	// AgentOptions.InitialState it seeds the leading system message.
 	SystemPrompt  string
 	Model         *ai.Model
 	ThinkingLevel ThinkingLevel
-	Tools         []AgentTool
-	Messages      []AgentMessage
+	// Tools are the executable tools. Differences from the tools declared in
+	// the transcript are announced to the model with a system message before
+	// the next request.
+	Tools []AgentTool
+	// Messages is the conversation transcript. Its system messages carry the
+	// prompt and the tool declarations.
+	Messages []AgentMessage
 
 	IsStreaming      bool
 	StreamingMessage AgentMessage
@@ -141,9 +151,6 @@ func NewAgent(opts AgentOptions) *Agent {
 	}
 	if opts.InitialState != nil {
 		in := opts.InitialState
-		if in.SystemPrompt != "" {
-			st.SystemPrompt = in.SystemPrompt
-		}
 		if in.Model != nil {
 			st.Model = in.Model
 		}
@@ -152,6 +159,17 @@ func NewAgent(opts AgentOptions) *Agent {
 		}
 		st.Tools = append([]AgentTool(nil), in.Tools...)
 		st.Messages = append([]AgentMessage(nil), in.Messages...)
+		// The seed prompt and tools become the leading system message, unless
+		// the transcript already starts with one (agent.ts
+		// createMutableAgentState).
+		declarations := make([]ai.Tool, len(st.Tools))
+		for i, tool := range st.Tools {
+			declarations[i] = ai.ToToolDeclaration(tool.asAITool())
+		}
+		initial, ok := ai.CreateInitialSystemMessage(in.SystemPrompt, declarations)
+		if ok && (len(st.Messages) == 0 || st.Messages[0].MessageRole() != ai.RoleSystem) {
+			st.Messages = append([]AgentMessage{initial}, st.Messages...)
+		}
 	}
 	a := &Agent{
 		state:                     st,
@@ -223,14 +241,14 @@ func (a *Agent) Subscribe(l Listener) func() {
 // shallow copy; slices share backing storage and should be treated read-only.
 // PendingToolCalls is copy-on-write (pi agent.ts:524-535), so the returned map
 // is an immutable snapshot that is safe to iterate while tools run.
+// SystemPrompt is replayed from the transcript.
 func (a *Agent) State() AgentState {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.state
+	st := a.state
+	st.SystemPrompt = ai.GetCurrentSystemPrompt(st.Messages)
+	return st
 }
-
-// SetSystemPrompt sets the system prompt used for future turns.
-func (a *Agent) SetSystemPrompt(p string) { a.mu.Lock(); a.state.SystemPrompt = p; a.mu.Unlock() }
 
 // SetModel sets the active model for future turns.
 func (a *Agent) SetModel(m *ai.Model) { a.mu.Lock(); a.state.Model = m; a.mu.Unlock() }
@@ -303,16 +321,22 @@ func (a *Agent) WaitForIdle() {
 	}
 }
 
-// Reset clears transcript, runtime state, and queued messages. It refuses
-// while a run is active, so a reset cannot race the run that is mutating the
-// state it clears (pi agent.ts reset()).
+// Reset clears conversation state, runtime state and queued messages while
+// retaining the replayed prompt/tool baseline: the transcript becomes its
+// current system message alone. It refuses while a run is active, so a reset
+// cannot race the run that is mutating the state it clears (pi agent.ts
+// reset()).
 func (a *Agent) Reset() error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.active != nil {
 		return errors.New("Agent is already processing. Wait for completion before resetting.")
 	}
+	baseline, ok := ai.GetCurrentSystemMessage(a.state.Messages)
 	a.state.Messages = nil
+	if ok {
+		a.state.Messages = []AgentMessage{baseline}
+	}
 	a.state.IsStreaming = false
 	a.state.StreamingMessage = nil
 	a.state.PendingToolCalls = map[string]bool{}
@@ -351,12 +375,13 @@ func (a *Agent) Continue(ctx context.Context) error {
 		a.mu.Unlock()
 		return errors.New("Agent is already processing. Wait for completion before continuing.")
 	}
-	n := len(a.state.Messages)
-	if n == 0 {
+	// An empty transcript, or one holding only the prompt and tool
+	// declarations, has nothing to continue from.
+	if !slices.ContainsFunc(a.state.Messages, func(m AgentMessage) bool { return m.MessageRole() != ai.RoleSystem }) {
 		a.mu.Unlock()
 		return errors.New("No messages to continue from")
 	}
-	last := a.state.Messages[n-1]
+	last := a.state.Messages[len(a.state.Messages)-1]
 	a.mu.Unlock()
 
 	if last.MessageRole() == ai.RoleAssistant {
@@ -450,9 +475,8 @@ func (a *Agent) contextSnapshot() AgentContext {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	return AgentContext{
-		SystemPrompt: a.state.SystemPrompt,
-		Messages:     append([]AgentMessage(nil), a.state.Messages...),
-		Tools:        append([]AgentTool(nil), a.state.Tools...),
+		Messages: append([]AgentMessage(nil), a.state.Messages...),
+		Tools:    append([]AgentTool(nil), a.state.Tools...),
 	}
 }
 

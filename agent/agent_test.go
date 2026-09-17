@@ -95,16 +95,16 @@ func TestAgentRunsToolCallThenFinishes(t *testing.T) {
 	}
 
 	st := a.State()
-	// user, assistant(toolcall), toolResult, assistant(final)
-	if len(st.Messages) != 4 {
-		t.Fatalf("expected 4 messages, got %d: %#v", len(st.Messages), st.Messages)
+	// system(tool declaration), user, assistant(toolcall), toolResult, assistant(final)
+	if len(st.Messages) != 5 {
+		t.Fatalf("expected 5 messages, got %d: %#v", len(st.Messages), st.Messages)
 	}
-	if st.Messages[2].MessageRole() != ai.RoleToolResult {
-		t.Fatalf("expected message[2] to be toolResult, got %s", st.Messages[2].MessageRole())
+	if st.Messages[3].MessageRole() != ai.RoleToolResult {
+		t.Fatalf("expected message[3] to be toolResult, got %s", st.Messages[3].MessageRole())
 	}
-	final, ok := asAssistant(st.Messages[3])
+	final, ok := asAssistant(st.Messages[4])
 	if !ok || textOf(final) != "all done" {
-		t.Fatalf("unexpected final message: %#v", st.Messages[3])
+		t.Fatalf("unexpected final message: %#v", st.Messages[4])
 	}
 
 	// Lifecycle events must include agent_start ... agent_end.
@@ -159,9 +159,10 @@ func TestAgentAfterToolCallContentOverridePreservesResult(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := a.State()
-	tr, ok := st.Messages[2].(ai.ToolResultMessage)
+	// [0] is the leading system message declaring the initial tools.
+	tr, ok := st.Messages[3].(ai.ToolResultMessage)
 	if !ok {
-		t.Fatalf("message[2] = %#v, want ToolResultMessage", st.Messages[2])
+		t.Fatalf("message[3] = %#v, want ToolResultMessage", st.Messages[3])
 	}
 	if tr.Details != "after_load" {
 		t.Fatalf("Details = %v, want after_load", tr.Details)
@@ -228,7 +229,8 @@ func TestAgentBlockedToolViaBeforeHook(t *testing.T) {
 		t.Fatal("blocked tool should not have executed")
 	}
 	st := a.State()
-	tr, _ := st.Messages[2].(ai.ToolResultMessage)
+	// [0] is the leading system message declaring the initial tools.
+	tr, _ := st.Messages[3].(ai.ToolResultMessage)
 	if !tr.IsError {
 		t.Fatal("expected blocked tool result to be an error")
 	}
@@ -280,9 +282,10 @@ func TestAgentBlockedToolTerminatesBatch(t *testing.T) {
 	if got := llmCalls.Load(); got != 1 {
 		t.Fatalf("llm calls = %d, want 1 (terminate should stop the loop)", got)
 	}
-	tr, ok := a.State().Messages[2].(ai.ToolResultMessage)
+	// [0] is the leading system message declaring the initial tools.
+	tr, ok := a.State().Messages[3].(ai.ToolResultMessage)
 	if !ok || !tr.IsError {
-		t.Fatalf("expected an error tool result, got %#v", a.State().Messages[2])
+		t.Fatalf("expected an error tool result, got %#v", a.State().Messages[3])
 	}
 	if got := textOf(&ai.AssistantMessage{Content: tr.Content}); got != "Blocked by policy" {
 		t.Fatalf("block reason = %q, want %q", got, "Blocked by policy")
@@ -376,9 +379,10 @@ func TestAgentParallelToolsTerminate(t *testing.T) {
 		t.Fatal(err)
 	}
 	st := a.State()
-	// user, assistant(2 toolcalls), 2 toolResults — then terminate stops the loop.
-	if len(st.Messages) != 4 {
-		t.Fatalf("expected 4 messages after terminate, got %d", len(st.Messages))
+	// system(tool declaration), user, assistant(2 toolcalls), 2 toolResults —
+	// then terminate stops the loop.
+	if len(st.Messages) != 5 {
+		t.Fatalf("expected 5 messages after terminate, got %d", len(st.Messages))
 	}
 }
 
@@ -496,6 +500,8 @@ func messageRoles(messages []AgentMessage) []string {
 	roles := make([]string, 0, len(messages))
 	for _, m := range messages {
 		switch m.(type) {
+		case ai.SystemMessage:
+			roles = append(roles, "system")
 		case ai.UserMessage:
 			roles = append(roles, "user")
 		case *ai.AssistantMessage:
@@ -623,9 +629,10 @@ func TestAgentPanickingHookProducesErrorToolResult(t *testing.T) {
 		if st.ErrorMessage != "" {
 			t.Fatalf("hook panic must not set run errorMessage, got %q", st.ErrorMessage)
 		}
-		tr, ok := st.Messages[2].(ai.ToolResultMessage)
+		// [0] is the leading system message declaring the initial tools.
+		tr, ok := st.Messages[3].(ai.ToolResultMessage)
 		if !ok || !tr.IsError {
-			t.Fatalf("expected error tool result at [2], got %#v", st.Messages[2])
+			t.Fatalf("expected error tool result at [3], got %#v", st.Messages[3])
 		}
 		if got := textOf(&ai.AssistantMessage{Content: tr.Content}); got != "before boom" {
 			t.Fatalf("expected error text 'before boom', got %q", got)
@@ -656,9 +663,10 @@ func TestAgentPanickingHookProducesErrorToolResult(t *testing.T) {
 		if st.ErrorMessage != "" {
 			t.Fatalf("hook panic must not set run errorMessage, got %q", st.ErrorMessage)
 		}
-		tr, ok := st.Messages[2].(ai.ToolResultMessage)
+		// [0] is the leading system message declaring the initial tools.
+		tr, ok := st.Messages[3].(ai.ToolResultMessage)
 		if !ok || !tr.IsError {
-			t.Fatalf("expected error tool result at [2], got %#v", st.Messages[2])
+			t.Fatalf("expected error tool result at [3], got %#v", st.Messages[3])
 		}
 		if got := textOf(&ai.AssistantMessage{Content: tr.Content}); got != "after boom" {
 			t.Fatalf("expected error text 'after boom', got %q", got)
@@ -1158,9 +1166,10 @@ func TestAgentPanickingToolYieldsErrorResultAndContinues(t *testing.T) {
 			if st.ErrorMessage != "" {
 				t.Fatalf("tool panic must not fail the run, got error %q", st.ErrorMessage)
 			}
-			tr, ok := st.Messages[2].(ai.ToolResultMessage)
+			// [0] is the leading system message declaring the initial tools.
+			tr, ok := st.Messages[3].(ai.ToolResultMessage)
 			if !ok || !tr.IsError {
-				t.Fatalf("expected error tool result at [2], got %#v", st.Messages[2])
+				t.Fatalf("expected error tool result at [3], got %#v", st.Messages[3])
 			}
 			if got := textOf(&ai.AssistantMessage{Content: tr.Content}); got != "tool exploded" {
 				t.Fatalf("expected error text 'tool exploded', got %q", got)
@@ -1569,18 +1578,19 @@ func TestAgentFailsToolCallsFromLengthTruncatedMessage(t *testing.T) {
 	}
 
 	st := a.State()
-	// user, assistant(truncated toolcalls), toolResult x2 (error), assistant(final)
-	if len(st.Messages) != 5 {
-		t.Fatalf("expected 5 messages, got %d: %#v", len(st.Messages), st.Messages)
+	// system(tool declaration), user, assistant(truncated toolcalls),
+	// toolResult x2 (error), assistant(final)
+	if len(st.Messages) != 6 {
+		t.Fatalf("expected 6 messages, got %d: %#v", len(st.Messages), st.Messages)
 	}
-	for _, i := range []int{2, 3} {
+	for _, i := range []int{3, 4} {
 		trm, ok := st.Messages[i].(ai.ToolResultMessage)
 		if !ok || !trm.IsError {
 			t.Fatalf("expected an error tool result at message[%d], got %#v", i, st.Messages[i])
 		}
 	}
-	if final, ok := asAssistant(st.Messages[4]); !ok || textOf(final) != "done" {
-		t.Fatalf("expected the run to end on an assistant message, got %#v", st.Messages[4])
+	if final, ok := asAssistant(st.Messages[5]); !ok || textOf(final) != "done" {
+		t.Fatalf("expected the run to end on an assistant message, got %#v", st.Messages[5])
 	}
 }
 
@@ -1723,7 +1733,8 @@ func TestAgentForwardsShouldStopAfterTurn(t *testing.T) {
 	if got := atomic.LoadInt32(&requests); got != 1 {
 		t.Fatalf("expected 1 provider request, got %d", got)
 	}
-	want := []ai.Role{ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult}
+	// The initial tools are declared by the leading system message.
+	want := []ai.Role{ai.RoleSystem, ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult}
 	if len(roles) != len(want) {
 		t.Fatalf("callback saw roles %v, want %v", roles, want)
 	}
@@ -1746,7 +1757,8 @@ type promptCtxKey struct{}
 // of its inputs and its position matter: it runs first, on the live transcript,
 // under the run's context — which is what carries an abort into a transform that
 // calls the provider itself — and convert is then fed its output rather than the
-// raw transcript. System prompt and tools ride through untouched.
+// raw transcript. The system prompt and tools ride the transcript's leading
+// system message, which this transform keeps.
 func TestAgentBuildsProviderContext(t *testing.T) {
 	tool := AgentTool{
 		Name:       "echo",
@@ -1771,7 +1783,7 @@ func TestAgentBuildsProviderContext(t *testing.T) {
 			callOrder = append(callOrder, "transform")
 			transformCtx = ctx
 			transformInput = messages
-			return []AgentMessage{kept}
+			return []AgentMessage{messages[0], kept}
 		},
 		ConvertToLlm: func(messages []AgentMessage) []ai.Message {
 			callOrder = append(callOrder, "convert")
@@ -1801,13 +1813,13 @@ func TestAgentBuildsProviderContext(t *testing.T) {
 	if len(callOrder) != 2 || callOrder[0] != "transform" || callOrder[1] != "convert" {
 		t.Fatalf("want transform then convert, got %v", callOrder)
 	}
-	if len(transformInput) != 1 || userText(transformInput[0]) != "discard" {
+	if len(transformInput) != 2 || transformInput[0].MessageRole() != ai.RoleSystem || userText(transformInput[1]) != "discard" {
 		t.Fatalf("transform must see the current transcript, got %v", transformInput)
 	}
 	if transformCtx == nil || transformCtx.Value(promptCtxKey{}) != "caller" {
 		t.Fatal("transform must run under a context derived from the caller's")
 	}
-	if len(convertInput) != 1 || userText(convertInput[0]) != "kept" {
+	if len(convertInput) != 2 || userText(convertInput[1]) != "kept" {
 		t.Fatalf("convert must see the transform's output, got %v", convertInput)
 	}
 	// The provider receives a normalized transcript: the prompt and tools ride
@@ -1828,7 +1840,8 @@ func TestAgentBuildsProviderContext(t *testing.T) {
 // TestAgentLoopDefaultConvertToLlm covers the Go-only arm of the same block: pi
 // requires convertToLlm on AgentLoopConfig (types.ts:178), while the Go loop
 // falls back to defaultConvertToLlm — and the fallback must still be fed the
-// transformed messages. Only reachable through AgentLoop; NewAgent fills the
+// transformed messages, system messages included (agent.ts defaultConvertToLlm,
+// upstream 9e05370b2). Only reachable through AgentLoop; NewAgent fills the
 // hook in.
 func TestAgentLoopDefaultConvertToLlm(t *testing.T) {
 	reply := scriptedStream(&ai.AssistantMessage{
@@ -1838,11 +1851,11 @@ func TestAgentLoopDefaultConvertToLlm(t *testing.T) {
 	var got ai.TranscriptContext
 	stream := AgentLoop(context.Background(),
 		[]AgentMessage{ai.NewUserText("discard", 1)},
-		AgentContext{SystemPrompt: "sp"},
+		AgentContext{},
 		AgentLoopConfig{
 			Model: testModel,
 			TransformContext: func(ctx context.Context, messages []AgentMessage) []AgentMessage {
-				return []AgentMessage{ai.NewUserText("kept", 7)}
+				return []AgentMessage{ai.NewSystemText("sp", 0), ai.NewUserText("kept", 7)}
 			},
 		},
 		func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
@@ -1853,6 +1866,9 @@ func TestAgentLoopDefaultConvertToLlm(t *testing.T) {
 
 	// The leading system message carries the "sp" prompt; the conversation
 	// after it is the transformed transcript.
+	if leading, ok := ai.GetInitialSystemMessage(got.Messages); !ok || ai.GetSystemMessageText(leading) != "sp" {
+		t.Fatalf("default conversion must keep the transformed system message, got %v", got.Messages)
+	}
 	if conversation := ai.WithoutInitialSystemMessage(got.Messages); len(conversation) != 1 || userText(conversation[0]) != "kept" {
 		t.Fatalf("default conversion must run on the transformed messages, got %v", got.Messages)
 	}

@@ -250,10 +250,11 @@ func TestPrepareNextTurnDoesNotDiscardAlreadyPolledSteering(t *testing.T) {
 // upstream fix rather than only its timing: a snapshot returned by
 // PrepareNextTurn must actually reach the provider request it prepares. The
 // replacement Context stands in for the compacted transcript that motivated
-// upstream #6879, and ThinkingLevel is included because "off" is the one field
-// whose absent and present-but-off cases differ (absent keeps the current
-// level, "off" clears it). Without this the whole apply path could be deleted
-// with the suite still green.
+// upstream #6879 (its leading system message replaced), the prepared Messages
+// append a prompt update to it (upstream 9e05370b2), and ThinkingLevel is
+// included because "off" is the one field whose absent and present-but-off
+// cases differ (absent keeps the current level, "off" clears it). Without this
+// the whole apply path could be deleted with the suite still green.
 func TestPrepareNextTurnSnapshotReachesTheNextRequest(t *testing.T) {
 	scripted := scriptedStream(
 		assistantWithToolCall("tool-1", "noop", map[string]any{}),
@@ -273,12 +274,18 @@ func TestPrepareNextTurnSnapshotReachesTheNextRequest(t *testing.T) {
 		Reasoning: ThinkingLevel("high"),
 		PrepareNextTurn: func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
 			next := *c.Context
-			next.SystemPrompt = "compacted"
-			return &AgentLoopTurnUpdate{Context: &next, Model: replacementModel, ThinkingLevel: &off}
+			next.Messages = append([]AgentMessage{ai.NewSystemText("compacted", 0)}, ai.WithoutInitialSystemMessage(c.Context.Messages)...)
+			return &AgentLoopTurnUpdate{
+				Context:       &next,
+				Messages:      []AgentMessage{ai.NewSystemText("updated guidance", 1)},
+				Model:         replacementModel,
+				ThinkingLevel: &off,
+			}
 		},
 	}
 
-	agentCtx := AgentContext{SystemPrompt: "original", Tools: []AgentTool{noopTool()}}
+	original, _ := ai.CreateInitialSystemMessage("original", []ai.Tool{ai.ToToolDeclaration(noopTool().asAITool())})
+	agentCtx := AgentContext{Messages: []AgentMessage{original}, Tools: []AgentTool{noopTool()}}
 	runAgentLoop(context.Background(), []AgentMessage{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "start"}}}},
 		agentCtx, cfg,
 		func(e AgentEvent) error { return nil },
@@ -297,9 +304,9 @@ func TestPrepareNextTurnSnapshotReachesTheNextRequest(t *testing.T) {
 	if seenPrompts[0] != "original" || seenModels[0] != testModel.ID {
 		t.Fatalf("turn 1 was already prepared: prompt=%q model=%q", seenPrompts[0], seenModels[0])
 	}
-	// Turn 2 is the one the snapshot prepared.
-	if seenPrompts[1] != "compacted" {
-		t.Fatalf("snapshot Context never reached the next request: system prompt = %q, want %q", seenPrompts[1], "compacted")
+	// Turn 2 is the one the snapshot prepared: its context, then its messages.
+	if want := "compacted\n\nupdated guidance"; seenPrompts[1] != want {
+		t.Fatalf("snapshot Context/Messages never reached the next request: system prompt = %q, want %q", seenPrompts[1], want)
 	}
 	if seenModels[1] != replacementModel.ID {
 		t.Fatalf("snapshot Model never reached the next request: model = %q, want %q", seenModels[1], replacementModel.ID)

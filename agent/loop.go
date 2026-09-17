@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"sync"
 
 	"github.com/sky-valley/pi/ai"
@@ -92,15 +93,16 @@ func newAgentStream() *ai.EventStream[AgentEvent, []AgentMessage] {
 }
 
 func runAgentLoop(ctx context.Context, prompts []AgentMessage, agentCtx AgentContext, config AgentLoopConfig, emit EventSink, streamFn StreamFn) []AgentMessage {
-	newMessages := append([]AgentMessage(nil), prompts...)
+	initialMessages := declareToolChanges(agentCtx, prompts)
+	newMessages := append([]AgentMessage(nil), initialMessages...)
 	current := agentCtx
-	current.Messages = append(append([]AgentMessage(nil), agentCtx.Messages...), prompts...)
+	current.Messages = append(append([]AgentMessage(nil), agentCtx.Messages...), initialMessages...)
 
 	mustEmit(emit, AgentEvent{Type: EvAgentStart})
 	mustEmit(emit, AgentEvent{Type: EvTurnStart})
-	for _, p := range prompts {
-		mustEmit(emit, AgentEvent{Type: EvMessageStart, Message: p})
-		mustEmit(emit, AgentEvent{Type: EvMessageEnd, Message: p})
+	for _, m := range initialMessages {
+		mustEmit(emit, AgentEvent{Type: EvMessageStart, Message: m})
+		mustEmit(emit, AgentEvent{Type: EvMessageEnd, Message: m})
 	}
 
 	runLoop(ctx, &current, &newMessages, config, emit, streamFn)
@@ -136,6 +138,7 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 		hasMoreToolCalls := true
 
 		for hasMoreToolCalls || len(pending) > 0 {
+			var prepared []AgentMessage
 			if lastCompletedTurn != nil {
 				// Preparation runs here — immediately before the next provider
 				// request — not right after the previous turn_end, so a preparation
@@ -143,7 +146,7 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 				// after tool calls (agent-loop.ts:176-195, upstream 56700d42e).
 				if config.PrepareNextTurn != nil {
 					if snap := config.PrepareNextTurn(*lastCompletedTurn); snap != nil {
-						snap.applyTo(current, &config)
+						prepared = snap.applyTo(current, &config)
 					}
 				}
 				// Preparation can be long-running (for example, compaction). Pick up
@@ -156,15 +159,15 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 				mustEmit(emit, AgentEvent{Type: EvTurnStart})
 			}
 
-			if len(pending) > 0 {
-				for _, m := range pending {
-					mustEmit(emit, AgentEvent{Type: EvMessageStart, Message: m})
-					mustEmit(emit, AgentEvent{Type: EvMessageEnd, Message: m})
-					current.Messages = append(current.Messages, m)
-					*newMessages = append(*newMessages, m)
-				}
-				pending = nil
+			// Process prepared and queued messages before the next assistant
+			// response, declaring any tool loadout change with them.
+			for _, m := range declareToolChanges(*current, slices.Concat(prepared, pending)) {
+				mustEmit(emit, AgentEvent{Type: EvMessageStart, Message: m})
+				mustEmit(emit, AgentEvent{Type: EvMessageEnd, Message: m})
+				current.Messages = append(current.Messages, m)
+				*newMessages = append(*newMessages, m)
 			}
+			pending = nil
 
 			message := streamAssistantResponse(ctx, current, config, emit, streamFn)
 			*newMessages = append(*newMessages, message)
@@ -259,11 +262,9 @@ func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config
 		llmMessages = defaultConvertToLlm(messages)
 	}
 
-	llmCtx := ai.NormalizeContext(ai.Context{
-		SystemPrompt: agentCtx.SystemPrompt,
-		Messages:     llmMessages,
-		Tools:        toAITools(agentCtx.Tools),
-	})
+	// The transcript carries the prompt and the tool declarations; the context
+	// holds nothing else.
+	llmCtx := ai.NormalizeContext(ai.Context{Messages: llmMessages})
 
 	fn := streamFn
 	if fn == nil {
@@ -353,22 +354,80 @@ func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config
 	return final
 }
 
-func toAITools(tools []AgentTool) []ai.Tool {
-	if len(tools) == 0 {
-		return nil
+// declareToolChanges declares tool loadout changes to the model
+// (agent-loop.ts declareToolChanges, upstream 9e05370b2).
+//
+// agentCtx.Tools is what the runtime can execute; the transcript's system
+// messages declare what the model may call. Before each request the difference
+// becomes ToolsAdded and ToolsRemoved on a system message. When a pending
+// system message exists, its tool fields are treated as intent and replaced
+// with the delta between the committed transcript and the executable set, so
+// replay always yields exactly agentCtx.Tools. Otherwise a new system message
+// is inserted before the first non-system pending message. When nothing
+// changes, the caller's slice is returned as is.
+func declareToolChanges(agentCtx AgentContext, pending []AgentMessage) []AgentMessage {
+	systemIndex := -1
+	var system ai.SystemMessage
+	for i := len(pending) - 1; i >= 0; i-- {
+		if m, ok := systemMessageOf(pending[i]); ok {
+			systemIndex, system = i, m
+			break
+		}
 	}
-	out := make([]ai.Tool, len(tools))
-	for i, t := range tools {
-		out[i] = t.asAITool()
+
+	baseline := pending
+	if systemIndex >= 0 {
+		baseline = slices.Clone(pending)
+		baseline[systemIndex] = system.WithToolChanges(ai.ToolStateChanges{})
 	}
-	return out
+	executable := make([]ai.Tool, len(agentCtx.Tools))
+	for i, tool := range agentCtx.Tools {
+		executable[i] = ai.ToToolDeclaration(tool.asAITool())
+	}
+	changes := ai.GetToolStateChanges(
+		ai.GetCurrentTools(slices.Concat(agentCtx.Messages, baseline)),
+		executable,
+	)
+	unchanged := len(changes.ToolsAdded) == 0 && len(changes.ToolsRemoved) == 0
+
+	if systemIndex >= 0 {
+		// Keep the caller's messages when the pending one already declares no
+		// tool changes.
+		if unchanged && len(system.ToolsAdded) == 0 && len(system.ToolsRemoved) == 0 {
+			return pending
+		}
+		baseline[systemIndex] = system.WithToolChanges(changes)
+		return baseline
+	}
+	if unchanged {
+		return pending
+	}
+	update := ai.NewSystemText("", nowMillis()).WithToolChanges(changes)
+	index := slices.IndexFunc(pending, func(m AgentMessage) bool { return m.MessageRole() != ai.RoleSystem })
+	if index == -1 {
+		index = len(pending)
+	}
+	return slices.Concat(pending[:index], []AgentMessage{update}, pending[index:])
+}
+
+// systemMessageOf reads a system message held by value or by pointer.
+func systemMessageOf(m AgentMessage) (ai.SystemMessage, bool) {
+	switch v := m.(type) {
+	case ai.SystemMessage:
+		return v, true
+	case *ai.SystemMessage:
+		if v != nil {
+			return *v, true
+		}
+	}
+	return ai.SystemMessage{}, false
 }
 
 func defaultConvertToLlm(messages []AgentMessage) []ai.Message {
 	var out []ai.Message
 	for _, m := range messages {
 		switch m.MessageRole() {
-		case ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult:
+		case ai.RoleSystem, ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult:
 			out = append(out, m)
 		}
 	}
