@@ -50,7 +50,18 @@ type openAICompletionsCompat struct {
 	// SupportsOpenAIGrammarTools reports whether the provider accepts OpenAI
 	// custom tools with Lark/regex grammar formats. When false, grammar-
 	// constrained tools fall back to normal function tools. Default: false.
-	SupportsOpenAIGrammarTools                  bool
+	SupportsOpenAIGrammarTools bool
+	// SupportsMidConvoSystemMessages reports whether the exact model accepts
+	// system or developer messages after the conversation has started. When
+	// false, later system messages are folded into the leading system message.
+	// Default: false; the generated model catalog enables it for verified
+	// models (pi 9e05370b2).
+	SupportsMidConvoSystemMessages bool
+	// SupportsMidConvoToolAdditions reports whether system messages can
+	// introduce additional tools mid-conversation, as Kimi's tool-bearing
+	// system messages. Requires SupportsMidConvoSystemMessages. Default: false;
+	// the generated model catalog enables it for capable models (pi 9e05370b2).
+	SupportsMidConvoToolAdditions               bool
 	SupportsLongCacheRetention                  bool
 	RequiresReasoningContentOnAssistantMessages bool
 	RequiresToolResultName                      bool
@@ -171,6 +182,8 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		ThinkingFormat:                              thinkingFormat,
 		SupportsStrictMode:                          !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
 		SupportsOpenAIGrammarTools:                  false,
+		SupportsMidConvoSystemMessages:              false,
+		SupportsMidConvoToolAdditions:               false,
 		SupportsLongCacheRetention:                  !(isTogether || isCloudflareWorkersAI || isCloudflareAiGateway || isNvidia || isAntLing),
 		RequiresReasoningContentOnAssistantMessages: isDeepSeek,
 		RequiresToolResultName:                      false,
@@ -203,6 +216,8 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	applyCompat(o, "thinkingFormat", &c.ThinkingFormat)
 	applyCompat(o, "supportsStrictMode", &c.SupportsStrictMode)
 	applyCompat(o, "supportsOpenAIGrammarTools", &c.SupportsOpenAIGrammarTools)
+	applyCompat(o, "supportsMidConvoSystemMessages", &c.SupportsMidConvoSystemMessages)
+	applyCompat(o, "supportsMidConvoToolAdditions", &c.SupportsMidConvoToolAdditions)
 	applyCompat(o, "supportsLongCacheRetention", &c.SupportsLongCacheRetention)
 	applyCompat(o, "requiresReasoningContentOnAssistantMessages", &c.RequiresReasoningContentOnAssistantMessages)
 	applyCompat(o, "requiresToolResultName", &c.RequiresToolResultName)

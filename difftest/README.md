@@ -275,14 +275,16 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 | `tool-choice-without-tools-present` | dist | `tool_choice` is sent even when the request carries no tools (upstream `6b36eb592` reverted the `params.tools?.length` guard) |
 | `tool-choice-with-tools-control` | dist | control for the row above: with tools present the key is sent too, so arm one passes on the guard's absence rather than on the key never being written |
 | `tools-only-openai-completions` | dist | tools and no `systemPrompt`: the normalized leading system message has empty text and sends no system message (upstream `9e05370b2`; the published build takes the raw context, which renders the same) |
+| `kimi-k3-anchored-tool-additions` | src | openai-completions Kimi K3 with `supportsMidConvoSystemMessages` + `supportsMidConvoToolAdditions`: `tools` holds the leading message's tools, and a later system message adding a tool is sent in place as a Kimi `{role:"system", tools}` message followed by its rendered update (upstream `9e05370b2`) |
 
 The `backend` column above is a snapshot. Scenarios flip `src` -> `dist` as releases
 ship the surface they cover, so re-read `scenarios/*.json` rather than this table when
-the distinction matters. **As of 2026-09-17 the suite is 52 scenarios: 49 `dist`,
-3 `src`.** The three `responses-deferred-*` scenarios moved to `src` when upstream
-`9e05370b2` replaced tool-result `addedToolNames` with mid-transcript system messages;
-they need `PI_UPSTREAM_SHA` at or after that sha (the `config.env` default), and flip
-back to `dist` with the first release that ships the transcript model.
+the distinction matters. **As of 2026-09-17 the suite is 53 scenarios: 49 `dist`,
+4 `src`.** The three `responses-deferred-*` scenarios moved to `src` when upstream
+`9e05370b2` replaced tool-result `addedToolNames` with mid-transcript system messages,
+and `kimi-k3-anchored-tool-additions` covers the same transcript model; they need
+`PI_UPSTREAM_SHA` at or after that sha (the `config.env` default), and flip back to
+`dist` with the first release that ships the transcript model.
 
 From `9e05370b2` on, the api adapters take a normalized transcript that only
 `normalizeContext` produces. Both arms normalize the scenario's `context` before

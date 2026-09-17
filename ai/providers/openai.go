@@ -54,14 +54,16 @@ func StreamSimpleOpenAICompletions(ctx context.Context, model *ai.Model, req ai.
 }
 
 // StreamOpenAICompletions streams from an OpenAI-compatible /chat/completions API.
-// Later system messages are folded into the leading one first, so the request
-// and the Copilot headers read the collapsed transcript.
+// The transcript is resolved for the model first: a model with
+// compat.supportsMidConvoSystemMessages keeps later system messages in place,
+// any other has them folded into the leading one. The request, the grammar
+// tools and the Copilot headers all read the resolved transcript.
 func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *OpenAIOptions) *ai.AssistantMessageEventStream {
 	stream := ai.NewAssistantMessageEventStream()
 	if opts == nil {
 		opts = &OpenAIOptions{}
 	}
-	normalized := ai.CollapseSystemMessages(req)
+	normalized := ai.ResolveTranscript(req, getOpenAICompat(model).SupportsMidConvoSystemMessages)
 
 	go func() {
 		output := &ai.AssistantMessage{
@@ -621,21 +623,26 @@ func buildOpenAIParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIOp
 	if err != nil {
 		return nil, err
 	}
-	// Without mid-conversation system messages the complete current tool set is
-	// the request's tool list.
-	transcriptTools := ai.ResolveTranscriptTools(req.Messages, false)
+	// Tool additions anchor in the transcript only where the model takes both
+	// later system messages and the tools they add; otherwise the request
+	// declares the complete current tool set.
+	supportsToolAdditions := compat.SupportsMidConvoSystemMessages && compat.SupportsMidConvoToolAdditions
+	transcriptTools := ai.ResolveTranscriptTools(req.Messages, supportsToolAdditions)
 
-	// pi's convertMessages resolves the transcript itself (a no-op on one the
-	// stream already collapsed), so the conversion below sees only a leading
-	// system message.
+	// pi's convertMessages resolves the transcript, and its tools, again itself
+	// (a no-op on a transcript the stream already resolved), so a builder handed
+	// an unresolved transcript still folds it for a model without
+	// mid-conversation system messages.
 	var messages []map[string]any
+	resolved := ai.ResolveTranscript(req, compat.SupportsMidConvoSystemMessages)
+	transformed := transformMessages(resolved.Messages, model, func(id string) string {
+		return normalizeOpenAIToolCallID(model, id)
+	})
+	anchorsAdditions := ai.ResolveTranscriptTools(resolved.Messages, supportsToolAdditions).AnchorsAdditions
 	instructionRole := "system"
 	if model.Reasoning && compat.SupportsDeveloperRole {
 		instructionRole = "developer"
 	}
-	transformed := transformMessages(ai.CollapseSystemMessages(req).Messages, model, func(id string) string {
-		return normalizeOpenAIToolCallID(model, id)
-	})
 	modelHasImageInput := false
 	for _, in := range model.Input {
 		if in == "image" {
@@ -657,13 +664,29 @@ func buildOpenAIParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIOp
 		}
 
 		if sm, ok := asSystemMsg(m); ok {
-			// The collapsed transcript holds one system message, the leading
-			// prompt. Empty text sends nothing. Either way it sets lastRole, as
-			// pi's system branch falls through to `lastRole = msg.role`: a system
-			// message between tool results and a user message means no bridge.
-			if text := ai.GetSystemMessageText(sm); text != "" {
+			// i counts the transformed transcript, as pi's loop does: the message
+			// at index 0 is the prompt, any later one an update.
+			if i > 0 && anchorsAdditions && len(sm.ToolsAdded) > 0 {
+				tools, err := convertOpenAITools(sm.ToolsAdded, compat)
+				if err != nil {
+					return nil, err
+				}
+				// Kimi accepts a system message with tools but omits the standard
+				// content field; it declares the additions ahead of the update.
+				messages = append(messages, map[string]any{"role": "system", "tools": tools})
+			}
+			var text string
+			if i == 0 {
+				text = ai.GetSystemMessageText(sm)
+			} else {
+				text = ai.RenderSystemMessageUpdate(sm)
+			}
+			if text != "" {
 				messages = append(messages, map[string]any{"role": instructionRole, "content": sanitizeSurrogates(text)})
 			}
+			// Empty text sends nothing. Either way the message sets lastRole, as
+			// pi's system branch falls through to `lastRole = msg.role`: a system
+			// message between tool results and a user message means no bridge.
 			lastRole = "system"
 		} else if um, ok := asUserMsg(m); ok {
 			// pi (openai-completions.ts:789-816): string-form content is sent as
