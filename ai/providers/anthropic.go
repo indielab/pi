@@ -26,9 +26,32 @@ const (
 	// (upstream 4e69b0c28).
 	midConvoOutputConfigBeta = "mid-conversation-output-config-2026-07-01"
 	thinkingBindingBeta      = "thinking-binding-controls-2026-08-01"
-	claudeCodeVersion        = "2.1.251"
-	anthropicDefaultBaseURL  = "https://api.anthropic.com"
+	// midConvoToolChangesBeta turns on tool_addition/tool_removal blocks in
+	// mid-conversation system messages (upstream 9e05370b2).
+	midConvoToolChangesBeta = "mid-conversation-tool-changes-2026-07-01"
+	claudeCodeVersion       = "2.1.251"
+	anthropicDefaultBaseURL = "https://api.anthropic.com"
 )
+
+// deferredToolPlaceholder is pi's DEFERRED_TOOL_PLACEHOLDER: a stable deferred
+// tool declared whenever native tool changes are in use. Anthropic adds hidden
+// prompt scaffolding as soon as any tool has `defer_loading`; declaring this
+// placeholder from the first request keeps that scaffolding in the cached
+// prefix, so the first real late tool does not invalidate the cache (measured
+// upstream: a full miss without it). It is never activated and the model cannot
+// see it.
+//
+// pi shares one module-level object; this builds a fresh one per request,
+// because the request body is handed to OnPayload, and a hook that edits the
+// map it was given must not change the next request's placeholder.
+func deferredToolPlaceholder() map[string]any {
+	return map[string]any{
+		"name":          "__pi_deferred_placeholder__",
+		"description":   "Reserved placeholder. Never available. Never call this.",
+		"input_schema":  map[string]any{"type": "object", "properties": map[string]any{}, "required": []string{}},
+		"defer_loading": true,
+	}
+}
 
 // claudeCodeTools is the canonical Claude Code 2.x tool-name casing used in
 // OAuth "stealth" mode.
@@ -106,6 +129,18 @@ type anthropicCompat struct {
 	// carries its per-turn effort in the message list instead of in
 	// output_config, and temperature is never sent.
 	supportsMidConvoEffort bool
+	// supportsMidConvoSystemMessages reports whether the model accepts system
+	// messages after the conversation has started (pi
+	// AnthropicMessagesCompat.supportsMidConvoSystemMessages, upstream
+	// 9e05370b2). Default: false, which folds every later system message into
+	// the leading system prompt before the request is built.
+	supportsMidConvoSystemMessages bool
+	// supportsMidConvoToolChanges reports whether the model accepts
+	// tool_addition/tool_removal blocks in those system messages (pi
+	// AnthropicMessagesCompat.supportsMidConvoToolChanges, upstream 9e05370b2).
+	// Default: false. It takes effect only together with
+	// supportsMidConvoSystemMessages.
+	supportsMidConvoToolChanges bool
 	// allowedFallbackModels are the catalog's permitted server-side fallback
 	// models: what the request's `fallbacks` field lists, what turns the fallback
 	// beta on, and where the local pricing used to cost a response one of them
@@ -180,6 +215,8 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 	applyCompat(o, "forceAdaptiveThinking", &c.forceAdaptiveThinking)
 	applyCompat(o, "supportsStrictTools", &c.supportsStrictTools)
 	applyCompat(o, "supportsMidConvoEffort", &c.supportsMidConvoEffort)
+	applyCompat(o, "supportsMidConvoSystemMessages", &c.supportsMidConvoSystemMessages)
+	applyCompat(o, "supportsMidConvoToolChanges", &c.supportsMidConvoToolChanges)
 	applyCompat(o, "allowedFallbackModels", &c.allowedFallbackModels)
 	return c
 }
@@ -454,15 +491,17 @@ func normalizeToolCallID(id string) string {
 
 // StreamAnthropic streams an assistant response from the Anthropic Messages API.
 //
-// Later system messages are folded into the leading one before anything reads
-// the transcript: the request, the Copilot headers and the OAuth tool-name
-// mapping all see the collapsed transcript and its current tools.
+// The transcript is resolved before anything reads it: a model with
+// supportsMidConvoSystemMessages keeps later system messages in place, and
+// every other model has them folded into the leading one. The request, the
+// Copilot headers and the OAuth tool-name mapping all see the resolved
+// transcript and its current tools.
 func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *AnthropicOptions) *ai.AssistantMessageEventStream {
 	stream := ai.NewAssistantMessageEventStream()
 	if opts == nil {
 		opts = &AnthropicOptions{}
 	}
-	normalized := ai.CollapseSystemMessages(req)
+	normalized := ai.ResolveTranscript(req, getAnthropicCompat(model).supportsMidConvoSystemMessages)
 	currentTools := ai.GetCurrentTools(normalized.Messages)
 
 	go func() {
@@ -913,8 +952,10 @@ func isAnthropicEffort(value string) bool {
 // compat is passed in rather than re-decoded: pi reads plain properties here,
 // so a second decode of the raw compat blob would be duplicated per-request work
 // and a second place for the two reads to drift (the same reasoning as
-// buildAnthropicParams' fallbacks list).
-func getAnthropicBetaFeatures(model *ai.Model, req ai.TranscriptContext, oauth bool, opts *AnthropicOptions, compat anthropicCompat) []string {
+// buildAnthropicParams' fallbacks list). nativeToolChanges is buildAnthropicParams'
+// decision to send tool changes as tool_addition/tool_removal blocks, which
+// needs its own beta.
+func getAnthropicBetaFeatures(model *ai.Model, req ai.TranscriptContext, oauth, nativeToolChanges bool, opts *AnthropicOptions, compat anthropicCompat) []string {
 	var optHeaders ai.ProviderHeaders
 	if opts != nil {
 		optHeaders = opts.Headers
@@ -948,7 +989,7 @@ func getAnthropicBetaFeatures(model *ai.Model, req ai.TranscriptContext, oauth b
 		return out
 	}
 
-	// The five sources below contribute disjoint literals, so pi's `new Set`
+	// The six sources below contribute disjoint literals, so pi's `new Set`
 	// round-trip cannot drop anything here.
 	var features []string
 	if oauth {
@@ -973,6 +1014,9 @@ func getAnthropicBetaFeatures(model *ai.Model, req ai.TranscriptContext, oauth b
 	}
 	if compat.supportsMidConvoEffort {
 		features = append(features, midConvoOutputConfigBeta, thinkingBindingBeta)
+	}
+	if nativeToolChanges {
+		features = append(features, midConvoToolChangesBeta)
 	}
 	return features
 }
@@ -1189,6 +1233,15 @@ func buildAnthropicParams(model *ai.Model, req ai.TranscriptContext, oauth bool,
 	if hasInitialSystemMessage {
 		conversationMessages = transformedMessages[1:]
 	}
+	// Native tool changes reference tools by name, so a redefined name cannot be
+	// expressed, and Anthropic rejects a tool list where every tool is deferred,
+	// so there must be an initial active tool to anchor the deferred ones.
+	// Otherwise the current tool list is sent.
+	initialTools := initialSystemMessage.ToolsAdded
+	nativeToolChanges := compat.supportsMidConvoSystemMessages &&
+		compat.supportsMidConvoToolChanges &&
+		len(initialTools) > 0 &&
+		!ai.HasToolRedefinitions(req.Messages)
 
 	// A managed-effort model replays each historical turn's own effort, so the
 	// conversion records which converted message each recorded level belongs to.
@@ -1200,7 +1253,7 @@ func buildAnthropicParams(model *ai.Model, req ai.TranscriptContext, oauth bool,
 		managedProvider = model.Provider
 	}
 	messages, assistantLevels := convertAnthropicMessages(
-		conversationMessages, oauth, cc, compat.allowEmptySignature, managedProvider)
+		conversationMessages, oauth, cc, compat.allowEmptySignature, managedProvider, nativeToolChanges)
 	if compat.supportsMidConvoEffort {
 		messages = insertAnthropicThinkingLevelMessages(messages, assistantLevels, anthropicActiveEffort(opts))
 	}
@@ -1213,7 +1266,7 @@ func buildAnthropicParams(model *ai.Model, req ai.TranscriptContext, oauth bool,
 	}
 	// `betas` travels in the params object so onPayload observes it; the SDK
 	// lifts it back out into the anthropic-beta header before sending.
-	if betas := getAnthropicBetaFeatures(model, req, oauth, opts, compat); len(betas) > 0 {
+	if betas := getAnthropicBetaFeatures(model, req, oauth, nativeToolChanges, opts, compat); len(betas) > 0 {
 		params["betas"] = betas
 	}
 
@@ -1246,7 +1299,39 @@ func buildAnthropicParams(model *ai.Model, req ai.TranscriptContext, oauth bool,
 	if compat.supportsCacheControlOnTools {
 		toolCC = cc
 	}
-	if tools := ai.GetCurrentTools(req.Messages); len(tools) > 0 {
+	if nativeToolChanges {
+		// Initial tools stay active with the cache breakpoint on the last one.
+		// Every later declaration is deferred and only surfaced by its
+		// tool_addition block; removed tools stay declared and are withdrawn by
+		// tool_removal. The request-level list therefore only grows, keeping the
+		// cached prefix intact across tool changes.
+		initialNames := make(map[string]bool, len(initialTools))
+		for _, tool := range initialTools {
+			initialNames[tool.Name] = true
+		}
+		var laterTools []ai.Tool
+		for _, tool := range ai.GetDeclaredTools(req.Messages) {
+			if !initialNames[tool.Name] {
+				laterTools = append(laterTools, tool)
+			}
+		}
+		initial, err := convertAnthropicTools(initialTools, oauth, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools, toolCC)
+		if err != nil {
+			return nil, err
+		}
+		later, err := convertAnthropicTools(laterTools, oauth, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools, nil)
+		if err != nil {
+			return nil, err
+		}
+		tools := make([]map[string]any, 0, len(initial)+1+len(later))
+		tools = append(tools, initial...)
+		tools = append(tools, deferredToolPlaceholder())
+		for _, tool := range later {
+			tool["defer_loading"] = true
+			tools = append(tools, tool)
+		}
+		params["tools"] = tools
+	} else if tools := ai.GetCurrentTools(req.Messages); len(tools) > 0 {
 		converted, err := convertAnthropicTools(tools, oauth, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools, toolCC)
 		if err != nil {
 			return nil, err
@@ -1420,7 +1505,13 @@ func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bo
 // converted assistant message was produced at, keyed by its index in the result.
 // managedProvider is empty for every other model, which switches the recording
 // off — pi passes `undefined` there.
-func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheControl, allowEmptySig bool, managedProvider string) ([]map[string]any, map[int]string) {
+//
+// The transcript is the conversation after the leading system message. A later
+// system message only reaches this point on a model that accepts one natively
+// (every other transcript was collapsed first); it is rendered as a framed
+// update, with its tool changes as tool_removal/tool_addition blocks when
+// nativeToolChanges is set.
+func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheControl, allowEmptySig bool, managedProvider string, nativeToolChanges bool) ([]map[string]any, map[int]string) {
 	// Seeded non-nil, like pi's `const params: MessageParam[] = []`: a transcript
 	// that converts to nothing must still marshal as `[]`, and a nil slice would
 	// marshal as `null`.
@@ -1429,16 +1520,57 @@ func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheCon
 	// passes a managedProvider, and every other request would otherwise allocate
 	// a map it is guaranteed to leave empty and discard.
 	var assistantLevels map[int]string
+	// Later system messages are held back and emitted directly before the next
+	// assistant message (or at the end of the transcript). Anthropic requires
+	// tool_result blocks to immediately follow their tool_use, so a system
+	// message between them is rejected; this also mirrors where the
+	// managed-effort system messages are inserted. As a result an update placed
+	// before a user message in the transcript lands after it on the wire.
+	var pendingSystemMessages []map[string]any
+	flushPendingSystemMessages := func() {
+		params = append(params, pendingSystemMessages...)
+		pendingSystemMessages = nil
+	}
+	toolReference := func(name string) map[string]any {
+		if oauth {
+			name = toClaudeCodeName(name)
+		}
+		return map[string]any{"type": "tool_reference", "name": name}
+	}
 
 	for i := 0; i < len(transformed); i++ {
 		m := transformed[i]
-		if um, ok := asUserMsg(m); ok {
+		if sm, ok := asSystemMsg(m); ok {
+			var blocks []any
+			if text := ai.RenderSystemMessageUpdate(sm); text != "" {
+				blocks = append(blocks, map[string]any{"type": "text", "text": sanitizeSurrogates(text)})
+			}
+			if nativeToolChanges {
+				for _, tool := range sm.ToolsRemoved {
+					blocks = append(blocks, map[string]any{"type": "tool_removal", "tool": toolReference(tool.Name)})
+				}
+				for _, tool := range sm.ToolsAdded {
+					blocks = append(blocks, map[string]any{"type": "tool_addition", "tool": toolReference(tool.Name)})
+				}
+			}
+			if len(blocks) > 0 {
+				pendingSystemMessages = append(pendingSystemMessages, map[string]any{"role": "system", "content": blocks})
+			}
+		} else if um, ok := asUserMsg(m); ok {
+			// pi sends string content as a string and block content as blocks.
+			if text, isString := um.StringContent(); isString {
+				if strings.TrimSpace(text) != "" {
+					params = append(params, map[string]any{"role": "user", "content": sanitizeSurrogates(text)})
+				}
+				continue
+			}
 			blocks := convertUserBlocks(um.Content)
 			if len(blocks) == 0 {
 				continue
 			}
 			params = append(params, map[string]any{"role": "user", "content": blocks})
 		} else if am, ok := asAssistantMsg(m); ok {
+			flushPendingSystemMessages()
 			blocks := convertAssistantBlocks(am, oauth, allowEmptySig)
 			if len(blocks) == 0 {
 				continue
@@ -1473,17 +1605,25 @@ func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheCon
 		}
 	}
 
-	// Cache the conversation history by marking the last user block.
+	flushPendingSystemMessages()
+
+	// Cache the conversation history by marking the last block of the last user
+	// or system message; string content becomes a single marked text block.
 	if cc != nil && len(params) > 0 {
 		last := params[len(params)-1]
-		if last["role"] == "user" {
-			if content, ok := last["content"].([]any); ok && len(content) > 0 {
-				if blk, ok := content[len(content)-1].(map[string]any); ok {
-					t, _ := blk["type"].(string)
-					if t == "text" || t == "image" || t == "tool_result" {
-						blk["cache_control"] = cc
+		if last["role"] == "user" || last["role"] == "system" {
+			switch content := last["content"].(type) {
+			case []any:
+				if len(content) > 0 {
+					if blk, ok := content[len(content)-1].(map[string]any); ok {
+						switch blk["type"] {
+						case "text", "image", "tool_result", "tool_addition", "tool_removal":
+							blk["cache_control"] = cc
+						}
 					}
 				}
+			case string:
+				last["content"] = []any{map[string]any{"type": "text", "text": content, "cache_control": cc}}
 			}
 		}
 	}

@@ -381,7 +381,11 @@ func TestAnthropicLongCacheRetentionTTL(t *testing.T) {
 	// Last user content block.
 	msgs := body["messages"].([]any)
 	lastUser := msgs[len(msgs)-1].(map[string]any)
-	uc := lastUser["content"].([]any)
+	// The trailing string content must have become a marked block list.
+	uc, ok := lastUser["content"].([]any)
+	if !ok || len(uc) == 0 {
+		t.Fatalf("messages[last].content = %#v, want a non-empty block list", lastUser["content"])
+	}
 	checkCC("messages[last].content[last]", uc[len(uc)-1].(map[string]any))
 
 	// pi does NOT send any extended-cache anthropic-beta header; the 1h TTL is

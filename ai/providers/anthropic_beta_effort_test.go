@@ -292,13 +292,15 @@ func TestAnthropicBetasHeaderBeatsConsumerSpelling(t *testing.T) {
 	}
 }
 
-// getBetaFeatures pushes its five sources in a fixed order and the SDK joins the
+// getBetaFeatures pushes its six sources in a fixed order and the SDK joins the
 // list with "," in that order, so the header is an ordered string rather than a
 // set. Only a request that arranges ALL of them at once pins the OAuth pair's
-// position, which is first.
+// position, which is first, and the native tool-changes beta's, which is last
+// (upstream 9e05370b2).
 func TestAnthropicBetaOrderAcrossEverySource(t *testing.T) {
 	model := anthropicMidConvoModel()
 	model.Compat = json.RawMessage(`{"supportsMidConvoEffort":true,"supportsEagerToolInputStreaming":false,
+		"supportsMidConvoSystemMessages":true,"supportsMidConvoToolChanges":true,
 		"allowedFallbackModels":[{"provider":"anthropic","model":"claude-opus-4-8"}]}`)
 	req := anthropicHelloContext()
 	req.Tools = []ai.Tool{{Name: "read", Description: "read", Parameters: ai.Object(ai.Prop("p", ai.String()))}}
@@ -312,6 +314,7 @@ func TestAnthropicBetaOrderAcrossEverySource(t *testing.T) {
 		interleavedThinkingBeta,
 		serverSideFallbackBeta,
 		midConvoOutputConfigBeta, thinkingBindingBeta,
+		"mid-conversation-tool-changes-2026-07-01",
 	}
 	if got := bodyStrings(t, params, "betas"); !reflect.DeepEqual(got, want) {
 		t.Fatalf("betas = %#v, want %#v", got, want)
