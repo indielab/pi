@@ -29,6 +29,31 @@ func TestIsRetryableAssistantError(t *testing.T) {
 			want: false,
 		},
 		{
+			// pi "keeps provider limit errors non-retryable": the limit pattern
+			// wins over a retryable status in the same message.
+			name: "429 quota exceeded is non-retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "429 quota exceeded"},
+			want: false,
+		},
+		{
+			// pi "classifies assistant error messages": fauxAssistantMessage("not an error").
+			name: "non-error message without error text is not retryable",
+			msg:  AssistantMessage{StopReason: StopStop},
+			want: false,
+		},
+		{
+			// pi "matches explicit provider retry guidance" (openAIExplicitRetryMessage).
+			name: "openai explicit retry guidance is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "An error occurred while processing your request. You can retry your request, or contact us through our help center at help.openai.com if the error persists. Please include the request ID req_******** in your message."},
+			want: true,
+		},
+		{
+			// pi "matches explicit provider retry guidance" (bedrockExplicitRetryMessage).
+			name: "bedrock explicit retry guidance is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: `{"message":"The system encountered an unexpected error during processing. Try your request again."}`},
+			want: true,
+		},
+		{
 			name: "new #6019: you can retry your request",
 			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "the model is busy; you can retry your request"},
 			want: true,
@@ -49,8 +74,21 @@ func TestIsRetryableAssistantError(t *testing.T) {
 			want: true,
 		},
 		{
+			// pi "classifies assistant error messages".
+			name: "overloaded_error is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "overloaded_error"},
+			want: true,
+		},
+		{
 			name: "429 is retryable",
 			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "received HTTP 429 from provider"},
+			want: true,
+		},
+		{
+			// pi e5d18382a (#9627): Cloudflare's unknown-error status
+			// (message byte-identical to pi's vitest literal).
+			name: "cloudflare 520 unknown error is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "520 status code (no body)"},
 			want: true,
 		},
 		{
