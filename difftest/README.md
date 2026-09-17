@@ -53,7 +53,7 @@ escalated, pre-existing divergence makes scenarios fail, that would permanently
 pin the exit code at 1, the exit code would carry no information, and the next
 NEW regression would hide inside the noise — reviewers would learn to read
 "3 FAIL" as normal. (The baseline is currently EMPTY: `known-divergences.json`
-holds no entries and the suite is 52 PASS / 0 KNOWN / 0 FAIL.)
+holds no entries and the suite is 56 PASS / 0 KNOWN / 0 FAIL.)
 
 **A run that never reaches the scenarios is DARK, not FAIL, and never PASS.**
 `run.sh` executes the pi capture and the Go driver in one shot each *before* the
@@ -276,15 +276,22 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 | `tool-choice-with-tools-control` | dist | control for the row above: with tools present the key is sent too, so arm one passes on the guard's absence rather than on the key never being written |
 | `tools-only-openai-completions` | dist | tools and no `systemPrompt`: the normalized leading system message has empty text and sends no system message (upstream `9e05370b2`; the published build takes the raw context, which renders the same) |
 | `kimi-k3-anchored-tool-additions` | src | openai-completions Kimi K3 with `supportsMidConvoSystemMessages` + `supportsMidConvoToolAdditions`: `tools` holds the leading message's tools, and a later system message adding a tool is sent in place as a Kimi `{role:"system", tools}` message followed by its rendered update (upstream `9e05370b2`) |
+| `anthropic-native-tool-changes` | src | anthropic-messages with `supportsMidConvoSystemMessages` + `supportsMidConvoToolChanges`: the leading message's tools stay active with the cache breakpoint, a stable `__pi_deferred_placeholder__` and every later declaration are sent with `defer_loading`, and the later system message is held and sent as a `{role:"system"}` block carrying its rendered update plus `tool_removal`/`tool_addition` references, with the `mid-conversation-tool-changes-2026-07-01` beta (upstream `9e05370b2`) |
+| `responses-midconvo-additional-tools` | src | native mid-conversation system messages (upstream `9e05370b2`): additive tool history keeps body.tools to the leading message's tools and loads `late_tool` with an `additional_tools` item before the in-place developer update |
+| `responses-midconvo-tool-search` | src | the same with `supportsToolSearch`: a completed client `tool_search_call`/`tool_search_output` pair, `call_id` `pi_tool_load_<shortHash("system:<msgIndex>:<names>")>` with a msgIndex the leading system message does not advance |
+| `responses-midconvo-fallback` | src | a removal makes the tool history non-additive: body.tools is the complete current tool state, no additional_tools item, and the update renders its section changes |
+| `responses-midconvo-off` | src | native system messages without additional_tools or tool search: every current tool in body.tools, the update still sent in place |
 
 The `backend` column above is a snapshot. Scenarios flip `src` -> `dist` as releases
 ship the surface they cover, so re-read `scenarios/*.json` rather than this table when
-the distinction matters. **As of 2026-09-17 the suite is 53 scenarios: 49 `dist`,
-4 `src`.** The three `responses-deferred-*` scenarios moved to `src` when upstream
-`9e05370b2` replaced tool-result `addedToolNames` with mid-transcript system messages,
-and `kimi-k3-anchored-tool-additions` covers the same transcript model; they need
-`PI_UPSTREAM_SHA` at or after that sha (the `config.env` default), and flip back to
-`dist` with the first release that ships the transcript model.
+the distinction matters. **As of 2026-09-17 the suite is 58 scenarios: 49 `dist`,
+9 `src`.** The three `responses-deferred-*` scenarios moved to `src` when upstream
+`9e05370b2` replaced tool-result `addedToolNames` with mid-transcript system messages;
+`anthropic-native-tool-changes`, `kimi-k3-anchored-tool-additions` and the four
+`responses-midconvo-*` scenarios cover the native (`supportsMidConvoSystemMessages`)
+paths of the same transcript model. All nine need `PI_UPSTREAM_SHA` at or after that sha
+(the `config.env` default), and flip to `dist` with the first release that ships the
+transcript model.
 
 From `9e05370b2` on, the api adapters take a normalized transcript that only
 `normalizeContext` produces. Both arms normalize the scenario's `context` before

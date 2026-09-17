@@ -209,7 +209,7 @@ func TestMakeStrictJSONSchemaUnsupported(t *testing.T) {
 				t.Fatalf("prefer must fall back to unconstrained: strict=%v err=%v", strict, err)
 			}
 
-			converted, err := convertResponsesTools([]ai.Tool{tool}, responsesCompat{SupportsStrictMode: true})
+			converted, err := convertResponsesTools([]ai.Tool{tool}, responsesCompat{SupportsStrictMode: true}, false)
 			if err != nil {
 				t.Fatalf("convertResponsesTools: %v", err)
 			}

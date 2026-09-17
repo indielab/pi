@@ -32,6 +32,10 @@ var openaiToolCallProviders = map[string]bool{
 // (port of OpenAIResponsesCompat, defaults true).
 type responsesCompat struct {
 	SupportsDeveloperRole bool
+	// SupportsMidConvoSystemMessages reports whether later system messages are
+	// sent in place as instruction-role messages; otherwise they are folded into
+	// the leading one. Default: false.
+	SupportsMidConvoSystemMessages bool
 	// SessionAffinityFormat selects the session-affinity header shape (pi
 	// SessionAffinityFormat). Auto-detected from provider/baseURL.
 	SessionAffinityFormat string
@@ -49,7 +53,8 @@ type responsesCompat struct {
 	// to normal function tools. Default: false.
 	SupportsOpenAIGrammarTools bool
 	// SupportsAdditionalTools reports whether the model accepts message-anchored
-	// `additional_tools` input items. Default: false.
+	// `additional_tools` input items. It outranks SupportsToolSearch. Default:
+	// false.
 	SupportsAdditionalTools bool
 	// SupportsToolSearch reports whether the model supports client-executed tool
 	// search for transcript-anchored additions. Default: false.
@@ -82,6 +87,7 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 	// does — see compatOverrides.
 	o := newCompatOverrides(model.Compat)
 	applyCompat(o, "supportsDeveloperRole", &c.SupportsDeveloperRole)
+	applyCompat(o, "supportsMidConvoSystemMessages", &c.SupportsMidConvoSystemMessages)
 	applyCompat(o, "sessionAffinityFormat", &c.SessionAffinityFormat)
 	applyCompat(o, "supportsLongCacheRetention", &c.SupportsLongCacheRetention)
 	applyCompat(o, "supportsStrictMode", &c.SupportsStrictMode)
@@ -245,14 +251,16 @@ func StreamSimpleOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Tr
 }
 
 // StreamOpenAIResponses streams from an OpenAI Responses API (/responses).
-// Later system messages are folded into the leading one first, so the request
-// and the Copilot headers read the collapsed transcript.
+// The transcript is resolved first: later system messages stay in place for a
+// model with compat.supportsMidConvoSystemMessages and are folded into the
+// leading one otherwise, so the request, the grammar tool properties and the
+// Copilot headers all read the resolved transcript.
 func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *OpenAIResponsesOptions) *ai.AssistantMessageEventStream {
 	stream := ai.NewAssistantMessageEventStream()
 	if opts == nil {
 		opts = &OpenAIResponsesOptions{}
 	}
-	normalized := ai.CollapseSystemMessages(req)
+	normalized := ai.ResolveTranscript(req, getResponsesCompat(model).SupportsMidConvoSystemMessages)
 
 	go func() {
 		output := &ai.AssistantMessage{
@@ -892,9 +900,8 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 func buildResponsesParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIResponsesOptions) (map[string]any, error) {
 	compat := getResponsesCompat(model)
 	// body.tools holds the initial tools when additions can be anchored at their
-	// system messages, and the complete current tool set otherwise. The stream
-	// collapses the transcript before building it, so there are no later system
-	// messages to anchor and both are the current tools.
+	// system messages (responsesInput emits the later ones there), and the
+	// complete current tool set otherwise.
 	transcriptTools := ai.ResolveTranscriptTools(req.Messages, compat.SupportsAdditionalTools || compat.SupportsToolSearch)
 	input, err := responsesInput(model, req)
 	if err != nil {
@@ -948,7 +955,7 @@ func buildResponsesParams(model *ai.Model, req ai.TranscriptContext, opts *OpenA
 		params["service_tier"] = opts.ServiceTier
 	}
 	if len(transcriptTools.RequestTools) > 0 {
-		tools, err := convertResponsesTools(transcriptTools.RequestTools, compat)
+		tools, err := convertResponsesTools(transcriptTools.RequestTools, compat, false)
 		if err != nil {
 			return nil, err
 		}
@@ -1053,9 +1060,10 @@ func buildResponsesToolCallIDNormalizer(model *ai.Model, messages []ai.Message) 
 
 // convertResponsesTools maps unified tools to Responses API tools. `strict` is
 // emitted only where the provider supports it (upstream 24bace27 — it used to be
-// unconditional); grammar-constrained tools become custom tools.
-// Port of convertResponsesTools.
-func convertResponsesTools(tools []ai.Tool, compat responsesCompat) ([]map[string]any, error) {
+// unconditional); grammar-constrained tools become custom tools;
+// toolSearchResult marks definitions returned by a client tool_search_output
+// item as `defer_loading`. Port of convertResponsesTools.
+func convertResponsesTools(tools []ai.Tool, compat responsesCompat, toolSearchResult bool) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		grammar, err := resolveGrammarSampling(t, compat.SupportsOpenAIGrammarTools)
@@ -1066,6 +1074,9 @@ func convertResponsesTools(tools []ai.Tool, compat responsesCompat) ([]map[strin
 			tool := map[string]any{
 				"type": "custom", "name": t.Name, "description": t.Description,
 				"format": map[string]any{"type": "grammar", "syntax": grammar.format, "definition": grammar.definition},
+			}
+			if toolSearchResult {
+				tool["defer_loading"] = true
 			}
 			out = append(out, tool)
 			continue
@@ -1093,6 +1104,9 @@ func convertResponsesTools(tools []ai.Tool, compat responsesCompat) ([]map[strin
 		tool := map[string]any{
 			"type": "function", "name": t.Name, "description": t.Description, "parameters": p,
 		}
+		if toolSearchResult {
+			tool["defer_loading"] = true
+		}
 		if compat.SupportsStrictMode {
 			tool["strict"] = strict
 		}
@@ -1119,25 +1133,38 @@ func responsesInput(model *ai.Model, req ai.TranscriptContext) ([]any, error) {
 	}
 
 	// pi's convertResponsesMessages resolves the transcript itself (a no-op on
-	// one the stream already collapsed). Tool-call id normalization happens
+	// one the stream already resolved). Tool-call id normalization happens
 	// inside transformMessages (gated on !isSameModel there), so the toolCallId
 	// map also rewrites tool results and synthetic orphan results, exactly like
 	// pi.
-	normalized := ai.CollapseSystemMessages(req)
+	normalized := ai.ResolveTranscript(req, compat.SupportsMidConvoSystemMessages)
 	transformed := transformMessages(normalized.Messages, model, buildResponsesToolCallIDNormalizer(model, normalized.Messages))
+	transcriptTools := ai.ResolveTranscriptTools(normalized.Messages, compat.SupportsAdditionalTools || compat.SupportsToolSearch)
 	imageInput := modelSupportsImages(model)
 
 	msgIndex := 0
-	for _, m := range transformed {
-		if sm, ok := asSystemMsg(m); ok {
-			// The collapsed transcript holds one system message, the leading
-			// prompt. It does not count toward the msg_pi_<index> fallback ids.
-			if text := ai.GetSystemMessageText(sm); text != "" {
+	for sourceIndex, m := range transformed {
+		sm, isSystem := asSystemMsg(m)
+		// The leading system message is the prompt; it does not count toward
+		// the msg_pi_<index> fallback ids or the tool_search call_id seeds.
+		isLeadingSystemMessage := sourceIndex == 0 && isSystem
+		if isSystem {
+			var text string
+			if isLeadingSystemMessage {
+				text = ai.GetSystemMessageText(sm)
+			} else {
+				if transcriptTools.AnchorsAdditions {
+					items, err = appendSystemToolAdditions(items, sm.ToolsAdded, fmt.Sprintf("system:%d", msgIndex), compat)
+					if err != nil {
+						return nil, err
+					}
+				}
+				text = ai.RenderSystemMessageUpdate(sm)
+			}
+			if text != "" {
 				items = append(items, map[string]any{"role": instructionRole, "content": sanitizeSurrogates(text)})
 			}
-			continue
-		}
-		if um, ok := asUserMsg(m); ok {
+		} else if um, ok := asUserMsg(m); ok {
 			var content []any
 			for _, c := range um.Content {
 				switch v := c.(type) {
@@ -1292,9 +1319,53 @@ func responsesInput(model *ai.Model, req ai.TranscriptContext) ([]any, error) {
 				"type": outputType, "call_id": callID, "output": outputVal,
 			})
 		}
-		msgIndex++
+		if !isLeadingSystemMessage {
+			msgIndex++
+		}
 	}
 	return items, nil
+}
+
+// appendSystemToolAdditions appends the tools a later system message adds to
+// items, at that message; callers invoke it only when the request anchors
+// additions (port of the convertResponsesMessages closure of the same name). A
+// model that accepts additional_tools gets them inline in one developer item;
+// otherwise a model with client tool search gets a completed tool_search_call
+// and its tool_search_output, whose call_id hashes seed ("system:<msgIndex>")
+// with the tool names.
+func appendSystemToolAdditions(items []any, tools []ai.Tool, seed string, compat responsesCompat) ([]any, error) {
+	if len(tools) == 0 {
+		return items, nil
+	}
+	if compat.SupportsAdditionalTools {
+		additional, err := convertResponsesTools(tools, compat, false)
+		if err != nil {
+			return nil, err
+		}
+		return append(items, map[string]any{"type": "additional_tools", "role": "developer", "tools": additional}), nil
+	}
+	if !compat.SupportsToolSearch {
+		return items, nil
+	}
+	names := make([]string, len(tools))
+	for i, tool := range tools {
+		names[i] = tool.Name
+	}
+	callID := "pi_tool_load_" + shortHash(seed+":"+strings.Join(names, ","))
+	loaded, err := convertResponsesTools(tools, compat, true)
+	if err != nil {
+		return nil, err
+	}
+	return append(items,
+		map[string]any{
+			"type": "tool_search_call", "call_id": callID, "execution": "client", "status": "completed",
+			"arguments": map[string]any{"query": strings.Join(names, " "), "limit": len(names)},
+		},
+		map[string]any{
+			"type": "tool_search_output", "call_id": callID, "execution": "client", "status": "completed",
+			"tools": loaded,
+		},
+	), nil
 }
 
 // serviceTierCostMultiplier ports getServiceTierCostMultiplier
