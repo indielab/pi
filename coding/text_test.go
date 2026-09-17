@@ -69,7 +69,7 @@ func TestEditToolPreservesLeadingBOM(t *testing.T) {
 		},
 		// Fuzzy match touching a BOM-only first line \u2014 the shape where the split
 		// is load-bearing. The trailing space in oldText defeats the exact match,
-		// and normalizeForFuzzyMatch trims U+FEFF as JS whitespace (isJSWhitespace),
+		// and normalizeForFuzzyMatch trims U+FEFF as JS whitespace (jstext.TrimEnd),
 		// so a BOM-only line normalizes to empty. The touched line is then
 		// rewritten from that fuzzy view, and only the BOM held aside by splitBOM
 		// survives to be re-prepended. Match on the unsplit text and the file

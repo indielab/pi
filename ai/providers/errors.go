@@ -209,7 +209,8 @@ func rawTruthy(raw json.RawMessage) bool {
 func anthropicSDKErrorMessage(status int, body []byte) string {
 	errText := string(body)
 	var errJSON any
-	jsonOK := strings.TrimSpace(errText) != "" && json.Unmarshal(body, &errJSON) == nil
+	// safeJSON: JSON.parse in a try, with no blank check of its own.
+	jsonOK := json.Unmarshal(body, &errJSON) == nil
 
 	var msg string
 	switch {

@@ -11,7 +11,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"unicode"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // Schema is a JSON Schema node used for tool parameters. It is the Go analogue
@@ -628,23 +629,6 @@ func toFloat(value any) (float64, bool) {
 	}
 }
 
-// isJSWhitespace reports whether r is whitespace for JS string trimming
-// (ECMA-262 TrimString: WhiteSpace ∪ LineTerminator). Notably this includes
-// FEFF (ZWNBSP) and all Zs, but NOT U+0085 NEL (which Go's unicode.IsSpace
-// accepts).
-func isJSWhitespace(r rune) bool {
-	switch r {
-	case '\t', '\n', '\v', '\f', '\r', 0x2028, 0x2029, 0xFEFF:
-		return true
-	}
-	return unicode.Is(unicode.Zs, r)
-}
-
-// trimJSWhitespace trims like String.prototype.trim / Number()'s implicit trim.
-func trimJSWhitespace(s string) string {
-	return strings.TrimFunc(s, isJSWhitespace)
-}
-
 // jsNumber mirrors ECMA-262 StringToNumber (the JS Number(string) coercion).
 // ok=false means the result is NaN. Note ok=true may still yield ±Inf
 // ("Infinity", "1e1000"); callers gate with Number.isFinite/isInteger
@@ -652,7 +636,7 @@ func trimJSWhitespace(s string) string {
 // "0o17"→15, "+5"→5, "1e3"→1000, ".5"→0.5, "5."→5, ""→0, "1_0"→NaN,
 // "0x1p4"→NaN, "-0x10"→NaN, "12abc"→NaN, "NaN"→NaN.
 func jsNumber(value string) (float64, bool) {
-	s := trimJSWhitespace(value)
+	s := jstext.Trim(value) // StringToNumber trims StrWhiteSpaceChar, trim's set
 	if s == "" {
 		return 0, true // Number("") === 0
 	}
@@ -850,7 +834,7 @@ func coercePrimitiveByType(value any, typ string) any {
 		}
 		// pi (validation.ts:88-92): Number(value) gated by Number.isFinite, with
 		// a value.trim() !== "" guard ("" / whitespace would coerce to 0).
-		if str, ok := value.(string); ok && trimJSWhitespace(str) != "" {
+		if str, ok := value.(string); ok && jstext.Trim(str) != "" {
 			if parsed, ok := jsNumber(str); ok && !math.IsInf(parsed, 0) {
 				return parsed
 			}
@@ -867,7 +851,7 @@ func coercePrimitiveByType(value any, typ string) any {
 			return float64(0)
 		}
 		// pi (validation.ts:97-101): Number(value) gated by Number.isInteger.
-		if str, ok := value.(string); ok && trimJSWhitespace(str) != "" {
+		if str, ok := value.(string); ok && jstext.Trim(str) != "" {
 			if parsed, ok := jsNumber(str); ok && !math.IsInf(parsed, 0) && parsed == math.Trunc(parsed) {
 				return parsed
 			}

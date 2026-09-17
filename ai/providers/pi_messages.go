@@ -21,6 +21,7 @@ import (
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // PiMessagesOptions are provider-native options for the pi-messages stream.
@@ -331,7 +332,7 @@ func parsePiMessagesFrame(raw string) (piMessagesEvent, bool) {
 	found := false
 	for _, line := range strings.Split(raw, "\n") {
 		if strings.HasPrefix(line, "data:") {
-			data = strings.TrimSpace(line[5:])
+			data = jstext.Trim(line[5:])
 			found = true
 			break
 		}
@@ -384,7 +385,7 @@ func readPiMessagesEvents(body io.Reader, ctx context.Context, handle func(piMes
 			return readErr
 		}
 	}
-	if strings.TrimSpace(pending) != "" {
+	if jstext.Trim(pending) != "" {
 		if ev, ok := parsePiMessagesFrame(pending); ok {
 			handle(ev)
 		}

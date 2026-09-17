@@ -4,27 +4,16 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"unicode"
 
 	"golang.org/x/text/unicode/norm"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // editEntry is a single oldText→newText replacement.
 type editEntry struct {
 	oldText string
 	newText string
-}
-
-// isJSWhitespace reports whether r is in JS String.prototype.trimEnd's trim set
-// (ECMAScript WhiteSpace ∪ LineTerminator): TAB VT FF SP NBSP ZWNBSP(U+FEFF),
-// any Zs, LF CR LS PS. Unlike Go's unicode.IsSpace it includes U+FEFF and
-// excludes U+0085 (NEL).
-func isJSWhitespace(r rune) bool {
-	switch r {
-	case '\t', '\n', '\v', '\f', '\r', ' ', '\u00a0', '\ufeff', '\u2028', '\u2029':
-		return true
-	}
-	return unicode.Is(unicode.Zs, r)
 }
 
 // normalizeForFuzzyMatch normalizes text for whitespace/Unicode-tolerant matching
@@ -35,7 +24,7 @@ func normalizeForFuzzyMatch(text string) string {
 	text = norm.NFKC.String(text)
 	lines := strings.Split(text, "\n")
 	for i, line := range lines {
-		lines[i] = strings.TrimRightFunc(line, isJSWhitespace)
+		lines[i] = jstext.TrimEnd(line)
 	}
 	joined := strings.Join(lines, "\n")
 	return strings.Map(func(r rune) rune {

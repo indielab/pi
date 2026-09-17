@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // System prompt construction, ported from pi
@@ -131,7 +132,7 @@ func buildRules(selectedTools []string, toolGuidelines map[string][]string, prom
 	var rules []string
 	seen := map[string]bool{}
 	addRule := func(rule string) {
-		normalized := trimJS(rule)
+		normalized := jstext.Trim(rule)
 		if normalized == "" || seen[normalized] {
 			return
 		}
@@ -238,7 +239,7 @@ func BuildSystemPromptSections(input BuildSystemPromptOptions) (ai.SystemSection
 		skillFileReadTool = SkillFileReadToolBash
 	}
 	if skillFileReadTool != "" && len(opts.Skills) > 0 {
-		if skills := trimJS(FormatSkillsForPromptWithTool(opts.Skills, skillFileReadTool)); skills != "" {
+		if skills := jstext.Trim(FormatSkillsForPromptWithTool(opts.Skills, skillFileReadTool)); skills != "" {
 			set("skills", skills)
 		}
 	}

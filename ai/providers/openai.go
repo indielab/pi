@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // OpenAIOptions are provider-native options for the OpenAI completions stream.
@@ -723,12 +724,12 @@ func buildOpenAIParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIOp
 			for _, c := range am.Content {
 				switch v := c.(type) {
 				case ai.TextContent:
-					if strings.TrimSpace(v.Text) != "" {
+					if jstext.Trim(v.Text) != "" {
 						assistantTextParts = append(assistantTextParts, sanitizeSurrogates(v.Text))
 					}
 				case ai.ThinkingContent:
 					thinkingBlocks = append(thinkingBlocks, v)
-					if strings.TrimSpace(v.Thinking) != "" {
+					if jstext.Trim(v.Thinking) != "" {
 						nonEmptyThinkingBlocks = append(nonEmptyThinkingBlocks, v)
 					}
 				case ai.ToolCall:
@@ -1052,7 +1053,7 @@ func clientAPIKey(provider ai.ProviderId, apiKey string, headers ai.ProviderHead
 	}
 	for k, v := range headers {
 		lk := strings.ToLower(k)
-		if (lk == "authorization" || lk == "cf-aig-authorization") && v != nil && strings.TrimSpace(*v) != "" {
+		if (lk == "authorization" || lk == "cf-aig-authorization") && v != nil && jstext.Trim(*v) != "" {
 			return "unused", nil
 		}
 	}
@@ -1597,6 +1598,15 @@ type openAIChunk struct {
 	Usage *openAIChunkUsage `json:"usage"`
 }
 
+// sseFieldValue is the value of an SSE field as the openai SDK's SSEDecoder
+// reads it: everything after the colon less exactly one leading space. The SDK
+// trims nothing else and hands data to JSON.parse, which accepts only JSON's own
+// whitespace around a value, so a line padded with anything else (U+00A0,
+// U+FEFF, U+0085, VT, FF) is not a chunk.
+func sseFieldValue(value string) string {
+	return strings.TrimPrefix(value, " ")
+}
+
 func iterateOpenAISSE(body io.Reader, ctx context.Context, handle func(openAIChunk) error) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -1608,7 +1618,7 @@ func iterateOpenAISSE(body io.Reader, ctx context.Context, handle func(openAIChu
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		data := sseFieldValue(strings.TrimPrefix(line, "data:"))
 		if data == "" || data == "[DONE]" {
 			continue
 		}

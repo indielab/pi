@@ -20,6 +20,11 @@ import (
 	"github.com/sky-valley/pi/ai"
 )
 
+// jsonWhitespace is the padding JSON.parse accepts around a value. A session
+// line padded with anything else — U+00A0, U+0085, U+FEFF — is malformed to
+// pi.
+const jsonWhitespace = " \t\n\r"
+
 // CurrentSessionVersion matches pi's session file format version.
 const CurrentSessionVersion = 3
 
@@ -261,7 +266,10 @@ type sessionLine struct {
 func readSessionLines(data []byte) []sessionLine {
 	var lines []sessionLine
 	for _, line := range strings.Split(string(data), "\n") {
-		line = strings.TrimSpace(line)
+		// pi skips a line blank as JavaScript trims and JSON.parses the rest,
+		// untrimmed; the decode's offset check needs JSON's own padding gone,
+		// and a line blank only by trim fails JSON.parse just the same.
+		line = strings.Trim(line, jsonWhitespace)
 		if line == "" {
 			continue
 		}
@@ -724,7 +732,7 @@ func readSessionInfo(path string) (SessionInfo, bool) {
 		var entry struct {
 			Type string `json:"type"`
 		}
-		if json.Unmarshal(bytes.TrimSpace(line), &entry) == nil && entry.Type == "message" {
+		if json.Unmarshal(line, &entry) == nil && entry.Type == "message" {
 			info.Messages++
 		}
 	}
@@ -760,7 +768,7 @@ const (
 // a literal null, false, 0 or "" is skipped like a blank line while any other
 // non-object value counts as a parsed non-header entry.
 func parseSessionHeaderCandidate(line []byte) (header *sessionFileHeader, decided bool) {
-	line = bytes.TrimSpace(line)
+	line = bytes.Trim(line, jsonWhitespace)
 	if len(line) == 0 {
 		return nil, false
 	}

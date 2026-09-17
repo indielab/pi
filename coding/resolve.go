@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // DefaultModelSpec is the model used when none is specified. Deliberate
@@ -307,7 +308,7 @@ func tryMatchModel(pattern string, models []*ai.Model) *ai.Model {
 // a canonical "provider/id" match, then a provider+id split match, then a bare
 // id match — each only when unambiguous (a unique match).
 func findExactModelReferenceMatch(reference string, models []*ai.Model) *ai.Model {
-	trimmed := strings.TrimSpace(reference)
+	trimmed := jstext.Trim(reference)
 	if trimmed == "" {
 		return nil
 	}
@@ -327,8 +328,8 @@ func findExactModelReferenceMatch(reference string, models []*ai.Model) *ai.Mode
 	}
 
 	if slash := strings.Index(trimmed, "/"); slash != -1 {
-		provider := strings.TrimSpace(trimmed[:slash])
-		modelID := strings.TrimSpace(trimmed[slash+1:])
+		provider := jstext.Trim(trimmed[:slash])
+		modelID := jstext.Trim(trimmed[slash+1:])
 		if provider != "" && modelID != "" {
 			var byProvider []*ai.Model
 			for _, m := range models {

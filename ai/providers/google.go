@@ -13,6 +13,7 @@ import (
 	"sync"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 const googleDefaultBaseURL = "https://generativelanguage.googleapis.com/v1beta"
@@ -831,7 +832,7 @@ func googleContents(model *ai.Model, req ai.TranscriptContext) []any {
 					// echoed back, and dropping it breaks the reasoning chain — the model
 					// then intermittently ends mid-task turns with a thought-only STOP
 					// (empty completion, no tool call).
-					if strings.TrimSpace(v.Text) == "" && sig == "" {
+					if jstext.Trim(v.Text) == "" && sig == "" {
 						continue
 					}
 					p := map[string]any{"text": sanitizeSurrogates(v.Text)}
@@ -844,7 +845,7 @@ func googleContents(model *ai.Model, req ai.TranscriptContext) []any {
 						sig := resolveThoughtSignature(isSame, v.ThinkingSignature)
 						// Same rule as text parts: an empty thinking block is dropped only
 						// when it carries no signature.
-						if strings.TrimSpace(v.Thinking) == "" && sig == "" {
+						if jstext.Trim(v.Thinking) == "" && sig == "" {
 							continue
 						}
 						p := map[string]any{"thought": true, "text": sanitizeSurrogates(v.Thinking)}
@@ -861,7 +862,7 @@ func googleContents(model *ai.Model, req ai.TranscriptContext) []any {
 						// no ThinkingContent survives to this branch. pi's converter has
 						// the same dead branch behind the same ordering
 						// (google-shared.ts:99); kept for shape parity.
-						if strings.TrimSpace(v.Thinking) == "" {
+						if jstext.Trim(v.Thinking) == "" {
 							continue
 						}
 						parts = append(parts, map[string]any{"text": sanitizeSurrogates(v.Thinking)})
@@ -1131,7 +1132,7 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 	var pending string
 
 	processEvent := func(event string) error {
-		trimmed := strings.TrimSpace(event)
+		trimmed := jstext.Trim(event)
 		if !strings.HasPrefix(trimmed, "data:") {
 			// The SDK detects bare (non-SSE) JSON error chunks before buffering;
 			// a 4xx/5xx error payload fails the stream as an ApiError.
@@ -1145,7 +1146,7 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 			}
 			return nil
 		}
-		data := strings.TrimSpace(strings.TrimPrefix(trimmed, "data:"))
+		data := jstext.Trim(strings.TrimPrefix(trimmed, "data:"))
 		if data == "" {
 			return nil
 		}
@@ -1192,8 +1193,7 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 		}
 	}
 
-	if strings.TrimSpace(pending) != "" {
-		trimmed := strings.TrimSpace(pending)
+	if trimmed := jstext.Trim(pending); trimmed != "" {
 		// A bare JSON error payload arriving without a trailing delimiter still
 		// fails as an ApiError (the SDK checks chunks before buffering them).
 		var chunk googleChunk

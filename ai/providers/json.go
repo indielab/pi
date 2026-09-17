@@ -13,6 +13,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 var validJSONEscapes = map[byte]bool{
@@ -380,7 +381,7 @@ func parseJSONWithRepair(s string, out any) error {
 // order kept (nil when nothing parsed): pi's JS object preserves it for free,
 // and the order is replayed into later requests.
 func parseStreamingJSON(partial string) (map[string]any, ai.OrderedObject) {
-	if strings.TrimSpace(partial) == "" {
+	if jstext.Trim(partial) == "" {
 		return map[string]any{}, nil
 	}
 	if out, order, err := ai.DecodeOrderedObject([]byte(partial)); err == nil {
@@ -408,6 +409,9 @@ func parseStreamingJSON(partial string) (map[string]any, ai.OrderedObject) {
 // JSON document so it can parse. It approximates the partial-json library for
 // the streaming tool-argument case.
 func completePartialJSON(s string) (string, bool) {
+	// partial-json trims the whole input first (jsonString.trim()), as
+	// JavaScript trims and even when it ends inside an open string.
+	s = jstext.Trim(s)
 	var stack []byte
 	inString := false
 	escaped := false
@@ -443,9 +447,7 @@ func completePartialJSON(s string) (string, bool) {
 		}
 	}
 
-	// partial-json trims the whole input first (jsonString.trim()), even when
-	// it ends inside an open string.
-	completed := strings.TrimRight(s, " \t\r\n")
+	completed := s
 	if inString && isDanglingObjectKey(s, stack, stringStart) {
 		// An open string in object-KEY position can't be completed into a
 		// member; partial-json drops the incomplete key entirely.

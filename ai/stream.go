@@ -3,11 +3,14 @@ package ai
 import (
 	"context"
 	"fmt"
-	"strings"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
+// hasExplicitAPIKey is compat.ts hasExplicitApiKey: a key that is blank as
+// JavaScript trims is no key.
 func hasExplicitAPIKey(key string) bool {
-	return strings.TrimSpace(key) != ""
+	return jstext.Trim(key) != ""
 }
 
 // anthropicAuthTokenActive reports whether the anthropic bearer auth token is

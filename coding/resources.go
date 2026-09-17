@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // ConfigDirName is pi's per-project/user config directory name.
@@ -139,14 +141,14 @@ func findGitPaths(cwd string) (gitPaths, bool) {
 			}
 			// A .git file that is not a gitdir pointer falls through to the
 			// parent walk, as it does in pi.
-			if rest, ok := strings.CutPrefix(strings.TrimSpace(string(content)), "gitdir: "); ok {
-				gitDir := resolveFrom(dir, strings.TrimSpace(rest))
+			if rest, ok := strings.CutPrefix(jstext.Trim(string(content)), "gitdir: "); ok {
+				gitDir := resolveFrom(dir, jstext.Trim(rest))
 				if !fileExists(filepath.Join(gitDir, "HEAD")) {
 					return gitPaths{}, false
 				}
 				commonGitDir := gitDir
 				if data, cerr := os.ReadFile(filepath.Join(gitDir, "commondir")); cerr == nil {
-					commonGitDir = resolveFrom(gitDir, strings.TrimSpace(string(data)))
+					commonGitDir = resolveFrom(gitDir, jstext.Trim(string(data)))
 				}
 				return gitPaths{repoDir: dir, commonGitDir: commonGitDir}, true
 			}
@@ -537,7 +539,7 @@ func loadSkillFromFile(filePath string) (*Skill, []SkillDiagnostic) {
 	if v := fm["description"]; v.isString() {
 		desc = v.value
 	}
-	hasDescription := strings.TrimSpace(desc) != ""
+	hasDescription := jstext.Trim(desc) != ""
 	if !isDeclaredSkill && !hasDescription {
 		return nil, diags
 	}
@@ -606,7 +608,7 @@ func isValidSkillName(name string) bool {
 // validateDescription ports pi's validateDescription (skills.ts:117-127).
 func validateDescription(desc string) []string {
 	var errs []string
-	if strings.TrimSpace(desc) == "" {
+	if jstext.Trim(desc) == "" {
 		errs = append(errs, "description is required")
 	} else if n := utf16Len(desc); n > maxSkillDescriptionLength {
 		// JS String.length (UTF-16 code units), like pi.
@@ -739,15 +741,22 @@ func parseFrontmatter(content string) (map[string]fmValue, string) {
 		return fm, normalized
 	}
 	yamlPart := normalized[4 : 3+end]
-	body := strings.TrimSpace(normalized[3+end+4:])
+	body := jstext.Trim(normalized[3+end+4:])
 
 	lines := strings.Split(yamlPart, "\n")
+	inDocument := false
 	for i := 0; i < len(lines); i++ {
 		line := lines[i]
-		trimmed := strings.TrimSpace(line)
+		if !inDocument {
+			// Until the document begins, the yaml lexer drops one U+FEFF
+			// from the start of every line it reads.
+			line = strings.TrimPrefix(line, "\ufeff")
+		}
+		trimmed := strings.Trim(line, yamlSpace)
 		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
 			continue
 		}
+		inDocument = true
 		if line[0] == ' ' || line[0] == '\t' {
 			continue // continuation lines are consumed by their key below
 		}
@@ -755,8 +764,8 @@ func parseFrontmatter(content string) (map[string]fmValue, string) {
 		if idx == -1 {
 			continue
 		}
-		key := strings.TrimSpace(line[:idx])
-		rest := strings.TrimSpace(line[idx+1:])
+		key := strings.Trim(line[:idx], yamlSpace)
+		rest := strings.Trim(line[idx+1:], yamlSpace)
 
 		// Block scalar: | or > with optional chomping indicator.
 		if isBlockIndicator(rest) {
@@ -780,7 +789,7 @@ func parseFrontmatter(content string) (map[string]fmValue, string) {
 			if cont == "" || (cont[0] != ' ' && cont[0] != '\t') {
 				break
 			}
-			contTrimmed := strings.TrimSpace(cont)
+			contTrimmed := strings.Trim(cont, yamlSpace)
 			if contTrimmed == "" || strings.HasPrefix(contTrimmed, "#") {
 				break
 			}
@@ -794,6 +803,12 @@ func parseFrontmatter(content string) (map[string]fmValue, string) {
 	}
 	return fm, body
 }
+
+// yamlSpace is YAML's white space (s-white), what the yaml parser pi uses
+// strips around keys and plain scalars. Any other padding — U+00A0, U+0085,
+// U+FEFF — is scalar content to it. The body after the closing fence is not
+// YAML and is trimmed as JavaScript trims.
+const yamlSpace = " \t"
 
 // isBlockIndicator reports whether a value is a YAML block scalar header:
 // | or > optionally followed by a chomping indicator (- or +).
@@ -820,7 +835,7 @@ func parseBlockScalar(header string, lines []string, start int) (string, int) {
 	i := start
 	for ; i < len(lines); i++ {
 		line := lines[i]
-		if strings.TrimSpace(line) == "" {
+		if strings.Trim(line, yamlSpace) == "" {
 			block = append(block, "")
 			continue
 		}
@@ -915,9 +930,11 @@ type skillIgnore struct {
 }
 
 type skillIgnoreRule struct {
-	pattern string // prefixed, slashes normalized, leading "/" stripped
-	negated bool
-	dirOnly bool
+	pattern  string // prefixed, slashes normalized, leading and trailing "/" stripped
+	negated  bool
+	dirOnly  bool
+	anchored bool // matches from the root rather than at any depth
+	matchAll bool // the body came out empty, which matches every path
 }
 
 func newSkillIgnore() *skillIgnore {
@@ -945,23 +962,30 @@ func (ig *skillIgnore) addRules(dir, root string) {
 			continue
 		}
 		for _, line := range strings.Split(strings.ReplaceAll(string(data), "\r\n", "\n"), "\n") {
-			if rule, ok := prefixIgnorePattern(line, prefix); ok {
+			pattern, ok := prefixIgnorePattern(line, prefix)
+			if !ok {
+				continue
+			}
+			if rule, ok := newSkillIgnoreRule(pattern); ok {
 				ig.rules = append(ig.rules, rule)
 			}
 		}
 	}
 }
 
-// prefixIgnorePattern ports skills.ts prefixIgnorePattern: trims comments/blank,
-// handles "!"/"\!" negation and "\#" escapes, strips a leading "/", and prefixes
-// the pattern with the directory prefix.
-func prefixIgnorePattern(line, prefix string) (skillIgnoreRule, bool) {
-	trimmed := strings.TrimSpace(line)
+// prefixIgnorePattern ports skills.ts prefixIgnorePattern: the pattern pi hands
+// the ignore matcher for one ignore-file line, or false for a line that is
+// blank or a comment as JavaScript trims it. The pattern itself is the line
+// untrimmed, less a leading "!" (restored in front of the prefix) or the
+// backslash of a leading "\!", less one leading "/", after the prefix. Like
+// pi, that makes "\!foo" at the root the negated rule "!foo".
+func prefixIgnorePattern(line, prefix string) (string, bool) {
+	trimmed := jstext.Trim(line)
 	if trimmed == "" {
-		return skillIgnoreRule{}, false
+		return "", false
 	}
 	if strings.HasPrefix(trimmed, "#") && !strings.HasPrefix(trimmed, "\\#") {
-		return skillIgnoreRule{}, false
+		return "", false
 	}
 
 	pattern := line
@@ -972,17 +996,89 @@ func prefixIgnorePattern(line, prefix string) (skillIgnoreRule, bool) {
 	} else if strings.HasPrefix(pattern, "\\!") {
 		pattern = pattern[1:]
 	}
-	if strings.HasPrefix(pattern, "/") {
-		pattern = pattern[1:]
+	pattern = prefix + strings.TrimPrefix(pattern, "/")
+	if negated {
+		return "!" + pattern, true
 	}
-	pattern = strings.TrimSpace(pattern)
-	if pattern == "" {
+	// pi filters the empty pattern out before the matcher sees it.
+	return pattern, pattern != ""
+}
+
+// newSkillIgnoreRule compiles one pattern the way the ignore package pi's lock
+// pins (7.0.8) does, as far as this matcher goes: checkPattern's rejections,
+// createRule's negation, and the whitespace steps of its regex compiler (see
+// ignoreRuleBody). createRule's unescaping of a leading "\!" or "\#" needs no
+// step: the pattern matcher reads the backslash as an escape already. Whether the
+// rule is anchored is decided on the body before the whitespace steps, so
+// "a/ " is anchored though what remains of it, "a/", would not be.
+func newSkillIgnoreRule(pattern string) (skillIgnoreRule, bool) {
+	// checkPattern: a blank line is spaces only, a lone trailing backslash is
+	// invalid, and "#" opens a comment.
+	if strings.Trim(pattern, " ") == "" || hasLoneTrailingBackslash(pattern) || strings.HasPrefix(pattern, "#") {
 		return skillIgnoreRule{}, false
 	}
-	dirOnly := strings.HasSuffix(pattern, "/")
-	pattern = strings.TrimSuffix(pattern, "/")
+	var rule skillIgnoreRule
+	body := pattern
+	if strings.HasPrefix(body, "!") {
+		rule.negated = true
+		body = body[1:]
+	}
+	// A separator anywhere but at the very end anchors the pattern.
+	rule.anchored = body != "" && strings.Contains(body[:len(body)-1], "/")
 
-	return skillIgnoreRule{pattern: prefix + pattern, negated: negated, dirOnly: dirOnly}, true
+	body = ignoreRuleBody(body)
+	if body == "" {
+		rule.matchAll = true
+		return rule, true
+	}
+	if strings.HasPrefix(body, "/") {
+		rule.anchored = true
+		body = body[1:]
+	}
+	rule.dirOnly = strings.HasSuffix(body, "/")
+	rule.pattern = strings.TrimSuffix(body, "/")
+	if rule.pattern == "" {
+		// "/" alone (or "//") compiles to a pattern no relative path matches.
+		return skillIgnoreRule{}, false
+	}
+	return rule, true
+}
+
+// hasLoneTrailingBackslash reports whether s ends in a backslash that is not
+// preceded by another (checkPattern's /(?:[^\\]|^)\\$/).
+func hasLoneTrailingBackslash(s string) bool {
+	return strings.HasSuffix(s, "\\") && !strings.HasSuffix(s, "\\\\")
+}
+
+// ignoreRuleBody applies the whitespace steps of the ignore matcher's rule
+// compiler, in its order: a leading U+FEFF is dropped; a trailing run of CR/LF
+// is dropped, unless a backslash escapes its first character, which then stays;
+// and a trailing run of spaces (spaces only: a tab, U+00A0 or U+3000 is pattern
+// text) is dropped, unless a backslash escapes it, which leaves one literal
+// space (/((?:\\\\)*?)(\\? +)$/).
+func ignoreRuleBody(body string) string {
+	body = strings.TrimPrefix(body, "\ufeff")
+
+	if kept := strings.TrimRight(body, "\r\n"); kept != body {
+		if endsInEscape(kept) {
+			return body[:len(kept)+1]
+		}
+		body = kept
+	}
+
+	if kept := strings.TrimRight(body, " "); kept != body {
+		if endsInEscape(kept) {
+			return kept[:len(kept)-1] + " "
+		}
+		body = kept
+	}
+	return body
+}
+
+// endsInEscape reports whether s ends in an odd run of backslashes, whose last
+// one escapes whatever follows.
+func endsInEscape(s string) bool {
+	return (len(s)-len(strings.TrimRight(s, "\\")))%2 == 1
 }
 
 // ignores reports whether the root-relative posix path is ignored. The last
@@ -994,7 +1090,7 @@ func (ig *skillIgnore) ignores(relPosix string, isDir bool) bool {
 		if r.dirOnly && !isDir {
 			continue
 		}
-		if gitignoreMatchPath(r.pattern, relPosix) {
+		if r.matchAll || gitignoreMatchPath(r.pattern, r.anchored, relPosix) {
 			ignored = !r.negated
 		}
 	}
@@ -1002,14 +1098,11 @@ func (ig *skillIgnore) ignores(relPosix string, isDir bool) bool {
 }
 
 // gitignoreMatchPath reports whether path (root-relative posix) matches a
-// gitignore pattern. Patterns without a "/" match on any path component
-// (basename); anchored patterns match from the root. A directory pattern also
+// gitignore pattern. An unanchored pattern matches the basename of any path
+// segment; an anchored one matches from the root. A directory pattern also
 // matches descendants.
-func gitignoreMatchPath(pattern, path string) bool {
-	if pattern == "" {
-		return false
-	}
-	if !strings.Contains(pattern, "/") {
+func gitignoreMatchPath(pattern string, anchored bool, path string) bool {
+	if !anchored {
 		// Unanchored: match the basename of any path segment.
 		base := path
 		if i := strings.LastIndex(path, "/"); i >= 0 {
@@ -1030,10 +1123,7 @@ func gitignoreMatchPath(pattern, path string) bool {
 	if ok, _ := filepath.Match(pattern, path); ok {
 		return true
 	}
-	if strings.HasPrefix(path, pattern+"/") {
-		return true
-	}
-	return false
+	return strings.HasPrefix(path, pattern+"/")
 }
 
 // SkillFileReadTool names the tool the skills block tells the model to use to

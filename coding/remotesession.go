@@ -4,10 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"strings"
 	"sync"
 
 	"github.com/sky-valley/pi/client"
+	"github.com/sky-valley/pi/internal/jstext"
 	"github.com/sky-valley/pi/protocol"
 )
 
@@ -408,7 +408,7 @@ func (s *RemoteSession) Create(ctx context.Context, opts CreateRemoteSessionOpti
 // Submit sends text to the session: a new turn while idle, a steer while one is
 // running. Text that is blank once trimmed is not a message and is dropped.
 func (s *RemoteSession) Submit(ctx context.Context, text string) error {
-	normalized := trimJS(text)
+	normalized := jstext.Trim(text)
 	if normalized == "" {
 		return nil
 	}
@@ -1210,15 +1210,3 @@ func (s *RemoteSession) reportListenerError(recovered any) {
 	}
 	s.onListenerError(err)
 }
-
-// jsWhitespace is ECMAScript's TrimString cutset — WhiteSpace ∪ LineTerminator
-// (ECMA-262 §11.2, §11.3). It differs from unicode.IsSpace in both directions:
-// it includes U+FEFF and excludes U+0085, so strings.TrimSpace would accept a
-// prompt pi rejects as blank and reject one pi accepts.
-const jsWhitespace = "\t\v\f\u0020\u00a0\ufeff" + // WhiteSpace
-	"\n\r\u2028\u2029" + // LineTerminator
-	"\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007" + // Unicode Zs
-	"\u2008\u2009\u200a\u202f\u205f\u3000"
-
-// trimJS is JavaScript's String.prototype.trim.
-func trimJS(text string) string { return strings.Trim(text, jsWhitespace) }

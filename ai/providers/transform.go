@@ -1,9 +1,8 @@
 package providers
 
 import (
-	"strings"
-
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 const (
@@ -153,7 +152,7 @@ func transformMessages(messages []ai.Message, model *ai.Model, normalizeToolCall
 					content = append(content, b)
 					continue
 				}
-				if strings.TrimSpace(b.Thinking) == "" {
+				if jstext.Trim(b.Thinking) == "" {
 					continue
 				}
 				if isSameModel {

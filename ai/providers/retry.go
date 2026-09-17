@@ -13,9 +13,9 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 const (
@@ -151,6 +151,19 @@ func shouldRetryResponse(resp *http.Response) bool {
 	return resp.StatusCode >= 500
 }
 
+// isomorphicDecode reads a header value the way fetch's Headers does: each byte
+// is one code unit (latin1). getRetryDelayMs parses that string, so a UTF-8
+// no-break space arrives as "\u00c2\u00a0" — not whitespace to parseFloat —
+// while a bare 0xA0 byte is.
+func isomorphicDecode(v string) string {
+	var b strings.Builder
+	b.Grow(len(v))
+	for i := 0; i < len(v); i++ {
+		b.WriteRune(rune(v[i]))
+	}
+	return b.String()
+}
+
 // parseFloatPrefix mirrors JavaScript's Number.parseFloat, which pi uses to read
 // the Retry-After headers: leading whitespace is skipped, the longest valid
 // numeric prefix is consumed, and trailing junk is ignored (so "3600s" parses as
@@ -160,12 +173,9 @@ func shouldRetryResponse(resp *http.Response) bool {
 // accepted too, because parseFloat does accept it — case-sensitively and as a
 // prefix, so "Infinityx" is Infinity while "Inf" and "infinity" are NaN.
 func parseFloatPrefix(s string) (float64, bool) {
-	// JS StrWhiteSpace is the Unicode space separators plus the BOM; Go's
-	// unicode.IsSpace covers the former (U+1680, U+2000-200A, U+2028/9,
-	// U+202F, U+205F, U+3000) which a hand-written set kept missing.
-	s = strings.TrimLeftFunc(s, func(r rune) bool {
-		return unicode.IsSpace(r) || r == '\ufeff'
-	})
+	// parseFloat skips StrWhiteSpaceChar, the set String.prototype.trim
+	// removes: U+FEFF is in it and U+0085 is not, unlike unicode.IsSpace.
+	s = jstext.TrimStart(s)
 	i := 0
 	if i < len(s) && (s[i] == '+' || s[i] == '-') {
 		i++
@@ -225,12 +235,12 @@ func serverRetryDelayMs(resp *http.Response) (float64, bool) {
 		return 0, false
 	}
 	if v := resp.Header.Get("retry-after-ms"); v != "" {
-		if ms, ok := parseFloatPrefix(v); ok {
+		if ms, ok := parseFloatPrefix(isomorphicDecode(v)); ok {
 			return ms, true
 		}
 	}
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
-		if secs, ok := parseFloatPrefix(ra); ok {
+		if secs, ok := parseFloatPrefix(isomorphicDecode(ra)); ok {
 			return secs * 1000, true
 		}
 		if t, err := http.ParseTime(ra); err == nil {

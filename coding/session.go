@@ -12,6 +12,7 @@ import (
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // DefaultThinkingLevel is pi's DEFAULT_THINKING_LEVEL (defaults.ts:3): an unset
@@ -240,7 +241,7 @@ func toolPromptGuidelines(tools []agent.AgentTool) map[string][]string {
 	for _, tool := range tools {
 		var normalized []string
 		for _, guideline := range tool.PromptGuidelines {
-			guideline = trimJS(guideline)
+			guideline = jstext.Trim(guideline)
 			if guideline != "" && !slices.Contains(normalized, guideline) {
 				normalized = append(normalized, guideline)
 			}

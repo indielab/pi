@@ -527,29 +527,3 @@ func TestCloneJSONValueIsDeep(t *testing.T) {
 		t.Fatalf("original mutated: n = %v", got)
 	}
 }
-
-func TestTrimJSMatchesJavaScript(t *testing.T) {
-	cases := []struct {
-		name string
-		in   string
-		want string
-	}{
-		{"ascii", "  hi  ", "hi"},
-		{"tabs and newlines", "\t\n hi \r\n", "hi"},
-		// JS trims U+FEFF; unicode.IsSpace does not.
-		{"byte order mark", "\ufeffhi\ufeff", "hi"},
-		{"no-break space", "\u00a0hi\u00a0", "hi"},
-		{"line separator", "\u2028hi\u2029", "hi"},
-		{"ideographic space", "\u3000hi\u3000", "hi"},
-		// JS does not trim U+0085; unicode.IsSpace does.
-		{"next line is not whitespace", "\u0085hi\u0085", "\u0085hi\u0085"},
-		{"blank", " \t\ufeff\u3000", ""},
-	}
-	for _, testCase := range cases {
-		t.Run(testCase.name, func(t *testing.T) {
-			if got := trimJS(testCase.in); got != testCase.want {
-				t.Fatalf("trimJS(%q) = %q, want %q", testCase.in, got, testCase.want)
-			}
-		})
-	}
-}

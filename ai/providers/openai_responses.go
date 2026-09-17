@@ -1574,7 +1574,7 @@ func iterateOpenAISSE2(body io.Reader, ctx context.Context, handle func(response
 		if !strings.HasPrefix(line, "data:") {
 			continue
 		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		data := sseFieldValue(strings.TrimPrefix(line, "data:"))
 		if data == "" || data == "[DONE]" {
 			continue
 		}

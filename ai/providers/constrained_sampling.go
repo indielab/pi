@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // Port of pi's packages/ai/src/api/constrained-sampling.ts. Every error message
@@ -333,8 +334,8 @@ func resolveGrammarSampling(tool ai.Tool, supportsOpenAIGrammarTools bool) (*gra
 		return nil, nil
 	}
 
-	lark := strings.TrimSpace(config.Variants.OpenAILark)
-	regex := strings.TrimSpace(config.Variants.OpenAIRegex)
+	lark := jstext.Trim(config.Variants.OpenAILark)
+	regex := jstext.Trim(config.Variants.OpenAIRegex)
 	if lark == "" && regex == "" {
 		return nil, fmt.Errorf("Tool %s cannot use grammar constrained sampling: no supported grammar variant was provided.",
 			quoteRaw(tool.Name))

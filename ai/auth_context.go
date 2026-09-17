@@ -3,17 +3,19 @@ package ai
 import (
 	"os"
 	"strings"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // defaultAuthContext is the default AuthContext: env vars from the OS
 // environment, file existence via os.Stat (pi packages/ai/src/auth/context.ts).
 type defaultAuthContext struct{}
 
-// Env returns the OS environment value, or "" when unset or whitespace-only
-// (pi normalizes empty to undefined).
+// Env returns the OS environment value, or "" when unset or blank as JavaScript
+// trims (pi normalizes empty to undefined).
 func (defaultAuthContext) Env(name string) string {
 	v := os.Getenv(name)
-	if strings.TrimSpace(v) == "" {
+	if jstext.Trim(v) == "" {
 		return ""
 	}
 	return v

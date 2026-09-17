@@ -18,6 +18,7 @@ import (
 	_ "golang.org/x/image/webp" // decode-only, to match photon's webp support
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // Image post-processing for the read tool (port of pi's resizeImageInProcess in
@@ -166,12 +167,7 @@ type ProcessImageResult struct {
 // (and any other non-listed type) must be converted to PNG before sending.
 // Mirrors pi's normalizeSupportedImageMimeType.
 func normalizeSupportedImageMimeType(mimeType string) string {
-	base := mimeType
-	if i := strings.IndexByte(base, ';'); i >= 0 {
-		base = base[:i]
-	}
-	base = strings.ToLower(strings.TrimSpace(base))
-	switch base {
+	switch baseMimeType(mimeType) {
 	case "image/png":
 		return "image/png"
 	case "image/jpeg", "image/jpg":
@@ -185,12 +181,14 @@ func normalizeSupportedImageMimeType(mimeType string) string {
 	}
 }
 
+// baseMimeType is pi's baseMimeType: the type before any parameters, trimmed
+// as JavaScript trims and lower-cased.
 func baseMimeType(mimeType string) string {
 	base := mimeType
 	if i := strings.IndexByte(base, ';'); i >= 0 {
 		base = base[:i]
 	}
-	return strings.ToLower(strings.TrimSpace(base))
+	return strings.ToLower(jstext.Trim(base))
 }
 
 // convertImageBytesToPng decodes arbitrary image bytes and re-encodes as PNG,

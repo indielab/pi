@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 const (
@@ -331,7 +332,7 @@ func hasAnthropicAuthHeader(headers ai.ProviderHeaders) bool {
 	for name, value := range headers {
 		switch strings.ToLower(name) {
 		case "authorization", "x-api-key", "cf-aig-authorization":
-			if value != nil && strings.TrimSpace(*value) != "" {
+			if value != nil && jstext.Trim(*value) != "" {
 				return true
 			}
 		}
@@ -987,7 +988,7 @@ func getAnthropicBetaFeatures(model *ai.Model, req ai.TranscriptContext, oauth, 
 		var out []string
 		seen := map[string]bool{}
 		for _, feature := range strings.Split(*configured, ",") {
-			feature = strings.TrimSpace(feature)
+			feature = jstext.Trim(feature)
 			if feature == "" || seen[feature] {
 				continue
 			}
@@ -1567,7 +1568,7 @@ func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheCon
 		} else if um, ok := asUserMsg(m); ok {
 			// pi sends string content as a string and block content as blocks.
 			if text, isString := um.StringContent(); isString {
-				if strings.TrimSpace(text) != "" {
+				if jstext.Trim(text) != "" {
 					params = append(params, map[string]any{"role": "user", "content": sanitizeSurrogates(text)})
 				}
 				continue
@@ -1643,7 +1644,7 @@ func convertUserBlocks(content ai.ContentList) []any {
 	for _, b := range content {
 		switch v := b.(type) {
 		case ai.TextContent:
-			if strings.TrimSpace(v.Text) == "" {
+			if jstext.Trim(v.Text) == "" {
 				continue
 			}
 			blocks = append(blocks, map[string]any{"type": "text", "text": sanitizeSurrogates(v.Text)})
@@ -1664,7 +1665,7 @@ func convertAssistantBlocks(am *ai.AssistantMessage, oauth, allowEmptySig bool) 
 	for _, b := range am.Content {
 		switch v := b.(type) {
 		case ai.TextContent:
-			if strings.TrimSpace(v.Text) == "" {
+			if jstext.Trim(v.Text) == "" {
 				continue
 			}
 			blocks = append(blocks, map[string]any{"type": "text", "text": sanitizeSurrogates(v.Text)})
@@ -1673,10 +1674,10 @@ func convertAssistantBlocks(am *ai.AssistantMessage, oauth, allowEmptySig bool) 
 				blocks = append(blocks, map[string]any{"type": "redacted_thinking", "data": v.ThinkingSignature})
 				continue
 			}
-			hasThinkingSignature := strings.TrimSpace(v.ThinkingSignature) != ""
+			hasThinkingSignature := jstext.Trim(v.ThinkingSignature) != ""
 			// Keep a thinking block when it carries a real signature even if its
 			// text is empty (#6457); only drop it when both are empty.
-			if strings.TrimSpace(v.Thinking) == "" && !hasThinkingSignature {
+			if jstext.Trim(v.Thinking) == "" && !hasThinkingSignature {
 				continue
 			}
 			// If the signature is missing/empty (e.g., from an aborted stream),
