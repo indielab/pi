@@ -3,7 +3,7 @@
 // coding/session_next_turn_test.go.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> sessionprompt-9e05370b2.json 9e05370b2
+//   e.g. ... capture.mts <dir> sessionprompt-e4c75a732.json e4c75a732
 //
 // <extraction> holds packages/ai, packages/agent and packages/coding-agent at
 // <sha> (`git archive <sha> packages/ai packages/agent packages/coding-agent`
@@ -12,8 +12,8 @@
 // needed only so the modules import), and
 // packages/{agent,coding-agent}/node_modules/@earendil-works/{pi-ai,pi-agent-core}
 // resolving to packages/{ai,agent}/src. The npm build 0.85.1 predates upstream
-// 9e05370b2, so these are src captures: re-verify them against the first build
-// that ships it (the BUILD wins).
+// 9e05370b2 and e4c75a732, so these are src captures: re-verify them against
+// the first build that ships them (the BUILD wins).
 //
 // AgentSession itself does not import under node without the host's modules
 // (theme, export-html, tools/index), so the script runs the REAL upstream Agent
@@ -23,7 +23,10 @@
 // _normalizePromptGuidelines, getActiveToolNames and the systemPrompt getter.
 // Transcribed around them (each marked below): sdk.ts's Agent with no prompt and
 // no tools, _buildRuntime's loadout for the default tools, prompt()'s declaration
-// with no extension handlers, _runAgentPrompt's reset of the run options,
+// with no extension handlers (or, for a step with `force`, with the options a
+// before_agent_start handler returning that systemPrompt leaves:
+// forceSystemPrompt set on the normalized base options — runner.ts
+// emitBeforeAgentStart), _runAgentPrompt's reset of the run options,
 // _refreshToolRegistry's guidelines map, and _compactBeforeNextAssistantResponse
 // returning the context unchanged (the port compacts in a per-request
 // TransformContext instead — docs/UPSTREAM.md D4).
@@ -32,6 +35,10 @@
 // default tools' snippets and guidelines, which the Go test does not need to
 // repeat because it asserts structure (roles, section names, tool names) and
 // checks the replayed prompt against Session.SystemPrompt.
+//
+// A message's projection is its role, and for a system message its content
+// text when non-empty, its section names, its declared tool names and its
+// replace flag when set.
 //
 // Per request the script records the messages' projection and the state the
 // refresh hands the loop: the model, the reasoning level and the tools the
@@ -57,7 +64,7 @@ const { Agent } = await import(url("packages/agent/src/agent.ts"));
 const { createAssistantMessageEventStream } = await import(url("packages/ai/src/utils/event-stream.ts"));
 const { fauxAssistantMessage, fauxToolCall } = await import(url("packages/ai/src/providers/faux.ts"));
 const { getCurrentSystemMessage, getCurrentTools } = await import(url("packages/ai/src/utils/transcript.ts"));
-const { getSystemMessageText } = await import(url("packages/ai/src/utils/text.ts"));
+const { contentText, getSystemMessageText } = await import(url("packages/ai/src/utils/text.ts"));
 const systemPrompt = await import(url("packages/coding-agent/src/core/system-prompt.ts"));
 
 // --- AgentSession members, verbatim from core/agent-session.ts at <sha> -----
@@ -100,15 +107,20 @@ const AgentSessionMembers = new Function(
 	"normalizeBuildSystemPromptOptions",
 	"buildSystemPrompt",
 	"buildSystemPromptSections",
+	"buildSystemPromptState",
 	"diffSystemPromptSections",
 	"getCurrentSystemMessage",
+	"contentText",
 	`return (${stripTypeScriptTypes(`class AgentSessionMembers {\n${members.join("\n")}\n}`)});`,
 )(
 	systemPrompt.normalizeBuildSystemPromptOptions,
 	systemPrompt.buildSystemPrompt,
 	systemPrompt.buildSystemPromptSections,
+	// Added by upstream e4c75a732; undefined at earlier shas, whose members do not use it.
+	systemPrompt.buildSystemPromptState,
 	systemPrompt.diffSystemPromptSections,
 	getCurrentSystemMessage,
+	contentText,
 );
 
 // --- Session construction (transcribed) --------------------------------------
@@ -136,16 +148,19 @@ type Reply = ({ text: string } | { toolCall: { id: string; name: string; argumen
 };
 type Step =
 	| { kind: "load"; messages: unknown[]; append?: boolean }
-	| { kind: "prompt"; text: string; replies: Reply[] }
+	| { kind: "prompt"; text: string; force?: string; replies: Reply[] }
 	| { kind: "continue"; replies: Reply[] };
 
 function project(message: any) {
 	if (message.role !== "system") return { role: message.role };
+	const content = contentText(message.content);
 	return {
 		role: "system",
+		...(content ? { content } : {}),
 		sections: Object.keys(message.sections ?? {}),
 		...(message.toolsAdded ? { toolsAdded: message.toolsAdded.map((tool: any) => tool.name) } : {}),
 		...(message.toolsRemoved ? { toolsRemoved: message.toolsRemoved.map((tool: any) => tool.name) } : {}),
+		...(message.replace !== undefined ? { replace: message.replace } : {}),
 	};
 }
 
@@ -228,6 +243,7 @@ async function run(steps: Step[]) {
 				// prompt() with no extension handlers: emitBeforeAgentStart returns the
 				// normalized base options and selectedTools becomes the live loadout.
 				const options = systemPrompt.normalizeBuildSystemPromptOptions(session._baseSystemPromptOptions);
+				if (step.force !== undefined) options.forceSystemPrompt = step.force;
 				options.selectedTools = session.getActiveToolNames();
 				const messages: unknown[] = [{ role: "user", content: [{ type: "text", text: step.text }], timestamp: 0 }];
 				const updateMessage = session._preparePromptAndToolLoadout(options);
@@ -307,6 +323,47 @@ const scenarios: Array<{ name: string; loadoutChange?: boolean; steps: Step[] }>
 		name: "prompt-twice-without-system-message",
 		steps: [
 			{ kind: "load", messages: [user("existing", 1), assistant("old", 2)] },
+			{ kind: "prompt", text: "one", replies: [{ text: "first" }] },
+			{ kind: "prompt", text: "two", replies: [{ text: "second" }] },
+		],
+	},
+	{
+		// system-prompt-updates.test.ts 'a forced prompt replaces the prompt and
+		// tool state and is replayed as the leading prompt' (upstream e4c75a732):
+		// prompts two and three are forced. Entering the forced prompt replaces
+		// the declared sections (the loop fills in the full tool set), staying in
+		// it declares nothing, and leaving it replaces again with the sections.
+		name: "forced-prompt-replaces-and-restores",
+		steps: [
+			{ kind: "prompt", text: "one", replies: [{ text: "one" }] },
+			{ kind: "prompt", text: "two", force: "Exact prompt.", replies: [{ text: "two" }] },
+			{ kind: "prompt", text: "three", force: "Exact prompt.", replies: [{ text: "three" }] },
+			{ kind: "prompt", text: "four", replies: [{ text: "four" }] },
+		],
+	},
+	{
+		// A forced prompt changing to another forced prompt replaces again; within
+		// a forced run the refresh before a tool turn's follow-up finds it unchanged.
+		name: "forced-prompt-changes-and-refreshes",
+		steps: [
+			{ kind: "prompt", text: "one", force: "Prompt A.", replies: [readCall, { text: "done" }] },
+			{ kind: "prompt", text: "two", force: "Prompt B.", replies: [{ text: "second" }] },
+		],
+	},
+	{
+		// A transcript whose replayed prompt has no sections (an Agent seeded with
+		// a plain systemPrompt) is opaque: the first prompt replaces it with the
+		// sections and the full tool set instead of patching sections onto it.
+		name: "prompt-over-an-opaque-system-message",
+		steps: [
+			{
+				kind: "load",
+				messages: [
+					{ role: "system", content: "Legacy prompt.", timestamp: 0 },
+					user("existing", 1),
+					assistant("old", 2),
+				],
+			},
 			{ kind: "prompt", text: "one", replies: [{ text: "first" }] },
 			{ kind: "prompt", text: "two", replies: [{ text: "second" }] },
 		],

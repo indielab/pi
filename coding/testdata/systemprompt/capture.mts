@@ -2,15 +2,19 @@
 // coding/systemprompt_golden_test.go.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> systemprompt-9e05370b2.json 9e05370b2
+//   e.g. ... capture.mts <dir> systemprompt-e4c75a732.json e4c75a732
 //
 // <extraction> holds packages/ai and packages/coding-agent at <sha>
 // (`git archive <sha> packages/ai packages/coding-agent` from the upstream
 // clone), a node_modules resolving their dependencies (the npm build's), and
 // packages/coding-agent/node_modules/@earendil-works/pi-ai resolving to
-// packages/ai/src. The npm build 0.85.1 predates upstream 9e05370b2, so these
-// are src captures: re-verify them against the first build that ships it (the
-// BUILD wins).
+// packages/ai/src. The npm build 0.85.1 predates upstream 9e05370b2 and
+// e4c75a732, so these are src captures: re-verify them against the first build
+// that ships them (the BUILD wins).
+//
+// Each build case calls buildSystemPrompt, buildSystemPromptSections and (from
+// e4c75a732) buildSystemPromptState on its own, recording the value or the
+// message it throws; a state keeps its `sections` key only when pi sets it.
 //
 // The inputs are the Go port's: toolSnippets is coding.ToolSnippets and
 // toolGuidelines is what NewSession collects from the default tools'
@@ -30,7 +34,7 @@ if (!extraction || !outFile || !sha) {
 	process.exit(2);
 }
 process.env.PI_PACKAGE_DIR = "/pkg";
-const { buildSystemPrompt, buildSystemPromptSections, diffSystemPromptSections } = await import(
+const { buildSystemPrompt, buildSystemPromptSections, buildSystemPromptState, diffSystemPromptSections } = await import(
 	pathToFileURL(path.join(extraction, "packages/coding-agent/src/core/system-prompt.ts")).href
 );
 
@@ -145,6 +149,20 @@ const builds: Array<{ name: string; input: Input }> = [
 		},
 	},
 	{ name: "force-system-prompt-empty", input: { forceSystemPrompt: "", cwd: "/tmp" } },
+	// system-prompt.test.ts 'preserves an exact forced prompt without sections'.
+	{ name: "force-system-prompt-exact", input: { forceSystemPrompt: "exact", cwd: "/tmp" } },
+	// A forced prompt is taken as given: never trimmed, and no other option adds to it.
+	{
+		name: "force-system-prompt-verbatim",
+		input: {
+			forceSystemPrompt: "  spaced\n\n",
+			appendSystemPrompt: "Appended.",
+			contextFiles: [agentsFile],
+			skills: [demoSkill],
+			sections: [["plan_mode", "Plan only."]],
+			cwd: "/tmp",
+		},
+	},
 	{
 		name: "custom-sections-default-prompt",
 		input: {
@@ -222,21 +240,29 @@ const toOptions = (input: Input) => {
 	return sections ? { ...rest, sections: Object.fromEntries(sections) } : rest;
 };
 
+// attempt returns { [key]: value } or { [key + "Error"]: message }.
+const attempt = (key: string, build: () => unknown) => {
+	try {
+		return { [key]: build() };
+	} catch (error) {
+		return { [`${key}Error`]: (error as Error).message };
+	}
+};
+
 const out = {
 	sha,
 	objectPrototypeNames,
-	builds: builds.map(({ name, input }) => {
-		try {
-			return {
-				name,
-				input,
-				prompt: buildSystemPrompt(toOptions(input)),
-				sections: entries(buildSystemPromptSections(toOptions(input))),
-			};
-		} catch (error) {
-			return { name, input, error: (error as Error).message };
-		}
-	}),
+	builds: builds.map(({ name, input }) => ({
+		name,
+		input,
+		...attempt("prompt", () => buildSystemPrompt(toOptions(input))),
+		...attempt("sections", () => entries(buildSystemPromptSections(toOptions(input)))),
+		...attempt("state", () => {
+			const { content, sections, ...rest } = buildSystemPromptState(toOptions(input));
+			if (Object.keys(rest).length > 0) throw new Error(`unexpected state keys ${Object.keys(rest)}`);
+			return { content, ...(sections === undefined ? {} : { sections: entries(sections) }) };
+		}),
+	})),
 	diffs: diffs.map(({ name, previous, current }) => ({
 		name,
 		previous,

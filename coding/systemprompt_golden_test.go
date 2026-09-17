@@ -13,12 +13,12 @@ import (
 
 // The system prompt goldens are pi's: testdata/systemprompt/capture.mts feeds
 // the Go port's inputs (ToolSnippets, the default tools' PromptGuidelines, and
-// fixture paths) to upstream buildSystemPrompt, buildSystemPromptSections and
-// diffSystemPromptSections at 9e05370b2 under node and records what they
-// return. npm 0.85.1 predates the sectioned prompt, so these are src captures:
-// re-verify them against the first build that ships it.
+// fixture paths) to upstream buildSystemPrompt, buildSystemPromptSections,
+// buildSystemPromptState and diffSystemPromptSections at e4c75a732 under node
+// and records what they return. npm 0.85.1 predates the sectioned prompt, so
+// these are src captures: re-verify them against the first build that ships it.
 
-const systemPromptCaptureFile = "testdata/systemprompt/systemprompt-9e05370b2.json"
+const systemPromptCaptureFile = "testdata/systemprompt/systemprompt-e4c75a732.json"
 
 // sectionPairs is a JS object written as [name, value] pairs, so its key order
 // survives JSON.
@@ -104,12 +104,24 @@ func (in promptCaptureInput) options() BuildSystemPromptOptions {
 	return opts
 }
 
+// promptCaptureBuild is one build case: each builder's result, or the message
+// it threw.
 type promptCaptureBuild struct {
-	Name     string             `json:"name"`
-	Input    promptCaptureInput `json:"input"`
-	Prompt   string             `json:"prompt"`
-	Sections sectionPairs       `json:"sections"`
-	Error    string             `json:"error"`
+	Name          string              `json:"name"`
+	Input         promptCaptureInput  `json:"input"`
+	Prompt        string              `json:"prompt"`
+	PromptError   string              `json:"promptError"`
+	Sections      sectionPairs        `json:"sections"`
+	SectionsError string              `json:"sectionsError"`
+	State         *promptCaptureState `json:"state"`
+	StateError    string              `json:"stateError"`
+}
+
+// promptCaptureState is buildSystemPromptState's result; Sections is nil when
+// pi leaves the key out.
+type promptCaptureState struct {
+	Content  string       `json:"content"`
+	Sections sectionPairs `json:"sections"`
 }
 
 type promptCaptureDiff struct {
@@ -177,29 +189,51 @@ func formatSections(sections []ai.SystemSection) string {
 	return b.String()
 }
 
-// Every build case: the rendered prompt and the ordered sections are pi's
-// bytes, and an invalid custom section name fails as pi throws.
+// checkCaptureError reports whether pi threw for a builder, failing unless the
+// Go error agrees: pi's message followed by a resolution hint.
+func checkCaptureError(t *testing.T, builder string, err error, piError string) bool {
+	t.Helper()
+	if piError == "" {
+		if err != nil {
+			t.Fatalf("%s: unexpected error %v", builder, err)
+		}
+		return false
+	}
+	if err == nil || !strings.HasPrefix(err.Error(), piError+" (") {
+		t.Fatalf("%s: error = %v, want pi's %q followed by a resolution hint", builder, err, piError)
+	}
+	return true
+}
+
+// Every build case: the rendered prompt, the ordered sections and the prompt
+// state are pi's bytes, and an invalid custom section name fails where pi
+// throws — in every builder but a forced prompt's state and rendering, which
+// never build the sections.
 func TestSystemPromptMatchesPiCapture(t *testing.T) {
 	for _, build := range loadPromptCapture(t).Builds {
 		t.Run(build.Name, func(t *testing.T) {
-			prompt, promptErr := BuildSystemPrompt(build.Input.options())
-			sections, sectionsErr := BuildSystemPromptSections(build.Input.options())
-			if build.Error != "" {
-				for _, err := range []error{promptErr, sectionsErr} {
-					if err == nil || !strings.HasPrefix(err.Error(), build.Error+" (") {
-						t.Fatalf("error = %v, want pi's %q followed by a resolution hint", err, build.Error)
-					}
-				}
-				return
-			}
-			if promptErr != nil || sectionsErr != nil {
-				t.Fatalf("unexpected errors: %v / %v", promptErr, sectionsErr)
-			}
-			if prompt != build.Prompt {
+			prompt, err := BuildSystemPrompt(build.Input.options())
+			if !checkCaptureError(t, "BuildSystemPrompt", err, build.PromptError) && prompt != build.Prompt {
 				t.Fatalf("prompt drift from pi.\n--- got ---\n%s\n--- pi ---\n%s", prompt, build.Prompt)
 			}
-			if got, want := sectionEntries(sections), []ai.SystemSection(build.Sections); !reflect.DeepEqual(got, want) {
-				t.Fatalf("sections drift from pi.\n--- got ---\n%s--- pi ---\n%s", formatSections(got), formatSections(want))
+			sections, err := BuildSystemPromptSections(build.Input.options())
+			if !checkCaptureError(t, "BuildSystemPromptSections", err, build.SectionsError) {
+				if got, want := sectionEntries(sections), []ai.SystemSection(build.Sections); !reflect.DeepEqual(got, want) {
+					t.Fatalf("sections drift from pi.\n--- got ---\n%s--- pi ---\n%s", formatSections(got), formatSections(want))
+				}
+			}
+			state, err := BuildSystemPromptState(build.Input.options())
+			if checkCaptureError(t, "BuildSystemPromptState", err, build.StateError) {
+				return
+			}
+			if build.State == nil {
+				t.Fatalf("%s records neither a state nor a state error; rerun capture.mts", systemPromptCaptureFile)
+			}
+			if state.Content != build.State.Content {
+				t.Fatalf("state content = %q, pi %q", state.Content, build.State.Content)
+			}
+			if got, want := sectionEntries(state.Sections), []ai.SystemSection(build.State.Sections); !reflect.DeepEqual(got, want) {
+				t.Fatalf("state sections drift from pi.\n--- got ---\n%s--- pi ---\n%s", formatSections(got), formatSections(want))
 			}
 		})
 	}
@@ -440,7 +474,7 @@ func TestBuildSystemPromptUpstreamCases(t *testing.T) {
 	})
 }
 
-// system-prompt-updates.test.ts at 9e05370b2, its system-prompt.ts cases.
+// system-prompt-updates.test.ts at e4c75a732, its system-prompt.ts cases.
 func TestSystemPromptSectionUpdatesUpstreamCases(t *testing.T) {
 	t.Run("diffs sections into a patch", func(t *testing.T) {
 		previous := mustBuildSystemPromptSections(t, BuildSystemPromptOptions{Cwd: "/tmp", Sections: sectionsOf("plan_mode", "Plan only.")})
@@ -470,15 +504,14 @@ func TestSystemPromptSectionUpdatesUpstreamCases(t *testing.T) {
 		}
 
 		force := "Exact prompt."
-		override := mustBuildSystemPromptSections(t, BuildSystemPromptOptions{ForceSystemPrompt: &force, Cwd: "/tmp"})
-		if want := sectionsOf("preamble", "Exact prompt."); !reflect.DeepEqual(override.Entries(), want.Entries()) {
-			t.Fatalf("override = %s", formatSections(sectionEntries(override)))
+		forced, err := BuildSystemPromptState(BuildSystemPromptOptions{ForceSystemPrompt: &force, Cwd: "/tmp"})
+		if err != nil || !reflect.DeepEqual(forced, SystemPromptState{Content: "Exact prompt."}) {
+			t.Fatalf("forced state = %+v, %v; want {Content: %q} with no sections", forced, err, force)
 		}
-		patch, changed = DiffSystemPromptSections(current, override)
-		want := sectionsOf("preamble", "Exact prompt.")
-		want.Set("cwd", nil)
-		if !changed || !reflect.DeepEqual(patch.Entries(), want.Entries()) {
-			t.Fatalf("override patch = %s", formatSections(sectionEntries(patch)))
+		structured, err := BuildSystemPromptState(BuildSystemPromptOptions{Cwd: "/tmp"})
+		want := SystemPromptState{Sections: mustBuildSystemPromptSections(t, BuildSystemPromptOptions{Cwd: "/tmp"})}
+		if err != nil || !reflect.DeepEqual(structured, want) {
+			t.Fatalf("structured state = %+v, %v; want %+v", structured, err, want)
 		}
 		if _, err := BuildSystemPromptSections(BuildSystemPromptOptions{Cwd: "/tmp", Sections: sectionsOf("preamble", "x")}); err == nil ||
 			!strings.Contains(err.Error(), "Invalid system prompt section name") {

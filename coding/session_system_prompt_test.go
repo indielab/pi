@@ -341,3 +341,125 @@ func jsonKeys(t *testing.T, raw json.RawMessage) []string {
 	}
 	return keys
 }
+
+// system-prompt-updates.test.ts at e4c75a732, 'a forced prompt replaces the
+// prompt and tool state and is replayed as the leading prompt'. The port has no
+// before_agent_start (Scope entry 12), so prompts two and three set the options
+// a handler returning that systemPrompt leaves, for their run only, as pi's run
+// options are. The recorder writes each replacement in its producer's key
+// order: role, content, sections, replace, timestamp, then the loop's tools.
+func TestSessionForcedPromptReplacesThePromptAndToolState(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+	cwd := t.TempDir()
+	sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: cwd})
+	rec, err := StartSession(cwd, reg.GetModel(), "off")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.Record(rec)
+
+	var requests []ai.TranscriptContext
+	var steps []providers.FauxResponseStep
+	texts := []string{"one", "two", "three", "four"}
+	for _, text := range texts {
+		reply := providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: text}}, ai.StopStop)
+		steps = append(steps, func(req ai.TranscriptContext, _ *ai.SimpleStreamOptions, _ *providers.FauxState, _ *ai.Model) *ai.AssistantMessage {
+			requests = append(requests, req)
+			return reply
+		})
+	}
+	reg.SetResponses(steps)
+	force := "Exact prompt."
+	for turn, text := range texts {
+		if turn == 1 || turn == 2 {
+			sess.systemPromptOptions.ForceSystemPrompt = &force
+		}
+		_, err := sess.Run(context.Background(), text)
+		sess.systemPromptOptions.ForceSystemPrompt = nil
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	rec.Close()
+
+	systemMessages := make([][]ai.SystemMessage, len(requests))
+	counts := make([]int, len(requests))
+	for i, request := range requests {
+		for _, message := range request.Messages {
+			if system, ok := message.(ai.SystemMessage); ok {
+				systemMessages[i] = append(systemMessages[i], system)
+			}
+		}
+		counts[i] = len(systemMessages[i])
+	}
+	if want := []int{1, 2, 2, 3}; !reflect.DeepEqual(counts, want) {
+		t.Fatalf("system messages per request = %v, want %v", counts, want)
+	}
+
+	declared := systemMessages[0][0]
+	forced := systemMessages[1][len(systemMessages[1])-1]
+	if content, ok := forced.StringContent(); !ok || content != force || !forced.Replace || forced.Sections != nil || forced.ToolsRemoved != nil ||
+		jsonText(t, forced.ToolsAdded) != jsonText(t, declared.ToolsAdded) {
+		t.Fatalf("forced message = %s, want {role: system, content: %q, toolsAdded: the declared tools, replace: true}", jsonText(t, forced), force)
+	}
+	if got := ai.GetCurrentSystemPrompt(requests[2].Messages); got != force {
+		t.Fatalf("replayed prompt of request three = %q, want %q", got, force)
+	}
+	// Anthropic-style providers keep later system messages in place, but a
+	// replacement collapses.
+	if got, want := messageRoles(ai.ResolveTranscript(requests[2], true).Messages), []string{"system", "user", "assistant", "user", "assistant", "user"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolved roles = %v, want %v", got, want)
+	}
+
+	restored := systemMessages[3][len(systemMessages[3])-1]
+	if content, _ := restored.StringContent(); content != "" || !restored.Replace || jsonText(t, restored.Sections) != jsonText(t, declared.Sections) {
+		t.Fatalf("restored message = %s, want content \"\", replace true and the declared sections", jsonText(t, restored))
+	}
+	if jsonText(t, restored.ToolsAdded) != jsonText(t, forced.ToolsAdded) {
+		t.Fatalf("restored toolsAdded = %s, want the forced message's %s", jsonText(t, restored.ToolsAdded), jsonText(t, forced.ToolsAdded))
+	}
+	prompt, err := sess.SystemPrompt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ai.GetCurrentSystemPrompt(sess.History()); got != prompt {
+		t.Fatalf("replayed prompt drift from SystemPrompt():\n--- replayed ---\n%s\n--- SystemPrompt ---\n%s", got, prompt)
+	}
+
+	var recorded [][]string
+	messages, err := LoadSessionMessages(rec.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range messages {
+		if system, ok := message.(ai.SystemMessage); ok {
+			raw, err := json.Marshal(system)
+			if err != nil {
+				t.Fatal(err)
+			}
+			recorded = append(recorded, jsonKeys(t, raw))
+		}
+	}
+	want := [][]string{
+		{"role", "content", "sections", "timestamp", "toolsAdded"},
+		{"role", "content", "replace", "timestamp", "toolsAdded"},
+		{"role", "content", "sections", "replace", "timestamp", "toolsAdded"},
+	}
+	if !reflect.DeepEqual(recorded, want) {
+		t.Fatalf("recorded system message keys = %v, want %v", recorded, want)
+	}
+	if got := ai.GetCurrentSystemPrompt(messages); got != prompt {
+		t.Fatalf("reloaded prompt drift:\n--- got ---\n%s\n--- want ---\n%s", got, prompt)
+	}
+}
+
+func jsonText(t *testing.T, v any) string {
+	t.Helper()
+	raw, err := json.Marshal(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(raw)
+}

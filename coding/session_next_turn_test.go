@@ -17,11 +17,14 @@ import (
 // prompt() puts a sections patch ahead of the user message, and the next-turn
 // refresh its constructor installs on the agent (_installAgentNextTurnRefresh)
 // re-diffs before every later turn of a run, prompt's and continue's alike.
-// testdata/sessionprompt/capture.mts runs the real upstream Agent under
-// AgentSession's own members at 9e05370b2; these tests replay the same steps
-// through a Session and compare what each request carries.
+// When the prompt the model has is opaque (it replays with no sections) or the
+// desired one is (a forced prompt), the declaration is a replacement instead of
+// a patch (upstream e4c75a732). testdata/sessionprompt/capture.mts runs the
+// real upstream Agent under AgentSession's own members at e4c75a732; these
+// tests replay the same steps through a Session and compare what each request
+// carries.
 
-const sessionPromptCaptureFile = "testdata/sessionprompt/sessionprompt-9e05370b2.json"
+const sessionPromptCaptureFile = "testdata/sessionprompt/sessionprompt-e4c75a732.json"
 
 type sessionPromptThen struct {
 	Model         string   `json:"model"`
@@ -44,16 +47,20 @@ type sessionPromptStep struct {
 	Messages []json.RawMessage    `json:"messages"`
 	Append   bool                 `json:"append"`
 	Text     string               `json:"text"`
+	Force    *string              `json:"force"`
 	Replies  []sessionPromptReply `json:"replies"`
 }
 
 // promptProjection is a message as the capture projects it: the role, and for
-// a system message its section names and declared tool names.
+// a system message its content text when non-empty, its section names, its
+// declared tool names and its replace flag when set.
 type promptProjection struct {
 	Role         string   `json:"role"`
+	Content      string   `json:"content,omitempty"`
 	Sections     []string `json:"sections,omitempty"`
 	ToolsAdded   []string `json:"toolsAdded,omitempty"`
 	ToolsRemoved []string `json:"toolsRemoved,omitempty"`
+	Replace      bool     `json:"replace,omitempty"`
 }
 
 // requestState is what the refresh hands the loop, as the provider sees it.
@@ -129,7 +136,12 @@ func projectPromptMessages[M agent.AgentMessage](messages []M) []promptProjectio
 			out = append(out, promptProjection{Role: string(m.MessageRole())})
 			continue
 		}
-		projection := promptProjection{Role: "system", Sections: sectionNames(system.Sections)}
+		projection := promptProjection{
+			Role:     "system",
+			Content:  ai.ContentText(system.Content),
+			Sections: sectionNames(system.Sections),
+			Replace:  system.Replace,
+		}
 		if system.ToolsAdded != nil {
 			projection.ToolsAdded = toolNames(system.ToolsAdded)
 		}
@@ -228,7 +240,13 @@ func TestSessionDeclaresPromptAcrossTurnsLikePi(t *testing.T) {
 					sess.LoadHistory(messages)
 				case "prompt":
 					reg.SetResponses(responses(step.Replies))
-					if _, err := sess.Run(context.Background(), step.Text); err != nil {
+					// The port has no before_agent_start (Scope entry 12): a forced
+					// step sets the options a handler returning that systemPrompt
+					// leaves, for this run only, as pi's run options are.
+					sess.systemPromptOptions.ForceSystemPrompt = step.Force
+					_, err := sess.Run(context.Background(), step.Text)
+					sess.systemPromptOptions.ForceSystemPrompt = nil
+					if err != nil {
 						t.Fatal(err)
 					}
 				case "continue":

@@ -11,10 +11,11 @@ import (
 )
 
 // System prompt construction, ported from pi
-// packages/coding-agent/src/core/system-prompt.ts (upstream 9e05370b2). The
-// prompt is a set of ordered, independently replaceable sections that become
-// the transcript's SystemMessage.Sections; BuildSystemPrompt renders them the
-// way the transcript replays them.
+// packages/coding-agent/src/core/system-prompt.ts (upstream 9e05370b2 and
+// e4c75a732). The prompt is a set of ordered, independently replaceable
+// sections that become the transcript's SystemMessage.Sections, or, when
+// forced, one opaque text that becomes its Content; BuildSystemPrompt renders
+// either the way the transcript replays it.
 
 // ContextFile is a project context file injected into the system prompt.
 type ContextFile struct {
@@ -29,9 +30,10 @@ type BuildSystemPromptOptions struct {
 	// rules and docs sections — with its text as the preamble. Empty keeps the
 	// default prefix.
 	CustomPrompt string
-	// ForceSystemPrompt, when non-nil, is an exact full prompt replacement: the
-	// sections are its text as the preamble and nothing else, even when empty.
-	// pi sets it from a before_agent_start handler.
+	// ForceSystemPrompt, when non-nil, is an exact full prompt replacement:
+	// BuildSystemPromptState and BuildSystemPrompt take its text verbatim as the
+	// whole prompt, with no sections, even when empty; BuildSystemPromptSections
+	// ignores it. pi sets it from a before_agent_start handler.
 	ForceSystemPrompt *string
 	// SelectedTools are the active tool names. Nil means pi's default
 	// [read, bash, edit, write]; an empty, non-nil slice means no tools.
@@ -177,21 +179,18 @@ func invalidSectionNameError(name string) error {
 }
 
 // BuildSystemPromptSections builds the ordered, independently replaceable
-// sections of the system prompt (pi buildSystemPromptSections): the untagged
-// preamble, then for the default prompt tools, rules and docs, then addendum,
-// project_context, skills and cwd, then the custom Sections. Every section but
-// the preamble is wrapped in a tag of its name, so the model can match later
-// updates to it. These become SystemMessage.Sections in the transcript.
+// sections of the structured system prompt (pi buildSystemPromptSections): the
+// untagged preamble, then for the default prompt tools, rules and docs, then
+// addendum, project_context, skills and cwd, then the custom Sections. Every
+// section but the preamble is wrapped in a tag of its name, so the model can
+// match later updates to it. These become SystemMessage.Sections in the
+// transcript. ForceSystemPrompt plays no part: a forced prompt has no sections
+// (BuildSystemPromptState).
 //
 // It fails, building nothing, when a custom section name is invalid; the first
 // invalid name in JS key order is reported.
 func BuildSystemPromptSections(input BuildSystemPromptOptions) (ai.SystemSections, error) {
 	opts := NormalizeBuildSystemPromptOptions(input)
-	if opts.ForceSystemPrompt != nil {
-		force := *opts.ForceSystemPrompt
-		return ai.SystemSections{{Name: "preamble", Value: &force}}, nil
-	}
-
 	customSections := opts.Sections.Entries()
 	for _, section := range customSections {
 		if !systemPromptSectionName.MatchString(section.Name) || section.Name == "preamble" {
@@ -286,15 +285,43 @@ func docsSection(opts BuildSystemPromptOptions) string {
 - Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`
 }
 
+// SystemPromptState is the complete prompt state a set of options describes
+// (pi buildSystemPromptState's result): the content and sections of a system
+// message holding the whole prompt. A forced prompt is opaque and lives in
+// Content with nil Sections; otherwise Content is empty and Sections carry the
+// structured prompt.
+type SystemPromptState struct {
+	Content  string
+	Sections ai.SystemSections
+}
+
+// BuildSystemPromptState returns the complete prompt state for input (pi
+// buildSystemPromptState, upstream e4c75a732): a non-nil ForceSystemPrompt is
+// the whole content, verbatim; otherwise the sections are
+// BuildSystemPromptSections', and so is the error.
+func BuildSystemPromptState(input BuildSystemPromptOptions) (SystemPromptState, error) {
+	if input.ForceSystemPrompt != nil {
+		return SystemPromptState{Content: *input.ForceSystemPrompt}, nil
+	}
+	sections, err := BuildSystemPromptSections(input)
+	if err != nil {
+		return SystemPromptState{}, err
+	}
+	return SystemPromptState{Sections: sections}, nil
+}
+
 // BuildSystemPrompt renders the system prompt exactly as the transcript's
-// system message replays it (pi buildSystemPrompt): the sections joined by a
-// blank line. It fails when BuildSystemPromptSections does.
+// system message replays it (pi buildSystemPrompt): BuildSystemPromptState's
+// content followed by its sections, joined by a blank line. It fails when
+// BuildSystemPromptState does.
 func BuildSystemPrompt(opts BuildSystemPromptOptions) (string, error) {
-	sections, err := BuildSystemPromptSections(opts)
+	state, err := BuildSystemPromptState(opts)
 	if err != nil {
 		return "", err
 	}
-	return ai.GetSystemMessageText(ai.SystemMessage{Sections: sections}), nil
+	message := ai.NewSystemText(state.Content, 0)
+	message.Sections = state.Sections
+	return ai.GetSystemMessageText(message), nil
 }
 
 // objectPrototypeKeys are the properties every plain JS object inherits from

@@ -319,13 +319,16 @@ func (m *toolMap) values() []Tool {
 }
 
 // GetCurrentTools resolves the tools available after applying every transcript
-// delta in order.
+// delta in order. A replacement clears the tools before its own deltas apply.
 func GetCurrentTools(messages []Message) []Tool {
 	tools := newToolMap()
 	for _, message := range messages {
 		system, ok := systemMessageOf(message)
 		if !ok {
 			continue
+		}
+		if system.Replace {
+			tools = newToolMap()
 		}
 		for _, tool := range system.ToolsRemoved {
 			tools.delete(tool.Name)
@@ -339,8 +342,10 @@ func GetCurrentTools(messages []Message) []Tool {
 
 // GetCurrentSystemMessage replays every system message into one leading system
 // message holding the current prompt and tools. Later content is appended to
-// the base prompt, sections are patched by name, and tools are resolved with
-// GetCurrentTools. It reports false when the transcript has no system message.
+// the base prompt, sections are patched by name, a replacement starts over
+// (the head keeps the first system message's timestamp), and tools are
+// resolved with GetCurrentTools. It reports false when the transcript has no
+// system message.
 func GetCurrentSystemMessage(messages []Message) (SystemMessage, bool) {
 	var content []string
 	// A SystemSections used as pi's Map<string, string>: Set keeps a slot,
@@ -353,6 +358,10 @@ func GetCurrentSystemMessage(messages []Message) (SystemMessage, bool) {
 		system, ok := systemMessageOf(message)
 		if !ok {
 			continue
+		}
+		if system.Replace {
+			content = nil
+			sections = SystemSections{}
 		}
 		if !found {
 			timestamp, found = system.Timestamp, true
@@ -409,12 +418,25 @@ func CollapseSystemMessages(context TranscriptContext) TranscriptContext {
 }
 
 // ResolveTranscript keeps later system messages in place when the model accepts
-// them, and collapses them otherwise.
+// them, and collapses them otherwise. A replacement after the leading message
+// always collapses: no provider can retract the prompt it already received, so
+// the replayed state must become the leading prompt.
 func ResolveTranscript(context TranscriptContext, supportsMidConvoSystemMessages bool) TranscriptContext {
-	if supportsMidConvoSystemMessages {
+	if supportsMidConvoSystemMessages && !hasLateReplacement(context.Messages) {
 		return context
 	}
 	return CollapseSystemMessages(context)
+}
+
+// hasLateReplacement reports whether a system message after the first message
+// replaces the prompt.
+func hasLateReplacement(messages []Message) bool {
+	for i, message := range messages {
+		if system, ok := systemMessageOf(message); ok && i > 0 && system.Replace {
+			return true
+		}
+	}
+	return false
 }
 
 // ToToolDeclaration strips a tool down to what it declares to the model — name,
