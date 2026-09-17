@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
@@ -164,42 +165,64 @@ func firstFunctionResponse(contents []any) map[string]any {
 
 // --- Task 4 + 5: REST body shape & disabled-thinking per family ---
 
+// Upstream 16235fd93: a disabled thinkingConfig is thinkingBudget:0 unless the
+// model uses Gemini's level control AND its thinkingLevelMap marks "off"
+// unsupported; then it is the lowest supported level, resolved through the map,
+// without includeThoughts. The maps below are the shipped catalog's shapes for
+// each family (inlined, so the test does not follow a catalog regen); the same
+// ids without a map keep "off" supported and disable with a budget. pi's values:
+// testdata/google-thinking/thinking-config-16235fd93.json "disabled/*".
 func TestGoogleDisabledThinkingPerFamily(t *testing.T) {
+	proMap := ai.ThinkingLevelMap{"off": nil, "minimal": nil, "low": strPtr("LOW"), "medium": nil, "high": strPtr("HIGH")}
+	flashMap := ai.ThinkingLevelMap{"off": nil}
+	gemmaMap := ai.ThinkingLevelMap{"off": nil, "minimal": strPtr("MINIMAL"), "low": nil, "medium": nil, "high": strPtr("HIGH")}
+	budgetOff := map[string]any{"thinkingBudget": float64(0)}
 	cases := []struct {
-		id      string
-		wantKey string
-		wantVal any
+		name   string
+		id     string
+		levels ai.ThinkingLevelMap
+		want   map[string]any
 	}{
-		{"gemini-2.5-flash", "thinkingBudget", float64(0)},
-		{"gemini-3-pro-preview", "thinkingLevel", "LOW"},
-		{"gemini-3-flash-preview", "thinkingLevel", "MINIMAL"},
-		{"gemma-4-12b", "thinkingLevel", "MINIMAL"},
-		// pi b0c8f65f / #5761: the rolling flash aliases route to the MINIMAL
-		// flash disabled-thinking config like the gemini-3 flash family.
-		{"gemini-flash-latest", "thinkingLevel", "MINIMAL"},
-		{"gemini-flash-lite-latest", "thinkingLevel", "MINIMAL"},
+		{"gemini 2.5", "gemini-2.5-flash", nil, budgetOff},
+		{"gemini 3 pro", "gemini-3.1-pro-preview", proMap, map[string]any{"thinkingLevel": "LOW"}},
+		{"gemini 3 flash", "gemini-3-flash-preview", flashMap, map[string]any{"thinkingLevel": "MINIMAL"}},
+		{"gemma 4", "gemma-4-31b-it", gemmaMap, map[string]any{"thinkingLevel": "MINIMAL"}},
+		// pi b0c8f65f / #5761: the rolling flash aliases use levels like the
+		// gemini-3 flash family.
+		{"flash latest", "gemini-flash-latest", flashMap, map[string]any{"thinkingLevel": "MINIMAL"}},
+		{"flash lite latest", "gemini-flash-lite-latest", flashMap, map[string]any{"thinkingLevel": "MINIMAL"}},
+		{"gemini 3 pro without a map", "gemini-3-pro-preview", nil, budgetOff},
+		{"gemini 3 flash without a map", "gemini-3-flash-preview", nil, budgetOff},
 	}
 	for _, tc := range cases {
-		t.Run(tc.id, func(t *testing.T) {
-			model := &ai.Model{ID: tc.id, Api: ai.APIGoogleGenerativeAI, Provider: "google", Reasoning: true}
+		t.Run(tc.name, func(t *testing.T) {
+			model := &ai.Model{ID: tc.id, Api: ai.APIGoogleGenerativeAI, Provider: "google", Reasoning: true, ThinkingLevelMap: tc.levels}
 			opts := &GoogleOptions{ThinkingProvided: true, ThinkingEnabled: false}
 			body := roundtripBody(t, mustBuildGoogleParams(t, model, ai.Context{}, opts))
 			gen, _ := body["generationConfig"].(map[string]any)
 			if gen == nil {
 				t.Fatalf("no generationConfig: %v", body)
 			}
-			tc2, _ := gen["thinkingConfig"].(map[string]any)
-			if tc2 == nil {
-				t.Fatalf("no thinkingConfig: %v", gen)
-			}
-			if got := tc2[tc.wantKey]; got != tc.wantVal {
-				t.Fatalf("%s: want %s=%v, got %v (cfg=%v)", tc.id, tc.wantKey, tc.wantVal, got, tc2)
-			}
-			// includeThoughts must NOT be set on the disabled path.
-			if _, ok := tc2["includeThoughts"]; ok {
-				t.Fatalf("disabled thinkingConfig must not set includeThoughts: %v", tc2)
+			// Exact: includeThoughts must NOT be set on the disabled path.
+			if got := gen["thinkingConfig"]; !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("thinkingConfig\n got %v\nwant %v", got, tc.want)
 			}
 		})
+	}
+}
+
+// getDisabledGoogleThinkingConfig resolves its fallback through the map, which
+// can fail: buildGoogleParams returns that error.
+func TestGoogleDisabledThinkingUnmappableFallbackFails(t *testing.T) {
+	model := &ai.Model{
+		ID: "gemini-3.8-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", Reasoning: true,
+		ThinkingLevelMap: ai.ThinkingLevelMap{"off": nil, "minimal": strPtr("extreme")},
+	}
+	opts := &GoogleOptions{ThinkingProvided: true, ThinkingEnabled: false}
+	_, err := buildGoogleParams(model, ai.NormalizeContext(ai.Context{}), opts)
+	want := "Unsupported Google thinking level mapping for google/gemini-3.8-flash: minimal -> extreme"
+	if err == nil || err.Error() != want {
+		t.Fatalf("want error %q, got %v", want, err)
 	}
 }
 
@@ -715,41 +738,6 @@ func googleServe(t *testing.T, modelID, sse string) *ai.AssistantMessageEventStr
 	model := &ai.Model{ID: modelID, Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	return StreamGoogle(context.Background(), model, ai.NormalizeContext(req), &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}})
-}
-
-// --- F1: gemma-4 thinkingLevel map ---
-
-func TestGoogleThinkingLevelMaps(t *testing.T) {
-	cases := []struct {
-		id     string
-		effort string
-		want   string
-	}{
-		// gemma-4 (pi google.ts:441-450): minimal/low -> MINIMAL, medium/high -> HIGH.
-		{"gemma-4-12b", "minimal", "MINIMAL"},
-		{"gemma-4-12b", "low", "MINIMAL"},
-		{"gemma-4-12b", "medium", "HIGH"},
-		{"gemma-4-12b", "high", "HIGH"},
-		// gemini-3-pro mapping kept: minimal/low -> LOW, medium/high -> HIGH.
-		{"gemini-3-pro-preview", "minimal", "LOW"},
-		{"gemini-3-pro-preview", "low", "LOW"},
-		{"gemini-3-pro-preview", "medium", "HIGH"},
-		{"gemini-3-pro-preview", "high", "HIGH"},
-		// gemini-3-flash falls to the generic 1:1 map.
-		{"gemini-3-flash-preview", "minimal", "MINIMAL"},
-		{"gemini-3-flash-preview", "low", "LOW"},
-		{"gemini-3-flash-preview", "medium", "MEDIUM"},
-		{"gemini-3-flash-preview", "high", "HIGH"},
-		// xhigh matches no case anywhere -> "" (pi returns undefined).
-		{"gemma-4-12b", "xhigh", ""},
-		{"gemini-3-pro-preview", "xhigh", ""},
-		{"gemini-3-flash-preview", "xhigh", ""},
-	}
-	for _, tc := range cases {
-		if got := googleThinkingLevel(tc.effort, tc.id); got != tc.want {
-			t.Errorf("googleThinkingLevel(%q,%q) = %q, want %q", tc.effort, tc.id, got, tc.want)
-		}
-	}
 }
 
 // --- F2: text-part presence semantics ---

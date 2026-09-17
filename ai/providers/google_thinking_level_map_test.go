@@ -1,7 +1,10 @@
 package providers
 
 import (
+	"encoding/json"
 	"errors"
+	"os"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -9,8 +12,9 @@ import (
 )
 
 // Ported from pi packages/ai/test/google-thinking-level-map.test.ts (upstream
-// af2c35223). The vertex half of that file has no Go counterpart — google-vertex
-// is on the deliberate non-port list.
+// af2c35223, 16235fd93). The file's google-vertex cases wait for that adapter:
+// google-vertex is Scope queue entry 5 (docs/UPSTREAM.md), and 16235fd93's
+// google-vertex.ts hunk is queued there with it.
 
 func googleLevelMapModel(id string, levels map[ai.ModelThinkingLevel]*string) *ai.Model {
 	return &ai.Model{
@@ -36,10 +40,18 @@ func levelMap(pairs map[ai.ModelThinkingLevel]string) map[ai.ModelThinkingLevel]
 	return out
 }
 
+// effortLevelMap is the test file's models.dev-effort map (#9455): off, minimal,
+// xhigh and max unsupported; low/medium/high native.
+func effortLevelMap() ai.ThinkingLevelMap {
+	return ai.ThinkingLevelMap{
+		"off": nil, "minimal": nil, "low": strPtr("low"), "medium": strPtr("medium"), "high": strPtr("high"),
+		"xhigh": nil, "max": nil,
+	}
+}
+
 func TestResolveGoogleThinkingLevel(t *testing.T) {
-	// Logical levels resolve to themselves; "off" is the one coercion.
-	defaults := map[ai.ModelThinkingLevel]string{
-		"off":     "high",
+	// Logical levels resolve to themselves.
+	defaults := map[ai.ThinkingLevel]string{
 		"minimal": "minimal",
 		"low":     "low",
 		"medium":  "medium",
@@ -63,7 +75,7 @@ func TestResolveGoogleThinkingLevel(t *testing.T) {
 		model := googleLevelMapModel("gemini-3.7-flash", levelMap(map[ai.ModelThinkingLevel]string{
 			"high": mapped, "xhigh": mapped, "max": mapped,
 		}))
-		for _, level := range []ai.ModelThinkingLevel{"high", "xhigh", "max"} {
+		for _, level := range []ai.ThinkingLevel{"high", "xhigh", "max"} {
 			got, err := resolveGoogleThinkingLevel(model, level)
 			if err != nil {
 				t.Fatalf("%s -> %s: unexpected error: %v", level, mapped, err)
@@ -81,7 +93,7 @@ func TestResolveGoogleThinkingLevelErrors(t *testing.T) {
 	cases := []struct {
 		name  string
 		model *ai.Model
-		level ai.ModelThinkingLevel
+		level ai.ThinkingLevel
 		want  string
 	}{
 		{
@@ -120,6 +132,7 @@ func TestResolveGoogleThinkingLevelErrors(t *testing.T) {
 
 // captureGoogleSimplePayload runs StreamSimpleGoogle and returns the request body
 // it would have sent, aborting the stream from OnPayload the way pi's test does.
+// An empty reasoning is pi's omitted `reasoning`.
 func captureGoogleSimplePayload(t *testing.T, model *ai.Model, reasoning ai.ThinkingLevel, budgets *ai.ThinkingBudgets) map[string]any {
 	t.Helper()
 	var captured any
@@ -131,10 +144,7 @@ func captureGoogleSimplePayload(t *testing.T, model *ai.Model, reasoning ai.Thin
 	}
 	msg := StreamSimpleGoogle(t.Context(), model, ai.NormalizeContext(ai.Context{
 		Messages: []ai.Message{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "Hello"}}}},
-	}),
-
-		opts).
-		Result()
+	}), opts).Result()
 	if !strings.Contains(msg.ErrorMessage, "payload captured") {
 		t.Fatalf("stream did not reach OnPayload: %q", msg.ErrorMessage)
 	}
@@ -156,6 +166,59 @@ func googleThinkingConfig(t *testing.T, body map[string]any) map[string]any {
 		t.Fatalf("no thinkingConfig: %v", gen)
 	}
 	return cfg
+}
+
+// assertGoogleThinkingConfig is pi's toEqual on thinkingConfig: every key, and
+// no others.
+func assertGoogleThinkingConfig(t *testing.T, got, want map[string]any) {
+	t.Helper()
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("thinkingConfig\n got %v\nwant %v", got, want)
+	}
+}
+
+// Regression test for https://github.com/earendil-works/pi/issues/9455
+func TestGoogleSimpleUsesLowestSupportedLevelWhenReasoningOmitted(t *testing.T) {
+	model := googleLevelMapModel("gemini-3.8-flash", effortLevelMap())
+	cfg := googleThinkingConfig(t, captureGoogleSimplePayload(t, model, "", nil))
+	assertGoogleThinkingConfig(t, cfg, map[string]any{"thinkingLevel": "LOW"})
+}
+
+func TestGoogleSimplePreservesNativeMediumForGemini31Pro(t *testing.T) {
+	model := googleLevelMapModel("gemini-3.1-pro-preview", effortLevelMap())
+	cfg := googleThinkingConfig(t, captureGoogleSimplePayload(t, model, ai.ThinkingMedium, nil))
+	assertGoogleThinkingConfig(t, cfg, map[string]any{"includeThoughts": true, "thinkingLevel": "MEDIUM"})
+}
+
+func TestGoogleSimpleDisablesGemini25WhenReasoningOmitted(t *testing.T) {
+	model := googleLevelMapModel("gemini-2.5-flash", ai.ThinkingLevelMap{})
+	cfg := googleThinkingConfig(t, captureGoogleSimplePayload(t, model, "", nil))
+	assertGoogleThinkingConfig(t, cfg, map[string]any{"thinkingBudget": float64(0)})
+}
+
+// pi's `!options?.reasoning` does not catch the string "off": an explicit or
+// clamped "off" returns the stream with thinking disabled rather than resolving
+// a level (#9455).
+func TestGoogleSimpleOffDisablesThinking(t *testing.T) {
+	cases := []struct {
+		name      string
+		model     *ai.Model
+		reasoning ai.ThinkingLevel
+	}{
+		{"explicit off, budget model", googleLevelMapModel("gemini-2.5-flash", nil), "off"},
+		{"explicit off, level model without a map", googleLevelMapModel("gemini-3-flash-preview", nil), "off"},
+		{
+			"high clamps to off",
+			googleLevelMapModel("gemini-3.8-flash", ai.ThinkingLevelMap{"minimal": nil, "low": nil, "medium": nil, "high": nil}),
+			ai.ThinkingHigh,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := googleThinkingConfig(t, captureGoogleSimplePayload(t, tc.model, tc.reasoning, nil))
+			assertGoogleThinkingConfig(t, cfg, map[string]any{"thinkingBudget": float64(0)})
+		})
+	}
 }
 
 func TestGoogleSimpleMapsExtendedLevels(t *testing.T) {
@@ -218,5 +281,99 @@ func TestGoogleSimpleUnresolvableLevelFailsStream(t *testing.T) {
 	}
 	if msg.Model != model.ID || msg.Provider != model.Provider || msg.Api != model.Api {
 		t.Fatalf("error message must identify the model: %+v", msg)
+	}
+}
+
+// googleThinkingCaptureFile holds pi's thinkingConfig for a table of models and
+// reasoning levels, captured under node at upstream 16235fd93 by
+// testdata/google-thinking/capture-thinking-config.mts. Each case carries its
+// own fixture, so both sides build the same model.
+const googleThinkingCaptureFile = "testdata/google-thinking/thinking-config-16235fd93.json"
+
+type googleThinkingCase struct {
+	Name               string              `json:"name"`
+	ID                 string              `json:"id"`
+	ThinkingLevelMap   ai.ThinkingLevelMap `json:"thinkingLevelMap"`
+	Reasoning          ai.ThinkingLevel    `json:"reasoning"`
+	ThinkingBudgets    *ai.ThinkingBudgets `json:"thinkingBudgets"`
+	ModelReasoning     *bool               `json:"modelReasoning"`
+	StrictRequiredTool bool                `json:"strictRequiredTool"`
+
+	// Exactly one outcome: the body's thinkingConfig (JSON null when it has
+	// none), a throw out of streamSimple, or a stream error before any request.
+	ThinkingConfig json.RawMessage `json:"thinkingConfig"`
+	Thrown         *string         `json:"thrown"`
+	Error          *string         `json:"error"`
+}
+
+func TestGoogleThinkingConfigMatchesPi(t *testing.T) {
+	data, err := os.ReadFile(googleThinkingCaptureFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capture struct {
+		Cases []googleThinkingCase `json:"cases"`
+	}
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatalf("%s: %v", googleThinkingCaptureFile, err)
+	}
+	if len(capture.Cases) == 0 {
+		t.Fatalf("%s has no cases; rerun capture-thinking-config.mts", googleThinkingCaptureFile)
+	}
+	for _, tc := range capture.Cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			model := googleLevelMapModel(tc.ID, tc.ThinkingLevelMap)
+			if tc.ModelReasoning != nil {
+				model.Reasoning = *tc.ModelReasoning
+			}
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("Hello", 0)}}
+			if tc.StrictRequiredTool {
+				tool := ai.Tool{Name: "strict_tool", Description: "strict tool", Parameters: ai.Object()}
+				tool.ConstrainedSampling = &ai.ConstrainedSamplingConfig{
+					Type: ai.ConstrainedSamplingJSONSchema, Strict: ai.ConstrainedSamplingRequire,
+				}
+				req.Tools = []ai.Tool{tool}
+			}
+			var captured map[string]any
+			opts := &ai.SimpleStreamOptions{Reasoning: tc.Reasoning, ThinkingBudgets: tc.ThinkingBudgets}
+			opts.APIKey = "test"
+			opts.OnPayload = func(payload any, _ *ai.Model) (any, error) {
+				captured, _ = payload.(map[string]any)
+				return nil, errors.New("payload captured")
+			}
+			msg := StreamSimpleGoogle(t.Context(), model, ai.NormalizeContext(req), opts).Result()
+
+			switch {
+			case tc.Thrown != nil || tc.Error != nil:
+				want := tc.Error
+				if tc.Thrown != nil {
+					want = tc.Thrown
+				}
+				if captured != nil {
+					t.Fatalf("pi fails before building the request (%q); Go built %v", *want, captured)
+				}
+				if msg.StopReason != ai.StopError || msg.ErrorMessage != *want {
+					t.Fatalf("want error %q, got %s %q", *want, msg.StopReason, msg.ErrorMessage)
+				}
+			case tc.ThinkingConfig != nil:
+				if captured == nil {
+					t.Fatalf("no request built: %s %q", msg.StopReason, msg.ErrorMessage)
+				}
+				gen, _ := roundtripBody(t, captured)["generationConfig"].(map[string]any)
+				var want any
+				if err := json.Unmarshal(tc.ThinkingConfig, &want); err != nil {
+					t.Fatal(err)
+				}
+				got, present := gen["thinkingConfig"]
+				if !present {
+					got = nil
+				}
+				if !reflect.DeepEqual(got, want) {
+					t.Fatalf("thinkingConfig\n got %v\nwant %v", got, want)
+				}
+			default:
+				t.Fatalf("%s: case %q records no outcome", googleThinkingCaptureFile, tc.Name)
+			}
+		})
 	}
 }

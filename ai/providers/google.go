@@ -41,7 +41,7 @@ type GoogleOptions struct {
 	ThinkingProvided bool
 	ThinkingEnabled  bool
 	ThinkingBudget   *int   // -1 dynamic, 0 disable
-	ThinkingLevel    string // Gemini 3: MINIMAL|LOW|MEDIUM|HIGH
+	ThinkingLevel    string // level models (Gemini 3, Gemma 4): MINIMAL|LOW|MEDIUM|HIGH
 	ToolChoice       string // auto|none|any
 }
 
@@ -86,19 +86,27 @@ func StreamSimpleGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptC
 		return StreamGoogle(ctx, model, req, g)
 	}
 	clamped := ai.ClampThinkingLevel(model, ai.ModelThinkingLevel(reasoning))
+	// The check above is pi's `!options?.reasoning`, which an explicit "off"
+	// passes; a level that is, or clamps to, "off" disables thinking here
+	// instead of reaching the level mapping (upstream 16235fd93, #9455).
+	if clamped == "off" {
+		g.ThinkingProvided = true
+		g.ThinkingEnabled = false
+		return StreamGoogle(ctx, model, req, g)
+	}
 	// pi resolves the clamped level through the model's thinkingLevelMap before
 	// picking a level or a budget (upstream af2c35223). A level that resolves to
 	// something outside Google's four standard levels is an error now, where it
 	// used to fall through both tables into thinkingConfig:{includeThoughts:true}
 	// with neither thinkingLevel nor thinkingBudget.
-	effort, err := resolveGoogleThinkingLevel(model, clamped)
+	effort, err := resolveGoogleThinkingLevel(model, ai.ThinkingLevel(clamped))
 	if err != nil {
 		return ai.ErrorStream(model, err)
 	}
 	g.ThinkingProvided = true
 	g.ThinkingEnabled = true
-	if isGemini3(model.ID) || isGemma4(model.ID) {
-		g.ThinkingLevel = googleThinkingLevel(effort, model.ID)
+	if usesGoogleThinkingLevel(model) {
+		g.ThinkingLevel = toGoogleThinkingLevel(effort)
 	} else {
 		var custom *ai.ThinkingBudgets
 		if opts != nil {
@@ -110,56 +118,77 @@ func StreamSimpleGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptC
 }
 
 var (
-	gemini3ProRe   = regexp.MustCompile(`gemini-3(?:\.\d+)?-pro`)
-	gemini3FlashRe = regexp.MustCompile(`gemini-3(?:\.\d+)?-flash`)
-	gemma4Re       = regexp.MustCompile(`gemma-?4`)
+	// Gemini 3 Pro/Flash ids with or without a minor version, such as
+	// gemini-3-flash-preview, gemini-3.1-pro-preview and gemini-3.8-flash.
+	gemini3LevelRe = regexp.MustCompile(`gemini-3(?:\.\d+)?-(?:pro|flash)`)
+	// Both hosted Gemma 4 naming forms: gemma-4-* and gemma4-*.
+	gemma4Re = regexp.MustCompile(`gemma-?4`)
 )
 
-func isGemini3Pro(id string) bool { return gemini3ProRe.MatchString(strings.ToLower(id)) }
-
-// isGemini3Flash matches the gemini-3.x flash family plus the rolling
-// gemini-flash-latest / gemini-flash-lite-latest aliases (pi b0c8f65f / #5761),
-// routing them to the MINIMAL disabled-thinking config.
-func isGemini3Flash(id string) bool {
-	lower := strings.ToLower(id)
-	return gemini3FlashRe.MatchString(lower) || lower == "gemini-flash-latest" || lower == "gemini-flash-lite-latest"
+// usesGoogleThinkingLevel reports whether the model uses Gemini's discrete
+// thinkingLevel control instead of the token-based thinkingBudget control (pi
+// google-shared.ts, upstream 16235fd93). It only selects the wire format: the
+// levels the model supports come from its thinkingLevelMap.
+func usesGoogleThinkingLevel(model *ai.Model) bool {
+	id := strings.ToLower(model.ID)
+	return gemini3LevelRe.MatchString(id) ||
+		id == "gemini-flash-latest" ||
+		id == "gemini-flash-lite-latest" ||
+		gemma4Re.MatchString(id)
 }
-func isGemini3(id string) bool {
-	return isGemini3Pro(id) || isGemini3Flash(id)
-}
-func isGemma4(id string) bool { return gemma4Re.MatchString(strings.ToLower(id)) }
 
-// getDisabledThinkingConfig mirrors pi google.ts getDisabledThinkingConfig.
-// Gemini 3 Pro cannot fully disable thinking (lowest is LOW); Gemini 3 Flash and
-// Gemma 4 use MINIMAL; everything else (Gemini 2.x) disables via thinkingBudget:0.
-func getDisabledThinkingConfig(modelID string) map[string]any {
-	switch {
-	case isGemini3Pro(modelID):
-		return map[string]any{"thinkingLevel": "LOW"}
-	case isGemini3Flash(modelID):
-		return map[string]any{"thinkingLevel": "MINIMAL"}
-	case isGemma4(modelID):
-		return map[string]any{"thinkingLevel": "MINIMAL"}
-	default:
-		return map[string]any{"thinkingBudget": 0}
+// toGoogleThinkingLevel maps a resolved level to Google's ThinkingLevel enum
+// value (pi toGoogleThinkingLevel). resolveGoogleThinkingLevel yields only the
+// four levels handled here; any other input returns "".
+func toGoogleThinkingLevel(level string) string {
+	switch level {
+	case "minimal":
+		return "MINIMAL"
+	case "low":
+		return "LOW"
+	case "medium":
+		return "MEDIUM"
+	case "high":
+		return "HIGH"
 	}
+	return ""
+}
+
+// getDisabledGoogleThinkingConfig ports pi getDisabledGoogleThinkingConfig
+// (google-shared.ts, upstream 16235fd93): the thinkingConfig sent when thinking
+// is disabled. Models on thinkingBudget, and level models whose
+// thinkingLevelMap supports "off", disable with a zero budget. A level model
+// that cannot turn thinking off (the catalog's Gemini 3 and Gemma 4 rows map
+// "off" to null) gets its lowest supported level, resolved through the map,
+// without includeThoughts so the hidden thinking stays invisible — and that
+// resolution fails the request the same way an unmappable enabled level does.
+func getDisabledGoogleThinkingConfig(model *ai.Model) (map[string]any, error) {
+	if !usesGoogleThinkingLevel(model) {
+		return map[string]any{"thinkingBudget": 0}, nil
+	}
+	fallback := ai.ClampThinkingLevel(model, "off")
+	if fallback == "off" {
+		return map[string]any{"thinkingBudget": 0}, nil
+	}
+	resolved, err := resolveGoogleThinkingLevel(model, ai.ThinkingLevel(fallback))
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"thinkingLevel": toGoogleThinkingLevel(resolved)}, nil
 }
 
 // resolveGoogleThinkingLevel ports pi resolveGoogleThinkingLevel (google-shared.ts,
-// upstream af2c35223): map a clamped pi level onto one of Google's four standard
-// levels. "off" becomes "high"; anything else consults the model's
-// thinkingLevelMap, which only participates when it holds a string for that level
-// — pi guards with `typeof mapped === "string"`, so an explicit null (the map's
+// upstream af2c35223, 16235fd93): map a supported pi level onto one of Google's
+// four standard levels. Callers handle "off" before resolving. The model's
+// thinkingLevelMap only participates when it holds a string for that level — pi
+// guards with `typeof mapped === "string"`, so an explicit null (the map's
 // "unsupported" marker) falls back to the level itself, exactly like an absent key.
 //
 // The error text is model-visible and byte-exact against pi's template, including
 // JS `String(mapped)` rendering an absent key as "undefined" and a null entry as
 // "null".
-func resolveGoogleThinkingLevel(model *ai.Model, level ai.ModelThinkingLevel) (string, error) {
-	if level == "off" {
-		return "high", nil
-	}
-	mapped, present := model.ThinkingLevelMap[level]
+func resolveGoogleThinkingLevel(model *ai.Model, level ai.ThinkingLevel) (string, error) {
+	mapped, present := model.ThinkingLevelMap[ai.ModelThinkingLevel(level)]
 	resolved := string(level)
 	if mapped != nil {
 		resolved = strings.ToLower(*mapped)
@@ -178,39 +207,6 @@ func resolveGoogleThinkingLevel(model *ai.Model, level ai.ModelThinkingLevel) (s
 	}
 	return "", fmt.Errorf("Unsupported Google thinking level mapping for %s/%s: %s -> %s",
 		model.Provider, model.ID, level, rendered)
-}
-
-// googleThinkingLevel mirrors pi getThinkingLevel (google.ts:430-461). The empty
-// string means "no thinkingLevel" (pi returns undefined for an unmatched effort
-// such as xhigh).
-func googleThinkingLevel(effort, id string) string {
-	if isGemini3Pro(id) {
-		switch effort {
-		case "minimal", "low":
-			return "LOW"
-		case "medium", "high":
-			return "HIGH"
-		}
-	}
-	if isGemma4(id) {
-		switch effort {
-		case "minimal", "low":
-			return "MINIMAL"
-		case "medium", "high":
-			return "HIGH"
-		}
-	}
-	switch effort {
-	case "minimal":
-		return "MINIMAL"
-	case "low":
-		return "LOW"
-	case "medium":
-		return "MEDIUM"
-	case "high":
-		return "HIGH"
-	}
-	return ""
 }
 
 // googleBudget mirrors pi getGoogleBudget (google.ts:463-503). A nil return means
@@ -677,19 +673,6 @@ func buildGoogleParams(model *ai.Model, req ai.TranscriptContext, opts *GoogleOp
 		gen["maxOutputTokens"] = *opts.MaxTokens
 	}
 
-	// thinkingConfig lives under generationConfig per the SDK.
-	if model.Reasoning && opts.ThinkingProvided && opts.ThinkingEnabled {
-		tc := map[string]any{"includeThoughts": true}
-		if opts.ThinkingLevel != "" {
-			tc["thinkingLevel"] = opts.ThinkingLevel
-		} else if opts.ThinkingBudget != nil {
-			tc["thinkingBudget"] = *opts.ThinkingBudget
-		}
-		gen["thinkingConfig"] = tc
-	} else if model.Reasoning && opts.ThinkingProvided && !opts.ThinkingEnabled {
-		gen["thinkingConfig"] = getDisabledThinkingConfig(model.ID)
-	}
-
 	// The genai SDK always sends generationConfig (unconditional setValueByPath),
 	// even as an empty {} when no generation params are set.
 	params["generationConfig"] = gen
@@ -721,6 +704,25 @@ func buildGoogleParams(model *ai.Model, req ai.TranscriptContext, opts *GoogleOp
 				"functionCallingConfig": map[string]any{"mode": mode},
 			}
 		}
+	}
+
+	// thinkingConfig lives under generationConfig per the SDK. pi sets it after
+	// building the tools, so a tool error wins over a disabled config whose
+	// fallback level cannot be resolved.
+	if model.Reasoning && opts.ThinkingProvided && opts.ThinkingEnabled {
+		tc := map[string]any{"includeThoughts": true}
+		if opts.ThinkingLevel != "" {
+			tc["thinkingLevel"] = opts.ThinkingLevel
+		} else if opts.ThinkingBudget != nil {
+			tc["thinkingBudget"] = *opts.ThinkingBudget
+		}
+		gen["thinkingConfig"] = tc
+	} else if model.Reasoning && opts.ThinkingProvided && !opts.ThinkingEnabled {
+		tc, err := getDisabledGoogleThinkingConfig(model)
+		if err != nil {
+			return nil, err
+		}
+		gen["thinkingConfig"] = tc
 	}
 	return params, nil
 }
