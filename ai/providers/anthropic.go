@@ -251,8 +251,9 @@ func anthropicFallbackModelCost(models []anthropicAllowedFallbackModel, provider
 // anthropicUsageModel is the model a response is COSTED against: the requested
 // model, or — when a server-side refusal fallback served it and the catalog
 // prices the serving model — that model repriced (pi's
-// `fallbackCost ? { ...model, id: output.model, cost: fallbackCost } : model`,
-// upstream ed867e909).
+// `fallbackCost ? { ...model, id: responseModel, cost: fallbackCost } : model`,
+// upstream ed867e909, 1283afd0d). servedID is message_start's model, which since
+// 1283afd0d is no longer the message's own Model.
 //
 // The swap needs a pricing to have been FOUND, not merely a different served
 // model: one the catalog does not list, or lists for another provider, keeps the
@@ -703,14 +704,21 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 					if list, ok := parseAnthropicInputTransformations(ev.Message.InputTransformations); ok {
 						inputTransformations = list
 					}
-					// pi eb1f87fa9: the served model replaces the requested one, so a
-					// server-side refusal fallback is visible on the message.
-					output.Model = ev.Message.Model
+					// pi 1283afd0d: the message keeps the REQUESTED id, so signed
+					// thinking still replays as this model's own when a relay relabels
+					// the model; a served model that differs (a server-side refusal
+					// fallback, or a relabel) is recorded beside it. A message_start
+					// naming the requested id leaves an earlier one standing, while
+					// one with no model clears it (pi assigns undefined).
+					served := ev.Message.Model
+					if served != model.ID {
+						output.ResponseModel = served
+					}
 					// pi ed867e909: a response a server-side refusal fallback served is
 					// billed at the SERVING model's rates, taken from the catalog.
 					// Assigned unconditionally, as pi's ternary is, so a second
 					// message_start reprices rather than sticking to the first.
-					usageModel = anthropicUsageModel(model, output.Model)
+					usageModel = anthropicUsageModel(model, served)
 					applyUsage(&output.Usage, ev.Message.Usage, true)
 					ai.CalculateCost(usageModel, &output.Usage)
 				}
@@ -1912,8 +1920,11 @@ type anthropicStreamEvent struct {
 	Index   int    `json:"index"`
 	Message *struct {
 		ID string `json:"id"`
-		// Model is the model Anthropic actually served, which differs from the
-		// requested one when a server-side refusal fallback fired.
+		// Model is the model the server reports serving. It differs from the
+		// requested one when a server-side refusal fallback fired or an
+		// Anthropic-compatible relay relabels the model. A differing value is
+		// recorded as the message's ResponseModel, never its Model (upstream
+		// 1283afd0d), and is what fallback pricing is looked up by.
 		Model string         `json:"model"`
 		Usage anthropicUsage `json:"usage"`
 		// InputTransformations lists what the server dropped or rewrote from the

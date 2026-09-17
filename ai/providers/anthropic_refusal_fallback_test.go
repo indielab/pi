@@ -251,8 +251,10 @@ func TestAnthropicNoFallbacksWithoutCatalogTargets(t *testing.T) {
 }
 
 // message_start reports the model Anthropic actually served, which is how a
-// server-side fallback becomes visible on the returned message. This is
-// independent of the catalog: pi assigns output.model unconditionally.
+// server-side fallback becomes visible on the returned message: as
+// responseModel, while model keeps the requested id so the message still replays
+// as the requested model's own (upstream 1283afd0d). This is independent of the
+// catalog: pi records any served model that differs, priced or not.
 func TestAnthropicCapturesServedModel(t *testing.T) {
 	stub := startAnthropicFallbackStub(t, anthropicSSEWithModel)
 	model := anthropicFallbackModel(stub.url, "")
@@ -261,8 +263,11 @@ func TestAnthropicCapturesServedModel(t *testing.T) {
 	opts.APIKey = "k"
 	msg := StreamSimpleAnthropic(context.Background(), model, ai.NormalizeContext(req), opts).Result()
 
-	if msg.Model != "claude-opus-4-8" {
-		t.Fatalf("want the served model claude-opus-4-8, got %q", msg.Model)
+	if msg.Model != model.ID {
+		t.Fatalf("want the requested model %s, got %q", model.ID, msg.Model)
+	}
+	if msg.ResponseModel != "claude-opus-4-8" {
+		t.Fatalf("want the served model claude-opus-4-8 as responseModel, got %q", msg.ResponseModel)
 	}
 }
 

@@ -843,12 +843,16 @@ func NewUserText(text string, timestamp int64) UserMessage {
 
 // AssistantMessage is a message authored by the model.
 type AssistantMessage struct {
-	Content       ContentList `json:"content"` // TextContent | ThinkingContent | ToolCall
-	Api           Api         `json:"api"`
-	Provider      ProviderId  `json:"provider"`
-	Model         string      `json:"model"`
-	ResponseModel string      `json:"responseModel,omitempty"`
-	ResponseID    string      `json:"responseId,omitempty"`
+	Content  ContentList `json:"content"` // TextContent | ThinkingContent | ToolCall
+	Api      Api         `json:"api"`
+	Provider ProviderId  `json:"provider"`
+	Model    string      `json:"model"`
+	// ResponseModel is the concrete model the provider reported when it differs
+	// from the requested Model, which stays the requested id.
+	ResponseModel string `json:"responseModel,omitempty"`
+	// ResponseID is the provider's own response/message identifier, when its API
+	// exposes one.
+	ResponseID string `json:"responseId,omitempty"`
 	// ProviderThinkingLevel is the exact provider-native effort level this
 	// response was produced under (pi `providerThinkingLevel?: string`, upstream
 	// 4e69b0c28). It is what lets a later turn replay the SAME effort for a
