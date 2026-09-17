@@ -115,7 +115,7 @@ disable-model-invocation: true
 }
 
 func TestSystemPromptIncludesContextAndSkills(t *testing.T) {
-	p := BuildSystemPrompt(BuildSystemPromptOptions{
+	p := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
 		SelectedTools: []string{"read", "bash"},
 		ToolSnippets:  ToolSnippets,
 		Cwd:           "/proj",
@@ -179,7 +179,7 @@ func TestSkillsPromptFollowsFileReadTool(t *testing.T) {
 		bashLine = "Use bash to load a skill's file when the task matches its description."
 	)
 	build := func(tools ...string) string {
-		return BuildSystemPrompt(BuildSystemPromptOptions{
+		return mustBuildSystemPrompt(t, BuildSystemPromptOptions{
 			SelectedTools: tools,
 			ToolSnippets:  ToolSnippets,
 			Cwd:           "/proj",
@@ -236,7 +236,7 @@ func TestContextFileStripsLeadingBOM(t *testing.T) {
 	files := LoadProjectContextFiles(cwd)
 	assertContents(t, contextContents(files), "follow the rules")
 
-	prompt := BuildSystemPrompt(BuildSystemPromptOptions{
+	prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
 		SelectedTools: []string{"read", "bash"},
 		ToolSnippets:  ToolSnippets,
 		Cwd:           cwd,
@@ -248,7 +248,7 @@ func TestContextFileStripsLeadingBOM(t *testing.T) {
 	// Byte-identical to the same file without a BOM.
 	plainCwd := t.TempDir()
 	writeFile(t, filepath.Join(plainCwd, "AGENTS.md"), "follow the rules")
-	plain := BuildSystemPrompt(BuildSystemPromptOptions{
+	plain := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
 		SelectedTools: []string{"read", "bash"},
 		ToolSnippets:  ToolSnippets,
 		Cwd:           plainCwd,

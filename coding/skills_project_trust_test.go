@@ -5,8 +5,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/sky-valley/pi/ai/providers"
 )
 
 // pi discovers <cwd>/.pi/skills only inside `if (projectTrusted)`
@@ -119,17 +117,14 @@ func TestNewSessionDefaultsToUntrustedProject(t *testing.T) {
 	writeSkill(t, filepath.Join(cwd, ".pi", "skills", "repo-skill"),
 		"---\nname: repo-skill\ndescription: "+marker+"\n---\n")
 
-	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
-	defer reg.Unregister()
-
 	// Zero value for TrustProject — the default every embedder gets.
-	untrusted := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: cwd})
-	if strings.Contains(untrusted.Agent.State().SystemPrompt, marker) {
+	untrusted := NewSession(SessionOptions{Cwd: cwd})
+	if strings.Contains(sessionSystemPrompt(t, untrusted), marker) {
 		t.Fatalf("NewSession must default to an untrusted project")
 	}
 
-	trusted := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: cwd, TrustProject: true})
-	if !strings.Contains(trusted.Agent.State().SystemPrompt, marker) {
+	trusted := NewSession(SessionOptions{Cwd: cwd, TrustProject: true})
+	if !strings.Contains(sessionSystemPrompt(t, trusted), marker) {
 		t.Fatalf("NewSession with TrustProject must load the project skill")
 	}
 }
@@ -148,7 +143,7 @@ func TestSystemPromptOmitsUntrustedProjectSkill(t *testing.T) {
 		"---\nname: repo-skill\ndescription: "+marker+"\n---\n")
 
 	build := func(trust bool) string {
-		return BuildSystemPrompt(BuildSystemPromptOptions{
+		return mustBuildSystemPrompt(t, BuildSystemPromptOptions{
 			SelectedTools: defaultActiveToolNames,
 			ToolSnippets:  ToolSnippets,
 			Cwd:           cwd,

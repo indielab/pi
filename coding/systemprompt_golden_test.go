@@ -1,283 +1,525 @@
 package coding
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
+	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/sky-valley/pi/ai"
 )
 
-// TestDefaultSystemPromptGolden pins the full assembled default system prompt
-// byte-for-byte, so any drift in the prompt text — including the "Pi
-// documentation" routing block and the per-tool promptGuidelines folded into
-// the Guidelines section — fails. The tool snippets and guidelines are
-// collected from the real resolved tool set, exactly like NewSession (pi
-// agent-session.ts _rebuildSystemPrompt). The expected text was verified
-// against pi's npm build by invoking the built buildSystemPrompt with the
-// build's own tool definitions (createAllToolDefinitions) for the default
-// [read, bash, edit, write] set.
-func TestDefaultSystemPromptGolden(t *testing.T) {
+// The system prompt goldens are pi's: testdata/systemprompt/capture.mts feeds
+// the Go port's inputs (ToolSnippets, the default tools' PromptGuidelines, and
+// fixture paths) to upstream buildSystemPrompt, buildSystemPromptSections and
+// diffSystemPromptSections at 9e05370b2 under node and records what they
+// return. npm 0.85.1 predates the sectioned prompt, so these are src captures:
+// re-verify them against the first build that ships it.
+
+const systemPromptCaptureFile = "testdata/systemprompt/systemprompt-9e05370b2.json"
+
+// sectionPairs is a JS object written as [name, value] pairs, so its key order
+// survives JSON.
+type sectionPairs []ai.SystemSection
+
+func (p *sectionPairs) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*p = nil
+		return nil
+	}
+	var raw [][]json.RawMessage
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	out := sectionPairs{}
+	for _, pair := range raw {
+		if len(pair) != 2 {
+			return fmt.Errorf("section pair %s: want [name, value]", pair)
+		}
+		var section ai.SystemSection
+		if err := json.Unmarshal(pair[0], &section.Name); err != nil {
+			return err
+		}
+		if err := json.Unmarshal(pair[1], &section.Value); err != nil {
+			return err
+		}
+		out = append(out, section)
+	}
+	*p = out
+	return nil
+}
+
+type promptCaptureInput struct {
+	CustomPrompt       string              `json:"customPrompt"`
+	ForceSystemPrompt  *string             `json:"forceSystemPrompt"`
+	SelectedTools      []string            `json:"selectedTools"`
+	ToolSnippets       map[string]string   `json:"toolSnippets"`
+	ToolGuidelines     map[string][]string `json:"toolGuidelines"`
+	PromptGuidelines   []string            `json:"promptGuidelines"`
+	AppendSystemPrompt string              `json:"appendSystemPrompt"`
+	Sections           sectionPairs        `json:"sections"`
+	Cwd                string              `json:"cwd"`
+	ContextFiles       []struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+	} `json:"contextFiles"`
+	Skills []struct {
+		Name                   string `json:"name"`
+		Description            string `json:"description"`
+		FilePath               string `json:"filePath"`
+		DisableModelInvocation bool   `json:"disableModelInvocation"`
+	} `json:"skills"`
+}
+
+// options is the Go call the capture made in TS, with pi's documentation paths
+// pinned to the capture's PI_PACKAGE_DIR.
+func (in promptCaptureInput) options() BuildSystemPromptOptions {
+	opts := BuildSystemPromptOptions{
+		CustomPrompt:       in.CustomPrompt,
+		ForceSystemPrompt:  in.ForceSystemPrompt,
+		SelectedTools:      in.SelectedTools,
+		ToolSnippets:       in.ToolSnippets,
+		ToolGuidelines:     in.ToolGuidelines,
+		PromptGuidelines:   in.PromptGuidelines,
+		AppendSystemPrompt: in.AppendSystemPrompt,
+		Cwd:                in.Cwd,
+		ReadmePath:         "/pkg/README.md",
+		DocsPath:           "/pkg/docs",
+		ExamplesPath:       "/pkg/examples",
+	}
+	if in.Sections != nil {
+		opts.Sections = ai.SystemSections(in.Sections)
+	}
+	for _, file := range in.ContextFiles {
+		opts.ContextFiles = append(opts.ContextFiles, ContextFile{Path: file.Path, Content: file.Content})
+	}
+	for _, skill := range in.Skills {
+		opts.Skills = append(opts.Skills, Skill{
+			Name: skill.Name, Description: skill.Description, FilePath: skill.FilePath,
+			DisableModelInvocation: skill.DisableModelInvocation,
+		})
+	}
+	return opts
+}
+
+type promptCaptureBuild struct {
+	Name     string             `json:"name"`
+	Input    promptCaptureInput `json:"input"`
+	Prompt   string             `json:"prompt"`
+	Sections sectionPairs       `json:"sections"`
+	Error    string             `json:"error"`
+}
+
+type promptCaptureDiff struct {
+	Name     string       `json:"name"`
+	Previous sectionPairs `json:"previous"`
+	Current  sectionPairs `json:"current"`
+	Patch    sectionPairs `json:"patch"`
+}
+
+type promptCapture struct {
+	Sha string `json:"sha"`
+	// ObjectPrototypeNames are Object.getOwnPropertyNames(Object.prototype)
+	// under the capturing node.
+	ObjectPrototypeNames []string             `json:"objectPrototypeNames"`
+	Builds               []promptCaptureBuild `json:"builds"`
+	Diffs                []promptCaptureDiff  `json:"diffs"`
+}
+
+func loadPromptCapture(t *testing.T) promptCapture {
+	t.Helper()
+	data, err := os.ReadFile(systemPromptCaptureFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capture promptCapture
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatalf("%s: %v", systemPromptCaptureFile, err)
+	}
+	if len(capture.Builds) == 0 || len(capture.Diffs) == 0 {
+		t.Fatalf("%s holds no cases", systemPromptCaptureFile)
+	}
+	return capture
+}
+
+func captureBuild(t *testing.T, name string) promptCaptureBuild {
+	t.Helper()
+	for _, build := range loadPromptCapture(t).Builds {
+		if build.Name == name {
+			return build
+		}
+	}
+	t.Fatalf("%s has no build case %q", systemPromptCaptureFile, name)
+	return promptCaptureBuild{}
+}
+
+func sectionEntries(sections ai.SystemSections) []ai.SystemSection {
+	if sections == nil {
+		return nil
+	}
+	return sections.Entries()
+}
+
+func formatSections(sections []ai.SystemSection) string {
+	if sections == nil {
+		return "<nil>"
+	}
+	var b strings.Builder
+	for _, section := range sections {
+		if section.Value == nil {
+			fmt.Fprintf(&b, "%q: null\n", section.Name)
+		} else {
+			fmt.Fprintf(&b, "%q: %q\n", section.Name, *section.Value)
+		}
+	}
+	return b.String()
+}
+
+// Every build case: the rendered prompt and the ordered sections are pi's
+// bytes, and an invalid custom section name fails as pi throws.
+func TestSystemPromptMatchesPiCapture(t *testing.T) {
+	for _, build := range loadPromptCapture(t).Builds {
+		t.Run(build.Name, func(t *testing.T) {
+			prompt, promptErr := BuildSystemPrompt(build.Input.options())
+			sections, sectionsErr := BuildSystemPromptSections(build.Input.options())
+			if build.Error != "" {
+				for _, err := range []error{promptErr, sectionsErr} {
+					if err == nil || !strings.HasPrefix(err.Error(), build.Error+" (") {
+						t.Fatalf("error = %v, want pi's %q followed by a resolution hint", err, build.Error)
+					}
+				}
+				return
+			}
+			if promptErr != nil || sectionsErr != nil {
+				t.Fatalf("unexpected errors: %v / %v", promptErr, sectionsErr)
+			}
+			if prompt != build.Prompt {
+				t.Fatalf("prompt drift from pi.\n--- got ---\n%s\n--- pi ---\n%s", prompt, build.Prompt)
+			}
+			if got, want := sectionEntries(sections), []ai.SystemSection(build.Sections); !reflect.DeepEqual(got, want) {
+				t.Fatalf("sections drift from pi.\n--- got ---\n%s--- pi ---\n%s", formatSections(got), formatSections(want))
+			}
+		})
+	}
+}
+
+// The capture's tool inputs are the Go port's own: NewSession passes
+// ToolSnippets and the resolved tools' guidelines keyed by name, exactly as the
+// default-tools case does.
+func TestSystemPromptCaptureInputsAreTheGoValues(t *testing.T) {
 	tools := resolveTools("/proj", SessionOptions{}, nil)
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Name)
 	}
-	got := BuildSystemPrompt(BuildSystemPromptOptions{
-		SelectedTools:    names,
-		ToolSnippets:     ToolSnippets,
-		PromptGuidelines: collectPromptGuidelines(tools),
+	build := captureBuild(t, "default-tools")
+	if !reflect.DeepEqual(build.Input.SelectedTools, names) {
+		t.Fatalf("selectedTools = %v, NewSession resolves %v", build.Input.SelectedTools, names)
+	}
+	if !reflect.DeepEqual(build.Input.ToolSnippets, ToolSnippets) {
+		t.Fatalf("capture toolSnippets = %v, want ToolSnippets %v", build.Input.ToolSnippets, ToolSnippets)
+	}
+	if got := toolPromptGuidelines(tools); !reflect.DeepEqual(build.Input.ToolGuidelines, got) {
+		t.Fatalf("capture toolGuidelines = %v, NewSession collects %v", build.Input.ToolGuidelines, got)
+	}
+}
+
+// Every diff case, including JS object semantics: a patch follows JS key order
+// (integer-like names first), and a name Object.prototype carries is never
+// reported removed because the inherited lookup is not undefined.
+func TestDiffSystemPromptSectionsMatchesPiCapture(t *testing.T) {
+	for _, diff := range loadPromptCapture(t).Diffs {
+		t.Run(diff.Name, func(t *testing.T) {
+			patch, changed := DiffSystemPromptSections(ai.SystemSections(diff.Previous), ai.SystemSections(diff.Current))
+			if changed != (diff.Patch != nil) {
+				t.Fatalf("changed = %v, pi patch = %s", changed, formatSections(diff.Patch))
+			}
+			if got, want := sectionEntries(patch), []ai.SystemSection(diff.Patch); !reflect.DeepEqual(got, want) {
+				t.Fatalf("patch drift from pi.\n--- got ---\n%s--- pi ---\n%s", formatSections(got), formatSections(want))
+			}
+		})
+	}
+}
+
+// objectPrototypeKeys is exactly the set of names node reports on
+// Object.prototype: a missing name would let a removed section of that name be
+// patched away where pi keeps it, and an extra one would keep a section pi
+// removes.
+func TestObjectPrototypeKeysMatchNode(t *testing.T) {
+	names := loadPromptCapture(t).ObjectPrototypeNames
+	if len(names) == 0 {
+		t.Fatalf("%s records no Object.prototype names", systemPromptCaptureFile)
+	}
+	want := make(map[string]bool, len(names))
+	for _, name := range names {
+		want[name] = true
+	}
+	if !reflect.DeepEqual(objectPrototypeKeys, want) {
+		t.Fatalf("objectPrototypeKeys = %v, node's Object.prototype names %v", objectPrototypeKeys, names)
+	}
+}
+
+func mustBuildSystemPrompt(t *testing.T, opts BuildSystemPromptOptions) string {
+	t.Helper()
+	prompt, err := BuildSystemPrompt(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prompt
+}
+
+func mustBuildSystemPromptSections(t *testing.T, opts BuildSystemPromptOptions) ai.SystemSections {
+	t.Helper()
+	sections, err := BuildSystemPromptSections(opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return sections
+}
+
+func sectionsOf(pairs ...string) ai.SystemSections {
+	sections := ai.SystemSections{}
+	for i := 0; i+1 < len(pairs); i += 2 {
+		value := pairs[i+1]
+		sections.Set(pairs[i], &value)
+	}
+	return sections
+}
+
+// system-prompt.test.ts at 9e05370b2, cases the capture does not already cover
+// byte for byte.
+func TestBuildSystemPromptUpstreamCases(t *testing.T) {
+	cwd, _ := os.Getwd()
+
+	t.Run("shows (none) for empty tools list", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{SelectedTools: []string{}, Cwd: cwd})
+		if !strings.Contains(prompt, "<tools>\n(none)\n") {
+			t.Fatalf("missing empty tools section:\n%s", prompt)
+		}
+	})
+	t.Run("shows file paths guideline even with no tools", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{SelectedTools: []string{}, Cwd: cwd})
+		if !strings.Contains(prompt, "Show file paths clearly") {
+			t.Fatalf("missing file paths guideline:\n%s", prompt)
+		}
+	})
+	t.Run("keeps the default and custom prompt prefixes exact", func(t *testing.T) {
+		defaultPrompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{Cwd: "/tmp", SelectedTools: []string{}})
+		customPrompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{CustomPrompt: "You are Exact.", Cwd: "/tmp", SelectedTools: []string{}})
+		if !strings.HasPrefix(defaultPrompt, "You are an expert coding assistant operating inside pi") {
+			t.Fatalf("default prefix:\n%s", defaultPrompt)
+		}
+		if !strings.HasPrefix(customPrompt, "You are Exact.\n\n<cwd>") {
+			t.Fatalf("custom prefix:\n%s", customPrompt)
+		}
+	})
+	t.Run("preserves an exact forced prompt without sections", func(t *testing.T) {
+		force := "exact"
+		if prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{ForceSystemPrompt: &force, Cwd: "/tmp"}); prompt != "exact" {
+			t.Fatalf("forced prompt = %q", prompt)
+		}
+	})
+	t.Run("maps appended instructions and project context to stable sections", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
+			CustomPrompt:       "You are Exact.",
+			AppendSystemPrompt: "Additional instructions.",
+			ContextFiles:       []ContextFile{{Path: "/tmp/AGENTS.md", Content: "Project instructions."}},
+			SelectedTools:      []string{},
+			Cwd:                "/tmp",
+		})
+		for _, want := range []string{
+			"<addendum>\nAdditional instructions.\n</addendum>",
+			"<project_context>\nProject-specific instructions and guidelines:\n\n<project_instructions path=\"/tmp/AGENTS.md\">",
+			"<cwd>\n/tmp\n</cwd>",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("missing %q:\n%s", want, prompt)
+			}
+		}
+	})
+	t.Run("includes all default tools when snippets are provided", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
+			ToolSnippets: map[string]string{
+				"read": "Read file contents", "bash": "Execute bash commands",
+				"edit": "Make surgical edits", "write": "Create or overwrite files",
+			},
+			Cwd: cwd,
+		})
+		for _, want := range []string{"- read:", "- bash:", "- edit:", "- write:"} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("missing %q:\n%s", want, prompt)
+			}
+		}
+	})
+	for _, tc := range []struct {
+		tools []string
+		want  string
+	}{
+		{[]string{"powershell"}, "Use PowerShell for file operations"},
+		{[]string{"bash", "powershell"}, "Use bash or PowerShell for file operations"},
+	} {
+		t.Run(fmt.Sprintf("uses shell-specific guidance for %v", tc.tools), func(t *testing.T) {
+			if prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{SelectedTools: tc.tools, Cwd: cwd}); !strings.Contains(prompt, tc.want) {
+				t.Fatalf("missing %q:\n%s", tc.want, prompt)
+			}
+		})
+	}
+	t.Run("instructs models to resolve pi docs and examples under absolute base paths", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{Cwd: cwd})
+		for _, want := range []string{
+			"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
+			"environment variables (docs/environment-variables.md)",
+		} {
+			if !strings.Contains(prompt, want) {
+				t.Fatalf("missing %q:\n%s", want, prompt)
+			}
+		}
+	})
+	t.Run("includes custom tools in available tools section when promptSnippet is provided", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
+			SelectedTools: []string{"read", "dynamic_tool"},
+			ToolSnippets:  map[string]string{"dynamic_tool": "Run dynamic test behavior"},
+			Cwd:           cwd,
+		})
+		if !strings.Contains(prompt, "- dynamic_tool: Run dynamic test behavior") {
+			t.Fatalf("missing dynamic tool:\n%s", prompt)
+		}
+	})
+	t.Run("omits custom tools from available tools section when promptSnippet is not provided", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{SelectedTools: []string{"read", "dynamic_tool"}, Cwd: cwd})
+		if strings.Contains(prompt, "dynamic_tool") {
+			t.Fatalf("dynamic_tool must be omitted:\n%s", prompt)
+		}
+	})
+	t.Run("appends promptGuidelines to default guidelines", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
+			SelectedTools:    []string{"read", "dynamic_tool"},
+			PromptGuidelines: []string{"Use dynamic_tool for project summaries."},
+			Cwd:              cwd,
+		})
+		if !strings.Contains(prompt, "- Use dynamic_tool for project summaries.") {
+			t.Fatalf("missing guideline:\n%s", prompt)
+		}
+	})
+	t.Run("deduplicates and trims promptGuidelines", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
+			SelectedTools:    []string{"read", "dynamic_tool"},
+			PromptGuidelines: []string{"Use dynamic_tool for summaries.", "  Use dynamic_tool for summaries.  ", "   "},
+			Cwd:              cwd,
+		})
+		if n := strings.Count(prompt, "- Use dynamic_tool for summaries."); n != 1 {
+			t.Fatalf("guideline appears %d times:\n%s", n, prompt)
+		}
+	})
+	skill := Skill{Name: "test-skill", Description: "A test skill.", FilePath: "/skills/test-skill/SKILL.md", BaseDir: "/skills/test-skill"}
+	for _, tc := range []struct{ name, customPrompt string }{
+		{"default prompt", ""},
+		{"custom prompt", "Custom system prompt"},
+	} {
+		t.Run("includes skills with only bash in the "+tc.name, func(t *testing.T) {
+			prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
+				CustomPrompt:  tc.customPrompt,
+				SelectedTools: []string{"bash"},
+				Skills:        []Skill{skill},
+				Cwd:           cwd,
+			})
+			for _, want := range []string{"<skills>", "<available_skills>", "<name>test-skill</name>", "Use bash to load a skill's file"} {
+				if !strings.Contains(prompt, want) {
+					t.Fatalf("missing %q:\n%s", want, prompt)
+				}
+			}
+		})
+	}
+	t.Run("omits skills without read or bash", func(t *testing.T) {
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{SelectedTools: []string{"write"}, Skills: []Skill{skill}, Cwd: cwd})
+		if strings.Contains(prompt, "<available_skills>") {
+			t.Fatalf("skills must be omitted:\n%s", prompt)
+		}
+	})
+}
+
+// system-prompt-updates.test.ts at 9e05370b2, its system-prompt.ts cases.
+func TestSystemPromptSectionUpdatesUpstreamCases(t *testing.T) {
+	t.Run("diffs sections into a patch", func(t *testing.T) {
+		previous := mustBuildSystemPromptSections(t, BuildSystemPromptOptions{Cwd: "/tmp", Sections: sectionsOf("plan_mode", "Plan only.")})
+		current := mustBuildSystemPromptSections(t, BuildSystemPromptOptions{Cwd: "/tmp", Sections: sectionsOf("plan_mode", "Implementation allowed.")})
+
+		patch, changed := DiffSystemPromptSections(previous, current)
+		if want := sectionsOf("plan_mode", "<plan_mode>\nImplementation allowed.\n</plan_mode>"); !changed || !reflect.DeepEqual(patch.Entries(), want.Entries()) {
+			t.Fatalf("patch = %s changed = %v", formatSections(sectionEntries(patch)), changed)
+		}
+		if patch, changed := DiffSystemPromptSections(previous, previous); changed || patch != nil {
+			t.Fatalf("an unchanged prompt must diff to nothing, got %s", formatSections(sectionEntries(patch)))
+		}
+		patch, changed = DiffSystemPromptSections(previous, mustBuildSystemPromptSections(t, BuildSystemPromptOptions{Cwd: "/tmp"}))
+		if want := (ai.SystemSections{{Name: "plan_mode"}}); !changed || !reflect.DeepEqual(patch.Entries(), want.Entries()) {
+			t.Fatalf("removal patch = %s changed = %v", formatSections(sectionEntries(patch)), changed)
+		}
+	})
+	t.Run("keeps the preamble untagged and replaces it like any section", func(t *testing.T) {
+		previous := mustBuildSystemPromptSections(t, BuildSystemPromptOptions{CustomPrompt: "You are A.", Cwd: "/tmp"})
+		current := mustBuildSystemPromptSections(t, BuildSystemPromptOptions{CustomPrompt: "You are B.", Cwd: "/tmp"})
+		if value, ok := previous.Get("preamble"); !ok || value == nil || *value != "You are A." {
+			t.Fatalf("preamble = %v", formatSections(sectionEntries(previous)))
+		}
+		patch, changed := DiffSystemPromptSections(previous, current)
+		if want := sectionsOf("preamble", "You are B."); !changed || !reflect.DeepEqual(patch.Entries(), want.Entries()) {
+			t.Fatalf("patch = %s", formatSections(sectionEntries(patch)))
+		}
+
+		force := "Exact prompt."
+		override := mustBuildSystemPromptSections(t, BuildSystemPromptOptions{ForceSystemPrompt: &force, Cwd: "/tmp"})
+		if want := sectionsOf("preamble", "Exact prompt."); !reflect.DeepEqual(override.Entries(), want.Entries()) {
+			t.Fatalf("override = %s", formatSections(sectionEntries(override)))
+		}
+		patch, changed = DiffSystemPromptSections(current, override)
+		want := sectionsOf("preamble", "Exact prompt.")
+		want.Set("cwd", nil)
+		if !changed || !reflect.DeepEqual(patch.Entries(), want.Entries()) {
+			t.Fatalf("override patch = %s", formatSections(sectionEntries(patch)))
+		}
+		if _, err := BuildSystemPromptSections(BuildSystemPromptOptions{Cwd: "/tmp", Sections: sectionsOf("preamble", "x")}); err == nil ||
+			!strings.Contains(err.Error(), "Invalid system prompt section name") {
+			t.Fatalf("a custom preamble section must be rejected, got %v", err)
+		}
+	})
+}
+
+// Normalizing copies every collection, so a caller mutating its inputs
+// afterwards cannot reach the normalized options (pi returns fresh arrays and
+// objects), and an absent tool selection becomes pi's default.
+func TestNormalizeBuildSystemPromptOptionsCopies(t *testing.T) {
+	in := BuildSystemPromptOptions{
+		ToolSnippets:     map[string]string{"read": "r"},
+		ToolGuidelines:   map[string][]string{"read": {"g"}},
+		PromptGuidelines: []string{"p"},
+		Sections:         sectionsOf("a", "1"),
+		ContextFiles:     []ContextFile{{Path: "/a", Content: "c"}},
+		Skills:           []Skill{{Name: "s"}},
 		Cwd:              "/proj",
-		ReadmePath:       "/pkg/README.md",
-		DocsPath:         "/pkg/docs",
-		ExamplesPath:     "/pkg/examples",
-	})
-
-	want := `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
-
-Available tools:
-- read: Read file contents
-- bash: Execute bash commands (ls, grep, find, etc.)
-- edit: Make precise file edits with exact text replacement, including multiple disjoint edits in one call
-- write: Create or overwrite files
-
-In addition to the tools above, you may have access to other custom tools depending on the project.
-
-Guidelines:
-- Use bash for file operations like ls, rg, find
-- Use read to examine files instead of cat or sed.
-- You can inspect PI_* environment variables for current model and session details.
-- Use edit for precise changes (edits[].oldText must match exactly)
-- When changing multiple separate locations in one file, use one edit call with multiple entries in edits[] instead of multiple edit calls
-- Each edits[].oldText is matched against the original file, not after earlier edits are applied. Do not emit overlapping or nested edits. Merge nearby changes into one edit.
-- Keep edits[].oldText as small as possible while still being unique in the file. Do not pad with large unchanged regions.
-- Use write only for new files or complete rewrites.
-- Be concise in your responses
-- Show file paths clearly when working with files
-
-Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: /pkg/README.md
-- Additional docs: /pkg/docs
-- Examples: /pkg/examples (extensions, custom tools, SDK)
-- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
-- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)
-Current working directory: /proj`
-
-	if got != want {
-		t.Fatalf("default system prompt drift.\n--- got ---\n%s\n--- want ---\n%s", got, want)
 	}
-}
-
-// TestCustomSystemPromptAssemblyGolden pins pi's custom-prompt assembly order
-// (system-prompt.ts:53-80): custom prompt, append section, project context,
-// skills, then date and cwd — and asserts the docs block and Guidelines
-// section are NOT included for custom prompts.
-func TestCustomSystemPromptAssemblyGolden(t *testing.T) {
-	got := BuildSystemPrompt(BuildSystemPromptOptions{
-		CustomPrompt:       "You are a custom agent.",
-		AppendSystemPrompt: "Appended instructions.",
-		SelectedTools:      []string{"read", "bash"},
-		ToolSnippets:       ToolSnippets,
-		PromptGuidelines:   []string{"Use read to examine files instead of cat or sed."},
-		Cwd:                "/proj",
-		ContextFiles:       []ContextFile{{Path: "/proj/AGENTS.md", Content: "follow the rules"}},
-		Skills:             []Skill{{Name: "demo", Description: "d", FilePath: "/proj/.pi/skills/demo/SKILL.md"}},
-	})
-
-	want := `You are a custom agent.
-
-Appended instructions.
-
-<project_context>
-
-Project-specific instructions and guidelines:
-
-<project_instructions path="/proj/AGENTS.md">
-follow the rules
-</project_instructions>
-
-</project_context>
-
-
-The following skills provide specialized instructions for specific tasks.
-Use the read tool to load a skill's file when the task matches its description.
-When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
-
-<available_skills>
-  <skill>
-    <name>demo</name>
-    <description>d</description>
-    <location>/proj/.pi/skills/demo/SKILL.md</location>
-  </skill>
-</available_skills>
-Current working directory: /proj
-`
-
-	if got != want {
-		t.Fatalf("custom system prompt assembly drift.\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	out := NormalizeBuildSystemPromptOptions(in)
+	if !reflect.DeepEqual(out.SelectedTools, []string{"read", "bash", "edit", "write"}) {
+		t.Fatalf("default selectedTools = %v", out.SelectedTools)
 	}
-}
-
-// TestBashOnlySkillsPromptGolden pins upstream 1d6dbf9e3 byte-for-byte in both
-// assembly branches: with bash active and read absent the skills block stays in
-// the prompt and its second line names bash instead of the read tool.
-//
-// The expected bytes were originally captured by running upstream's own
-// buildSystemPrompt at 64eeb82a4 under Node type-stripping, because the change
-// was unreleased at the time. It SHIPPED in pi 0.85.1, and the golden has since
-// been re-verified against the published build — `formatSkillsForPrompt` in
-// node_modules/@earendil-works/pi-coding-agent/dist/core/skills.js emits these
-// exact lines in this order for fileReadTool != "read". Only the three pi
-// documentation paths differ, because the Go call injects fixed paths where pi
-// resolved its own install.
-func TestBashOnlySkillsPromptGolden(t *testing.T) {
-	skills := []Skill{{Name: "demo", Description: "d", FilePath: "/proj/.pi/skills/demo/SKILL.md"}}
-
-	custom := BuildSystemPrompt(BuildSystemPromptOptions{
-		CustomPrompt:       "You are a custom agent.",
-		AppendSystemPrompt: "Appended instructions.",
-		SelectedTools:      []string{"bash"},
-		ToolSnippets:       ToolSnippets,
-		Cwd:                "/proj",
-		ContextFiles:       []ContextFile{{Path: "/proj/AGENTS.md", Content: "follow the rules"}},
-		Skills:             skills,
-	})
-
-	wantCustom := `You are a custom agent.
-
-Appended instructions.
-
-<project_context>
-
-Project-specific instructions and guidelines:
-
-<project_instructions path="/proj/AGENTS.md">
-follow the rules
-</project_instructions>
-
-</project_context>
-
-
-The following skills provide specialized instructions for specific tasks.
-Use bash to load a skill's file when the task matches its description.
-When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
-
-<available_skills>
-  <skill>
-    <name>demo</name>
-    <description>d</description>
-    <location>/proj/.pi/skills/demo/SKILL.md</location>
-  </skill>
-</available_skills>
-Current working directory: /proj
-`
-
-	if custom != wantCustom {
-		t.Fatalf("bash-only custom prompt drift.\n--- got ---\n%s\n--- want ---\n%s", custom, wantCustom)
+	in.ToolSnippets["read"] = "changed"
+	in.ToolGuidelines["read"][0] = "changed"
+	in.PromptGuidelines[0] = "changed"
+	*in.Sections[0].Value = "changed"
+	in.ContextFiles[0].Content = "changed"
+	in.Skills[0].Name = "changed"
+	if out.ToolSnippets["read"] != "r" || out.ToolGuidelines["read"][0] != "g" || out.PromptGuidelines[0] != "p" ||
+		*out.Sections[0].Value != "1" || out.ContextFiles[0].Content != "c" || out.Skills[0].Name != "s" {
+		t.Fatalf("normalized options alias the input: %+v", out)
 	}
 
-	def := BuildSystemPrompt(BuildSystemPromptOptions{
-		SelectedTools: []string{"bash"},
-		ToolSnippets:  ToolSnippets,
-		Cwd:           "/proj",
-		ReadmePath:    "/pkg/README.md",
-		DocsPath:      "/pkg/docs",
-		ExamplesPath:  "/pkg/examples",
-		// Append, context files AND skills together, so the golden pins pi's
-		// append-then-project-context-then-skills order in this branch too
-		// (system-prompt.ts:146-163), not just the presence of each.
-		AppendSystemPrompt: "Appended instructions.",
-		ContextFiles:       []ContextFile{{Path: "/proj/AGENTS.md", Content: "follow the rules"}},
-		Skills:             skills,
-	})
-
-	wantDefault := `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
-
-Available tools:
-- bash: Execute bash commands (ls, grep, find, etc.)
-
-In addition to the tools above, you may have access to other custom tools depending on the project.
-
-Guidelines:
-- Use bash for file operations like ls, rg, find
-- Be concise in your responses
-- Show file paths clearly when working with files
-
-Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: /pkg/README.md
-- Additional docs: /pkg/docs
-- Examples: /pkg/examples (extensions, custom tools, SDK)
-- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
-- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)
-
-Appended instructions.
-
-<project_context>
-
-Project-specific instructions and guidelines:
-
-<project_instructions path="/proj/AGENTS.md">
-follow the rules
-</project_instructions>
-
-</project_context>
-
-
-The following skills provide specialized instructions for specific tasks.
-Use bash to load a skill's file when the task matches its description.
-When a skill file references a relative path, resolve it against the skill directory (parent of SKILL.md / dirname of the path) and use that absolute path in tool commands.
-
-<available_skills>
-  <skill>
-    <name>demo</name>
-    <description>d</description>
-    <location>/proj/.pi/skills/demo/SKILL.md</location>
-  </skill>
-</available_skills>
-Current working directory: /proj`
-
-	if def != wantDefault {
-		t.Fatalf("bash-only default prompt drift.\n--- got ---\n%s\n--- want ---\n%s", def, wantDefault)
+	empty := NormalizeBuildSystemPromptOptions(BuildSystemPromptOptions{SelectedTools: []string{}})
+	if empty.SelectedTools == nil || len(empty.SelectedTools) != 0 {
+		t.Fatalf("an explicit empty selection must stay empty, got %v", empty.SelectedTools)
 	}
-}
-
-// An EMPTY (non-nil) tool set is not the default set: pi's `selectedTools ||
-// [...]` keeps the empty array, so no tool snippet, no bash guideline, and —
-// after 1d6dbf9e3 — no skills block either, since neither read nor bash is
-// active. Captured from upstream buildSystemPrompt at 64eeb82a4.
-func TestEmptyToolSetSystemPromptGolden(t *testing.T) {
-	got := BuildSystemPrompt(BuildSystemPromptOptions{
-		SelectedTools: []string{},
-		ToolSnippets:  ToolSnippets,
-		Cwd:           "/proj",
-		ReadmePath:    "/pkg/README.md",
-		DocsPath:      "/pkg/docs",
-		ExamplesPath:  "/pkg/examples",
-		Skills:        []Skill{{Name: "demo", Description: "d", FilePath: "/proj/.pi/skills/demo/SKILL.md"}},
-	})
-
-	want := `You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
-
-Available tools:
-(none)
-
-In addition to the tools above, you may have access to other custom tools depending on the project.
-
-Guidelines:
-- Be concise in your responses
-- Show file paths clearly when working with files
-
-Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: /pkg/README.md
-- Additional docs: /pkg/docs
-- Examples: /pkg/examples (extensions, custom tools, SDK)
-- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
-- When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
-- When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)
-Current working directory: /proj`
-
-	if got != want {
-		t.Fatalf("empty tool set prompt drift.\n--- got ---\n%s\n--- want ---\n%s", got, want)
+	if empty.ToolSnippets == nil || empty.ToolGuidelines == nil || empty.Sections == nil {
+		t.Fatalf("normalized collections must be non-nil: %+v", empty)
 	}
 }

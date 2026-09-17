@@ -5,19 +5,26 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/sky-valley/pi/ai/providers"
 )
 
-// TestNewSessionCollectsPromptGuidelines locks NewSession → BuildSystemPrompt
-// wiring for I1: the resolved tools' PromptGuidelines must appear in the
-// Guidelines section of the agent's system prompt, in tool order.
+// sessionSystemPrompt returns the session's effective system prompt, the one
+// its first prompt declares (TestSessionSystemPromptBeforeTheFirstRun).
+func sessionSystemPrompt(t *testing.T, s *Session) string {
+	t.Helper()
+	prompt, err := s.SystemPrompt()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return prompt
+}
+
+// TestNewSessionCollectsPromptGuidelines locks NewSession → prompt wiring for
+// I1: the resolved tools' PromptGuidelines must appear in the rules section of
+// the session's system prompt, in tool order.
 func TestNewSessionCollectsPromptGuidelines(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
-	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
-	defer reg.Unregister()
-	s := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir()})
-	prompt := s.Agent.State().SystemPrompt
+	s := NewSession(SessionOptions{Cwd: t.TempDir()})
+	prompt := sessionSystemPrompt(t, s)
 
 	wantOrder := []string{
 		"- Use bash for file operations like ls, rg, find",
@@ -53,15 +60,12 @@ func TestNewSessionBashOnlyKeepsSkills(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
-	defer reg.Unregister()
 	s := NewSession(SessionOptions{
-		Model:        reg.GetModel(),
 		Cwd:          cwd,
 		ToolNames:    []string{"bash"},
 		TrustProject: true,
 	})
-	prompt := s.Agent.State().SystemPrompt
+	prompt := sessionSystemPrompt(t, s)
 
 	if !strings.Contains(prompt, "<name>demo-skill</name>") {
 		t.Fatalf("bash-only session dropped its skills:\n%s", prompt)
@@ -75,9 +79,8 @@ func TestNewSessionBashOnlyKeepsSkills(t *testing.T) {
 }
 
 // TestNewSessionCustomPromptStillAssembles locks I2: a custom SystemPrompt
-// still gets project context files, skills, date, and cwd appended (pi
-// system-prompt.ts:53-80), in pi's order — and never the docs block or the
-// default Guidelines section.
+// still gets the project context, skills and cwd sections after it, in pi's
+// order — and never the default prompt's tools, rules or docs sections.
 func TestNewSessionCustomPromptStillAssembles(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cwd := t.TempDir()
@@ -92,10 +95,7 @@ func TestNewSessionCustomPromptStillAssembles(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
-	defer reg.Unregister()
 	s := NewSession(SessionOptions{
-		Model:        reg.GetModel(),
 		Cwd:          cwd,
 		SystemPrompt: "You are a custom agent.",
 		// The fixture skill lives in <cwd>/.pi/skills, which is gated on
@@ -103,7 +103,7 @@ func TestNewSessionCustomPromptStillAssembles(t *testing.T) {
 		// see TestSystemPromptOmitsUntrustedProjectSkill for that.
 		TrustProject: true,
 	})
-	prompt := s.Agent.State().SystemPrompt
+	prompt := sessionSystemPrompt(t, s)
 
 	if !strings.HasPrefix(prompt, "You are a custom agent.") {
 		t.Fatalf("custom prompt should lead the system prompt:\n%s", prompt)
@@ -113,9 +113,10 @@ func TestNewSessionCustomPromptStillAssembles(t *testing.T) {
 		"You are a custom agent.",
 		"<project_context>",
 		"<project_instructions path=\"" + filepath.Join(cwd, "AGENTS.md") + "\">\nfollow the rules\n</project_instructions>",
+		"<skills>",
 		"<available_skills>",
 		"<name>demo-skill</name>",
-		"\nCurrent working directory: ",
+		"<cwd>\n",
 	}
 	last := -1
 	for _, sub := range ordered {
@@ -128,8 +129,8 @@ func TestNewSessionCustomPromptStillAssembles(t *testing.T) {
 		}
 		last = idx
 	}
-	// Custom prompts get neither the docs block nor the Guidelines section.
-	for _, banned := range []string{"Pi documentation", "Guidelines:", "expert coding assistant"} {
+	// Custom prompts get neither the docs, tools nor rules sections.
+	for _, banned := range []string{"Pi documentation", "Guidelines:", "<rules>", "<tools>", "<docs>", "expert coding assistant"} {
 		if strings.Contains(prompt, banned) {
 			t.Fatalf("custom prompt must not include %q:\n%s", banned, prompt)
 		}

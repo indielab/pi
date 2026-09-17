@@ -252,18 +252,30 @@ type cutPointResult struct {
 	isSplitTurn bool
 }
 
-// findCutPoint ports pi's findCutPoint + findValidCutPoints (compaction.ts:380-448)
-// to a flat message list. Valid cut points are any non-tool-result message (a kept
-// run must never start on a tool result). Walking backwards from the newest
-// message, tokens accumulate until KeepRecentTokens is reached; the cut then snaps
-// FORWARD to the first valid cut point at or after the crossing index (so a
-// boundary tool-result goes into the summarized portion). If the budget is never
-// reached, the cut defaults to the first valid cut point (keep everything).
-// Only messages in [startIndex, endIndex) are considered.
+// isCutPointMessage is pi's isCutPointMessage over the port's in-memory roles:
+// a kept run may start on a user or assistant message, never on a tool result
+// (it must follow its tool call) or a system message (prompt state, which the
+// compaction replays instead).
+func isCutPointMessage(m agent.AgentMessage) bool {
+	switch m.MessageRole() {
+	case ai.RoleUser, ai.RoleAssistant:
+		return true
+	}
+	return false
+}
+
+// findCutPoint ports pi's findCutPoint + findValidCutPoints (compaction.ts) to a
+// flat message list. Walking backwards from the newest message, estimated tokens
+// accumulate until KeepRecentTokens is reached — a message estimated at zero
+// tokens (a system message) never crosses the budget — and the cut then snaps
+// FORWARD to the first cut point at or after the crossing index (so a boundary
+// tool result goes into the summarized portion). If the budget is never
+// reached, the cut defaults to the first cut point (keep everything). Only
+// messages in [startIndex, endIndex) are considered.
 func findCutPoint(messages []agent.AgentMessage, startIndex, endIndex, keepRecentTokens int) cutPointResult {
 	var cutPoints []int
 	for i := startIndex; i < endIndex; i++ {
-		if messages[i].MessageRole() != ai.RoleToolResult {
+		if isCutPointMessage(messages[i]) {
 			cutPoints = append(cutPoints, i)
 		}
 	}
@@ -275,7 +287,11 @@ func findCutPoint(messages []agent.AgentMessage, startIndex, endIndex, keepRecen
 	acc := 0
 	cutIndex := cutPoints[0] // default: keep from first message
 	for i := endIndex - 1; i >= startIndex; i-- {
-		acc += EstimateMessageTokens(messages[i])
+		tokens := EstimateMessageTokens(messages[i])
+		if tokens == 0 {
+			continue
+		}
+		acc += tokens
 		if acc >= keepRecentTokens {
 			// Snap to the closest valid cut point at or after this index.
 			for _, c := range cutPoints {
@@ -307,11 +323,72 @@ func findCutPoint(messages []agent.AgentMessage, startIndex, endIndex, keepRecen
 	}
 }
 
+// compactionPreparation is pi's CompactionPreparation over the in-memory
+// transcript.
+type compactionPreparation struct {
+	// firstKeptIndex is the first message kept after the summary.
+	firstKeptIndex int
+	// messagesToSummarize are summarized and dropped.
+	messagesToSummarize []agent.AgentMessage
+	// turnPrefixMessages are the split turn's prefix, summarized on their own.
+	turnPrefixMessages []agent.AgentMessage
+	// isSplitTurn reports whether the cut lands mid-turn.
+	isSplitTurn bool
+}
+
+// prepareCompaction is pi's prepareCompaction: it cuts the transcript from
+// boundaryStart (the previous compaction's first kept message) and collects the
+// messages to summarize. System messages are prompt state, not conversation, so
+// neither list carries them (pi getMessageFromEntryForCompaction); the
+// compaction replays them instead. It reports false when there is nothing to
+// summarize.
+func prepareCompaction(messages []agent.AgentMessage, boundaryStart, keepRecentTokens int) (compactionPreparation, bool) {
+	cp := findCutPoint(messages, boundaryStart, len(messages), keepRecentTokens)
+	historyEnd := cp.firstKeptIndex
+	if cp.isSplitTurn {
+		historyEnd = cp.turnStartIndex
+	}
+	preparation := compactionPreparation{
+		firstKeptIndex:      cp.firstKeptIndex,
+		messagesToSummarize: withoutSystemMessages(messages[boundaryStart:historyEnd]),
+		isSplitTurn:         cp.isSplitTurn,
+	}
+	if cp.isSplitTurn {
+		preparation.turnPrefixMessages = withoutSystemMessages(messages[cp.turnStartIndex:cp.firstKeptIndex])
+	}
+	if len(preparation.messagesToSummarize) == 0 && len(preparation.turnPrefixMessages) == 0 {
+		return compactionPreparation{}, false
+	}
+	return preparation, true
+}
+
+// withoutSystemMessages returns the messages that are not system messages, in
+// a fresh slice.
+func withoutSystemMessages(messages []agent.AgentMessage) []agent.AgentMessage {
+	var out []agent.AgentMessage
+	for _, m := range messages {
+		if m.MessageRole() != ai.RoleSystem {
+			out = append(out, m)
+		}
+	}
+	return out
+}
+
 type compactionState struct {
-	mu        sync.Mutex
-	settings  CompactionSettings
-	prefixLen int    // index into the ORIGINAL message list of the first kept message
-	summary   string // cached summary text (includes the file-ops appendix, like pi)
+	mu       sync.Mutex
+	settings CompactionSettings
+	// prefixLen indexes the ORIGINAL message list: the first kept message (pi
+	// firstKeptEntryId).
+	prefixLen int
+	// compactedLen is the length of the original message list when the
+	// checkpoint was taken, where pi appends the compaction entry: kept
+	// messages before it drop their system messages, which the replay already
+	// holds; messages from it on come after the compaction and keep theirs.
+	compactedLen int
+	// systemMessage is the prompt and tool state replayed at the checkpoint (pi
+	// CompactionEntry.systemMessage); nil when the transcript had none.
+	systemMessage *ai.SystemMessage
+	summary       string // cached summary text (includes the file-ops appendix, like pi)
 	// readFiles/modifiedFiles persist the previous compaction's file lists so the
 	// next compaction can merge them (pi extractFileOperations, compaction.ts:41-69).
 	readFiles     []string
@@ -329,14 +406,28 @@ func (s *Session) EnableCompaction(settings CompactionSettings) {
 	}
 }
 
-// applyCheckpoint builds the compacted view: the checkpoint summary message
-// followed by the messages after prefixLen (pi: compaction entry + kept entries).
-func applyCheckpoint(summary string, messages []agent.AgentMessage, prefixLen int) []agent.AgentMessage {
-	checkpoint := compactionSummaryMessage(summary, nowMillisCoding())
-	out := make([]agent.AgentMessage, 0, 1+len(messages)-prefixLen)
-	out = append(out, checkpoint)
-	out = append(out, messages[prefixLen:]...)
-	return out
+// compactionCheckpoint is one compaction as pi's session file records it.
+type compactionCheckpoint struct {
+	prefixLen     int
+	compactedLen  int
+	systemMessage *ai.SystemMessage
+	summary       string
+}
+
+// apply builds the compacted view in pi buildSessionContext's order: the
+// replayed system message, the summary, the kept messages without their system
+// messages, then every message after the compaction.
+func (c compactionCheckpoint) apply(messages []agent.AgentMessage) []agent.AgentMessage {
+	// Defensive: the transcript was replaced or shrunk.
+	prefixLen := min(c.prefixLen, len(messages))
+	compactedLen := min(max(c.compactedLen, prefixLen), len(messages))
+	out := make([]agent.AgentMessage, 0, 2+len(messages)-prefixLen)
+	if c.systemMessage != nil {
+		out = append(out, *c.systemMessage)
+	}
+	out = append(out, compactionSummaryMessage(c.summary, nowMillisCoding()))
+	out = append(out, withoutSystemMessages(messages[prefixLen:compactedLen])...)
+	return append(out, messages[compactedLen:]...)
 }
 
 // compact is the per-request TransformContext. pi semantics: compaction is
@@ -345,8 +436,9 @@ func applyCheckpoint(summary string, messages []agent.AgentMessage, prefixLen in
 // only decides whether to EXTEND the compaction by summarizing a larger prefix,
 // merging via the <previous-summary> update flow (pi prepareCompaction/compact).
 //
-// state.prefixLen indexes into the ORIGINAL message list, which the agent only
-// ever grows by appending, so it stays valid across turns and re-compactions.
+// state.prefixLen and state.compactedLen index the ORIGINAL message list, which
+// the agent only ever grows by appending, so they stay valid across turns and
+// re-compactions.
 func (s *Session) compact(ctx context.Context, state *compactionState, messages []agent.AgentMessage) []agent.AgentMessage {
 	window := 0
 	if s.Model != nil {
@@ -354,19 +446,21 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	}
 
 	state.mu.Lock()
-	prefixLen := state.prefixLen
-	summary := state.summary
+	previous := compactionCheckpoint{
+		prefixLen:     state.prefixLen,
+		compactedLen:  state.compactedLen,
+		systemMessage: state.systemMessage,
+		summary:       state.summary,
+	}
 	prevRead := state.readFiles
 	prevModified := state.modifiedFiles
 	state.mu.Unlock()
-	if prefixLen > len(messages) {
-		prefixLen = len(messages) // defensive: transcript was replaced/shrunk
-	}
+	boundaryStart := min(previous.prefixLen, len(messages))
 
 	// Always re-apply the cached checkpoint first (permanence).
 	current := messages
-	if summary != "" {
-		current = applyCheckpoint(summary, messages, prefixLen)
+	if previous.summary != "" {
+		current = previous.apply(messages)
 	}
 
 	tokens := estimateContextTokensUsageAware(current)
@@ -375,29 +469,25 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	}
 
 	// Extend: find a new cut within the kept tail (pi boundaryStart = previous
-	// firstKeptEntryIndex; compaction.ts:660-672).
-	cp := findCutPoint(messages, prefixLen, len(messages), state.settings.KeepRecentTokens)
-	if cp.firstKeptIndex <= prefixLen {
+	// firstKeptEntryIndex).
+	preparation, ok := prepareCompaction(messages, boundaryStart, state.settings.KeepRecentTokens)
+	if !ok {
 		return current // nothing new safely summarizable
 	}
-
-	historyEnd := cp.firstKeptIndex
-	if cp.isSplitTurn {
-		historyEnd = cp.turnStartIndex
-	}
-	history := messages[prefixLen:historyEnd]
-	var turnPrefix []agent.AgentMessage
-	if cp.isSplitTurn {
-		turnPrefix = messages[cp.turnStartIndex:cp.firstKeptIndex]
-	}
+	history, turnPrefix := preparation.messagesToSummarize, preparation.turnPrefixMessages
 
 	// Generate summaries (pi compact, compaction.ts:747-815). Sequential, as
 	// upstream is since f58c1156.
 	var newSummary string
-	if cp.isSplitTurn && len(turnPrefix) > 0 {
-		historyResult := "No prior history."
+	if preparation.isSplitTurn && len(turnPrefix) > 0 {
+		// pi: `previousSummary ?? "No prior history."`. The port's empty summary
+		// is pi's undefined: a compaction never records an empty one.
+		historyResult := previous.summary
+		if historyResult == "" {
+			historyResult = "No prior history."
+		}
 		if len(history) > 0 {
-			hr, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, summary, state.settings.SessionID)
+			hr, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, previous.summary, state.settings.SessionID)
 			if !ok {
 				return current // summarization failed; keep current view
 			}
@@ -409,7 +499,7 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 		}
 		newSummary = historyResult + "\n\n---\n\n**Turn Context (split turn):**\n\n" + tp
 	} else {
-		ns, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, summary, state.settings.SessionID)
+		ns, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, previous.summary, state.settings.SessionID)
 		if !ok {
 			return current
 		}
@@ -437,14 +527,28 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	readFiles, modifiedFiles := ops.lists()
 	newSummary += formatFileOperations(readFiles, modifiedFiles)
 
+	// pi appendCompaction stores the prompt and tool state the context replays
+	// at this point, stamped with the compaction's time.
+	next := compactionCheckpoint{
+		prefixLen:    preparation.firstKeptIndex,
+		compactedLen: len(messages),
+		summary:      newSummary,
+	}
+	if replay, ok := ai.GetCurrentSystemMessage(current); ok {
+		replay.Timestamp = nowMillisCoding()
+		next.systemMessage = &replay
+	}
+
 	state.mu.Lock()
-	state.prefixLen = cp.firstKeptIndex
-	state.summary = newSummary
+	state.prefixLen = next.prefixLen
+	state.compactedLen = next.compactedLen
+	state.systemMessage = next.systemMessage
+	state.summary = next.summary
 	state.readFiles = readFiles
 	state.modifiedFiles = modifiedFiles
 	state.mu.Unlock()
 
-	return applyCheckpoint(newSummary, messages, cp.firstKeptIndex)
+	return next.apply(messages)
 }
 
 // summarize asks the model to produce a structured checkpoint of older messages
@@ -500,12 +604,14 @@ func (s *Session) summaryMaxTokens(frac float64, reserveTokens int) int {
 	return maxTokens
 }
 
-// messagesAsLlm filters agent messages down to LLM roles (pi convertToLlm).
+// messagesAsLlm filters agent messages down to LLM roles (pi convertToLlm, which
+// passes system messages since upstream 9e05370b2; serializeConversation has
+// no system arm, so they never reach a summary).
 func messagesAsLlm(messages []agent.AgentMessage) []ai.Message {
 	var llmMessages []ai.Message
 	for _, m := range messages {
 		switch m.MessageRole() {
-		case ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult:
+		case ai.RoleSystem, ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult:
 			llmMessages = append(llmMessages, m)
 		}
 	}

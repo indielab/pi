@@ -2,9 +2,19 @@ package coding
 
 import (
 	"fmt"
+	"maps"
+	"regexp"
 	"slices"
 	"strings"
+
+	"github.com/sky-valley/pi/ai"
 )
+
+// System prompt construction, ported from pi
+// packages/coding-agent/src/core/system-prompt.ts (upstream 9e05370b2). The
+// prompt is a set of ordered, independently replaceable sections that become
+// the transcript's SystemMessage.Sections; BuildSystemPrompt renders them the
+// way the transcript replays them.
 
 // ContextFile is a project context file injected into the system prompt.
 type ContextFile struct {
@@ -12,126 +22,248 @@ type ContextFile struct {
 	Content string
 }
 
-// BuildSystemPromptOptions configures buildSystemPrompt.
+// BuildSystemPromptOptions configures BuildSystemPromptSections and
+// BuildSystemPrompt (pi BuildSystemPromptOptions).
 type BuildSystemPromptOptions struct {
-	CustomPrompt       string
-	SelectedTools      []string
-	ToolSnippets       map[string]string
-	PromptGuidelines   []string
+	// CustomPrompt replaces the default prompt prefix — the preamble, tools,
+	// rules and docs sections — with its text as the preamble. Empty keeps the
+	// default prefix.
+	CustomPrompt string
+	// ForceSystemPrompt, when non-nil, is an exact full prompt replacement: the
+	// sections are its text as the preamble and nothing else, even when empty.
+	// pi sets it from a before_agent_start handler.
+	ForceSystemPrompt *string
+	// SelectedTools are the active tool names. Nil means pi's default
+	// [read, bash, edit, write]; an empty, non-nil slice means no tools.
+	SelectedTools []string
+	// ToolSnippets are optional one-line tool snippets keyed by tool name. A
+	// selected tool appears in the tools section only when it has one.
+	ToolSnippets map[string]string
+	// ToolGuidelines are the guideline bullets each tool contributes, keyed by
+	// tool name. Only selected tools' guidelines reach the rules section.
+	ToolGuidelines map[string][]string
+	// PromptGuidelines are additional guideline bullets appended to the rules.
+	PromptGuidelines []string
+	// AppendSystemPrompt is text from user configuration placed before project
+	// context, skills and cwd (the addendum section).
 	AppendSystemPrompt string
-	Cwd                string
-	ContextFiles       []ContextFile
-	Skills             []Skill
+	// Sections are additional prompt sections, each wrapped in a tag of its
+	// name. A name must start with a lowercase letter followed by lowercase
+	// letters, digits, "_" or "-", and "preamble" is reserved. A section named
+	// like a built-in one replaces its content in place; an empty or nil value
+	// adds nothing.
+	Sections ai.SystemSections
+	// Cwd is the working directory; backslashes render as forward slashes.
+	Cwd string
+	// ContextFiles are pre-loaded project context files.
+	ContextFiles []ContextFile
+	// Skills are pre-loaded skills, offered when read or bash is selected.
+	Skills []Skill
 	// ReadmePath/DocsPath/ExamplesPath are the absolute pi documentation paths
-	// referenced by the "Pi documentation" prompt section. Empty values fall back
-	// to ReadmePath()/DocsPath()/ExamplesPath().
+	// referenced by the docs section. Empty values fall back to
+	// ReadmePath()/DocsPath()/ExamplesPath().
 	ReadmePath   string
 	DocsPath     string
 	ExamplesPath string
 }
 
-// BuildSystemPrompt constructs the coding agent system prompt (port of
-// buildSystemPrompt), including tools, guidelines, project context, and footer.
-func BuildSystemPrompt(opts BuildSystemPromptOptions) string {
-	promptCwd := strings.ReplaceAll(opts.Cwd, "\\", "/")
+// defaultPromptPreamble is the default prompt's untagged opening section.
+const defaultPromptPreamble = "You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files."
 
-	appendSection := ""
-	if opts.AppendSystemPrompt != "" {
-		appendSection = "\n\n" + opts.AppendSystemPrompt
+// systemPromptSectionName is pi's SYSTEM_PROMPT_SECTION_NAME.
+var systemPromptSectionName = regexp.MustCompile(`^[a-z][a-z0-9_-]*$`)
+
+// NormalizeBuildSystemPromptOptions returns opts in pi's normalized,
+// collection-complete shape (normalizeBuildSystemPromptOptions): SelectedTools
+// defaults to [read, bash, edit, write] only when nil, every collection is
+// non-nil, and every collection is a copy, so mutating the result cannot reach
+// the caller's inputs or the other way round. Go has one options type for both
+// shapes; the normalized one is the result of this function.
+func NormalizeBuildSystemPromptOptions(opts BuildSystemPromptOptions) BuildSystemPromptOptions {
+	out := opts
+	if opts.SelectedTools == nil {
+		out.SelectedTools = []string{"read", "bash", "edit", "write"}
+	} else {
+		out.SelectedTools = slices.Clone(opts.SelectedTools)
 	}
-
-	contextSection := func() string {
-		if len(opts.ContextFiles) == 0 {
-			return ""
+	out.ToolSnippets = maps.Clone(opts.ToolSnippets)
+	if out.ToolSnippets == nil {
+		out.ToolSnippets = map[string]string{}
+	}
+	out.ToolGuidelines = make(map[string][]string, len(opts.ToolGuidelines))
+	for name, guidelines := range opts.ToolGuidelines {
+		out.ToolGuidelines[name] = slices.Clone(guidelines)
+	}
+	out.PromptGuidelines = append([]string{}, opts.PromptGuidelines...)
+	// A spread copy is a fresh object in the source's own key order.
+	out.Sections = ai.SystemSections{}
+	for _, section := range opts.Sections.Entries() {
+		value := section.Value
+		if value != nil {
+			content := *value
+			value = &content
 		}
-		var b strings.Builder
-		b.WriteString("\n\n<project_context>\n\n")
-		b.WriteString("Project-specific instructions and guidelines:\n\n")
-		for _, cf := range opts.ContextFiles {
-			// pi interpolates the raw path into the attribute (system-prompt.ts:66
-			// `path="${filePath}"`) — no quoting/escaping, byte-for-byte.
-			b.WriteString(fmt.Sprintf("<project_instructions path=\"%s\">\n%s\n</project_instructions>\n\n", cf.Path, cf.Content))
-		}
-		b.WriteString("</project_context>\n")
-		return b.String()
+		out.Sections.Set(section.Name, value)
 	}
+	out.ContextFiles = append([]ContextFile{}, opts.ContextFiles...)
+	out.Skills = append([]Skill{}, opts.Skills...)
+	return out
+}
 
-	tools := opts.SelectedTools
-	if tools == nil {
-		tools = []string{"read", "bash", "edit", "write"}
+// renderProjectContext is pi's renderProjectContext.
+func renderProjectContext(contextFiles []ContextFile) string {
+	parts := []string{"Project-specific instructions and guidelines:"}
+	for _, file := range contextFiles {
+		// pi interpolates the raw path into the attribute — no quoting or
+		// escaping, byte for byte.
+		parts = append(parts, `<project_instructions path="`+file.Path+`">`+"\n"+file.Content+"\n</project_instructions>")
 	}
-	has := func(name string) bool {
-		return slices.Contains(tools, name)
-	}
-	// Skills are offered as soon as SOME tool can load their files, and the
-	// block names that tool. pi takes the first of ["read", "bash"] present, so
-	// read wins when both are; with neither, the block is dropped entirely
-	// (upstream 1d6dbf9e3).
-	skillsSection := ""
-	switch {
-	case has("read"):
-		skillsSection = FormatSkillsForPromptWithTool(opts.Skills, SkillFileReadToolRead)
-	case has("bash"):
-		skillsSection = FormatSkillsForPromptWithTool(opts.Skills, SkillFileReadToolBash)
-	}
+	return strings.Join(parts, "\n\n")
+}
 
-	if opts.CustomPrompt != "" {
-		prompt := opts.CustomPrompt + appendSection + contextSection() + skillsSection
-		// Custom prompts terminate the cwd footer with a newline; the default
-		// prompt below deliberately does not (upstream 3dd4623ee touched only
-		// this branch, leaving its twin unchanged).
-		prompt += "\nCurrent working directory: " + promptCwd + "\n"
-		return prompt
-	}
-	var visible []string
-	for _, name := range tools {
-		if snippet, ok := opts.ToolSnippets[name]; ok && snippet != "" {
-			visible = append(visible, fmt.Sprintf("- %s: %s", name, snippet))
-		}
-	}
-	toolsList := "(none)"
-	if len(visible) > 0 {
-		toolsList = strings.Join(visible, "\n")
-	}
-
-	var guidelines []string
+// buildRules is pi's buildRules: the file-exploration rule, each selected
+// tool's guidelines in selection order, the prompt guidelines, then the two
+// fixed rules — each trimmed as JS trims, empties dropped, first occurrence
+// kept.
+func buildRules(selectedTools []string, toolGuidelines map[string][]string, promptGuidelines []string) string {
+	var rules []string
 	seen := map[string]bool{}
-	add := func(g string) {
-		if g == "" || seen[g] {
+	addRule := func(rule string) {
+		normalized := trimJS(rule)
+		if normalized == "" || seen[normalized] {
 			return
 		}
-		seen[g] = true
-		guidelines = append(guidelines, g)
+		seen[normalized] = true
+		rules = append(rules, normalized)
 	}
 
-	// File exploration guidelines (system-prompt.ts:104-112). With no dedicated
-	// exploration tool the guideline names whichever shells are active; the
-	// bash-only wording predates powershell and is unchanged (upstream 80e62761f).
+	has := func(name string) bool { return slices.Contains(selectedTools, name) }
+	// With no dedicated exploration tool the rule names whichever shells are
+	// active; the bash-only wording predates powershell (upstream 80e62761f).
 	hasBash, hasPowerShell := has("bash"), has("powershell")
 	if (hasBash || hasPowerShell) && !has("grep") && !has("find") && !has("ls") {
 		switch {
 		case hasBash && hasPowerShell:
-			add("Use bash or PowerShell for file operations like listing, searching, and finding files")
+			addRule("Use bash or PowerShell for file operations like listing, searching, and finding files")
 		case hasPowerShell:
-			add("Use PowerShell for file operations like listing, searching, and finding files")
+			addRule("Use PowerShell for file operations like listing, searching, and finding files")
 		default:
-			add("Use bash for file operations like ls, rg, find")
+			addRule("Use bash for file operations like ls, rg, find")
 		}
 	}
-	for _, g := range opts.PromptGuidelines {
-		add(strings.TrimSpace(g))
-	}
-	add("Be concise in your responses")
-	add("Show file paths clearly when working with files")
 
-	var gb strings.Builder
-	for i, g := range guidelines {
-		if i > 0 {
-			gb.WriteString("\n")
+	for _, name := range selectedTools {
+		for _, rule := range toolGuidelines[name] {
+			addRule(rule)
 		}
-		gb.WriteString("- " + g)
+	}
+	for _, rule := range promptGuidelines {
+		addRule(rule)
+	}
+	addRule("Be concise in your responses")
+	addRule("Show file paths clearly when working with files")
+
+	lines := make([]string, len(rules))
+	for i, rule := range rules {
+		lines[i] = "- " + rule
+	}
+	return strings.Join(lines, "\n")
+}
+
+// invalidSectionNameError is pi's "Invalid system prompt section name" throw,
+// with what a valid name looks like.
+func invalidSectionNameError(name string) error {
+	return fmt.Errorf(`Invalid system prompt section name: %s (a section name starts with a lowercase letter followed by lowercase letters, digits, "_" or "-", and "preamble" is reserved; rename it, e.g. "plan_mode")`, name)
+}
+
+// BuildSystemPromptSections builds the ordered, independently replaceable
+// sections of the system prompt (pi buildSystemPromptSections): the untagged
+// preamble, then for the default prompt tools, rules and docs, then addendum,
+// project_context, skills and cwd, then the custom Sections. Every section but
+// the preamble is wrapped in a tag of its name, so the model can match later
+// updates to it. These become SystemMessage.Sections in the transcript.
+//
+// It fails, building nothing, when a custom section name is invalid; the first
+// invalid name in JS key order is reported.
+func BuildSystemPromptSections(input BuildSystemPromptOptions) (ai.SystemSections, error) {
+	opts := NormalizeBuildSystemPromptOptions(input)
+	if opts.ForceSystemPrompt != nil {
+		force := *opts.ForceSystemPrompt
+		return ai.SystemSections{{Name: "preamble", Value: &force}}, nil
 	}
 
+	customSections := opts.Sections.Entries()
+	for _, section := range customSections {
+		if !systemPromptSectionName.MatchString(section.Name) || section.Name == "preamble" {
+			return nil, invalidSectionNameError(section.Name)
+		}
+	}
+
+	// promptSections is pi's plain object: assigning an existing name keeps its
+	// slot, which is how a custom section replaces a built-in one in place.
+	promptSections := ai.SystemSections{}
+	set := func(name, content string) { promptSections.Set(name, &content) }
+	if opts.CustomPrompt != "" {
+		set("preamble", opts.CustomPrompt)
+	} else {
+		set("preamble", defaultPromptPreamble)
+		var visible []string
+		for _, name := range opts.SelectedTools {
+			if snippet := opts.ToolSnippets[name]; snippet != "" {
+				visible = append(visible, "- "+name+": "+snippet)
+			}
+		}
+		tools := "(none)"
+		if len(visible) > 0 {
+			tools = strings.Join(visible, "\n")
+		}
+		set("tools", tools+"\n\nIn addition to the tools above, you may have access to other custom tools depending on the project.")
+		set("rules", buildRules(opts.SelectedTools, opts.ToolGuidelines, opts.PromptGuidelines))
+		set("docs", docsSection(opts))
+	}
+
+	if opts.AppendSystemPrompt != "" {
+		set("addendum", opts.AppendSystemPrompt)
+	}
+	if len(opts.ContextFiles) > 0 {
+		set("project_context", renderProjectContext(opts.ContextFiles))
+	}
+	// Skills are offered as soon as some tool can load their files, and the
+	// block names that tool: the first of read and bash that is selected
+	// (upstream 1d6dbf9e3).
+	skillFileReadTool := SkillFileReadTool("")
+	switch {
+	case slices.Contains(opts.SelectedTools, "read"):
+		skillFileReadTool = SkillFileReadToolRead
+	case slices.Contains(opts.SelectedTools, "bash"):
+		skillFileReadTool = SkillFileReadToolBash
+	}
+	if skillFileReadTool != "" && len(opts.Skills) > 0 {
+		if skills := trimJS(FormatSkillsForPromptWithTool(opts.Skills, skillFileReadTool)); skills != "" {
+			set("skills", skills)
+		}
+	}
+	set("cwd", strings.ReplaceAll(opts.Cwd, `\`, "/"))
+	for _, section := range customSections {
+		if section.Value != nil && *section.Value != "" {
+			set(section.Name, *section.Value)
+		}
+	}
+
+	entries := promptSections.Entries()
+	sections := make(ai.SystemSections, len(entries))
+	for i, section := range entries {
+		content := *section.Value
+		if section.Name != "preamble" {
+			content = "<" + section.Name + ">\n" + content + "\n</" + section.Name + ">"
+		}
+		sections[i] = ai.SystemSection{Name: section.Name, Value: &content}
+	}
+	return sections, nil
+}
+
+// docsSection is the default prompt's pi documentation section.
+func docsSection(opts BuildSystemPromptOptions) string {
 	readmePath := opts.ReadmePath
 	if readmePath == "" {
 		readmePath = ReadmePath()
@@ -144,27 +276,72 @@ func BuildSystemPrompt(opts BuildSystemPromptOptions) string {
 	if examplesPath == "" {
 		examplesPath = ExamplesPath()
 	}
-
-	prompt := fmt.Sprintf(`You are an expert coding assistant operating inside pi, a coding agent harness. You help users by reading files, executing commands, editing code, and writing new files.
-
-Available tools:
-%s
-
-In addition to the tools above, you may have access to other custom tools depending on the project.
-
-Guidelines:
-%s
-
-Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
-- Main documentation: %s
-- Additional docs: %s
-- Examples: %s (extensions, custom tools, SDK)
+	return `Pi documentation (read only when the user asks about pi itself, its SDK, extensions, themes, skills, or TUI):
+- Main documentation: ` + readmePath + `
+- Additional docs: ` + docsPath + `
+- Examples: ` + examplesPath + ` (extensions, custom tools, SDK)
 - When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory
 - When asked about: extensions (docs/extensions.md, examples/extensions/), themes (docs/themes.md), skills (docs/skills.md), prompt templates (docs/prompt-templates.md), TUI components (docs/tui.md), keybindings (docs/keybindings.md), SDK integrations (docs/sdk.md), custom providers (docs/custom-provider.md), adding models (docs/models.md), pi packages (docs/packages.md), environment variables (docs/environment-variables.md)
 - When working on pi topics, read the docs and examples, and follow .md cross-references before implementing
-- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`, toolsList, gb.String(), readmePath, docsPath, examplesPath)
+- Always read pi .md files completely and follow links to related docs (e.g., tui.md for TUI API details)`
+}
 
-	prompt += appendSection + contextSection() + skillsSection
-	prompt += "\nCurrent working directory: " + promptCwd
-	return prompt
+// BuildSystemPrompt renders the system prompt exactly as the transcript's
+// system message replays it (pi buildSystemPrompt): the sections joined by a
+// blank line. It fails when BuildSystemPromptSections does.
+func BuildSystemPrompt(opts BuildSystemPromptOptions) (string, error) {
+	sections, err := BuildSystemPromptSections(opts)
+	if err != nil {
+		return "", err
+	}
+	return ai.GetSystemMessageText(ai.SystemMessage{Sections: sections}), nil
+}
+
+// objectPrototypeKeys are the properties every plain JS object inherits from
+// Object.prototype. Reading one of these names from an object that lacks it as
+// an own property yields the inherited value, never undefined.
+var objectPrototypeKeys = map[string]bool{
+	"constructor": true, "__defineGetter__": true, "__defineSetter__": true, "hasOwnProperty": true,
+	"__lookupGetter__": true, "__lookupSetter__": true, "isPrototypeOf": true, "propertyIsEnumerable": true,
+	"toString": true, "valueOf": true, "__proto__": true, "toLocaleString": true,
+}
+
+// DiffSystemPromptSections diffs the sections the model currently has
+// (replayed from the transcript) against the desired ones (pi
+// diffSystemPromptSections). The patch sets every changed or new section and
+// removes, with a nil value, every section current lacks; it reports false,
+// with a nil patch, when nothing changed. The patch is in JS key order.
+//
+// pi compares plain JS objects, and Go follows their lookups: a previous
+// section named like an Object.prototype property (e.g. "constructor") is never
+// reported removed, because current's inherited property is not undefined, and
+// a "__proto__" section is never patched, because assigning __proto__ sets the
+// object's prototype instead of a key.
+func DiffSystemPromptSections(previous, current ai.SystemSections) (ai.SystemSections, bool) {
+	patch := ai.SystemSections{}
+	for _, section := range current.Entries() {
+		if section.Name == "__proto__" {
+			continue
+		}
+		if value, ok := previous.Get(section.Name); !ok || !sameSectionValue(value, section.Value) {
+			patch.Set(section.Name, section.Value)
+		}
+	}
+	for _, section := range previous.Entries() {
+		if _, ok := current.Get(section.Name); !ok && !objectPrototypeKeys[section.Name] {
+			patch.Set(section.Name, nil)
+		}
+	}
+	if patch.Len() == 0 {
+		return nil, false
+	}
+	return patch, true
+}
+
+// sameSectionValue is JS strict equality over string | null.
+func sameSectionValue(a, b *string) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
 }

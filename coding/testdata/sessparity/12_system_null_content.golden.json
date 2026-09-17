@@ -1,0 +1,42 @@
+{
+  "thinkingLevel": "off",
+  "model": {
+    "provider": "p",
+    "modelId": "m"
+  },
+  "messages": [
+    {
+      "role": "system",
+      "text": "",
+      "message": {
+        "role": "system",
+        "content": "",
+        "sections": {
+          "preamble": "P"
+        },
+        "timestamp": 1789603201000
+      }
+    },
+    {
+      "role": "user",
+      "text": "hi"
+    },
+    {
+      "role": "system",
+      "text": "",
+      "message": {
+        "role": "system",
+        "sections": {
+          "7": "seven",
+          "b": "B"
+        },
+        "timestamp": 1789603203000,
+        "content": ""
+      }
+    },
+    {
+      "role": "assistant",
+      "text": "ok"
+    }
+  ]
+}

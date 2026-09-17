@@ -197,7 +197,7 @@ func TestShellToolMissingCwdMessage(t *testing.T) {
 // introduced by upstream 80e62761f (system-prompt.ts:102-112).
 func TestSystemPromptShellGuideline(t *testing.T) {
 	guideline := func(tools ...string) string {
-		prompt := BuildSystemPrompt(BuildSystemPromptOptions{
+		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
 			SelectedTools: tools,
 			ToolSnippets:  ToolSnippets,
 			Cwd:           "/proj",

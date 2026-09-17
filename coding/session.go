@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -227,25 +228,28 @@ func resolveTools(cwd string, opts SessionOptions, sessionEnv sessionEnvFn) []ag
 	return active
 }
 
-// collectPromptGuidelines gathers per-tool prompt guidelines in active-tool
-// order, mirroring agent-session.ts _rebuildSystemPrompt (896-929): each tool's
-// guidelines are normalized (_normalizePromptGuidelines: trimmed, empties
-// dropped, deduped within the tool) and concatenated in tool order. Cross-tool
-// dedupe happens in BuildSystemPrompt's addGuideline, like pi.
-func collectPromptGuidelines(tools []agent.AgentTool) []string {
-	var out []string
-	for _, t := range tools {
-		seen := map[string]bool{}
-		for _, g := range t.PromptGuidelines {
-			g = strings.TrimSpace(g)
-			if g == "" || seen[g] {
-				continue
+// toolPromptGuidelines maps each tool with prompt guidelines to them, as
+// agent-session.ts builds _toolPromptGuidelines for _rebuildSystemPrompt: a
+// tool's guidelines are normalized (_normalizePromptGuidelines: trimmed as JS
+// trims, empties dropped, deduplicated in first-occurrence order) and a tool
+// left with none has no entry. BuildSystemPromptSections folds the selected
+// tools' guidelines into the rules section in tool order and deduplicates
+// across tools.
+func toolPromptGuidelines(tools []agent.AgentTool) map[string][]string {
+	guidelines := map[string][]string{}
+	for _, tool := range tools {
+		var normalized []string
+		for _, guideline := range tool.PromptGuidelines {
+			guideline = trimJS(guideline)
+			if guideline != "" && !slices.Contains(normalized, guideline) {
+				normalized = append(normalized, guideline)
 			}
-			seen[g] = true
-			out = append(out, g)
+		}
+		if len(normalized) > 0 {
+			guidelines[tool.Name] = normalized
 		}
 	}
-	return out
+	return guidelines
 }
 
 // Session is a coding-agent session: an Agent wired with a model, tools, and the
@@ -260,6 +264,10 @@ type Session struct {
 	// recMu guards Recorder against the tool-execution goroutine reading it for
 	// bash session metadata while Record attaches one.
 	recMu sync.RWMutex
+	// systemPromptOptions are the normalized prompt inputs a prompt declares
+	// (pi AgentSession._baseSystemPromptOptions). They are fixed for the
+	// session: the tool loadout does not change after NewSession.
+	systemPromptOptions BuildSystemPromptOptions
 }
 
 // bashSessionEnv returns the PI_* session metadata exposed to bash commands
@@ -352,6 +360,15 @@ func (s *Session) SetThinkingLevel(level agent.ThinkingLevel) {
 // History returns the current transcript.
 func (s *Session) History() []agent.AgentMessage { return s.Agent.State().Messages }
 
+// SystemPrompt returns the session's current effective system prompt,
+// including sections not yet declared to the model (pi AgentSession's
+// systemPrompt getter). It is built from the session's prompt options, so it is
+// available before the first Run, while Agent.State().SystemPrompt replays only
+// what the transcript has declared so far. The error is BuildSystemPrompt's.
+func (s *Session) SystemPrompt() (string, error) {
+	return BuildSystemPrompt(s.systemPromptOptions)
+}
+
 // Reset clears the transcript. It errors while a run is active.
 func (s *Session) Reset() error { return s.Agent.Reset() }
 
@@ -361,7 +378,8 @@ func (s *Session) LastAssistantText() string {
 }
 
 // NewSession builds a Session. If Tools is nil, the default coding tools are used;
-// if SystemPrompt is empty, a system prompt is built from the tool set.
+// if SystemPrompt is empty, the default prompt is built from the tool set. The
+// prompt is not part of the transcript until the first prompt declares it.
 func NewSession(opts SessionOptions) *Session {
 	cwd := opts.Cwd
 	if cwd == "" {
@@ -374,25 +392,25 @@ func NewSession(opts SessionOptions) *Session {
 	// Agent is filled in below, before NewSession returns and any tool can run.
 	sess := &Session{Cwd: cwd, Model: opts.Model, apiKey: opts.APIKey, models: opts.Models}
 	tools := resolveTools(cwd, opts, sess.bashSessionEnv)
-	// A custom SystemPrompt still goes through buildSystemPrompt with discovery:
-	// pi appends project context files, skills, date, and cwd to custom prompts
-	// too (system-prompt.ts:53-80 custom branch; only the docs block and the
-	// Guidelines section are exclusive to the default prompt).
+	// A custom SystemPrompt still goes through the prompt builder with discovery:
+	// pi adds project context files, skills and cwd to custom prompts too; only
+	// the tools, rules and docs sections are exclusive to the default prompt.
 	// names is non-nil even when empty: pi passes the concrete (possibly empty)
 	// active-tool list, never undefined, so the builder must not fall back to
-	// its [read,bash,edit,write] default.
+	// its [read,bash,edit,write] default. Snippets cover every built-in tool,
+	// as pi's cover every registry tool; the builder shows only selected ones.
 	names := make([]string, 0, len(tools))
 	for _, t := range tools {
 		names = append(names, t.Name)
 	}
-	systemPrompt := BuildSystemPrompt(BuildSystemPromptOptions{
-		CustomPrompt:     opts.SystemPrompt,
-		SelectedTools:    names,
-		ToolSnippets:     ToolSnippets,
-		PromptGuidelines: collectPromptGuidelines(tools),
-		Cwd:              cwd,
-		ContextFiles:     LoadProjectContextFiles(cwd),
-		Skills:           sessionSkills(cwd, opts.TrustProject),
+	sess.systemPromptOptions = NormalizeBuildSystemPromptOptions(BuildSystemPromptOptions{
+		CustomPrompt:   opts.SystemPrompt,
+		SelectedTools:  names,
+		ToolSnippets:   ToolSnippets,
+		ToolGuidelines: toolPromptGuidelines(tools),
+		Cwd:            cwd,
+		ContextFiles:   LoadProjectContextFiles(cwd),
+		Skills:         sessionSkills(cwd, opts.TrustProject),
 	})
 	thinking := opts.ThinkingLevel
 	if thinking == "" {
@@ -409,11 +427,16 @@ func NewSession(opts SessionOptions) *Session {
 		thinking = agent.ThinkOff
 	}
 
+	// pi's sdk.ts builds the Agent with no prompt and no tools: seeding either
+	// would put an event-less system message at the head of the transcript
+	// that the session never records. The tools are set directly (the loop
+	// declares them with the first request); each prompt declares the system
+	// prompt sections it needs (declareSystemPrompt), and so does every later
+	// turn (prepareNextTurn).
 	a := agent.NewAgent(agent.AgentOptions{
+		PrepareNextTurn: sess.prepareNextTurn,
 		InitialState: &agent.AgentState{
 			Model:         opts.Model,
-			SystemPrompt:  systemPrompt,
-			Tools:         tools,
 			ThinkingLevel: thinking,
 		},
 		StreamFn:        opts.StreamFn,
@@ -434,6 +457,7 @@ func NewSession(opts SessionOptions) *Session {
 		AfterToolCall:   withToolResultImageNormalization(opts.AfterToolCall),
 	})
 
+	a.SetTools(tools)
 	sess.Agent = a
 	if opts.Compaction != nil && opts.Compaction.Enabled {
 		sess.EnableCompaction(*opts.Compaction)
@@ -527,9 +551,73 @@ func (s *Session) Run(ctx context.Context, prompt string, images ...ai.ImageCont
 	return s.RunMessages(ctx, []agent.AgentMessage{ai.UserMessage{Content: content, Timestamp: nowMillisCoding()}})
 }
 
+// systemPromptUpdate is pi's _preparePromptAndToolLoadout for the session's
+// fixed loadout: the sections built from the session's options are diffed
+// against the ones messages replay, and a change becomes a
+// {role: "system", content: "", sections: patch} message; it reports false
+// when the prompt is unchanged. The agent loop attaches any tool declarations
+// to the message.
+func (s *Session) systemPromptUpdate(messages []agent.AgentMessage) (ai.SystemMessage, bool, error) {
+	sections, err := BuildSystemPromptSections(s.systemPromptOptions)
+	if err != nil {
+		return ai.SystemMessage{}, false, err
+	}
+	var previous ai.SystemSections
+	if current, found := ai.GetCurrentSystemMessage(messages); found {
+		previous = current.Sections
+	}
+	patch, changed := DiffSystemPromptSections(previous, sections)
+	if !changed {
+		return ai.SystemMessage{}, false, nil
+	}
+	return ai.SystemMessage{Sections: patch, Timestamp: nowMillisCoding()}, true, nil
+}
+
+// declareSystemPrompt puts the system prompt sections the model does not have
+// yet ahead of prompts (pi AgentSession.prompt → _preparePromptAndToolLoadout).
+// An unchanged prompt adds nothing.
+func (s *Session) declareSystemPrompt(prompts []agent.AgentMessage) ([]agent.AgentMessage, error) {
+	update, ok, err := s.systemPromptUpdate(s.Agent.State().Messages)
+	if err != nil || !ok {
+		return prompts, err
+	}
+	return append([]agent.AgentMessage{update}, prompts...), nil
+}
+
+// prepareNextTurn is the agent's PrepareNextTurn, installed by NewSession as
+// pi's AgentSession constructor installs _installAgentNextTurnRefresh: before
+// every turn after a run's first — Run's and Continue's alike — it declares the
+// prompt sections the turn's transcript does not replay yet, and hands the loop
+// the context with the agent's tools, the agent's model and its thinking level,
+// so a mid-run model or thinking-level change reaches the next request. A
+// transcript without a system message that Continue resumes is declared from
+// its second request, as in pi, whose agent.continue() declares nothing up
+// front. Compaction stays in the per-request TransformContext
+// (docs/UPSTREAM.md D4) instead of running here first.
+//
+// The session's options carry no custom sections, the only input
+// BuildSystemPromptSections rejects, so the build cannot fail here; were it to,
+// the turn would proceed undeclared, and the next Run reports the error.
+func (s *Session) prepareNextTurn(turn agent.ShouldStopAfterTurnContext) *agent.AgentLoopTurnUpdate {
+	st := s.Agent.State()
+	next := agent.AgentContext{Messages: turn.Context.Messages, Tools: slices.Clone(st.Tools)}
+	thinkingLevel := st.ThinkingLevel
+	prepared := &agent.AgentLoopTurnUpdate{Context: &next, Model: st.Model, ThinkingLevel: &thinkingLevel}
+	if update, ok, err := s.systemPromptUpdate(turn.Context.Messages); err == nil && ok {
+		prepared.Messages = []agent.AgentMessage{update}
+	}
+	return prepared
+}
+
 // RunMessages executes explicit prompt messages and returns a structured result.
+// The system prompt sections the model does not have yet are declared ahead of
+// them, so Messages starts with that system message when there is one.
 func (s *Session) RunMessages(ctx context.Context, prompts []agent.AgentMessage) (*RunResult, error) {
 	before := len(s.Agent.State().Messages)
+	prompts, err := s.declareSystemPrompt(prompts)
+	if err != nil {
+		return nil, err
+	}
 
 	result := &RunResult{}
 	unsub := s.Agent.Subscribe(func(ctx context.Context, e agent.AgentEvent) error {
@@ -619,7 +707,13 @@ func (s *Session) RunPrint(ctx context.Context, w io.Writer, prompt string) (str
 	})
 	defer unsub()
 
-	if err := s.Agent.Prompt(ctx, prompt); err != nil {
+	prompts, err := s.declareSystemPrompt([]agent.AgentMessage{
+		ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: prompt}}, Timestamp: nowMillisCoding()},
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := s.Agent.PromptMessages(ctx, prompts); err != nil {
 		return "", err
 	}
 	st := s.Agent.State()

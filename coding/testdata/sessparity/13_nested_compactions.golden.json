@@ -1,0 +1,92 @@
+{
+  "thinkingLevel": "off",
+  "model": {
+    "provider": "p",
+    "modelId": "m"
+  },
+  "messages": [
+    {
+      "role": "system",
+      "text": "",
+      "message": {
+        "role": "system",
+        "content": "",
+        "sections": {
+          "preamble": "v2",
+          "b": "<b>\n1\n</b>"
+        },
+        "timestamp": 1789603208000,
+        "toolsAdded": [
+          {
+            "name": "read",
+            "description": "Read a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "role": "user",
+      "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nS-late\n</summary>"
+    },
+    {
+      "role": "assistant",
+      "text": "first"
+    },
+    {
+      "role": "system",
+      "text": "",
+      "message": {
+        "role": "system",
+        "content": "",
+        "sections": {
+          "preamble": "v1"
+        },
+        "timestamp": 1789603204000,
+        "toolsAdded": [
+          {
+            "name": "read",
+            "description": "Read a file",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ]
+            }
+          }
+        ]
+      }
+    },
+    {
+      "role": "user",
+      "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nS-early\n</summary>"
+    },
+    {
+      "role": "user",
+      "text": "two"
+    },
+    {
+      "role": "assistant",
+      "text": "second"
+    },
+    {
+      "role": "user",
+      "text": "three"
+    }
+  ]
+}

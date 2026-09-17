@@ -30,6 +30,10 @@ type SessionEntry struct {
 	FromID        string     // for "branch_summary"
 	// compaction
 	FirstKeptEntryID string
+	// SystemMessage is the complete prompt and tool state at a compaction
+	// boundary (pi CompactionEntry.systemMessage); BuildContext replays it ahead
+	// of the summary. Nil when the entry carries none.
+	SystemMessage *ai.SystemMessage
 	// RetainedTail holds the compaction's kept tail inlined on the entry (pi
 	// CompactionEntry.retainedTail, upstream 9e7582aa). When set, it replaces the
 	// firstKeptEntryId walk: the reconstructed context is the summary followed by
@@ -55,17 +59,29 @@ type SessionTree struct {
 // file is migrated in memory first (pi migrateToCurrentVersion via
 // readSessionEntries); unlike pi's SessionManager this read-only loader never
 // rewrites the file — ResumeSession, the append path, does.
+//
+// A current-version file is decoded line by line as written, so messages keep
+// their key order (a system message's sections render in it). A migrated
+// file's entries are re-encoded from their migrated form first, which orders
+// nested keys alphabetically; such files predate system messages.
 func LoadSessionTree(path string) (*SessionTree, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
-	entries, _ := readSessionEntries(data)
+	lines := readSessionLines(data)
+	entries := make([]map[string]any, len(lines))
+	for i, line := range lines {
+		entries[i] = line.entry
+	}
+	migrated := migrateSessionEntries(entries)
 	t := &SessionTree{byID: map[string]*SessionEntry{}, children: map[string][]*SessionEntry{}}
-	for _, entry := range entries {
-		line, err := json.Marshal(entry)
-		if err != nil {
-			continue
+	for i, entry := range entries {
+		line := []byte(lines[i].raw)
+		if migrated {
+			if line, err = json.Marshal(entry); err != nil {
+				continue
+			}
 		}
 		var head struct {
 			Type             string            `json:"type"`
@@ -80,6 +96,7 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			Summary          string            `json:"summary"`
 			FromID           string            `json:"fromId"`
 			FirstKeptEntryID string            `json:"firstKeptEntryId"`
+			SystemMessage    json.RawMessage   `json:"systemMessage"`
 			RetainedTail     []json.RawMessage `json:"retainedTail"`
 			CustomType       string            `json:"customType"`
 			Content          json.RawMessage   `json:"content"`
@@ -101,6 +118,15 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			e.ParentID = *head.ParentID
 		}
 		if head.Type == "compaction" {
+			// pi replays the stored system message only when there is one (a
+			// falsy systemMessage is skipped); an undecodable one drops out like
+			// an undecodable message.
+			if len(head.SystemMessage) > 0 && string(head.SystemMessage) != "null" {
+				var system ai.SystemMessage
+				if json.Unmarshal(head.SystemMessage, &system) == nil {
+					e.SystemMessage = &system
+				}
+			}
 			// Parse the inlined kept tail, applying the same convertToLlm filtering
 			// as message entries (excluded/undecodable messages drop out).
 			for _, raw := range head.RetainedTail {
@@ -196,9 +222,12 @@ func (t *SessionTree) BuildContextNull() BranchContext {
 
 // BuildContext reconstructs the LLM message list, thinking level, and model for
 // the active branch. It mirrors pi's buildSessionContext followed by convertToLlm:
-// it handles the compaction checkpoint (emit summary, then kept entries from
-// firstKeptEntryId, then post-compaction entries) and converts custom_message /
+// it handles the compaction checkpoint (emit the compaction's system message and
+// summary, then kept entries from firstKeptEntryId without their system
+// messages, then post-compaction entries) and converts custom_message /
 // branch_summary entries to their user-message form with pi's exact wrapper text.
+// A system message whose content is null or missing reads as "" (the codec's
+// own rule, which is pi's sessionEntryToContextMessages rule).
 func (t *SessionTree) BuildContext(leafID ...string) BranchContext {
 	leaf := t.LeafID
 	if len(leafID) > 0 {
@@ -225,6 +254,14 @@ func (t *SessionTree) BuildContext(leafID ...string) BranchContext {
 		}
 	}
 
+	// appendCompaction projects a compaction entry: the prompt and tool state it
+	// stored, when it stored one, then its summary.
+	appendCompaction := func(e *SessionEntry) {
+		if e.SystemMessage != nil {
+			ctx.Messages = append(ctx.Messages, *e.SystemMessage)
+		}
+		ctx.Messages = append(ctx.Messages, compactionSummaryMessage(e.Summary, entryMillis(e.Timestamp)))
+	}
 	appendMessage := func(e *SessionEntry) {
 		switch e.Type {
 		case "message":
@@ -239,28 +276,30 @@ func (t *SessionTree) BuildContext(leafID ...string) BranchContext {
 			}
 		case "compaction":
 			// An EARLIER compaction sitting inside the latest one's kept range
-			// still contributes its summary: pi's sessionEntryToContextMessages
-			// (session-manager.ts:403-406) projects any "compaction" entry, not
+			// still contributes its system message and summary: pi's
+			// sessionEntryToContextMessages projects any "compaction" entry, not
 			// only the one buildContextEntries selected.
-			ctx.Messages = append(ctx.Messages, compactionSummaryMessage(e.Summary, entryMillis(e.Timestamp)))
+			appendCompaction(e)
 		}
 	}
 
 	if compaction != nil {
-		// 1. Emit the compaction summary first.
-		ctx.Messages = append(ctx.Messages, compactionSummaryMessage(compaction.Summary, entryMillis(compaction.Timestamp)))
+		// 1. Emit the compaction's system message and summary first.
+		appendCompaction(compaction)
 		// 2. Emit the kept tail. A retainedTail inlined on the entry (upstream
 		// 9e7582aa) replaces the firstKeptEntryId walk; otherwise walk kept
 		// pre-compaction entries starting at firstKeptEntryId.
 		if len(compaction.RetainedTail) > 0 {
 			ctx.Messages = append(ctx.Messages, compaction.RetainedTail...)
 		} else {
+			// A kept system message is skipped: the compaction's system message
+			// replays it (pi buildContextEntries).
 			foundFirstKept := false
 			for i := 0; i < compactionIdx; i++ {
 				if path[i].ID == compaction.FirstKeptEntryID {
 					foundFirstKept = true
 				}
-				if foundFirstKept {
+				if foundFirstKept && !(path[i].Type == "message" && path[i].Message != nil && path[i].Message.MessageRole() == ai.RoleSystem) {
 					appendMessage(path[i])
 				}
 			}

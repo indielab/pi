@@ -14,9 +14,11 @@ import (
 //
 // The .json scenarios in testdata/sessparity and their .golden.json expected
 // outputs were captured by running pi's own buildSessionContext+convertToLlm
-// (from @earendil-works/pi-coding-agent) over the same scenarios. This test
-// reconstructs each scenario through the Go port and asserts the {role,text}
-// projection matches pi byte-for-byte, so any drift from pi's behaviour fails
+// over the same scenarios (testdata/sessparity/capture.mts: scenarios 1-8 from
+// the npm build of @earendil-works/pi-coding-agent, 9-13 from upstream TS at
+// 9e05370b2). This test reconstructs each scenario through the Go port and
+// asserts the {role,text} projection — plus the whole message for a system
+// message — matches pi byte-for-byte, so any drift from pi's behaviour fails
 // the build.
 
 type parityScenario struct {
@@ -32,6 +34,9 @@ type parityModel struct {
 type parityMsg struct {
 	Role string `json:"role"`
 	Text string `json:"text"`
+	// Message is the whole system message, whose key order, sections and tool
+	// fields are part of what a resumed session replays.
+	Message json.RawMessage `json:"message,omitempty"`
 }
 
 type parityOut struct {
@@ -65,6 +70,12 @@ func projectParityMsg(m ai.Message) parityMsg {
 		return parityMsg{Role: "assistant", Text: parityText(v.Content)}
 	case ai.ToolResultMessage:
 		return parityMsg{Role: "toolResult", Text: parityText(v.Content)}
+	case ai.SystemMessage:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return parityMsg{Role: "system", Text: "<unmarshalable>"}
+		}
+		return parityMsg{Role: "system", Text: parityText(v.Content), Message: raw}
 	}
 	return parityMsg{Role: string(m.MessageRole())}
 }

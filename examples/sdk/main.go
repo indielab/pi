@@ -40,8 +40,9 @@ func main() {
 
 	// 3. Build a session. Pass your own tools (or coding.CreateAllTools(cwd) for
 	//    the built-in file/bash toolset). A custom system prompt replaces the
-	//    coding-agent prompt body; project context files, skills, date, and cwd
-	//    are still appended, exactly as in pi.
+	//    coding-agent prompt's preamble, tools, rules and docs sections; project
+	//    context files, skills and cwd still follow it, exactly as in pi. The
+	//    first prompt declares it into the transcript.
 	cwd, _ := os.Getwd()
 	sess := coding.NewSession(coding.SessionOptions{
 		Model:        model,

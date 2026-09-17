@@ -83,7 +83,7 @@ type AgentTool struct {
 	// validation. Return the same map to indicate no change.
 	PrepareArguments func(raw map[string]any) map[string]any
 	// PromptGuidelines are optional bullet lines the system prompt builder folds
-	// into its Guidelines section (port of pi's tool promptGuidelines).
+	// into its rules section (port of pi's tool promptGuidelines).
 	PromptGuidelines []string
 	// ConstrainedSampling optionally asks the provider to constrain sampling for
 	// this tool (JSON schema or grammar). pi carries this on AgentTool for free

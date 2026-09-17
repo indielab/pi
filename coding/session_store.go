@@ -240,6 +240,26 @@ func genEntryID(taken func(id string) bool) string {
 // together (an unterminated tail plus a later append, issue #8345) is dropped
 // whole rather than resurrecting its first entry as an orphan.
 func readSessionEntries(data []byte) (entries []map[string]any, migrated bool) {
+	for _, line := range readSessionLines(data) {
+		entries = append(entries, line.entry)
+	}
+	return entries, migrateSessionEntries(entries)
+}
+
+// sessionLine is one parsed session file line: the decoded entry and the line
+// as written.
+type sessionLine struct {
+	entry map[string]any
+	raw   string
+}
+
+// readSessionLines parses a session file's JSONL lines as readSessionEntries
+// does, without migrating them, keeping each line's text beside its entry.
+// Decoding the text again keeps every nested object's key order, which a
+// map[string]any loses; the order is data pi keeps (JSON.parse preserves it),
+// such as a system message's sections, which render in that order.
+func readSessionLines(data []byte) []sessionLine {
+	var lines []sessionLine
 	for _, line := range strings.Split(string(data), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -251,9 +271,9 @@ func readSessionEntries(data []byte) (entries []map[string]any, migrated bool) {
 		if dec.Decode(&entry) != nil || entry == nil || dec.InputOffset() != int64(len(line)) {
 			continue
 		}
-		entries = append(entries, entry)
+		lines = append(lines, sessionLine{entry: entry, raw: line})
 	}
-	return entries, migrateSessionEntries(entries)
+	return lines
 }
 
 // sessionHeader returns the first session entry, pi's

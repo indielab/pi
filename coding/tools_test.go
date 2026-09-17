@@ -249,7 +249,7 @@ func TestToolSchemasValidateViaAgent(t *testing.T) {
 }
 
 func TestSystemPromptShape(t *testing.T) {
-	p := BuildSystemPrompt(BuildSystemPromptOptions{
+	p := mustBuildSystemPrompt(t, BuildSystemPromptOptions{
 		SelectedTools: []string{"read", "bash", "edit", "write"},
 		ToolSnippets:  ToolSnippets,
 		Cwd:           "/work/project",
@@ -260,8 +260,8 @@ func TestSystemPromptShape(t *testing.T) {
 	if !strings.Contains(p, "- read: Read file contents") {
 		t.Fatal("missing tool list")
 	}
-	if !strings.Contains(p, "Current working directory: /work/project") {
-		t.Fatal("missing cwd footer")
+	if !strings.Contains(p, "<cwd>\n/work/project\n</cwd>") {
+		t.Fatal("missing cwd section")
 	}
 }
 

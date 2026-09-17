@@ -58,9 +58,12 @@ func TestSessionPersistenceRoundTrip(t *testing.T) {
 	if len(messages) < 2 {
 		t.Fatalf("expected >=2 messages reloaded, got %d", len(messages))
 	}
-	// First is the user prompt, last is the assistant reply.
-	if messages[0].MessageRole() != ai.RoleUser {
-		t.Fatalf("first message should be user, got %s", messages[0].MessageRole())
+	// The declared system prompt leads, then the user prompt.
+	if messages[0].MessageRole() != ai.RoleSystem {
+		t.Fatalf("first message should be the declared system prompt, got %s", messages[0].MessageRole())
+	}
+	if messages[1].MessageRole() != ai.RoleUser {
+		t.Fatalf("second message should be user, got %s", messages[1].MessageRole())
 	}
 }
 

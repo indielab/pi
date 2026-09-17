@@ -38,9 +38,13 @@ func TestSessionRunAggregatesUsageAcrossToolLoop(t *testing.T) {
 	if len(res.ToolCalls) != 1 || res.ToolCalls[0].Name != "ls" {
 		t.Fatalf("tool calls wrong: %#v", res.ToolCalls)
 	}
-	// Messages: user, assistant(toolcall), toolResult, assistant(final).
-	if len(res.Messages) != 4 {
-		t.Fatalf("expected 4 new messages, got %d", len(res.Messages))
+	// Messages: the declared system prompt, user, assistant(toolcall),
+	// toolResult, assistant(final).
+	if len(res.Messages) != 5 {
+		t.Fatalf("expected 5 new messages, got %d", len(res.Messages))
+	}
+	if res.Messages[0].MessageRole() != ai.RoleSystem {
+		t.Fatalf("the run's first message should declare the prompt, got %s", res.Messages[0].MessageRole())
 	}
 	// Usage was aggregated across both assistant turns (faux estimates >0 output).
 	if res.Usage.Output <= 0 {
