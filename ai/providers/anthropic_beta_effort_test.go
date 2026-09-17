@@ -48,7 +48,7 @@ func anthropicCaptureRequest(t *testing.T, model *ai.Model, req ai.Context, opts
 	}))
 	defer server.Close()
 	model.BaseURL = server.URL
-	StreamAnthropic(context.Background(), model, req, opts).Result()
+	StreamAnthropic(context.Background(), model, ai.NormalizeContext(req), opts).Result()
 	return gotURI, gotHeaders, gotBody
 }
 
@@ -538,7 +538,7 @@ func TestAnthropicProviderThinkingLevelOnOutput(t *testing.T) {
 
 	model := anthropicMidConvoModel()
 	model.BaseURL = server.URL
-	got := StreamAnthropic(context.Background(), model, anthropicHelloContext(), opts).Result()
+	got := StreamAnthropic(context.Background(), model, ai.NormalizeContext(anthropicHelloContext()), opts).Result()
 	if got.ProviderThinkingLevel != "xhigh" {
 		t.Fatalf("providerThinkingLevel = %q, want %q", got.ProviderThinkingLevel, "xhigh")
 	}
@@ -546,14 +546,14 @@ func TestAnthropicProviderThinkingLevelOnOutput(t *testing.T) {
 	// Default when the caller supplied no effort.
 	defaulted := anthropicMidConvoModel()
 	defaulted.BaseURL = server.URL
-	got = StreamAnthropic(context.Background(), defaulted, anthropicHelloContext(), apiKeyOptions("k")).Result()
+	got = StreamAnthropic(context.Background(), defaulted, ai.NormalizeContext(anthropicHelloContext()), apiKeyOptions("k")).Result()
 	if got.ProviderThinkingLevel != "high" {
 		t.Fatalf("defaulted providerThinkingLevel = %q, want %q", got.ProviderThinkingLevel, "high")
 	}
 
 	unmanaged := anthropicPlainModel()
 	unmanaged.BaseURL = server.URL
-	got = StreamAnthropic(context.Background(), unmanaged, anthropicHelloContext(), apiKeyOptions("k")).Result()
+	got = StreamAnthropic(context.Background(), unmanaged, ai.NormalizeContext(anthropicHelloContext()), apiKeyOptions("k")).Result()
 	if got.ProviderThinkingLevel != "" {
 		t.Fatalf("unmanaged providerThinkingLevel = %q, want empty", got.ProviderThinkingLevel)
 	}
@@ -609,7 +609,7 @@ func streamAnthropicAgainst(t *testing.T, model *ai.Model, sse string) *ai.Assis
 	}))
 	defer server.Close()
 	model.BaseURL = server.URL
-	return StreamAnthropic(context.Background(), model, anthropicHelloContext(), apiKeyOptions("test-key")).Result()
+	return StreamAnthropic(context.Background(), model, ai.NormalizeContext(anthropicHelloContext()), apiKeyOptions("test-key")).Result()
 }
 
 // A leading `fallback` block is skipped, and the text after it still lands at
@@ -859,7 +859,7 @@ func TestAnthropicOutputFormatConflictFailsStream(t *testing.T) {
 	defer server.Close()
 	model := anthropicPlainModel()
 	model.BaseURL = server.URL
-	got := StreamAnthropic(context.Background(), model, anthropicHelloContext(), opts).Result()
+	got := StreamAnthropic(context.Background(), model, ai.NormalizeContext(anthropicHelloContext()), opts).Result()
 	want := "Both output_format and output_config.format were provided. " +
 		"Please use only output_config.format (output_format is deprecated)."
 	if got.StopReason != ai.StopError || got.ErrorMessage != want {

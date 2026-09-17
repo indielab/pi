@@ -106,14 +106,14 @@ func TestGoogleStreamSimpleMissingKeyPreemptsOtherSetupFailures(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.control != "" {
-				_, final := drainSimple(StreamSimpleGoogle(context.Background(), tc.model(), req, tc.opts("gemini-key")))
+				_, final := drainSimple(StreamSimpleGoogle(context.Background(), tc.model(), ai.NormalizeContext(req), tc.opts("gemini-key")))
 				if final.ErrorMessage != tc.control {
 					t.Fatalf("with a key: error = %q, want %q (the precedence check would be vacuous)",
 						final.ErrorMessage, tc.control)
 				}
 			}
 
-			types, final := drainSimple(StreamSimpleGoogle(context.Background(), tc.model(), req, tc.opts("")))
+			types, final := drainSimple(StreamSimpleGoogle(context.Background(), tc.model(), ai.NormalizeContext(req), tc.opts("")))
 			if len(types) != 1 || types[0] != ai.EventError {
 				t.Fatalf("events = %v, want a single error event", types)
 			}
@@ -128,7 +128,7 @@ func TestGoogleStreamSimpleMissingKeyPreemptsOtherSetupFailures(t *testing.T) {
 // pi's `streamSimple(model, context)` with no options object at all.
 func TestGoogleStreamSimpleMissingKeyWithNilOptions(t *testing.T) {
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	types, final := drainSimple(StreamSimpleGoogle(context.Background(), googleAuthModel(nil), req, nil))
+	types, final := drainSimple(StreamSimpleGoogle(context.Background(), googleAuthModel(nil), ai.NormalizeContext(req), nil))
 	if len(types) != 1 || types[0] != ai.EventError {
 		t.Fatalf("events = %v, want a single error event", types)
 	}
@@ -146,7 +146,7 @@ func TestGoogleStreamKeepsCustomFetchPrecedence(t *testing.T) {
 	opts := &GoogleOptions{StreamOptions: ai.StreamOptions{
 		ProviderRequestOptions: ai.ProviderRequestOptions{HTTPClient: &http.Client{}},
 	}}
-	_, final := drainSimple(StreamGoogle(context.Background(), googleAuthModel(nil), req, opts))
+	_, final := drainSimple(StreamGoogle(context.Background(), googleAuthModel(nil), ai.NormalizeContext(req), opts))
 	const want = "Custom fetch is not supported by the Google Generative AI adapter"
 	if final.ErrorMessage != want {
 		t.Fatalf("error = %q, want %q", final.ErrorMessage, want)
@@ -181,7 +181,7 @@ func anthropicSimpleCapture(t *testing.T, model *ai.Model, opts *ai.SimpleStream
 	defer server.Close()
 	model.BaseURL = server.URL
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	_, final := drainSimple(StreamSimpleAnthropic(context.Background(), model, req, opts))
+	_, final := drainSimple(StreamSimpleAnthropic(context.Background(), model, ai.NormalizeContext(req), opts))
 	return gotHeaders, final
 }
 
@@ -297,7 +297,7 @@ func TestAnthropicStreamSimpleRejectsEmptyAndSuppressedHeaders(t *testing.T) {
 			model := anthropicAuthModel()
 			model.BaseURL = "https://example.invalid"
 			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-			types, final := drainSimple(StreamSimpleAnthropic(context.Background(), model, req, opts))
+			types, final := drainSimple(StreamSimpleAnthropic(context.Background(), model, ai.NormalizeContext(req), opts))
 			if len(types) != 1 || types[0] != ai.EventError {
 				t.Fatalf("events = %v, want a single error event", types)
 			}
@@ -412,13 +412,13 @@ func TestAnthropicStreamSimpleMissingKeyPreemptsOtherSetupFailures(t *testing.T)
 	ctrlOpts := &ai.SimpleStreamOptions{StreamOptions: ai.StreamOptions{
 		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"},
 	}}
-	_, ctrl := drainSimple(StreamSimpleAnthropic(context.Background(), newModel(), req, ctrlOpts))
+	_, ctrl := drainSimple(StreamSimpleAnthropic(context.Background(), newModel(), ai.NormalizeContext(req), ctrlOpts))
 	if ctrl.ErrorMessage != strictErr {
 		t.Fatalf("control error = %q, want %q — the precedence case below would be vacuous", ctrl.ErrorMessage, strictErr)
 	}
 
 	// Without a key, the auth failure must preempt it.
-	types, final := drainSimple(StreamSimpleAnthropic(context.Background(), newModel(), req, &ai.SimpleStreamOptions{}))
+	types, final := drainSimple(StreamSimpleAnthropic(context.Background(), newModel(), ai.NormalizeContext(req), &ai.SimpleStreamOptions{}))
 	if len(types) != 1 || types[0] != ai.EventError {
 		t.Fatalf("events = %v, want a single error event", types)
 	}

@@ -18,11 +18,11 @@ const (
 // window after the estimated context and a safety margin, mirroring pi's
 // clampMaxTokensToContext. Models with no known context window only get the
 // MIN_MAX_TOKENS floor applied.
-func ClampMaxTokensToContext(model *Model, context Context, maxTokens int) int {
+func ClampMaxTokensToContext(model *Model, context TranscriptContext, maxTokens int) int {
 	if model.ContextWindow <= 0 {
 		return max(minMaxTokens, maxTokens)
 	}
-	available := model.ContextWindow - estimateContextTokens(context).Tokens - contextSafetyTokens
+	available := model.ContextWindow - estimateContextTokens(context.Messages).Tokens - contextSafetyTokens
 	return min(maxTokens, max(minMaxTokens, available))
 }
 

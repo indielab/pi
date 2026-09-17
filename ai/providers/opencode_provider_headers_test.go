@@ -123,9 +123,11 @@ func captureOpenAISimpleHeaders(t *testing.T, model *ai.Model, opts ai.StreamOpt
 	}))
 	defer server.Close()
 	model.BaseURL = server.URL
-	final := StreamSimpleOpenAICompletions(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&ai.SimpleStreamOptions{StreamOptions: opts}).Result()
+	final := StreamSimpleOpenAICompletions(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+		&ai.SimpleStreamOptions{StreamOptions: opts}).
+		Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}

@@ -27,7 +27,7 @@ func captureOpenAIBody(t *testing.T, model *ai.Model, req ai.Context, opts *ai.S
 		opts = &ai.SimpleStreamOptions{}
 	}
 	opts.APIKey = "k"
-	StreamSimpleOpenAICompletions(context.Background(), model, req, opts).Result()
+	StreamSimpleOpenAICompletions(context.Background(), model, ai.NormalizeContext(req), opts).Result()
 	return gotBody
 }
 

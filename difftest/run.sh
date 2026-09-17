@@ -87,10 +87,10 @@ verify_integrity "@earendil-works/pi-coding-agent"
 # published build simply does not contain it.
 #
 # Skipped entirely when no scenario asks for it. The suite empties of "src"
-# scenarios every time a release ships the surface they cover — it is fully
-# dist-backed as of the 2026-08-27 sync — and extracting then would make the
-# upstream clone and a resolvable PI_UPSTREAM_SHA hard requirements of a run
-# that reads neither, which is a fresh-clone and CI failure for nothing.
+# scenarios every time a release ships the surface they cover, and extracting
+# then would make the upstream clone and a resolvable PI_UPSTREAM_SHA hard
+# requirements of a run that reads neither, which is a fresh-clone and CI
+# failure for nothing.
 
 SRC="$HERE/pisrc/$PI_UPSTREAM_SHA"
 if grep -lq '"backend"[[:space:]]*:[[:space:]]*"src"' "$HERE"/scenarios/*.json 2>/dev/null; then

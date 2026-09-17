@@ -7,15 +7,18 @@ import (
 	"sync"
 )
 
-// StreamFunction streams an assistant response for a model + request context.
+// StreamFunction streams an assistant response for a model + request transcript.
 //
-// Contract (mirrors pi): once invoked, request/model/runtime failures must be
-// encoded in the returned stream (terminal "error" event with stopReason
-// "error"/"aborted"), not returned as a Go error.
-type StreamFunction func(ctx context.Context, model *Model, req Context, opts *StreamOptions) *AssistantMessageEventStream
+// Contract (mirrors pi):
+//   - It receives a normalized transcript: the system prompt and tools live in
+//     the leading system message, never on a Context (see NormalizeContext).
+//   - Once invoked, request/model/runtime failures must be encoded in the
+//     returned stream (terminal "error" event with stopReason
+//     "error"/"aborted"), not returned as a Go error.
+type StreamFunction func(ctx context.Context, model *Model, req TranscriptContext, opts *StreamOptions) *AssistantMessageEventStream
 
 // StreamSimpleFunction is StreamFunction with unified reasoning options.
-type StreamSimpleFunction func(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream
+type StreamSimpleFunction func(ctx context.Context, model *Model, req TranscriptContext, opts *SimpleStreamOptions) *AssistantMessageEventStream
 
 // FetchDeferredFunction redeems a DeferredHandle, streaming the response the
 // provider has been producing asynchronously. Like StreamFunction it reports
@@ -61,7 +64,7 @@ func RegisterApiProvider(p ApiProvider, sourceID ...string) {
 	stream := p.Stream
 	if stream != nil {
 		orig := stream
-		stream = func(ctx context.Context, model *Model, req Context, opts *StreamOptions) *AssistantMessageEventStream {
+		stream = func(ctx context.Context, model *Model, req TranscriptContext, opts *StreamOptions) *AssistantMessageEventStream {
 			if model.Api != api {
 				panic(fmt.Sprintf("Mismatched api: %s expected %s", model.Api, api))
 			}
@@ -71,7 +74,7 @@ func RegisterApiProvider(p ApiProvider, sourceID ...string) {
 	streamSimple := p.StreamSimple
 	if streamSimple != nil {
 		orig := streamSimple
-		streamSimple = func(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream {
+		streamSimple = func(ctx context.Context, model *Model, req TranscriptContext, opts *SimpleStreamOptions) *AssistantMessageEventStream {
 			if model.Api != api {
 				panic(fmt.Sprintf("Mismatched api: %s expected %s", model.Api, api))
 			}

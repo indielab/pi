@@ -604,9 +604,14 @@ func (s *Session) completeSummarization(ctx context.Context, promptText string, 
 
 	streamFn := s.Agent.StreamFn
 	if streamFn == nil {
-		streamFn = ai.StreamSimple
+		streamFn = func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			return ai.StreamSimple(ctx, model, ai.Context{Messages: req.Messages}, opts)
+		}
 	}
-	stream := streamFn(ctx, requestModel, ai.Context{SystemPrompt: summarizationSystemPrompt, Messages: summarizationMessages}, opts)
+	// pi buildSummarizationContext: the summarization prompt rides the leading
+	// system message of a normalized transcript.
+	summarizationContext := ai.NormalizeContext(ai.Context{SystemPrompt: summarizationSystemPrompt, Messages: summarizationMessages})
+	stream := streamFn(ctx, requestModel, summarizationContext, opts)
 	msg := stream.Result()
 	if msg == nil || summarizationFailed(msg.StopReason) {
 		return "", false

@@ -653,8 +653,10 @@ func TestGatewayBindingComposesWithOpenAICompletions(t *testing.T) {
 		},
 	}}
 
-	result := StreamSimpleOpenAICompletions(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, opts).Result()
+	result := StreamSimpleOpenAICompletions(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+		opts).
+		Result()
 	if result == nil {
 		t.Fatal("stream produced no result")
 	}

@@ -57,7 +57,7 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 				Input: []string{"text"}, MaxTokens: 4096,
 			},
 			stream: func(m *ai.Model, r ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
-				return StreamSimpleAnthropic(t.Context(), m, r, o)
+				return StreamSimpleAnthropic(t.Context(), m, ai.NormalizeContext(r), o)
 			},
 			// pi wraps a bare string as {type: ...}.
 			want: func(body map[string]any) any {
@@ -76,7 +76,7 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 				Input: []string{"text"}, MaxTokens: 4096,
 			},
 			stream: func(m *ai.Model, r ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
-				return StreamSimpleOpenAICompletions(t.Context(), m, r, o)
+				return StreamSimpleOpenAICompletions(t.Context(), m, ai.NormalizeContext(r), o)
 			},
 			want:     func(body map[string]any) any { return body["tool_choice"] },
 			wantNone: "none",
@@ -88,7 +88,7 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 				Input: []string{"text"}, MaxTokens: 4096,
 			},
 			stream: func(m *ai.Model, r ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
-				return StreamSimpleOpenAIResponses(t.Context(), m, r, o)
+				return StreamSimpleOpenAIResponses(t.Context(), m, ai.NormalizeContext(r), o)
 			},
 			want:     func(body map[string]any) any { return body["tool_choice"] },
 			wantNone: "none",
@@ -100,7 +100,7 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 				Input: []string{"text"}, MaxTokens: 4096, BaseURL: "https://example.invalid/v1beta",
 			},
 			stream: func(m *ai.Model, r ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
-				return StreamSimpleGoogle(t.Context(), m, r, o)
+				return StreamSimpleGoogle(t.Context(), m, ai.NormalizeContext(r), o)
 			},
 			// Google carries it as a functionCallingConfig mode, upper-cased.
 			want: func(body map[string]any) any {
@@ -124,7 +124,7 @@ func TestSimpleToolChoicePerProvider(t *testing.T) {
 				Input: []string{"text"}, MaxTokens: 4096, BaseURL: "https://example.invalid",
 			},
 			stream: func(m *ai.Model, r ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
-				return StreamSimplePiMessages(t.Context(), m, r, o)
+				return StreamSimplePiMessages(t.Context(), m, ai.NormalizeContext(r), o)
 			},
 			want: func(body map[string]any) any {
 				opts, _ := body["options"].(map[string]any)
@@ -173,7 +173,7 @@ func TestSimpleToolChoiceSentWithoutTools(t *testing.T) {
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("Summarize the conversation", 1)}}
 	body := captureSimplePayload(t, func(m *ai.Model, r ai.Context, o *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
-		return StreamSimpleOpenAICompletions(t.Context(), m, r, o)
+		return StreamSimpleOpenAICompletions(t.Context(), m, ai.NormalizeContext(r), o)
 	}, model, req, ai.ToolChoiceNone)
 
 	if body["tool_choice"] != "none" {

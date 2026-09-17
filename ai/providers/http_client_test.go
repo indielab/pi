@@ -46,29 +46,30 @@ var injectionProviders = []struct {
 		name: "anthropic-messages", api: ai.APIAnthropicMessages, sse: anthropicSSE,
 		run: func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessage {
 			model := &ai.Model{ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", BaseURL: baseURL, MaxTokens: 4096}
-			return StreamAnthropic(context.Background(), model, injectionContext(), &AnthropicOptions{StreamOptions: opts}).Result()
+			return StreamAnthropic(context.Background(), model, ai.NormalizeContext(injectionContext()), &AnthropicOptions{StreamOptions: opts}).Result()
 		},
 	},
 	{
 		name: "openai-completions", api: ai.APIOpenAICompletions, sse: completionsInjectionSSE,
 		run: func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessage {
 			model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: baseURL, MaxTokens: 4096}
-			return StreamOpenAICompletions(context.Background(), model, injectionContext(), &OpenAIOptions{StreamOptions: opts}).Result()
+			return StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(injectionContext()), &OpenAIOptions{StreamOptions: opts}).Result()
 		},
 	},
 	{
 		name: "openai-responses", api: ai.APIOpenAIResponses, sse: responsesSSE,
 		run: func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessage {
 			model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAIResponses, Provider: "openai", BaseURL: baseURL, MaxTokens: 4096}
-			return StreamOpenAIResponses(context.Background(), model, injectionContext(), &OpenAIResponsesOptions{StreamOptions: opts}).Result()
+			return StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(injectionContext()), &OpenAIResponsesOptions{StreamOptions: opts}).Result()
 		},
 	},
 	{
 		name: "pi-messages", api: ai.APIPiMessages,
 		sse: piMessagesSSE(`{"type":"start"}`, `{"type":"done","reason":"stop","usage":`+piMessagesUsageJSON+`}`),
 		run: func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessage {
-			return StreamPiMessages(context.Background(), piMessagesTestModel(baseURL+"/v1"), piMessagesTestContext(),
-				&PiMessagesOptions{StreamOptions: opts}).Result()
+			return StreamPiMessages(context.Background(), piMessagesTestModel(baseURL+"/v1"), ai.NormalizeContext(piMessagesTestContext()),
+				&PiMessagesOptions{StreamOptions: opts}).
+				Result()
 		},
 	},
 }
@@ -181,9 +182,10 @@ func TestGoogleRejectsCustomHTTPClient(t *testing.T) {
 		BaseURL: server.URL, MaxTokens: 8192,
 	}
 
-	final := StreamGoogle(context.Background(), model, injectionContext(), &GoogleOptions{
+	final := StreamGoogle(context.Background(), model, ai.NormalizeContext(injectionContext()), &GoogleOptions{
 		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key", HTTPClient: &countingClient{inner: server.Client()}}},
-	}).Result()
+	}).
+		Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error stop, got %s", final.StopReason)
@@ -200,10 +202,12 @@ func TestGoogleRejectsCustomHTTPClient(t *testing.T) {
 // both faults reports the fetch error, not the missing key.
 func TestGoogleRejectsCustomHTTPClientBeforeAPIKeyCheck(t *testing.T) {
 	final := StreamGoogle(context.Background(),
-		&ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", MaxTokens: 8192},
-		injectionContext(),
-		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{HTTPClient: &countingClient{inner: http.DefaultClient}}}},
-	).Result()
+		&ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", MaxTokens: 8192}, ai.NormalizeContext(
+
+			injectionContext()),
+
+		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{HTTPClient: &countingClient{inner: http.DefaultClient}}}}).
+		Result()
 
 	if final.ErrorMessage != "Custom fetch is not supported by the Google Generative AI adapter" {
 		t.Fatalf("error message wrong: %q", final.ErrorMessage)
@@ -219,9 +223,10 @@ func TestGoogleAcceptsDefaultHTTPClient(t *testing.T) {
 		BaseURL: server.URL, MaxTokens: 8192,
 	}
 
-	final := StreamGoogle(context.Background(), model, injectionContext(), &GoogleOptions{
+	final := StreamGoogle(context.Background(), model, ai.NormalizeContext(injectionContext()), &GoogleOptions{
 		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key", HTTPClient: http.DefaultClient}},
-	}).Result()
+	}).
+		Result()
 
 	if final.StopReason == ai.StopError {
 		t.Fatalf("default client must be accepted, got error: %s", final.ErrorMessage)

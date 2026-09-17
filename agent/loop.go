@@ -11,7 +11,18 @@ import (
 
 // StreamFn streams an assistant response. Defaults to ai.StreamSimple. Per the
 // stream contract it must encode failures in the returned stream, not panic.
-type StreamFn func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream
+//
+// The loop passes a normalized transcript: the system prompt and tool
+// declarations are carried by the transcript's system messages (pi StreamFn,
+// upstream 9e05370b2).
+type StreamFn func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream
+
+// streamSimpleTranscript is the default StreamFn: ai.StreamSimple over the
+// transcript. Normalizing a context that carries no prompt or tools is the
+// identity, so the provider receives exactly the transcript the loop built.
+func streamSimpleTranscript(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+	return ai.StreamSimple(ctx, model, ai.Context{Messages: req.Messages}, opts)
+}
 
 // emitPanic is the value used to unwind the loop when an event listener returns
 // an error. pi rejects the run when a subscriber throws (agent.ts:553-555); the
@@ -248,15 +259,15 @@ func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config
 		llmMessages = defaultConvertToLlm(messages)
 	}
 
-	llmCtx := ai.Context{
+	llmCtx := ai.NormalizeContext(ai.Context{
 		SystemPrompt: agentCtx.SystemPrompt,
 		Messages:     llmMessages,
 		Tools:        toAITools(agentCtx.Tools),
-	}
+	})
 
 	fn := streamFn
 	if fn == nil {
-		fn = ai.StreamSimple
+		fn = streamSimpleTranscript
 	}
 
 	apiKey := config.APIKey
@@ -790,9 +801,8 @@ func finalizeExecutedToolCall(ctx context.Context, current *AgentContext, msg *a
 				Context:          current,
 			})
 			// pi rebuilds `result = {...result, content, details, terminate}`; the
-			// spread preserves fields the after-hook does not override (notably
-			// addedToolNames). Go mutates `result` in place, which preserves them
-			// the same way.
+			// spread preserves fields the after-hook does not override. Go mutates
+			// `result` in place, which preserves them the same way.
 			if after != nil {
 				if after.HasContent {
 					result.Content = after.Content
@@ -828,7 +838,7 @@ func emitToolExecutionEnd(fo finalizedOutcome, emit EventSink) {
 }
 
 func createToolResultMessage(fo finalizedOutcome) ai.ToolResultMessage {
-	trm := ai.ToolResultMessage{
+	return ai.ToolResultMessage{
 		ToolCallID: fo.toolCall.ID,
 		ToolName:   fo.toolCall.Name,
 		Content:    fo.result.Content,
@@ -836,12 +846,6 @@ func createToolResultMessage(fo finalizedOutcome) ai.ToolResultMessage {
 		IsError:    fo.isError,
 		Timestamp:  nowMillis(),
 	}
-	// pi only writes addedToolNames when non-empty so the field never enters
-	// session history or provider payloads as an empty array.
-	if len(fo.result.AddedToolNames) > 0 {
-		trm.AddedToolNames = fo.result.AddedToolNames
-	}
-	return trm
 }
 
 func emitToolResultMessage(trm ai.ToolResultMessage, emit EventSink) {

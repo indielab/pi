@@ -30,6 +30,22 @@ function moduleFor(backend, api) {
 	throw new Error(`scenario backend must be "dist" or "src", got ${JSON.stringify(backend)}`);
 }
 
+/**
+ * The context an adapter entry point takes. From upstream 9e05370b2 on, api
+ * `stream`/`streamSimple` take a TranscriptContext that only normalizeContext
+ * produces (the public entry points normalize before dispatching), so a "src"
+ * scenario at such a sha is normalized here exactly as they would; without it
+ * the adapter would silently drop the system prompt and tools. The published
+ * "dist" build predates the change and takes the raw context.
+ */
+async function adapterContext(scenario) {
+	if (scenario.backend !== "src") return scenario.context;
+	const transcriptPath = path.join(SRC_DIR, "src/utils/transcript.ts");
+	if (!existsSync(transcriptPath)) return scenario.context;
+	const { normalizeContext } = await import(pathToFileURL(transcriptPath).href);
+	return normalizeContext(scenario.context);
+}
+
 /** Map scenario options (pi-shaped, camelCase) onto the pi options object. */
 function buildOptions(scenario, capture) {
 	const o = { ...(scenario.options ?? {}) };
@@ -62,7 +78,7 @@ async function captureScenario(scenario) {
 		throw halt;
 	});
 
-	const final = await entry(scenario.model, scenario.context, options).result();
+	const final = await entry(scenario.model, await adapterContext(scenario), options).result();
 	if (captured === undefined) {
 		throw new Error(
 			`payload was never built (stream ended ${final?.stopReason}: ${final?.errorMessage ?? ""})`,

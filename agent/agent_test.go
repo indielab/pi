@@ -23,7 +23,7 @@ var testModel = &ai.Model{ID: "faux", Name: "faux", Api: "faux", Provider: "faux
 func scriptedStream(messages ...*ai.AssistantMessage) StreamFn {
 	var mu sync.Mutex
 	idx := 0
-	return func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+	return func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 		mu.Lock()
 		var msg *ai.AssistantMessage
 		if idx < len(messages) {
@@ -127,19 +127,20 @@ func TestAgentRunsToolCallThenFinishes(t *testing.T) {
 	}
 }
 
-// TestAgentToolResultAddedToolNames verifies that AddedToolNames set on a tool's
-// execute result flows onto the constructed ToolResultMessage, and survives an
-// AfterToolCall hook that overrides other fields (pi's `...result` spread
-// preservation + createToolResultMessage's non-empty guard).
-func TestAgentToolResultAddedToolNames(t *testing.T) {
+// TestAgentAfterToolCallContentOverridePreservesResult verifies that an
+// AfterToolCall hook overriding only content keeps the rest of the execute
+// result (pi's `{...result, content}` spread preservation). Upstream 9e05370b2
+// deleted addedToolNames, the field this test used to carry through the hook;
+// details is the surviving field the spread preserves.
+func TestAgentAfterToolCallContentOverridePreservesResult(t *testing.T) {
 	tool := AgentTool{
 		Name:        "loader",
 		Description: "loads more tools",
 		Parameters:  ai.Object(),
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
 			return AgentToolResult{
-				Content:        ai.ContentList{ai.TextContent{Text: "loaded"}},
-				AddedToolNames: []string{"after_load"},
+				Content: ai.ContentList{ai.TextContent{Text: "loaded"}},
+				Details: "after_load",
 			}, nil
 		},
 	}
@@ -149,7 +150,7 @@ func TestAgentToolResultAddedToolNames(t *testing.T) {
 			assistantWithToolCall("c1", "loader", map[string]any{}),
 			&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "done"}}, StopReason: ai.StopStop},
 		),
-		// The after-hook only overrides content; AddedToolNames must be preserved.
+		// The after-hook only overrides content; details must be preserved.
 		AfterToolCall: func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult {
 			return &AfterToolCallResult{Content: ai.ContentList{ai.TextContent{Text: "loaded!"}}, HasContent: true}
 		},
@@ -162,36 +163,11 @@ func TestAgentToolResultAddedToolNames(t *testing.T) {
 	if !ok {
 		t.Fatalf("message[2] = %#v, want ToolResultMessage", st.Messages[2])
 	}
-	if len(tr.AddedToolNames) != 1 || tr.AddedToolNames[0] != "after_load" {
-		t.Fatalf("AddedToolNames = %v, want [after_load]", tr.AddedToolNames)
+	if tr.Details != "after_load" {
+		t.Fatalf("Details = %v, want after_load", tr.Details)
 	}
 	if textOf(&ai.AssistantMessage{Content: tr.Content}) != "loaded!" {
 		t.Fatalf("after-hook content override lost: %#v", tr.Content)
-	}
-}
-
-// TestAgentToolResultAddedToolNamesOmittedWhenEmpty guards the non-empty write:
-// a result with no added tools leaves the field nil.
-func TestAgentToolResultAddedToolNamesOmittedWhenEmpty(t *testing.T) {
-	tool := AgentTool{
-		Name: "echo", Parameters: ai.Object(),
-		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
-			return AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "ok"}}}, nil
-		},
-	}
-	a := NewAgent(AgentOptions{
-		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
-		StreamFn: scriptedStream(
-			assistantWithToolCall("c1", "echo", map[string]any{}),
-			&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "done"}}, StopReason: ai.StopStop},
-		),
-	})
-	if err := a.Prompt(context.Background(), "go"); err != nil {
-		t.Fatal(err)
-	}
-	tr := a.State().Messages[2].(ai.ToolResultMessage)
-	if tr.AddedToolNames != nil {
-		t.Fatalf("AddedToolNames = %v, want nil", tr.AddedToolNames)
 	}
 }
 
@@ -278,7 +254,7 @@ func TestAgentBlockedToolTerminatesBatch(t *testing.T) {
 	}
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			n := llmCalls.Add(1)
 			s := ai.NewAssistantMessageEventStream()
 			go func() {
@@ -336,7 +312,7 @@ func TestAgentBlockedToolTerminateNeedsWholeBatch(t *testing.T) {
 	a := NewAgent(AgentOptions{
 		InitialState:  &AgentState{Model: testModel, Tools: []AgentTool{tool}},
 		ToolExecution: ToolParallel,
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			n := llmCalls.Add(1)
 			s := ai.NewAssistantMessageEventStream()
 			go func() {
@@ -410,7 +386,7 @@ func TestAgentRejectsConcurrentPrompt(t *testing.T) {
 	block := make(chan struct{})
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel},
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			s := ai.NewAssistantMessageEventStream()
 			go func() {
 				<-block
@@ -442,7 +418,7 @@ func TestAgentRejectsResetWhileProcessing(t *testing.T) {
 	started := make(chan struct{})
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel},
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			s := ai.NewAssistantMessageEventStream()
 			go func() {
 				// Mirrors pi's streamStarted deferred: signal only once the
@@ -542,7 +518,7 @@ func messageRoles(messages []AgentMessage) []string {
 func TestAgentPanickingStreamFnEmitsFailureLifecycle(t *testing.T) {
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel},
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			panic(errors.New("provider exploded"))
 		},
 	})
@@ -832,7 +808,7 @@ func TestAgentAbortMidStream(t *testing.T) {
 	started := make(chan struct{})
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel},
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			s := ai.NewAssistantMessageEventStream()
 			go func() {
 				s.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: &ai.AssistantMessage{}})
@@ -1320,7 +1296,7 @@ func TestAgentContinueConcurrentPromptDoesNotLoseDrainedMessages(t *testing.T) {
 				ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "hi"}}},
 				&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "hello"}}, StopReason: ai.StopStop},
 			}},
-			StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 				return scriptedStream()(ctx, model, req, opts) // always a clean done turn
 			},
 		})
@@ -1355,7 +1331,7 @@ func TestAgentContinueConcurrentPromptDoesNotLoseDrainedMessages(t *testing.T) {
 func TestAgentFailureEventListenerErrorStopsAndReturns(t *testing.T) {
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel},
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			panic(errors.New("provider exploded"))
 		},
 	})
@@ -1404,7 +1380,7 @@ func TestAgentForwardsMetadataAndWebSocketTimeout(t *testing.T) {
 		InitialState:              &AgentState{Model: testModel},
 		Metadata:                  map[string]any{"user_id": "u1"},
 		WebSocketConnectTimeoutMs: 1234,
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			got = opts
 			return inner(ctx, model, req, opts)
 		},
@@ -1513,7 +1489,7 @@ func TestAgentFailsToolCallsFromLengthTruncatedMessage(t *testing.T) {
 		truncated,
 		&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "done"}}, StopReason: ai.StopStop},
 	)
-	counting := func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+	counting := func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 		atomic.AddInt32(&streamCalls, 1)
 		return scripted(ctx, model, req, opts)
 	}
@@ -1632,7 +1608,7 @@ func TestAgentForwardsHTTPClientToStreamOptions(t *testing.T) {
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel},
 		HTTPClient:   client,
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			got = opts.HTTPClient
 			seen.Store(true)
 			return scriptedStream()(ctx, model, req, opts)
@@ -1728,7 +1704,7 @@ func TestAgentForwardsShouldStopAfterTurn(t *testing.T) {
 	var roles []ai.Role
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			atomic.AddInt32(&requests, 1)
 			return scripted(ctx, model, req, opts)
 		},
@@ -1787,7 +1763,7 @@ func TestAgentBuildsProviderContext(t *testing.T) {
 	var callOrder []string
 	var transformInput, convertInput []AgentMessage
 	var transformCtx context.Context
-	var got ai.Context
+	var got ai.TranscriptContext
 
 	a := NewAgent(AgentOptions{
 		InitialState: &AgentState{SystemPrompt: "System prompt", Model: testModel, Tools: []AgentTool{tool}},
@@ -1802,7 +1778,7 @@ func TestAgentBuildsProviderContext(t *testing.T) {
 			convertInput = messages
 			return defaultConvertToLlm(messages)
 		},
-		StreamFn: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			got = req
 			return reply(ctx, model, req, opts)
 		},
@@ -1834,14 +1810,18 @@ func TestAgentBuildsProviderContext(t *testing.T) {
 	if len(convertInput) != 1 || userText(convertInput[0]) != "kept" {
 		t.Fatalf("convert must see the transform's output, got %v", convertInput)
 	}
-	if got.SystemPrompt != "System prompt" {
-		t.Fatalf("system prompt must reach the provider verbatim, got %q", got.SystemPrompt)
+	// The provider receives a normalized transcript: the prompt and tools ride
+	// its leading system message.
+	leading, ok := ai.GetInitialSystemMessage(got.Messages)
+	if !ok || ai.GetSystemMessageText(leading) != "System prompt" {
+		t.Fatalf("system prompt must reach the provider verbatim, got %v", got.Messages)
 	}
-	if len(got.Messages) != 1 || userText(got.Messages[0]) != "kept" {
+	conversation := ai.WithoutInitialSystemMessage(got.Messages)
+	if len(conversation) != 1 || userText(conversation[0]) != "kept" {
 		t.Fatalf("want the transformed transcript on the wire, got %v", got.Messages)
 	}
-	if len(got.Tools) != 1 || got.Tools[0].Name != "echo" {
-		t.Fatalf("context tools must carry the agent's tools, got %v", got.Tools)
+	if tools := ai.GetCurrentTools(got.Messages); len(tools) != 1 || tools[0].Name != "echo" {
+		t.Fatalf("context tools must carry the agent's tools, got %v", tools)
 	}
 }
 
@@ -1855,7 +1835,7 @@ func TestAgentLoopDefaultConvertToLlm(t *testing.T) {
 		Content: ai.ContentList{ai.TextContent{Text: "ok"}}, StopReason: ai.StopStop,
 	})
 
-	var got ai.Context
+	var got ai.TranscriptContext
 	stream := AgentLoop(context.Background(),
 		[]AgentMessage{ai.NewUserText("discard", 1)},
 		AgentContext{SystemPrompt: "sp"},
@@ -1865,13 +1845,15 @@ func TestAgentLoopDefaultConvertToLlm(t *testing.T) {
 				return []AgentMessage{ai.NewUserText("kept", 7)}
 			},
 		},
-		func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			got = req
 			return reply(ctx, model, req, opts)
 		})
 	stream.Result()
 
-	if len(got.Messages) != 1 || userText(got.Messages[0]) != "kept" {
+	// The leading system message carries the "sp" prompt; the conversation
+	// after it is the transformed transcript.
+	if conversation := ai.WithoutInitialSystemMessage(got.Messages); len(conversation) != 1 || userText(conversation[0]) != "kept" {
 		t.Fatalf("default conversion must run on the transformed messages, got %v", got.Messages)
 	}
 }

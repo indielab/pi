@@ -7,7 +7,7 @@ import (
 )
 
 // Context-token estimation, ported from pi packages/ai/src/utils/estimate.ts
-// (upstream 09f10595). The estimates here drive clampMaxTokensToContext, which
+// (upstream 09f10595, system messages 9e05370b2). The estimates here drive clampMaxTokensToContext, which
 // caps streamSimple max-token defaults so providers that count input and output
 // against a single context window do not reject long requests.
 
@@ -88,6 +88,11 @@ func estimateTextAndImageContentTokens(content ContentList) int {
 
 // estimateMessageTokens mirrors pi's estimateMessageTokens.
 func estimateMessageTokens(message Message) int {
+	if system, ok := systemMessageOf(message); ok {
+		return estimateTextTokens(GetSystemMessageText(system)) +
+			estimateToolsTokens(system.ToolsAdded) +
+			estimateToolsTokens(system.ToolsRemoved)
+	}
 	switch m := message.(type) {
 	case UserMessage:
 		return estimateTextAndImageContentTokens(m.Content)
@@ -114,6 +119,9 @@ func estimateMessageTokens(message Message) int {
 // messageTimestamp returns the message's timestamp, mirroring pi where every
 // Message carries a `timestamp`.
 func messageTimestamp(m Message) int64 {
+	if system, ok := systemMessageOf(m); ok {
+		return system.Timestamp
+	}
 	switch msg := m.(type) {
 	case UserMessage:
 		return msg.Timestamp
@@ -150,9 +158,12 @@ func getLastAssistantUsageInfo(messages []Message) (usage Usage, index int, foun
 	return usage, index, found
 }
 
-// estimateMessages mirrors pi's estimateMessages: anchor on the last usage
-// block when present, else sum every message.
-func estimateMessages(messages []Message) ContextUsageEstimate {
+// estimateContextTokens mirrors pi's estimateContextTokens over a transcript
+// (upstream 9e05370b2 dropped the Context overload: the system prompt and tool
+// definitions now ride the transcript's system messages and are counted like any
+// other message). It anchors on the last usage block when present, else sums
+// every message.
+func estimateContextTokens(messages []Message) ContextUsageEstimate {
 	usage, index, found := getLastAssistantUsageInfo(messages)
 	if found {
 		usageTokens := calculateContextTokens(usage)
@@ -175,58 +186,12 @@ func estimateMessages(messages []Message) ContextUsageEstimate {
 	return ContextUsageEstimate{Tokens: tokens, UsageTokens: 0, TrailingTokens: tokens, LastUsageIndex: -1}
 }
 
-// estimateToolsTokens mirrors pi's estimateToolsTokens: JSON-serialize the tool
-// definitions and estimate their text tokens (0 for an empty set).
-func estimateToolsTokens(tools []Tool) int {
+// estimateToolsTokens mirrors pi's estimateToolsTokens: JSON-serialize a list
+// (tool definitions or tool references) and estimate its text tokens (0 for an
+// empty list).
+func estimateToolsTokens[T any](tools []T) int {
 	if len(tools) == 0 {
 		return 0
 	}
 	return estimateTextTokens(safeJSONStringify(tools))
-}
-
-// estimateContextTokens mirrors pi's Context overload of estimateContextTokens.
-// When there is no usage anchor it adds prefix tokens for the system prompt and
-// tool definitions. When there is an anchor it adds tokens for any tools whose
-// definitions were introduced by trailing tool results' AddedToolNames, since
-// those load after the anchored usage checkpoint.
-func estimateContextTokens(context Context) ContextUsageEstimate {
-	estimate := estimateMessages(context.Messages)
-	if estimate.LastUsageIndex != -1 {
-		addedNames := map[string]bool{}
-		for i := estimate.LastUsageIndex + 1; i < len(context.Messages); i++ {
-			// Value form only, matching estimateMessages' switch: transcript
-			// messages flow as value types throughout the port.
-			if tr, ok := context.Messages[i].(ToolResultMessage); ok {
-				for _, name := range tr.AddedToolNames {
-					addedNames[name] = true
-				}
-			}
-		}
-		var addedTools []Tool
-		for _, tool := range context.Tools {
-			if addedNames[tool.Name] {
-				addedTools = append(addedTools, tool)
-			}
-		}
-		addedToolTokens := estimateToolsTokens(addedTools)
-		return ContextUsageEstimate{
-			Tokens:         estimate.Tokens + addedToolTokens,
-			UsageTokens:    estimate.UsageTokens,
-			TrailingTokens: estimate.TrailingTokens + addedToolTokens,
-			LastUsageIndex: estimate.LastUsageIndex,
-		}
-	}
-
-	prefixTokens := 0
-	if context.SystemPrompt != "" {
-		prefixTokens += estimateTextTokens(context.SystemPrompt)
-	}
-	prefixTokens += estimateToolsTokens(context.Tools)
-
-	return ContextUsageEstimate{
-		Tokens:         estimate.Tokens + prefixTokens,
-		UsageTokens:    estimate.UsageTokens,
-		TrailingTokens: estimate.TrailingTokens + prefixTokens,
-		LastUsageIndex: estimate.LastUsageIndex,
-	}
 }

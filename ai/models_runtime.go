@@ -116,8 +116,11 @@ type Provider interface {
 	// auth is configured.
 	FilterModels(models []*Model, credential *Credential) []*Model
 
-	Stream(ctx context.Context, model *Model, req Context, opts *StreamOptions) *AssistantMessageEventStream
-	StreamSimple(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream
+	// Stream and StreamSimple take a normalized transcript: Models normalizes the
+	// caller's Context before dispatching here (pi Provider.stream, upstream
+	// 9e05370b2).
+	Stream(ctx context.Context, model *Model, req TranscriptContext, opts *StreamOptions) *AssistantMessageEventStream
+	StreamSimple(ctx context.Context, model *Model, req TranscriptContext, opts *SimpleStreamOptions) *AssistantMessageEventStream
 }
 
 // deferredUnsupportedHint tells the caller how to proceed when a provider has
@@ -357,7 +360,7 @@ func (p *providerImpl) streamsFor(model *Model) (ProviderStreams, bool) {
 	return s, ok
 }
 
-func (p *providerImpl) Stream(ctx context.Context, model *Model, req Context, opts *StreamOptions) *AssistantMessageEventStream {
+func (p *providerImpl) Stream(ctx context.Context, model *Model, req TranscriptContext, opts *StreamOptions) *AssistantMessageEventStream {
 	s, ok := p.streamsFor(model)
 	if !ok || s.Stream == nil {
 		return ErrorStream(model, newModelsError(ErrStream, "Provider "+p.id+" has no API implementation for \""+model.Api+"\"", nil))
@@ -365,7 +368,7 @@ func (p *providerImpl) Stream(ctx context.Context, model *Model, req Context, op
 	return s.Stream(ctx, model, req, opts)
 }
 
-func (p *providerImpl) StreamSimple(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream {
+func (p *providerImpl) StreamSimple(ctx context.Context, model *Model, req TranscriptContext, opts *SimpleStreamOptions) *AssistantMessageEventStream {
 	s, ok := p.streamsFor(model)
 	if !ok || s.StreamSimple == nil {
 		return ErrorStream(model, newModelsError(ErrStream, "Provider "+p.id+" has no API implementation for \""+model.Api+"\"", nil))
@@ -1275,6 +1278,7 @@ func (m *modelsImpl) applyAuth(
 }
 
 func (m *modelsImpl) Stream(ctx context.Context, model *Model, req Context, opts *ModelsStreamOptions) *AssistantMessageEventStream {
+	transcript := NormalizeContext(req)
 	p := m.GetProvider(model.Provider)
 	if p == nil {
 		return ErrorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
@@ -1294,7 +1298,7 @@ func (m *modelsImpl) Stream(ctx context.Context, model *Model, req Context, opts
 		stream = opts.StreamOptions
 	}
 	stream.ProviderRequestOptions = *requestOptions
-	return p.Stream(ctx, requestModel, req, &stream)
+	return p.Stream(ctx, requestModel, transcript, &stream)
 }
 
 func (m *modelsImpl) Complete(ctx context.Context, model *Model, req Context, opts *ModelsStreamOptions) *AssistantMessage {
@@ -1302,6 +1306,7 @@ func (m *modelsImpl) Complete(ctx context.Context, model *Model, req Context, op
 }
 
 func (m *modelsImpl) StreamSimple(ctx context.Context, model *Model, req Context, opts *ModelsSimpleStreamOptions) *AssistantMessageEventStream {
+	transcript := NormalizeContext(req)
 	p := m.GetProvider(model.Provider)
 	if p == nil {
 		return ErrorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
@@ -1321,7 +1326,7 @@ func (m *modelsImpl) StreamSimple(ctx context.Context, model *Model, req Context
 		simple = opts.SimpleStreamOptions
 	}
 	simple.ProviderRequestOptions = *requestOptions
-	return p.StreamSimple(ctx, requestModel, req, &simple)
+	return p.StreamSimple(ctx, requestModel, transcript, &simple)
 }
 
 func (m *modelsImpl) CompleteSimple(ctx context.Context, model *Model, req Context, opts *ModelsSimpleStreamOptions) *AssistantMessage {

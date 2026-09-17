@@ -28,10 +28,10 @@ func TestSummarizationRequestShape(t *testing.T) {
 	model := reg.GetModel()
 	model.MaxTokens = 1_000_000 // large so the 0.8*reserve cap wins
 
-	var captured ai.Context
+	var captured ai.TranscriptContext
 	var capturedMax int
 	reg.SetResponses([]providers.FauxResponseStep{
-		func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+		func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
 			captured = req
 			if opts != nil && opts.MaxTokens != nil {
 				capturedMax = *opts.MaxTokens
@@ -60,18 +60,20 @@ func TestSummarizationRequestShape(t *testing.T) {
 	const reserve = 16384
 	summary := sess.summarize(context.Background(), older, reserve)
 
-	// System prompt present and exact.
-	if captured.SystemPrompt != summarizationSystemPrompt {
-		t.Fatalf("summarization system prompt missing/wrong:\n%q", captured.SystemPrompt)
+	// System prompt present and exact, as the transcript's leading system message.
+	leading, hasLeading := ai.GetInitialSystemMessage(captured.Messages)
+	if !hasLeading || ai.GetSystemMessageText(leading) != summarizationSystemPrompt {
+		t.Fatalf("summarization system prompt missing/wrong:\n%q", ai.GetCurrentSystemPrompt(captured.Messages))
 	}
 
 	// Single user message with the <conversation> wrapper + the summarization prompt.
-	if len(captured.Messages) != 1 {
-		t.Fatalf("expected 1 summarization message, got %d", len(captured.Messages))
+	conversation := ai.WithoutInitialSystemMessage(captured.Messages)
+	if len(conversation) != 1 {
+		t.Fatalf("expected 1 summarization message, got %d", len(conversation))
 	}
-	um, ok := captured.Messages[0].(ai.UserMessage)
+	um, ok := conversation[0].(ai.UserMessage)
 	if !ok {
-		t.Fatalf("expected user message, got %T", captured.Messages[0])
+		t.Fatalf("expected user message, got %T", conversation[0])
 	}
 	text := textOf(um.Content)
 	if !strings.HasPrefix(text, "<conversation>\n") || !strings.Contains(text, "\n</conversation>\n\n") {
@@ -125,7 +127,7 @@ func TestSummarizationMaxTokensClampedByModel(t *testing.T) {
 
 	var capturedMax int
 	reg.SetResponses([]providers.FauxResponseStep{
-		func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+		func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
 			if opts != nil && opts.MaxTokens != nil {
 				capturedMax = *opts.MaxTokens
 			}
@@ -154,7 +156,7 @@ func TestSummarizationIsolatesRouting(t *testing.T) {
 
 	var retentions []ai.CacheRetention
 	var sessionIDs []string
-	capture := func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+	capture := func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
 		retentions = append(retentions, opts.CacheRetention)
 		sessionIDs = append(sessionIDs, opts.SessionID)
 		return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "ok"}}, ai.StopStop)
@@ -204,7 +206,7 @@ func TestSummarizationUsesAuthResolvedBaseURL(t *testing.T) {
 	const enterpriseBaseURL = "https://api.enterprise.githubcopilot.com"
 
 	var requestBaseURL string
-	respond := func(_ context.Context, model *ai.Model, _ ai.Context, _ *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+	respond := func(_ context.Context, model *ai.Model, _ ai.TranscriptContext, _ *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 		requestBaseURL = model.BaseURL
 		s := ai.NewAssistantMessageEventStream()
 		s.Push(ai.AssistantMessageEvent{Type: ai.EventDone, Reason: ai.StopStop, Message: &ai.AssistantMessage{
@@ -238,7 +240,7 @@ func TestSummarizationUsesAuthResolvedBaseURL(t *testing.T) {
 		},
 		Models: []*ai.Model{catalogModel},
 		APIByApi: map[ai.Api]ai.ProviderStreams{catalogModel.Api: {
-			Stream: func(ctx context.Context, m *ai.Model, req ai.Context, _ *ai.StreamOptions) *ai.AssistantMessageEventStream {
+			Stream: func(ctx context.Context, m *ai.Model, req ai.TranscriptContext, _ *ai.StreamOptions) *ai.AssistantMessageEventStream {
 				return respond(ctx, m, req, nil)
 			},
 			StreamSimple: respond,
@@ -258,12 +260,12 @@ func TestSummarizationUsesAuthResolvedBaseURL(t *testing.T) {
 	models.SetProvider(provider)
 
 	// The SDK-style wrapper upstream installs as the session's stream function.
-	streamFn := func(ctx context.Context, m *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+	streamFn := func(ctx context.Context, m *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 		var runtimeOpts ai.ModelsSimpleStreamOptions
 		if opts != nil {
 			runtimeOpts.SimpleStreamOptions = *opts
 		}
-		return models.StreamSimple(ctx, m, req, &runtimeOpts)
+		return models.StreamSimple(ctx, m, ai.Context{Messages: req.Messages}, &runtimeOpts)
 	}
 
 	sess := NewSession(SessionOptions{
@@ -392,7 +394,7 @@ func TestSummarizationDoesNotOverrideToolChoice(t *testing.T) {
 
 	var capturedChoice ai.ToolChoice
 	reg.SetResponses([]providers.FauxResponseStep{
-		func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+		func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
 			if opts != nil {
 				capturedChoice = opts.ToolChoice
 			}
@@ -412,7 +414,7 @@ func TestSummarizationDoesNotOverrideToolChoice(t *testing.T) {
 
 	// Same request, but the model calls a tool: no summary survives.
 	reg.SetResponses([]providers.FauxResponseStep{
-		func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+		func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
 			return providers.FauxAssistantMessage(ai.ContentList{
 				ai.TextContent{Text: "## Goal\nsummary"},
 				ai.ToolCall{ID: "t1", Name: "read", Arguments: map[string]any{"path": "/a"}},

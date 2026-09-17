@@ -30,7 +30,7 @@ type OpenAIOptions struct {
 }
 
 // StreamSimpleOpenAICompletions maps unified reasoning to OpenAI options.
-func StreamSimpleOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+func StreamSimpleOpenAICompletions(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 	o := &OpenAIOptions{}
 	if opts != nil {
 		o.StreamOptions = opts.StreamOptions
@@ -54,11 +54,14 @@ func StreamSimpleOpenAICompletions(ctx context.Context, model *ai.Model, req ai.
 }
 
 // StreamOpenAICompletions streams from an OpenAI-compatible /chat/completions API.
-func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Context, opts *OpenAIOptions) *ai.AssistantMessageEventStream {
+// Later system messages are folded into the leading one first, so the request
+// and the Copilot headers read the collapsed transcript.
+func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *OpenAIOptions) *ai.AssistantMessageEventStream {
 	stream := ai.NewAssistantMessageEventStream()
 	if opts == nil {
 		opts = &OpenAIOptions{}
 	}
+	normalized := ai.CollapseSystemMessages(req)
 
 	go func() {
 		output := &ai.AssistantMessage{
@@ -142,12 +145,12 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 
 		// Resolved before the request body, matching pi: a bad grammar tool must
 		// fail the stream with its own message rather than a downstream one.
-		grammarProps, err := grammarToolInputProperties(req.Tools, getOpenAICompat(model).SupportsOpenAIGrammarTools)
+		grammarProps, err := grammarToolInputProperties(ai.GetDeclaredTools(normalized.Messages), getOpenAICompat(model).SupportsOpenAIGrammarTools)
 		if err != nil {
 			fail(err)
 			return
 		}
-		params, err := buildOpenAIParams(model, req, opts)
+		params, err := buildOpenAIParams(model, normalized, opts)
 		if err != nil {
 			fail(err)
 			return
@@ -203,7 +206,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Contex
 			// affinity (overrides model headers), with options.headers merged last.
 			o.merge(model.Headers)
 			if model.Provider == "github-copilot" {
-				o.mergeStrings(buildCopilotDynamicHeaders(req.Messages, hasCopilotVisionInput(req.Messages)))
+				o.mergeStrings(buildCopilotDynamicHeaders(normalized.Messages, hasCopilotVisionInput(normalized.Messages)))
 			}
 			// Session-affinity headers for cache-routing providers (e.g. Fireworks).
 			// Format selects the header shape (pi openai-completions.ts:519-530).
@@ -612,22 +615,25 @@ func openRouterErrorRaw(body []byte) string {
 	return parsed.Error.Metadata.Raw
 }
 
-func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (map[string]any, error) {
+func buildOpenAIParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIOptions) (map[string]any, error) {
 	compat := getOpenAICompat(model)
-	grammarProps, err := grammarToolInputProperties(req.Tools, compat.SupportsOpenAIGrammarTools)
+	grammarProps, err := grammarToolInputProperties(ai.GetDeclaredTools(req.Messages), compat.SupportsOpenAIGrammarTools)
 	if err != nil {
 		return nil, err
 	}
+	// Without mid-conversation system messages the complete current tool set is
+	// the request's tool list.
+	transcriptTools := ai.ResolveTranscriptTools(req.Messages, false)
 
+	// pi's convertMessages resolves the transcript itself (a no-op on one the
+	// stream already collapsed), so the conversion below sees only a leading
+	// system message.
 	var messages []map[string]any
-	if req.SystemPrompt != "" {
-		role := "system"
-		if model.Reasoning && compat.SupportsDeveloperRole {
-			role = "developer"
-		}
-		messages = append(messages, map[string]any{"role": role, "content": sanitizeSurrogates(req.SystemPrompt)})
+	instructionRole := "system"
+	if model.Reasoning && compat.SupportsDeveloperRole {
+		instructionRole = "developer"
 	}
-	transformed := transformMessages(req.Messages, model, func(id string) string {
+	transformed := transformMessages(ai.CollapseSystemMessages(req).Messages, model, func(id string) string {
 		return normalizeOpenAIToolCallID(model, id)
 	})
 	modelHasImageInput := false
@@ -650,7 +656,16 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 			}
 		}
 
-		if um, ok := asUserMsg(m); ok {
+		if sm, ok := asSystemMsg(m); ok {
+			// The collapsed transcript holds one system message, the leading
+			// prompt. Empty text sends nothing. Either way it sets lastRole, as
+			// pi's system branch falls through to `lastRole = msg.role`: a system
+			// message between tool results and a user message means no bridge.
+			if text := ai.GetSystemMessageText(sm); text != "" {
+				messages = append(messages, map[string]any{"role": instructionRole, "content": sanitizeSurrogates(text)})
+			}
+			lastRole = "system"
+		} else if um, ok := asUserMsg(m); ok {
 			// pi (openai-completions.ts:789-816): string-form content is sent as
 			// a plain string; array content maps to an array of parts — even a
 			// single text block — and an empty array skips the message entirely.
@@ -809,11 +824,8 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 			messages = append(messages, msg)
 			lastRole = "assistant"
 		} else if _, ok := asToolResultMsg(m); ok {
-			// Group consecutive tool-result messages, collecting images and —
-			// in Kimi deferred mode — the tool names this run introduces.
+			// Group consecutive tool-result messages, collecting images.
 			var imageBlocks []any
-			var runDeferredNames []string
-			runDeferredSeen := map[string]bool{}
 			j := i
 			for ; j < len(transformed); j++ {
 				tr, ok := asToolResultMsg(transformed[j])
@@ -852,15 +864,6 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 				}
 				messages = append(messages, toolMsg)
 
-				if compat.DeferredToolsMode == "kimi" {
-					for _, name := range tr.AddedToolNames {
-						if !runDeferredSeen[name] {
-							runDeferredSeen[name] = true
-							runDeferredNames = append(runDeferredNames, name)
-						}
-					}
-				}
-
 				if hasImages && modelHasImageInput {
 					for _, c := range tr.Content {
 						if img, ok := c.(ai.ImageContent); ok {
@@ -886,19 +889,6 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 				lastRole = "user"
 			} else {
 				lastRole = "toolResult"
-			}
-
-			// Kimi deferred tools: declare the run's introduced tools in a
-			// system message after all its tool results. Kimi accepts a system
-			// message with tools but omits the standard content field.
-			if len(runDeferredNames) > 0 {
-				if deferredTools := getToolsByName(req.Tools, runDeferredNames); len(deferredTools) > 0 {
-					converted, cerr := convertOpenAITools(deferredTools, compat)
-					if cerr != nil {
-						return nil, cerr
-					}
-					messages = append(messages, map[string]any{"role": "system", "tools": converted})
-				}
 			}
 			continue
 		}
@@ -938,21 +928,8 @@ func buildOpenAIParams(model *ai.Model, req ai.Context, opts *OpenAIOptions) (ma
 		params["temperature"] = *opts.Temperature
 	}
 
-	// Kimi deferred tools: tools introduced by a tool result's addedToolNames
-	// are withheld from the top-level tools param (pi f16b4e0c; they are
-	// re-declared in a system message after their tool-result run instead).
-	deferredNames := map[string]bool{}
-	if compat.DeferredToolsMode == "kimi" {
-		deferredNames = getDeferredToolNames(req.Messages)
-	}
-	var activeTools []ai.Tool
-	for _, t := range req.Tools {
-		if !deferredNames[t.Name] {
-			activeTools = append(activeTools, t)
-		}
-	}
-	if len(activeTools) > 0 {
-		converted, cerr := convertOpenAITools(activeTools, compat)
+	if len(transcriptTools.RequestTools) > 0 {
+		converted, cerr := convertOpenAITools(transcriptTools.RequestTools, compat)
 		if cerr != nil {
 			return nil, cerr
 		}
@@ -1059,43 +1036,8 @@ func clientAPIKey(provider ai.ProviderId, apiKey string, headers ai.ProviderHead
 	return "", fmt.Errorf("No API key for provider: %s", provider)
 }
 
-// getDeferredToolNames collects the tool names introduced by tool results'
-// addedToolNames across the conversation (port of pi's getDeferredToolNames,
-// f16b4e0c).
-func getDeferredToolNames(messages []ai.Message) map[string]bool {
-	names := map[string]bool{}
-	for _, m := range messages {
-		if tr, ok := asToolResultMsg(m); ok {
-			for _, name := range tr.AddedToolNames {
-				names[name] = true
-			}
-		}
-	}
-	return names
-}
-
-// getToolsByName resolves names against the context tools, preserving name
-// order and skipping unknown names (port of pi's getToolsByName).
-func getToolsByName(tools []ai.Tool, names []string) []ai.Tool {
-	if len(tools) == 0 {
-		return nil
-	}
-	byName := make(map[string]ai.Tool, len(tools))
-	for _, t := range tools {
-		byName[t.Name] = t
-	}
-	out := make([]ai.Tool, 0, len(names))
-	for _, name := range names {
-		if t, ok := byName[name]; ok {
-			out = append(out, t)
-		}
-	}
-	return out
-}
-
 // convertOpenAITools serializes tools into the chat-completions tools shape
-// (port of pi's convertTools), shared by the top-level tools param and the
-// Kimi deferred-tools system message.
+// (port of pi's convertTools).
 func convertOpenAITools(tools []ai.Tool, compat openAICompletionsCompat) ([]map[string]any, error) {
 	var out []map[string]any
 	for _, t := range tools {
@@ -1670,7 +1612,7 @@ func iterateOpenAISSE(body io.Reader, ctx context.Context, handle func(openAIChu
 func RegisterOpenAICompletions() {
 	ai.RegisterApiProvider(ai.ApiProvider{
 		Api: ai.APIOpenAICompletions,
-		Stream: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
+		Stream: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
 			o := &OpenAIOptions{}
 			if opts != nil {
 				o.StreamOptions = *opts

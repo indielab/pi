@@ -78,7 +78,7 @@ func TestPiMessagesStreamsTextAndToolCalls(t *testing.T) {
 
 	model := piMessagesTestModel(server.URL + "/v1")
 	ctxReq := piMessagesTestContext()
-	es := StreamPiMessages(context.Background(), model, ctxReq, &PiMessagesOptions{
+	es := StreamPiMessages(context.Background(), model, ai.NormalizeContext(ctxReq), &PiMessagesOptions{
 		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key", Headers: ai.ProviderHeaders{"x-custom": strPtr("1")}}, SessionID: "session-1", MaxTokens: intp(100)},
 		ToolChoice:    "auto",
 	})
@@ -161,10 +161,12 @@ func TestPiMessagesStreamsTextAndToolCalls(t *testing.T) {
 			t.Errorf("options[%q] = %v, want %v", k, opts[k], v)
 		}
 	}
-	// context round-trips: a single user message with content "Hello". Normalize
-	// both through a map so key ordering doesn't affect the comparison.
+	// The posted context is the normalized transcript (pi posts the
+	// TranscriptContext it was handed): a single user message with content
+	// "Hello". Normalize both through a map so key ordering doesn't affect the
+	// comparison; TestPiMessagesPostsTheNormalizedTranscript pins the bytes.
 	gotCtx, _ := json.Marshal(gotBody["context"])
-	wantRaw, _ := json.Marshal(ctxReq)
+	wantRaw, _ := json.Marshal(ai.NormalizeContext(ctxReq))
 	var wantMap map[string]any
 	_ = json.Unmarshal(wantRaw, &wantMap)
 	wantCtx, _ := json.Marshal(wantMap)
@@ -185,20 +187,22 @@ func TestPiMessagesDebugAndOnResponse(t *testing.T) {
 
 	model := piMessagesTestModel(server.URL + "/v1")
 	var observed map[string]string
-	final := StreamSimplePiMessages(context.Background(), model, piMessagesTestContext(), &ai.SimpleStreamOptions{
+	final := StreamSimplePiMessages(context.Background(), model, ai.NormalizeContext(piMessagesTestContext()), &ai.SimpleStreamOptions{
 		StreamOptions: ai.StreamOptions{
 			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key", OnResponse: func(resp ai.ProviderResponse, m *ai.Model) error { observed = resp.Headers; return nil }},
 		},
-	}).Result()
+	}).
+		Result()
 
 	// debug is only reachable via *PiMessagesOptions; drive it through the full
 	// stream to lock the ?debug=1 behavior.
 	_ = final
 
-	dbg := StreamPiMessages(context.Background(), model, piMessagesTestContext(), &PiMessagesOptions{
+	dbg := StreamPiMessages(context.Background(), model, ai.NormalizeContext(piMessagesTestContext()), &PiMessagesOptions{
 		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key"}},
 		Debug:         true,
-	}).Result()
+	}).
+		Result()
 	if dbg.StopReason != ai.StopStop {
 		t.Fatalf("stopReason = %s, want stop (%s)", dbg.StopReason, dbg.ErrorMessage)
 	}
@@ -219,9 +223,10 @@ func TestPiMessagesBackendErrorResponse(t *testing.T) {
 	defer server.Close()
 
 	model := piMessagesTestModel(server.URL + "/v1")
-	final := StreamPiMessages(context.Background(), model, piMessagesTestContext(), &PiMessagesOptions{
+	final := StreamPiMessages(context.Background(), model, ai.NormalizeContext(piMessagesTestContext()), &PiMessagesOptions{
 		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "stale"}},
-	}).Result()
+	}).
+		Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("stopReason = %s, want error", final.StopReason)
@@ -254,9 +259,10 @@ func TestPiMessagesServerSentError(t *testing.T) {
 	defer server.Close()
 
 	model := piMessagesTestModel(server.URL + "/v1")
-	final := StreamPiMessages(context.Background(), model, piMessagesTestContext(), &PiMessagesOptions{
+	final := StreamPiMessages(context.Background(), model, ai.NormalizeContext(piMessagesTestContext()), &PiMessagesOptions{
 		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key"}},
-	}).Result()
+	}).
+		Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("stopReason = %s, want error", final.StopReason)
@@ -271,7 +277,7 @@ func TestPiMessagesServerSentError(t *testing.T) {
 
 func TestPiMessagesMissingAPIKey(t *testing.T) {
 	model := piMessagesTestModel("http://127.0.0.1:1/v1")
-	final := StreamPiMessages(context.Background(), model, piMessagesTestContext(), nil).Result()
+	final := StreamPiMessages(context.Background(), model, ai.NormalizeContext(piMessagesTestContext()), nil).Result()
 	if final.StopReason != ai.StopError {
 		t.Fatalf("stopReason = %s, want error", final.StopReason)
 	}
@@ -292,9 +298,10 @@ func TestPiMessagesNoTerminalEvent(t *testing.T) {
 	defer server.Close()
 
 	model := piMessagesTestModel(server.URL + "/v1")
-	final := StreamPiMessages(context.Background(), model, piMessagesTestContext(), &PiMessagesOptions{
+	final := StreamPiMessages(context.Background(), model, ai.NormalizeContext(piMessagesTestContext()), &PiMessagesOptions{
 		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key"}},
-	}).Result()
+	}).
+		Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("stopReason = %s, want error", final.StopReason)
@@ -327,9 +334,10 @@ func TestPiMessagesMalformedStreamDoesNotPanic(t *testing.T) {
 	defer server.Close()
 
 	model := piMessagesTestModel(server.URL + "/v1")
-	final := StreamPiMessages(context.Background(), model, piMessagesTestContext(), &PiMessagesOptions{
+	final := StreamPiMessages(context.Background(), model, ai.NormalizeContext(piMessagesTestContext()), &PiMessagesOptions{
 		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key"}},
-	}).Result()
+	}).
+		Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("stopReason = %s, want error", final.StopReason)
@@ -346,11 +354,12 @@ func TestPiMessagesOnResponseErrorFailsStream(t *testing.T) {
 	defer server.Close()
 
 	model := piMessagesTestModel(server.URL + "/v1")
-	final := StreamPiMessages(context.Background(), model, piMessagesTestContext(), &PiMessagesOptions{
+	final := StreamPiMessages(context.Background(), model, ai.NormalizeContext(piMessagesTestContext()), &PiMessagesOptions{
 		StreamOptions: ai.StreamOptions{
 			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key", OnResponse: func(resp ai.ProviderResponse, m *ai.Model) error { return fmt.Errorf("hook rejected") }},
 		},
-	}).Result()
+	}).
+		Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("stopReason = %s, want error", final.StopReason)
@@ -442,7 +451,7 @@ func TestPiMessagesProviderThinkingLevel(t *testing.T) {
 
 			opts := &PiMessagesOptions{}
 			opts.APIKey = "k"
-			got := StreamPiMessages(context.Background(), piMessagesTestModel(server.URL), piMessagesTestContext(), opts).Result()
+			got := StreamPiMessages(context.Background(), piMessagesTestModel(server.URL), ai.NormalizeContext(piMessagesTestContext()), opts).Result()
 			if got.StopReason != tc.wantStop {
 				t.Fatalf("stopReason = %q, want %q", got.StopReason, tc.wantStop)
 			}

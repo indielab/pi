@@ -129,9 +129,12 @@ func captureGoogleSimplePayload(t *testing.T, model *ai.Model, reasoning ai.Thin
 		captured = payload
 		return nil, errors.New("payload captured")
 	}
-	msg := StreamSimpleGoogle(t.Context(), model, ai.Context{
+	msg := StreamSimpleGoogle(t.Context(), model, ai.NormalizeContext(ai.Context{
 		Messages: []ai.Message{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "Hello"}}}},
-	}, opts).Result()
+	}),
+
+		opts).
+		Result()
 	if !strings.Contains(msg.ErrorMessage, "payload captured") {
 		t.Fatalf("stream did not reach OnPayload: %q", msg.ErrorMessage)
 	}
@@ -202,7 +205,7 @@ func TestGoogleSimpleUnresolvableLevelFailsStream(t *testing.T) {
 		built = true
 		return nil, errors.New("request must not be built for an unresolvable level")
 	}
-	msg := StreamSimpleGoogle(t.Context(), model, ai.Context{}, opts).Result()
+	msg := StreamSimpleGoogle(t.Context(), model, ai.NormalizeContext(ai.Context{}), opts).Result()
 	if built {
 		t.Fatal("request must not be built for an unresolvable level")
 	}

@@ -49,10 +49,11 @@ type responsesCompat struct {
 	// to normal function tools. Default: false.
 	SupportsOpenAIGrammarTools bool
 	// SupportsAdditionalTools reports whether the model accepts message-anchored
-	// `additional_tools` input items. Default: false. It outranks
-	// SupportsToolSearch — see responsesDeferredToolsMode.
+	// `additional_tools` input items. Default: false.
 	SupportsAdditionalTools bool
-	SupportsToolSearch      bool
+	// SupportsToolSearch reports whether the model supports client-executed tool
+	// search for transcript-anchored additions. Default: false.
+	SupportsToolSearch bool
 	// SupportsExplicitPromptCacheMode reports whether the model accepts
 	// `prompt_cache_options` (OpenAI GPT-5.6+ prompt caching). Older
 	// OpenAI models reject the parameter. Default: false.
@@ -90,29 +91,6 @@ func getResponsesCompat(model *ai.Model) responsesCompat {
 	applyCompat(o, "supportsExplicitPromptCacheMode", &c.SupportsExplicitPromptCacheMode)
 	applyCompat(o, "supportsMaxOutputTokens", &c.SupportsMaxOutputTokens)
 	return c
-}
-
-// deferredToolsMode is how a request delivers tool definitions that arrive
-// mid-transcript: as message-anchored additional_tools items, as a completed
-// client tool search, or not at all (pi e47b8e37a). additional-tools wins when
-// the model supports both.
-type deferredToolsMode string
-
-const (
-	deferredToolsNone       deferredToolsMode = ""
-	deferredToolsAdditional deferredToolsMode = "additional-tools"
-	deferredToolsSearch     deferredToolsMode = "tool-search"
-)
-
-func responsesDeferredToolsMode(c responsesCompat) deferredToolsMode {
-	switch {
-	case c.SupportsAdditionalTools:
-		return deferredToolsAdditional
-	case c.SupportsToolSearch:
-		return deferredToolsSearch
-	default:
-		return deferredToolsNone
-	}
 }
 
 // textSignatureV1 is the encoded provider metadata carried on assistant text
@@ -244,7 +222,7 @@ type OpenAIResponsesOptions struct {
 }
 
 // StreamSimpleOpenAIResponses maps unified reasoning to Responses options.
-func StreamSimpleOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+func StreamSimpleOpenAIResponses(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 	o := &OpenAIResponsesOptions{}
 	if opts != nil {
 		o.StreamOptions = opts.StreamOptions
@@ -267,11 +245,14 @@ func StreamSimpleOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Co
 }
 
 // StreamOpenAIResponses streams from an OpenAI Responses API (/responses).
-func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context, opts *OpenAIResponsesOptions) *ai.AssistantMessageEventStream {
+// Later system messages are folded into the leading one first, so the request
+// and the Copilot headers read the collapsed transcript.
+func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *OpenAIResponsesOptions) *ai.AssistantMessageEventStream {
 	stream := ai.NewAssistantMessageEventStream()
 	if opts == nil {
 		opts = &OpenAIResponsesOptions{}
 	}
+	normalized := ai.CollapseSystemMessages(req)
 
 	go func() {
 		output := &ai.AssistantMessage{
@@ -313,12 +294,12 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 
 		// Resolved before the request body, matching pi: a bad grammar tool must
 		// fail the stream with its own message rather than a downstream one.
-		grammarProps, err := grammarToolInputProperties(req.Tools, getResponsesCompat(model).SupportsOpenAIGrammarTools)
+		grammarProps, err := grammarToolInputProperties(ai.GetDeclaredTools(normalized.Messages), getResponsesCompat(model).SupportsOpenAIGrammarTools)
 		if err != nil {
 			fail(err)
 			return
 		}
-		params, err := buildResponsesParams(model, req, opts)
+		params, err := buildResponsesParams(model, normalized, opts)
 		if err != nil {
 			fail(err)
 			return
@@ -374,7 +355,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 			// then options.headers merged last so they can override defaults.
 			o.merge(model.Headers)
 			if model.Provider == "github-copilot" {
-				o.mergeStrings(buildCopilotDynamicHeaders(req.Messages, hasCopilotVisionInput(req.Messages)))
+				o.mergeStrings(buildCopilotDynamicHeaders(normalized.Messages, hasCopilotVisionInput(normalized.Messages)))
 			}
 			// Session cache headers (pi openai-responses.ts:207-217); the
 			// sessionId is zeroed when cacheRetention is "none" (:115). Format
@@ -908,13 +889,14 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Context,
 	return stream
 }
 
-func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponsesOptions) (map[string]any, error) {
-	// Only immediate tools go in body.tools; deferred definitions are emitted at
-	// their tool-result markers inside responsesInput, as additional_tools or
-	// client tool_search items depending on the model.
+func buildResponsesParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIResponsesOptions) (map[string]any, error) {
 	compat := getResponsesCompat(model)
-	placement := ai.SplitDeferredTools(req, responsesDeferredToolsMode(compat) != deferredToolsNone, nil)
-	input, err := responsesInput(model, req, placement.ByName)
+	// body.tools holds the initial tools when additions can be anchored at their
+	// system messages, and the complete current tool set otherwise. The stream
+	// collapses the transcript before building it, so there are no later system
+	// messages to anchor and both are the current tools.
+	transcriptTools := ai.ResolveTranscriptTools(req.Messages, compat.SupportsAdditionalTools || compat.SupportsToolSearch)
+	input, err := responsesInput(model, req)
 	if err != nil {
 		return nil, err
 	}
@@ -965,8 +947,8 @@ func buildResponsesParams(model *ai.Model, req ai.Context, opts *OpenAIResponses
 	if opts.ServiceTier != "" {
 		params["service_tier"] = opts.ServiceTier
 	}
-	if len(placement.Immediate) > 0 {
-		tools, err := convertResponsesTools(placement.Immediate, compat, false)
+	if len(transcriptTools.RequestTools) > 0 {
+		tools, err := convertResponsesTools(transcriptTools.RequestTools, compat)
 		if err != nil {
 			return nil, err
 		}
@@ -1071,10 +1053,9 @@ func buildResponsesToolCallIDNormalizer(model *ai.Model, messages []ai.Message) 
 
 // convertResponsesTools maps unified tools to Responses API tools. `strict` is
 // emitted only where the provider supports it (upstream 24bace27 — it used to be
-// unconditional); grammar-constrained tools become custom tools; deferLoading
-// marks deferred definitions emitted in a tool_search_output item.
+// unconditional); grammar-constrained tools become custom tools.
 // Port of convertResponsesTools.
-func convertResponsesTools(tools []ai.Tool, compat responsesCompat, deferLoading bool) ([]map[string]any, error) {
+func convertResponsesTools(tools []ai.Tool, compat responsesCompat) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(tools))
 	for _, t := range tools {
 		grammar, err := resolveGrammarSampling(t, compat.SupportsOpenAIGrammarTools)
@@ -1085,9 +1066,6 @@ func convertResponsesTools(tools []ai.Tool, compat responsesCompat, deferLoading
 			tool := map[string]any{
 				"type": "custom", "name": t.Name, "description": t.Description,
 				"format": map[string]any{"type": "grammar", "syntax": grammar.format, "definition": grammar.definition},
-			}
-			if deferLoading {
-				tool["defer_loading"] = true
 			}
 			out = append(out, tool)
 			continue
@@ -1115,9 +1093,6 @@ func convertResponsesTools(tools []ai.Tool, compat responsesCompat, deferLoading
 		tool := map[string]any{
 			"type": "function", "name": t.Name, "description": t.Description, "parameters": p,
 		}
-		if deferLoading {
-			tool["defer_loading"] = true
-		}
 		if compat.SupportsStrictMode {
 			tool["strict"] = strict
 		}
@@ -1129,34 +1104,39 @@ func convertResponsesTools(tools []ai.Tool, compat responsesCompat, deferLoading
 // responsesInput converts unified messages into Responses API input items
 // (port of convertResponsesMessages). It errors when an assistant thinking
 // block carries an unparseable thinkingSignature (pi's JSON.parse throws and
-// fails the stream). deferredByName holds tools loaded lazily at their
-// tool-result markers via client tool_search items.
-func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]ai.Tool) ([]any, error) {
+// fails the stream).
+func responsesInput(model *ai.Model, req ai.TranscriptContext) ([]any, error) {
 	var items []any
-	loadedToolNames := map[string]bool{}
 
 	compat := getResponsesCompat(model)
-	mode := responsesDeferredToolsMode(compat)
-	grammarProps, err := grammarToolInputProperties(req.Tools, compat.SupportsOpenAIGrammarTools)
+	grammarProps, err := grammarToolInputProperties(ai.GetDeclaredTools(req.Messages), compat.SupportsOpenAIGrammarTools)
 	if err != nil {
 		return nil, err
 	}
-	if req.SystemPrompt != "" {
-		role := "system"
-		if model.Reasoning && compat.SupportsDeveloperRole {
-			role = "developer"
-		}
-		items = append(items, map[string]any{"role": role, "content": sanitizeSurrogates(req.SystemPrompt)})
+	instructionRole := "system"
+	if model.Reasoning && compat.SupportsDeveloperRole {
+		instructionRole = "developer"
 	}
 
-	// Tool-call id normalization happens inside transformMessages (gated on
-	// !isSameModel there), so the toolCallId map also rewrites tool results
-	// and synthetic orphan results, exactly like pi.
-	transformed := transformMessages(req.Messages, model, buildResponsesToolCallIDNormalizer(model, req.Messages))
+	// pi's convertResponsesMessages resolves the transcript itself (a no-op on
+	// one the stream already collapsed). Tool-call id normalization happens
+	// inside transformMessages (gated on !isSameModel there), so the toolCallId
+	// map also rewrites tool results and synthetic orphan results, exactly like
+	// pi.
+	normalized := ai.CollapseSystemMessages(req)
+	transformed := transformMessages(normalized.Messages, model, buildResponsesToolCallIDNormalizer(model, normalized.Messages))
 	imageInput := modelSupportsImages(model)
 
 	msgIndex := 0
 	for _, m := range transformed {
+		if sm, ok := asSystemMsg(m); ok {
+			// The collapsed transcript holds one system message, the leading
+			// prompt. It does not count toward the msg_pi_<index> fallback ids.
+			if text := ai.GetSystemMessageText(sm); text != "" {
+				items = append(items, map[string]any{"role": instructionRole, "content": sanitizeSurrogates(text)})
+			}
+			continue
+		}
 		if um, ok := asUserMsg(m); ok {
 			var content []any
 			for _, c := range um.Content {
@@ -1249,14 +1229,11 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 							"arguments": string(args),
 						}
 					}
-					if v.Namespace != "" {
-						// A namespace only replays for a call the current model could
-						// have made itself: its own call, or a deferred tool this
-						// request is loading (upstream 02bd2d1c6).
-						_, isDeferredTool := deferredByName[v.Name]
-						if isSameModel || isDeferredTool {
-							item["namespace"] = v.Namespace
-						}
+					if v.Namespace != "" && isSameModel {
+						// A namespace only replays for a call the current model made
+						// itself (upstream 02bd2d1c6, narrowed back to the same model
+						// by 9e05370b2).
+						item["namespace"] = v.Namespace
 					}
 					if itemID != "" {
 						item["id"] = itemID
@@ -1314,52 +1291,6 @@ func responsesInput(model *ai.Model, req ai.Context, deferredByName map[string]a
 			items = append(items, map[string]any{
 				"type": outputType, "call_id": callID, "output": outputVal,
 			})
-
-			// Load tools introduced by this result at this transcript point,
-			// deduped across results. How they are delivered depends on the
-			// model — see deferredToolsMode.
-			var deferred []ai.Tool
-			for _, name := range tr.AddedToolNames {
-				tool, ok := deferredByName[name]
-				if !ok || loadedToolNames[name] {
-					continue
-				}
-				loadedToolNames[name] = true
-				deferred = append(deferred, tool)
-			}
-			if len(deferred) > 0 {
-				switch mode {
-				case deferredToolsAdditional:
-					// Models that take additional_tools get the definitions inline at
-					// this transcript point, with no synthetic search call and no
-					// deferred-loading marker on the tools themselves.
-					additional, err := convertResponsesTools(deferred, compat, false)
-					if err != nil {
-						return nil, err
-					}
-					items = append(items, map[string]any{
-						"type": "additional_tools", "role": "developer", "tools": additional,
-					})
-				case deferredToolsSearch:
-					names := make([]string, len(deferred))
-					for i, t := range deferred {
-						names[i] = t.Name
-					}
-					searchCallID := "pi_tool_load_" + shortHash(tr.ToolCallID+":"+strings.Join(names, ","))
-					items = append(items, map[string]any{
-						"type": "tool_search_call", "call_id": searchCallID, "execution": "client", "status": "completed",
-						"arguments": map[string]any{"query": strings.Join(names, " "), "limit": len(names)},
-					})
-					deferredTools, err := convertResponsesTools(deferred, compat, true)
-					if err != nil {
-						return nil, err
-					}
-					items = append(items, map[string]any{
-						"type": "tool_search_output", "call_id": searchCallID, "execution": "client", "status": "completed",
-						"tools": deferredTools,
-					})
-				}
-			}
 		}
 		msgIndex++
 	}
@@ -1598,7 +1529,7 @@ func iterateOpenAISSE2(body io.Reader, ctx context.Context, handle func(response
 func RegisterOpenAIResponses() {
 	ai.RegisterApiProvider(ai.ApiProvider{
 		Api: ai.APIOpenAIResponses,
-		Stream: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
+		Stream: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
 			o := &OpenAIResponsesOptions{}
 			if opts != nil {
 				o.StreamOptions = *opts

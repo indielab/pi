@@ -27,9 +27,11 @@ func captureOpenAIHeaders(t *testing.T, model *ai.Model, opts ai.StreamOptions) 
 	}))
 	defer server.Close()
 	model.BaseURL = server.URL
-	final := StreamOpenAICompletions(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIOptions{StreamOptions: opts}).Result()
+	final := StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+		&OpenAIOptions{StreamOptions: opts}).
+		Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}
@@ -169,9 +171,11 @@ func TestAnthropicCloudflareAIGatewayTakesApiKeyBranch(t *testing.T) {
 		Input:   []string{"text"}, MaxTokens: 4096,
 		Compat: []byte(`{"sendSessionAffinityHeaders":true}`),
 	}
-	final := StreamAnthropic(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cf-key"}, SessionID: "sess-1"}}).Result()
+	final := StreamAnthropic(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cf-key"}, SessionID: "sess-1"}}).
+		Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}
@@ -201,15 +205,17 @@ func TestGoogleHeaderStates(t *testing.T) {
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI,
 		Provider: "cloudflare-workers-ai", BaseURL: server.URL,
 		Headers: ai.ProviderHeaders{"X-Model": strPtr("from-model"), "X-Empty": strPtr("")}}
-	final := StreamGoogle(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+	final := StreamGoogle(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
 		&GoogleOptions{StreamOptions: ai.StreamOptions{
 			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key", Headers: ai.ProviderHeaders{
 				"X-Model":        nil,
 				"User-Agent":     nil,
 				"x-goog-api-key": nil,
 			}},
-		}}).Result()
+		}}).
+		Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}
@@ -248,14 +254,16 @@ func TestPiMessagesHeaderStates(t *testing.T) {
 		))
 	}))
 	defer server.Close()
-	final := StreamPiMessages(context.Background(), piMessagesTestModel(server.URL+"/v1"),
-		piMessagesTestContext(), &PiMessagesOptions{StreamOptions: ai.StreamOptions{
+	final := StreamPiMessages(context.Background(), piMessagesTestModel(server.URL+"/v1"), ai.NormalizeContext(
+		piMessagesTestContext()),
+		&PiMessagesOptions{StreamOptions: ai.StreamOptions{
 			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key", Headers: ai.ProviderHeaders{
 				"authorization": nil,
 				"x-custom":      nil,
 				"x-empty":       strPtr(""),
 			}},
-		}}).Result()
+		}}).
+		Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}

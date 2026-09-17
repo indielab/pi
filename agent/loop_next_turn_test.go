@@ -55,7 +55,7 @@ func runProbeLoop(t *testing.T, p *nextTurnProbe, cfg AgentLoopConfig, msgs ...*
 			}
 			return nil
 		},
-		func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			p.log("request")
 			return scripted(ctx, model, req, opts)
 		})
@@ -122,7 +122,7 @@ func TestPrepareNextTurnPicksUpSteeringQueuedWhilePreparing(t *testing.T) {
 	var typed bool
 
 	steered := ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "steered"}}}
-	var secondRequest ai.Context
+	var secondRequest ai.TranscriptContext
 	scripted := scriptedStream(
 		assistantWithToolCall("tool-1", "noop", map[string]any{}),
 		&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "done"}}, StopReason: ai.StopStop},
@@ -151,7 +151,7 @@ func TestPrepareNextTurnPicksUpSteeringQueuedWhilePreparing(t *testing.T) {
 	runAgentLoop(context.Background(), []AgentMessage{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "start"}}}},
 		agentCtx, cfg,
 		func(e AgentEvent) error { return nil },
-		func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			requests++
 			if requests == 2 {
 				secondRequest = req
@@ -208,7 +208,7 @@ func TestPrepareNextTurnDoesNotDiscardAlreadyPolledSteering(t *testing.T) {
 	)
 
 	var requests int
-	var secondRequest ai.Context
+	var secondRequest ai.TranscriptContext
 	cfg := AgentLoopConfig{
 		Model:               testModel,
 		GetSteeringMessages: poll,
@@ -218,7 +218,7 @@ func TestPrepareNextTurnDoesNotDiscardAlreadyPolledSteering(t *testing.T) {
 	runAgentLoop(context.Background(), []AgentMessage{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "start"}}}},
 		agentCtx, cfg,
 		func(e AgentEvent) error { return nil },
-		func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			requests++
 			if requests == 2 {
 				secondRequest = req
@@ -282,9 +282,9 @@ func TestPrepareNextTurnSnapshotReachesTheNextRequest(t *testing.T) {
 	runAgentLoop(context.Background(), []AgentMessage{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "start"}}}},
 		agentCtx, cfg,
 		func(e AgentEvent) error { return nil },
-		func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 			requests++
-			seenPrompts = append(seenPrompts, req.SystemPrompt)
+			seenPrompts = append(seenPrompts, ai.GetCurrentSystemPrompt(req.Messages))
 			seenModels = append(seenModels, model.ID)
 			seenReasoning = append(seenReasoning, opts.Reasoning)
 			return scripted(ctx, model, req, opts)

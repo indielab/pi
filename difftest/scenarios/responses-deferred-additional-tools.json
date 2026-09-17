@@ -1,7 +1,7 @@
 {
   "name": "responses-deferred-additional-tools",
-  "note": "Upstream e47b8e37a + 02bd2d1c6 (Go 6d67d5d/2b661cb). openai-responses with compat.supportsAdditionalTools: deferred tool definitions ride a message-anchored {type:additional_tools, role:developer} item placed directly after the tool result that introduced them, with NO synthetic tool_search_call/tool_search_output and NO defer_loading marker on the tools. Also covers namespace replay in one transcript: same-model call keeps its namespace, a different-model call on a non-deferred tool drops it, and a different-model call on a DEFERRED tool keeps it. Shipped in pi-ai 0.84.2; backend flipped to dist (README rule).",
-  "backend": "dist",
+  "note": "Upstream e47b8e37a + 02bd2d1c6, rewritten for 9e05370b2 (mid-conversation system messages). openai-responses with compat.supportsAdditionalTools and NO supportsMidConvoSystemMessages: late_tool is declared by a mid-transcript system message (toolsAdded) where the deleted addedToolNames marker used to sit, the transcript collapses into the leading developer message, and body.tools carries the complete current tool set with no additional_tools item. Namespace replay follows isSameModel alone (9e05370b2 reverted the deferred-tool arm): the same-model call keeps its namespace, both different-model calls drop it. backend src: npm 0.85.1 predates the transcript model.",
+  "backend": "src",
   "api": "openai-responses",
   "entry": "streamSimple",
   "model": {
@@ -69,8 +69,28 @@
           }
         ],
         "isError": false,
-        "addedToolNames": [
-          "late_tool"
+        "timestamp": 3
+      },
+      {
+        "role": "system",
+        "content": "",
+        "toolsAdded": [
+          {
+            "name": "late_tool",
+            "description": "A tool introduced mid-transcript.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
         ],
         "timestamp": 3
       },
@@ -207,22 +227,6 @@
           },
           "required": [
             "q"
-          ],
-          "additionalProperties": false
-        }
-      },
-      {
-        "name": "late_tool",
-        "description": "A tool introduced mid-transcript.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "path": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "path"
           ],
           "additionalProperties": false
         }

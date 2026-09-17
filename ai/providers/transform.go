@@ -22,6 +22,19 @@ func asAssistantMsg(m ai.Message) (*ai.AssistantMessage, bool) {
 	return nil, false
 }
 
+// asSystemMsg normalizes a value/pointer system message.
+func asSystemMsg(m ai.Message) (ai.SystemMessage, bool) {
+	switch v := m.(type) {
+	case ai.SystemMessage:
+		return v, true
+	case *ai.SystemMessage:
+		if v != nil {
+			return *v, true
+		}
+	}
+	return ai.SystemMessage{}, false
+}
+
 func asUserMsg(m ai.Message) (ai.UserMessage, bool) {
 	switch v := m.(type) {
 	case ai.UserMessage:
@@ -95,14 +108,20 @@ func downgradeUnsupportedImages(messages []ai.Message, model *ai.Model) []ai.Mes
 
 // transformMessages normalizes messages for cross-provider compatibility:
 // downgrades unsupported images, rewrites thinking blocks for cross-model
-// replay, normalizes tool-call ids, drops errored/aborted assistant turns, and
-// inserts synthetic results for orphaned tool calls.
+// replay, normalizes tool-call ids, drops errored/aborted assistant turns,
+// inserts synthetic results for orphaned tool calls, and holds a system message
+// that lands between a tool call and its results until they close.
 func transformMessages(messages []ai.Message, model *ai.Model, normalizeToolCallID func(id string) string) []ai.Message {
 	toolCallIDMap := map[string]string{}
 	imageAware := downgradeUnsupportedImages(messages, model)
 
 	transformed := make([]ai.Message, 0, len(imageAware))
 	for _, m := range imageAware {
+		// System and user messages pass through unchanged.
+		if sm, ok := asSystemMsg(m); ok {
+			transformed = append(transformed, sm)
+			continue
+		}
 		if um, ok := asUserMsg(m); ok {
 			transformed = append(transformed, um)
 			continue
@@ -174,7 +193,12 @@ func transformMessages(messages []ai.Message, model *ai.Model, normalizeToolCall
 	var result []ai.Message
 	var pendingToolCalls []ai.ToolCall
 	existingResultIDs := map[string]bool{}
-	insertSynthetic := func() {
+	// System messages are transparent to tool-call accounting: one that lands
+	// between a tool call and its results is held back and emitted after the
+	// results (synthetic ones included), so it never causes a duplicate result
+	// for a call that is answered later.
+	var heldSystemMessages []ai.Message
+	closePendingToolCalls := func() {
 		if len(pendingToolCalls) > 0 {
 			for _, tc := range pendingToolCalls {
 				if !existingResultIDs[tc.ID] {
@@ -190,11 +214,13 @@ func transformMessages(messages []ai.Message, model *ai.Model, normalizeToolCall
 			pendingToolCalls = nil
 			existingResultIDs = map[string]bool{}
 		}
+		result = append(result, heldSystemMessages...)
+		heldSystemMessages = nil
 	}
 
 	for _, m := range transformed {
 		if am, ok := asAssistantMsg(m); ok {
-			insertSynthetic()
+			closePendingToolCalls()
 			if am.StopReason == ai.StopError || am.StopReason == ai.StopAborted {
 				continue
 			}
@@ -212,13 +238,22 @@ func transformMessages(messages []ai.Message, model *ai.Model, normalizeToolCall
 		} else if tr, ok := asToolResultMsg(m); ok {
 			existingResultIDs[tr.ToolCallID] = true
 			result = append(result, m)
+		} else if _, ok := asSystemMsg(m); ok {
+			if len(pendingToolCalls) > 0 {
+				heldSystemMessages = append(heldSystemMessages, m)
+			} else {
+				result = append(result, m)
+			}
 		} else if _, ok := asUserMsg(m); ok {
-			insertSynthetic()
+			// A new user turn interrupts tool flow - insert synthetic results for
+			// orphaned calls.
+			closePendingToolCalls()
 			result = append(result, m)
 		} else {
 			result = append(result, m)
 		}
 	}
-	insertSynthetic()
+	// If the conversation ends with unresolved tool calls, synthesize results now.
+	closePendingToolCalls()
 	return result
 }

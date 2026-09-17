@@ -33,7 +33,7 @@ func capturedSimplePayload(
 		captured = params
 		return nil, fmt.Errorf("payload captured")
 	}
-	final := stream(context.Background(), model, baseReq(), &opts).Result()
+	final := stream(context.Background(), model, ai.NormalizeContext(baseReq()), &opts).Result()
 	if captured == nil {
 		t.Fatalf("payload was never built (stream ended %s: %q)", final.StopReason, final.ErrorMessage)
 	}

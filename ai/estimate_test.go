@@ -28,7 +28,7 @@ func TestJSStringLength(t *testing.T) {
 }
 
 func TestEstimateContextTokensEmpty(t *testing.T) {
-	est := estimateContextTokens(Context{})
+	est := estimateContextTokens(NormalizeContext(Context{}).Messages)
 	if est.Tokens != 0 || est.UsageTokens != 0 || est.TrailingTokens != 0 || est.LastUsageIndex != -1 {
 		t.Fatalf("empty context = %+v, want all-zero with LastUsageIndex -1", est)
 	}
@@ -37,8 +37,8 @@ func TestEstimateContextTokensEmpty(t *testing.T) {
 func TestEstimateContextTokensUserText(t *testing.T) {
 	// "hello" -> UTF-16 length 5 -> ceil(5/4) = 2 tokens. No usage anchor, no
 	// system prompt, no tools.
-	ctx := Context{Messages: []Message{NewUserText("hello", 1)}}
-	est := estimateContextTokens(ctx)
+	ctx := NormalizeContext(Context{Messages: []Message{NewUserText("hello", 1)}})
+	est := estimateContextTokens(ctx.Messages)
 	if est.Tokens != 2 || est.LastUsageIndex != -1 {
 		t.Fatalf("user text = %+v, want Tokens 2, LastUsageIndex -1", est)
 	}
@@ -46,16 +46,17 @@ func TestEstimateContextTokensUserText(t *testing.T) {
 
 func TestEstimateContextTokensSystemPromptAndTools(t *testing.T) {
 	// systemPrompt "abcd" (4) -> ceil(4/4)=1. user "hi" (2) -> ceil(2/4)=1.
-	// tools prefix adds estimateTextTokens(JSON.stringify(tools)).
+	// The leading system message adds estimateTextTokens(JSON.stringify(tools)).
 	tool := Tool{Name: "t", Description: "d"}
-	ctx := Context{
+	tools := []Tool{tool}
+	ctx := NormalizeContext(Context{
 		SystemPrompt: "abcd",
 		Messages:     []Message{NewUserText("hi", 1)},
-		Tools:        []Tool{tool},
-	}
-	toolsJSON := safeJSONStringify(ctx.Tools)
+		Tools:        tools,
+	})
+	toolsJSON := safeJSONStringify(tools)
 	wantPrefix := 1 /*system*/ + estimateTextTokens(toolsJSON)
-	est := estimateContextTokens(ctx)
+	est := estimateContextTokens(ctx.Messages)
 	if want := 1 /*user*/ + wantPrefix; est.Tokens != want {
 		t.Fatalf("system+tools Tokens = %d, want %d (toolsJSON=%q)", est.Tokens, want, toolsJSON)
 	}
@@ -86,8 +87,8 @@ func TestEstimateMessageTokensAssistantToolCall(t *testing.T) {
 
 func TestEstimateContextTokensUsageAnchor(t *testing.T) {
 	// With a usage anchor, tokens = usageTokens + sum(messages after anchor).
-	// The anchor's totalTokens is used; the system prompt / tools prefix is NOT
-	// added once an anchor exists.
+	// The anchor's totalTokens is used; the leading system message (prompt and
+	// tools) sits before the anchor, so it is not added once an anchor exists.
 	assistant := AssistantMessage{
 		Content:    ContentList{TextContent{Text: "ok"}},
 		StopReason: StopStop,
@@ -95,12 +96,12 @@ func TestEstimateContextTokensUsageAnchor(t *testing.T) {
 		Timestamp:  2, // after the preceding user (ts 1), so its usage anchors the prefix
 	}
 	trailing := NewUserText(strings.Repeat("x", 8), 3) // 8 chars -> ceil(8/4)=2
-	ctx := Context{
+	ctx := NormalizeContext(Context{
 		SystemPrompt: "ignored-because-anchor",
 		Tools:        []Tool{{Name: "t"}},
 		Messages:     []Message{NewUserText("hi", 1), assistant, trailing},
-	}
-	est := estimateContextTokens(ctx)
+	})
+	est := estimateContextTokens(ctx.Messages)
 	if est.UsageTokens != 1000 {
 		t.Fatalf("UsageTokens = %d, want 1000", est.UsageTokens)
 	}
@@ -110,8 +111,10 @@ func TestEstimateContextTokensUsageAnchor(t *testing.T) {
 	if est.Tokens != 1002 {
 		t.Fatalf("Tokens = %d, want 1002 (no prefix added when anchored)", est.Tokens)
 	}
-	if est.LastUsageIndex != 1 {
-		t.Fatalf("LastUsageIndex = %d, want 1", est.LastUsageIndex)
+	// The index is into the normalized transcript, which leads with the system
+	// message: the anchoring assistant is its third message.
+	if est.LastUsageIndex != 2 {
+		t.Fatalf("LastUsageIndex = %d, want 2", est.LastUsageIndex)
 	}
 }
 
@@ -120,8 +123,7 @@ func TestGetLastAssistantUsageInfoSkipsAbortedAndError(t *testing.T) {
 	good := AssistantMessage{StopReason: StopStop, Usage: Usage{Input: 5, Output: 5}} // 10
 	aborted := AssistantMessage{StopReason: StopAborted, Usage: Usage{TotalTokens: 999}}
 	errored := AssistantMessage{StopReason: StopError, Usage: Usage{TotalTokens: 999}}
-	ctx := Context{Messages: []Message{good, aborted, errored}}
-	est := estimateContextTokens(ctx)
+	est := estimateContextTokens([]Message{good, aborted, errored})
 	if est.UsageTokens != 10 || est.LastUsageIndex != 0 {
 		t.Fatalf("est = %+v, want UsageTokens 10 at index 0 (aborted/error skipped)", est)
 	}
@@ -140,25 +142,32 @@ func TestEstimateIgnoresStaleUsageAfterNewerInsertedMessage(t *testing.T) {
 	// Mirrors pi context-estimate.test.ts (upstream 8973ae28): the assistant's
 	// usage (ts 100) is stale because a newer prefix message (the summary user
 	// message, ts 200) was inserted before it, so it cannot describe the current
-	// prefix. Falls back to a full estimate with no anchor.
-	ctx := Context{
+	// prefix. Falls back to a full estimate with no anchor. Wrapped in
+	// NormalizeContext as upstream 9e05370b2 wraps it.
+	ctx := NormalizeContext(Context{
 		SystemPrompt: "system",
 		Messages: []Message{
 			NewUserText("summary", 200),
 			estimateTestAssistant(100, 9_500),
 			NewUserText(strings.Repeat("x", 4_000), 300),
 		},
-	}
-	est := estimateContextTokens(ctx)
+	})
+	est := estimateContextTokens(ctx.Messages)
 	if est.Tokens != 1_005 || est.UsageTokens != 0 || est.TrailingTokens != 1_005 || est.LastUsageIndex != -1 {
 		t.Fatalf("stale-usage estimate = %+v, want {Tokens:1005 UsageTokens:0 TrailingTokens:1005 LastUsageIndex:-1}", est)
+	}
+	// buildBaseOptions(model, context).maxTokens: contextWindow 10000, maxTokens
+	// 8000 -> min(8000, 10000 - 1005 - 4096) = 4899.
+	model := &Model{ContextWindow: 10_000, MaxTokens: 8_000}
+	if got := ClampMaxTokensToContext(model, ctx, SimpleMaxTokensDefault(model, nil)); got != 4_899 {
+		t.Fatalf("clamped maxTokens = %d, want 4899", got)
 	}
 }
 
 func TestEstimateUsesUsageAfterResponseToInsertedContext(t *testing.T) {
 	// The later assistant (ts 400) responds to the inserted context (ts 300), so
 	// its usage applies to the current prefix and anchors the estimate again.
-	ctx := Context{
+	ctx := NormalizeContext(Context{
 		Messages: []Message{
 			NewUserText("summary", 200),
 			estimateTestAssistant(100, 9_500),
@@ -166,8 +175,8 @@ func TestEstimateUsesUsageAfterResponseToInsertedContext(t *testing.T) {
 			estimateTestAssistant(400, 2_000),
 			NewUserText("tail", 500),
 		},
-	}
-	est := estimateContextTokens(ctx)
+	})
+	est := estimateContextTokens(ctx.Messages)
 	if est.Tokens != 2_001 || est.UsageTokens != 2_000 || est.TrailingTokens != 1 || est.LastUsageIndex != 3 {
 		t.Fatalf("post-insert estimate = %+v, want {Tokens:2001 UsageTokens:2000 TrailingTokens:1 LastUsageIndex:3}", est)
 	}
@@ -186,17 +195,17 @@ func TestCalculateContextTokensFallback(t *testing.T) {
 func TestClampMaxTokensToContext(t *testing.T) {
 	// contextWindow <= 0 -> max(MIN_MAX_TOKENS, maxTokens).
 	noWindow := &Model{ContextWindow: 0}
-	if got := ClampMaxTokensToContext(noWindow, Context{}, 8000); got != 8000 {
+	if got := ClampMaxTokensToContext(noWindow, TranscriptContext{}, 8000); got != 8000 {
 		t.Fatalf("no-window large = %d, want 8000", got)
 	}
-	if got := ClampMaxTokensToContext(noWindow, Context{}, 0); got != minMaxTokens {
+	if got := ClampMaxTokensToContext(noWindow, TranscriptContext{}, 0); got != minMaxTokens {
 		t.Fatalf("no-window floor = %d, want %d", got, minMaxTokens)
 	}
 
 	// Small context: available = window - estimate - safety is still > maxTokens,
 	// so the clamp is a no-op (this is the golden-stability invariant).
 	model := &Model{ContextWindow: 128000, MaxTokens: 16384}
-	smallCtx := Context{SystemPrompt: "sys", Messages: []Message{NewUserText("hi", 1)}}
+	smallCtx := NormalizeContext(Context{SystemPrompt: "sys", Messages: []Message{NewUserText("hi", 1)}})
 	if got := ClampMaxTokensToContext(model, smallCtx, 16384); got != 16384 {
 		t.Fatalf("small-context clamp = %d, want 16384 (no-op)", got)
 	}
@@ -205,7 +214,7 @@ func TestClampMaxTokensToContext(t *testing.T) {
 	// contextWindow 10000, maxTokens 8000, a user message of 8000 'x' chars.
 	// estimate = ceil(8000/4) = 2000; available = 10000 - 2000 - 4096 = 3904.
 	big := &Model{ContextWindow: 10000, MaxTokens: 8000}
-	bigCtx := Context{Messages: []Message{NewUserText(strings.Repeat("x", 8000), 1)}}
+	bigCtx := NormalizeContext(Context{Messages: []Message{NewUserText(strings.Repeat("x", 8000), 1)}})
 	if got := ClampMaxTokensToContext(big, bigCtx, 8000); got != 3904 {
 		t.Fatalf("clamped default = %d, want 3904", got)
 	}
@@ -215,7 +224,7 @@ func TestClampMaxTokensToContext(t *testing.T) {
 
 	// Floor at MIN_MAX_TOKENS when available would be negative.
 	tiny := &Model{ContextWindow: 100, MaxTokens: 8000}
-	hugeCtx := Context{Messages: []Message{NewUserText(strings.Repeat("x", 8000), 1)}}
+	hugeCtx := NormalizeContext(Context{Messages: []Message{NewUserText(strings.Repeat("x", 8000), 1)}})
 	if got := ClampMaxTokensToContext(tiny, hugeCtx, 8000); got != minMaxTokens {
 		t.Fatalf("over-budget floor = %d, want %d", got, minMaxTokens)
 	}
@@ -232,5 +241,50 @@ func TestSimpleMaxTokensDefault(t *testing.T) {
 	mt := 1234
 	if got := SimpleMaxTokensDefault(model, &SimpleStreamOptions{StreamOptions: StreamOptions{MaxTokens: &mt}}); got != 1234 {
 		t.Fatalf("explicit = %d, want 1234", got)
+	}
+}
+
+// estimateTestTool is `tool("base_tool")` from the upstream suites:
+// {name, description: "base_tool tool", parameters: Type.Object({})}.
+func estimateTestTool() Tool {
+	return Tool{Name: "base_tool", Description: "base_tool tool", Parameters: Object()}
+}
+
+func TestEstimateMessageTokensSystemMessage(t *testing.T) {
+	// pi 9e05370b2 estimateMessageTokens system arm: text tokens of
+	// getSystemMessageText ("abcd\n\nefgh" -> 3) + tokens of JSON.stringify of
+	// toolsAdded (99 chars -> 25) + of toolsRemoved (`[{"name":"gone"}]` -> 5).
+	// 33 captured under node at the sha.
+	sys := NewSystemText("abcd", 50)
+	sys.Sections = SystemSections{{Name: "s", Value: strp("efgh")}}
+	sys.ToolsAdded = []Tool{estimateTestTool()}
+	sys.ToolsRemoved = []ToolReference{{Name: "gone"}}
+	if got := estimateMessageTokens(sys); got != 33 {
+		t.Fatalf("system message tokens = %d, want 33", got)
+	}
+}
+
+func TestEstimateSystemMessageTimestampInvalidatesStaleUsage(t *testing.T) {
+	// Every message's timestamp advances the prefix watermark, system messages
+	// included: a system message newer than a response makes that response's
+	// usage stale. Expected values captured under node at 9e05370b2.
+	messages := []Message{
+		NewSystemText("newer prompt", 200),
+		estimateTestAssistant(100, 9_500),
+		NewUserText("tail", 300),
+	}
+	est := estimateContextTokens(messages)
+	if est.Tokens != 5 || est.UsageTokens != 0 || est.TrailingTokens != 5 || est.LastUsageIndex != -1 {
+		t.Fatalf("estimate = %+v, want {Tokens:5 UsageTokens:0 TrailingTokens:5 LastUsageIndex:-1}", est)
+	}
+}
+
+func TestEstimateCountsTrailingSystemMessagesAfterTheAnchor(t *testing.T) {
+	late := NewSystemText("late!", 3)
+	late.ToolsAdded = []Tool{estimateTestTool()}
+	messages := []Message{NewUserText("u", 1), estimateTestAssistant(2, 9_500), late}
+	est := estimateContextTokens(messages)
+	if est.Tokens != 9_527 || est.UsageTokens != 9_500 || est.TrailingTokens != 27 || est.LastUsageIndex != 1 {
+		t.Fatalf("estimate = %+v, want {Tokens:9527 UsageTokens:9500 TrailingTokens:27 LastUsageIndex:1}", est)
 	}
 }

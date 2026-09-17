@@ -447,7 +447,7 @@ func resolvePiMessagesCacheRetention(cacheRetention ai.CacheRetention, env map[s
 
 // StreamPiMessages streams from a pi-messages backend. Port of the `stream`
 // export in pi-messages.ts.
-func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.Context, opts *PiMessagesOptions) *ai.AssistantMessageEventStream {
+func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *PiMessagesOptions) *ai.AssistantMessageEventStream {
 	stream := ai.NewAssistantMessageEventStream()
 	if opts == nil {
 		opts = &PiMessagesOptions{}
@@ -599,7 +599,7 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.Context, opts
 // reasoning and the unified toolChoice. Port of the `streamSimple` export;
 // upstream e5dde9a76 moved toolChoice off the provider-extra object onto the
 // unified options, so it no longer depends on the caller passing native options.
-func StreamSimplePiMessages(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+func StreamSimplePiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 	p := &PiMessagesOptions{}
 	if opts != nil {
 		p.StreamOptions = opts.StreamOptions
@@ -615,7 +615,7 @@ func StreamSimplePiMessages(ctx context.Context, model *ai.Model, req ai.Context
 func RegisterPiMessages() {
 	ai.RegisterApiProvider(ai.ApiProvider{
 		Api: ai.APIPiMessages,
-		Stream: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
+		Stream: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
 			p := &PiMessagesOptions{}
 			if opts != nil {
 				p.StreamOptions = *opts

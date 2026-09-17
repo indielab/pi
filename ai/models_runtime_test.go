@@ -16,7 +16,7 @@ import (
 // was handed and returns a closed stream.
 func capture(gotModel **Model, gotOpts **StreamOptions) ProviderStreams {
 	return ProviderStreams{
-		Stream: func(_ context.Context, model *Model, _ Context, opts *StreamOptions) *AssistantMessageEventStream {
+		Stream: func(_ context.Context, model *Model, _ TranscriptContext, opts *StreamOptions) *AssistantMessageEventStream {
 			*gotModel = model
 			*gotOpts = opts
 			s := NewAssistantMessageEventStream()
@@ -43,12 +43,12 @@ func TestCreateProviderDispatch(t *testing.T) {
 		},
 	})
 
-	p.Stream(context.Background(), &Model{Provider: "multi", ID: "a", Api: "api-a"}, Context{}, nil)
+	p.Stream(context.Background(), &Model{Provider: "multi", ID: "a", Api: "api-a"}, TranscriptContext{}, nil)
 	if *gotA == nil || (*gotA).Api != "api-a" {
 		t.Fatalf("api-a not dispatched, got %v", *gotA)
 	}
 	// A model whose api has no implementation yields a stream error.
-	res := p.Stream(context.Background(), &Model{Provider: "multi", ID: "c", Api: "api-z"}, Context{}, nil).Result()
+	res := p.Stream(context.Background(), &Model{Provider: "multi", ID: "c", Api: "api-z"}, TranscriptContext{}, nil).Result()
 	if res.StopReason != StopError {
 		t.Fatalf("missing api should produce a stream error, got %v", res.StopReason)
 	}
@@ -1338,7 +1338,7 @@ func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 // cancel was dispatched with.
 func deferredStreams(cancelled *[]DeferredHandle, cancelOpts *[]*DeferredCancelOptions) ProviderStreams {
 	return ProviderStreams{
-		Stream: func(_ context.Context, _ *Model, _ Context, _ *StreamOptions) *AssistantMessageEventStream {
+		Stream: func(_ context.Context, _ *Model, _ TranscriptContext, _ *StreamOptions) *AssistantMessageEventStream {
 			s := NewAssistantMessageEventStream()
 			s.End()
 			return s

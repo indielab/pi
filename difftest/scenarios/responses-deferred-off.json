@@ -1,7 +1,7 @@
 {
   "name": "responses-deferred-off",
-  "note": "Upstream e47b8e37a + 02bd2d1c6 (Go 6d67d5d/2b661cb). Same transcript with neither compat flag: deferral is off entirely, so late_tool stays in body.tools, no additional_tools and no tool_search items are emitted, and namespace replay still obeys the same-model / deferred-tool gate. Shipped in pi-ai 0.84.2; backend flipped to dist (README rule).",
-  "backend": "dist",
+  "note": "Upstream e47b8e37a + 02bd2d1c6, rewritten for 9e05370b2 (mid-conversation system messages). Same transcript with neither compat flag: the mid-transcript system message that declares late_tool collapses into the leading developer message, body.tools carries base_tool and late_tool, and namespace replay follows isSameModel. backend src: npm 0.85.1 predates the transcript model.",
+  "backend": "src",
   "api": "openai-responses",
   "entry": "streamSimple",
   "model": {
@@ -66,8 +66,28 @@
           }
         ],
         "isError": false,
-        "addedToolNames": [
-          "late_tool"
+        "timestamp": 3
+      },
+      {
+        "role": "system",
+        "content": "",
+        "toolsAdded": [
+          {
+            "name": "late_tool",
+            "description": "A tool introduced mid-transcript.",
+            "parameters": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path"
+              ],
+              "additionalProperties": false
+            }
+          }
         ],
         "timestamp": 3
       },
@@ -204,22 +224,6 @@
           },
           "required": [
             "q"
-          ],
-          "additionalProperties": false
-        }
-      },
-      {
-        "name": "late_tool",
-        "description": "A tool introduced mid-transcript.",
-        "parameters": {
-          "type": "object",
-          "properties": {
-            "path": {
-              "type": "string"
-            }
-          },
-          "required": [
-            "path"
           ],
           "additionalProperties": false
         }

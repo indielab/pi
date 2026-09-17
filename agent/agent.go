@@ -184,7 +184,7 @@ func NewAgent(opts AgentOptions) *Agent {
 		a.ConvertToLlm = defaultConvertToLlm
 	}
 	if a.StreamFn == nil {
-		a.StreamFn = ai.StreamSimple
+		a.StreamFn = streamSimpleTranscript
 	}
 	if a.Transport == "" {
 		a.Transport = ai.TransportAuto

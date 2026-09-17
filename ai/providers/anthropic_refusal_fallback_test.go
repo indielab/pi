@@ -146,7 +146,7 @@ func runAnthropicFallbackRequest(t *testing.T, model *ai.Model) {
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	opts := &ai.SimpleStreamOptions{}
 	opts.APIKey = "k"
-	StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
+	StreamSimpleAnthropic(context.Background(), model, ai.NormalizeContext(req), opts).Result()
 }
 
 // TestAnthropicFallbacksOnWire pins the request half: the `fallbacks` field is
@@ -214,7 +214,7 @@ func TestAnthropicFallbackBetaOrder(t *testing.T) {
 	}
 	opts := &ai.SimpleStreamOptions{Reasoning: ai.ThinkingMedium}
 	opts.APIKey = "k"
-	StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
+	StreamSimpleAnthropic(context.Background(), model, ai.NormalizeContext(req), opts).Result()
 
 	wantBeta := strings.Join([]string{fineGrainedToolStreamBeta, interleavedThinkingBeta, serverSideFallbackBeta}, ",")
 	if got := stub.headers.Get("anthropic-beta"); got != wantBeta {
@@ -259,7 +259,7 @@ func TestAnthropicCapturesServedModel(t *testing.T) {
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	opts := &ai.SimpleStreamOptions{}
 	opts.APIKey = "k"
-	msg := StreamSimpleAnthropic(context.Background(), model, req, opts).Result()
+	msg := StreamSimpleAnthropic(context.Background(), model, ai.NormalizeContext(req), opts).Result()
 
 	if msg.Model != "claude-opus-4-8" {
 		t.Fatalf("want the served model claude-opus-4-8, got %q", msg.Model)
@@ -278,7 +278,7 @@ func anthropicFallbackCosts(t *testing.T, model *ai.Model) (start, final ai.Cost
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	opts := &ai.SimpleStreamOptions{}
 	opts.APIKey = "k"
-	stream := StreamSimpleAnthropic(context.Background(), model, req, opts)
+	stream := StreamSimpleAnthropic(context.Background(), model, ai.NormalizeContext(req), opts)
 	for ev := range stream.Events() {
 		if ev.Type == ai.EventTextStart && ev.Partial != nil {
 			start = ev.Partial.Usage.Cost

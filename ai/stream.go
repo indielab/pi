@@ -93,12 +93,17 @@ func resolveProvider(api Api) (ApiProvider, error) {
 // terminal "error" event, keeping a single return value and a uniform
 // "failures live in the stream" contract for callers. Same applies to
 // StreamSimple.
+//
+// The request is normalized once here (NormalizeContext): providers receive a
+// transcript whose leading system message carries req.SystemPrompt and
+// req.Tools (pi compat.ts stream, upstream 9e05370b2).
 func Stream(ctx context.Context, model *Model, req Context, opts *StreamOptions) *AssistantMessageEventStream {
+	transcript := NormalizeContext(req)
 	p, err := resolveProvider(model.Api)
 	if err != nil {
 		return ErrorStream(model, err)
 	}
-	return p.Stream(ctx, model, req, withEnvAPIKey(model, opts))
+	return p.Stream(ctx, model, transcript, withEnvAPIKey(model, opts))
 }
 
 // Complete runs Stream and waits for the final assistant message.
@@ -108,13 +113,14 @@ func Complete(ctx context.Context, model *Model, req Context, opts *StreamOption
 
 // StreamSimple streams an assistant response using unified reasoning options.
 // See Stream for the deliberate unknown-api divergence from pi (errors are
-// encoded in the stream, not thrown).
+// encoded in the stream, not thrown), and for the normalization it applies.
 func StreamSimple(ctx context.Context, model *Model, req Context, opts *SimpleStreamOptions) *AssistantMessageEventStream {
+	transcript := NormalizeContext(req)
 	p, err := resolveProvider(model.Api)
 	if err != nil {
 		return ErrorStream(model, err)
 	}
-	return p.StreamSimple(ctx, model, req, withEnvAPIKeySimple(model, opts))
+	return p.StreamSimple(ctx, model, transcript, withEnvAPIKeySimple(model, opts))
 }
 
 // CompleteSimple runs StreamSimple and waits for the final assistant message.

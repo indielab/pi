@@ -10,7 +10,6 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
-	"strconv"
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
@@ -98,8 +97,7 @@ type anthropicCompat struct {
 	forceAdaptiveThinking       bool
 	// supportsStrictTools reports whether the provider accepts Anthropic strict
 	// tool schemas. Default: false.
-	supportsStrictTools    bool
-	supportsToolReferences bool
+	supportsStrictTools bool
 	// supportsMidConvoEffort reports whether this exact model transport accepts
 	// effort-only system messages and thinking binding controls (pi
 	// AnthropicMessagesCompat.supportsMidConvoEffort, upstream 4e69b0c28).
@@ -159,7 +157,6 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 		sendSessionAffinityHeaders:      isOpenRouter,
 		supportsCacheControlOnTools:     true,
 		supportsTemperature:             true,
-		supportsToolReferences:          defaultSupportsToolReferences(model),
 	}
 	// pi's `?? (isOpenRouter ? "openrouter" : undefined)`: off OpenRouter the
 	// format stays unset, which is why sessionAffinityFormatFor is not reused —
@@ -182,7 +179,6 @@ func getAnthropicCompat(model *ai.Model) anthropicCompat {
 	applyCompat(o, "allowEmptySignature", &c.allowEmptySignature)
 	applyCompat(o, "forceAdaptiveThinking", &c.forceAdaptiveThinking)
 	applyCompat(o, "supportsStrictTools", &c.supportsStrictTools)
-	applyCompat(o, "supportsToolReferences", &c.supportsToolReferences)
 	applyCompat(o, "supportsMidConvoEffort", &c.supportsMidConvoEffort)
 	applyCompat(o, "allowedFallbackModels", &c.allowedFallbackModels)
 	return c
@@ -241,37 +237,6 @@ func anthropicUsageModel(model *ai.Model, servedID string) *ai.Model {
 	priced := *model
 	priced.ID, priced.Cost = servedID, *cost
 	return &priced
-}
-
-// toolReferenceVersionRe matches first-party Claude model ids to extract the
-// major/optional-minor version (port of the regex in defaultSupportsToolReferences).
-var toolReferenceVersionRe = regexp.MustCompile(`^claude-(?:opus|sonnet|fable)-(\d+)(?:-(\d+))?(?:-|$)`)
-
-// defaultSupportsToolReferences is the default for supportsToolReferences:
-// first-party Anthropic models except Haiku (rejects client-side tool_reference
-// blocks) and models that predate tool search (Claude 3.x, Opus/Sonnet 4.0,
-// Opus 4.1). Port of pi's helper of the same name.
-func defaultSupportsToolReferences(model *ai.Model) bool {
-	if model.Provider != "anthropic" || strings.Contains(model.ID, "haiku") {
-		return false
-	}
-	m := toolReferenceVersionRe.FindStringSubmatch(model.ID)
-	if m == nil {
-		return false
-	}
-	major, err := strconv.Atoi(m[1])
-	if err != nil {
-		return false
-	}
-	// A second group of 8+ digits is a date suffix (e.g. claude-sonnet-4-20250514),
-	// not a minor version; treat minor as 0.
-	minor := 0
-	if m[2] != "" && len(m[2]) < 8 {
-		if v, err := strconv.Atoi(m[2]); err == nil {
-			minor = v
-		}
-	}
-	return major > 4 || (major == 4 && minor >= 5)
 }
 
 func resolveCacheRetention(r ai.CacheRetention, env map[string]string) ai.CacheRetention {
@@ -337,7 +302,7 @@ func hasAnthropicAuthHeader(headers ai.ProviderHeaders) bool {
 }
 
 // StreamSimpleAnthropic maps unified reasoning to AnthropicOptions then streams.
-func StreamSimpleAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+func StreamSimpleAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 	var base ai.StreamOptions
 	if opts != nil {
 		base = opts.StreamOptions
@@ -488,11 +453,17 @@ func normalizeToolCallID(id string) string {
 }
 
 // StreamAnthropic streams an assistant response from the Anthropic Messages API.
-func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts *AnthropicOptions) *ai.AssistantMessageEventStream {
+//
+// Later system messages are folded into the leading one before anything reads
+// the transcript: the request, the Copilot headers and the OAuth tool-name
+// mapping all see the collapsed transcript and its current tools.
+func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *AnthropicOptions) *ai.AssistantMessageEventStream {
 	stream := ai.NewAssistantMessageEventStream()
 	if opts == nil {
 		opts = &AnthropicOptions{}
 	}
+	normalized := ai.CollapseSystemMessages(req)
+	currentTools := ai.GetCurrentTools(normalized.Messages)
 
 	go func() {
 		output := &ai.AssistantMessage{
@@ -558,7 +529,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 			model.Provider != "github-copilot" &&
 			isOAuthToken(apiKey)
 
-		body, err := buildAnthropicParams(model, req, oauth, opts)
+		body, err := buildAnthropicParams(model, normalized, oauth, opts)
 		if err != nil {
 			fail(err)
 			return
@@ -633,7 +604,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 			if err != nil {
 				return nil, err
 			}
-			applyAnthropicHeaders(r, model, opts, oauth, apiKey, authToken, req.Messages)
+			applyAnthropicHeaders(r, model, opts, oauth, apiKey, authToken, normalized.Messages)
 			// The betas header is a PER-REQUEST header in the SDK, so it beats
 			// every default header the merge above produced — including one the
 			// consumer spelled differently, and including the empty-string value an
@@ -739,7 +710,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.Context, opts 
 				case "tool_use":
 					name := ev.ContentBlock.Name
 					if oauth {
-						name = fromClaudeCodeName(name, req.Tools)
+						name = fromClaudeCodeName(name, currentTools)
 					}
 					b = &blockBuilder{kind: "toolCall", toolID: ev.ContentBlock.ID, toolName: name, args: map[string]any{}}
 					evType = ai.EventToolCallStart
@@ -943,7 +914,7 @@ func isAnthropicEffort(value string) bool {
 // so a second decode of the raw compat blob would be duplicated per-request work
 // and a second place for the two reads to drift (the same reasoning as
 // buildAnthropicParams' fallbacks list).
-func getAnthropicBetaFeatures(model *ai.Model, req ai.Context, oauth bool, opts *AnthropicOptions, compat anthropicCompat) []string {
+func getAnthropicBetaFeatures(model *ai.Model, req ai.TranscriptContext, oauth bool, opts *AnthropicOptions, compat anthropicCompat) []string {
 	var optHeaders ai.ProviderHeaders
 	if opts != nil {
 		optHeaders = opts.Headers
@@ -983,7 +954,7 @@ func getAnthropicBetaFeatures(model *ai.Model, req ai.Context, oauth bool, opts 
 	if oauth {
 		features = append(features, "claude-code-20250219", "oauth-2025-04-20")
 	}
-	if len(req.Tools) > 0 && !compat.supportsEagerToolInputStreaming {
+	if len(ai.GetCurrentTools(req.Messages)) > 0 && !compat.supportsEagerToolInputStreaming {
 		features = append(features, fineGrainedToolStreamBeta)
 	}
 	// Narrowed by 4e69b0c28: interleaved thinking is now asked for only when the
@@ -1191,7 +1162,7 @@ func insertAnthropicThinkingLevelMessages(messages []map[string]any, levels map[
 	return append(out, effortMessage(activeEffort))
 }
 
-func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *AnthropicOptions) (map[string]any, error) {
+func buildAnthropicParams(model *ai.Model, req ai.TranscriptContext, oauth bool, opts *AnthropicOptions) (map[string]any, error) {
 	retention := ai.CacheRetention("")
 	var env map[string]string
 	if opts != nil {
@@ -1206,29 +1177,17 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 		maxTokens = *opts.MaxTokens
 	}
 
-	// pi hoists transformMessages out of convertMessages so the tool split and the
-	// message conversion see the same normalized transcript.
+	// The leading system message is the top-level system prompt; the conversation
+	// is everything transformed after it.
+	initialSystemMessage, hasInitialSystemMessage := ai.GetInitialSystemMessage(req.Messages)
+	initialSystemText := ""
+	if hasInitialSystemMessage {
+		initialSystemText = ai.GetSystemMessageText(initialSystemMessage)
+	}
 	transformedMessages := transformMessages(req.Messages, model, normalizeToolCallID)
-	normalizeToolName := ai.ToolNameNormalizer(func(name string) string { return name })
-	if oauth {
-		normalizeToolName = toClaudeCodeName
-	}
-	placement := ai.SplitDeferredTools(
-		ai.Context{SystemPrompt: req.SystemPrompt, Messages: transformedMessages, Tools: req.Tools},
-		compat.supportsToolReferences,
-		normalizeToolName,
-	)
-	immediateTools := placement.Immediate
-	deferredTools := placement.Deferred
-	// If every current tool is deferred there is no prefix to anchor references
-	// against; promote them back to immediate (the safe, cache-wiping path).
-	if len(immediateTools) == 0 && len(deferredTools) > 0 {
-		immediateTools = deferredTools
-		deferredTools = nil
-	}
-	deferredToolNames := map[string]bool{}
-	for _, tool := range deferredTools {
-		deferredToolNames[normalizeToolName(tool.Name)] = true
+	conversationMessages := transformedMessages
+	if hasInitialSystemMessage {
+		conversationMessages = transformedMessages[1:]
 	}
 
 	// A managed-effort model replays each historical turn's own effort, so the
@@ -1241,7 +1200,7 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 		managedProvider = model.Provider
 	}
 	messages, assistantLevels := convertAnthropicMessages(
-		transformedMessages, oauth, cc, compat.allowEmptySignature, deferredToolNames, normalizeToolName, managedProvider)
+		conversationMessages, oauth, cc, compat.allowEmptySignature, managedProvider)
 	if compat.supportsMidConvoEffort {
 		messages = insertAnthropicThinkingLevelMessages(messages, assistantLevels, anthropicActiveEffort(opts))
 	}
@@ -1267,12 +1226,12 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 	}
 	if oauth {
 		system := []any{textBlock("You are Claude Code, Anthropic's official CLI for Claude.")}
-		if req.SystemPrompt != "" {
-			system = append(system, textBlock(req.SystemPrompt))
+		if initialSystemText != "" {
+			system = append(system, textBlock(initialSystemText))
 		}
 		params["system"] = system
-	} else if req.SystemPrompt != "" {
-		params["system"] = []any{textBlock(req.SystemPrompt)}
+	} else if initialSystemText != "" {
+		params["system"] = []any{textBlock(initialSystemText)}
 	}
 
 	// pi: `!options?.thinkingEnabled` — only an explicit thinkingEnabled:true
@@ -1283,20 +1242,16 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 		params["temperature"] = *opts.Temperature
 	}
 
-	if len(immediateTools) > 0 || len(deferredTools) > 0 {
-		var toolCC *cacheControl
-		if compat.supportsCacheControlOnTools {
-			toolCC = cc
-		}
-		tools, err := convertAnthropicTools(immediateTools, oauth, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools, toolCC, false)
+	var toolCC *cacheControl
+	if compat.supportsCacheControlOnTools {
+		toolCC = cc
+	}
+	if tools := ai.GetCurrentTools(req.Messages); len(tools) > 0 {
+		converted, err := convertAnthropicTools(tools, oauth, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools, toolCC)
 		if err != nil {
 			return nil, err
 		}
-		deferred, err := convertAnthropicTools(deferredTools, oauth, compat.supportsEagerToolInputStreaming, compat.supportsStrictTools, nil, true)
-		if err != nil {
-			return nil, err
-		}
-		params["tools"] = append(tools, deferred...)
+		params["tools"] = converted
 	}
 
 	// pi tri-state (anthropic.ts:950-978): thinkingEnabled undefined omits the
@@ -1385,7 +1340,7 @@ func buildAnthropicParams(model *ai.Model, req ai.Context, oauth bool, opts *Ant
 	return params, nil
 }
 
-func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bool, cc *cacheControl, deferLoading bool) ([]map[string]any, error) {
+func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bool, cc *cacheControl) ([]map[string]any, error) {
 	out := make([]map[string]any, len(tools))
 	for i, t := range tools {
 		name := t.Name
@@ -1452,9 +1407,6 @@ func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bo
 			tool["strict"] = true
 		}
 		tool["input_schema"] = inputSchema
-		if deferLoading {
-			tool["defer_loading"] = true
-		}
 		if cc != nil && i == len(tools)-1 {
 			tool["cache_control"] = cc
 		}
@@ -1468,10 +1420,7 @@ func convertAnthropicTools(tools []ai.Tool, oauth, eager, supportsStrictTools bo
 // converted assistant message was produced at, keyed by its index in the result.
 // managedProvider is empty for every other model, which switches the recording
 // off — pi passes `undefined` there.
-func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheControl, allowEmptySig bool, deferredToolNames map[string]bool, normalizeToolName ai.ToolNameNormalizer, managedProvider string) ([]map[string]any, map[int]string) {
-	if normalizeToolName == nil {
-		normalizeToolName = func(name string) string { return name }
-	}
+func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheControl, allowEmptySig bool, managedProvider string) ([]map[string]any, map[int]string) {
 	// Seeded non-nil, like pi's `const params: MessageParam[] = []`: a transcript
 	// that converts to nothing must still marshal as `[]`, and a nil slice would
 	// marshal as `null`.
@@ -1480,7 +1429,6 @@ func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheCon
 	// passes a managedProvider, and every other request would otherwise allocate
 	// a map it is guaranteed to leave empty and discard.
 	var assistantLevels map[int]string
-	loadedToolNames := map[string]bool{}
 
 	for i := 0; i < len(transformed); i++ {
 		m := transformed[i]
@@ -1509,26 +1457,19 @@ func convertAnthropicMessages(transformed []ai.Message, oauth bool, cc *cacheCon
 			}
 		} else if _, ok := asToolResultMsg(m); ok {
 			// Collect all consecutive toolResult messages (needed for z.ai's
-			// Anthropic endpoint). Reference-bearing results displace their ordinary
-			// content to sibling blocks, since Anthropic rejects tool references
-			// mixed with tool-result content.
+			// Anthropic endpoint).
 			var toolResults []any
-			var siblingContent []any
 			j := i
 			for j < len(transformed) {
 				next, ok := asToolResultMsg(transformed[j])
 				if !ok {
 					break
 				}
-				res := convertToolResult(next, oauth, deferredToolNames, loadedToolNames, normalizeToolName)
-				toolResults = append(toolResults, res.toolResult)
-				siblingContent = append(siblingContent, res.siblingContent...)
+				toolResults = append(toolResults, convertToolResult(next))
 				j++
 			}
 			i = j - 1
-			// Displaced reference-bearing results must follow every tool_result block.
-			content := append(toolResults, siblingContent...)
-			params = append(params, map[string]any{"role": "user", "content": content})
+			params = append(params, map[string]any{"role": "user", "content": toolResults})
 		}
 	}
 
@@ -1613,54 +1554,14 @@ func convertAssistantBlocks(am *ai.AssistantMessage, oauth, allowEmptySig bool) 
 	return blocks
 }
 
-// convertedToolResult is a tool_result block plus any ordinary content displaced
-// to sibling blocks because the block carries tool references instead.
-type convertedToolResult struct {
-	toolResult     map[string]any
-	siblingContent []any
-}
-
-// convertToolResult builds a tool_result block. When the result's AddedToolNames
-// introduce still-unloaded deferred tools, the block's content becomes
-// tool_reference blocks (deduped via loadedToolNames) and the ordinary content is
-// displaced to sibling blocks. Port of pi's convertToolResult.
-func convertToolResult(tr ai.ToolResultMessage, oauth bool, deferredToolNames, loadedToolNames map[string]bool, normalizeToolName ai.ToolNameNormalizer) convertedToolResult {
-	var references []any
-	for _, name := range tr.AddedToolNames {
-		normalizedName := normalizeToolName(name)
-		if !deferredToolNames[normalizedName] || loadedToolNames[normalizedName] {
-			continue
-		}
-		loadedToolNames[normalizedName] = true
-		refName := name
-		if oauth {
-			refName = toClaudeCodeName(name)
-		}
-		references = append(references, map[string]any{"type": "tool_reference", "tool_name": refName})
-	}
-
-	convertedContent := convertContentBlocks(tr.Content)
-	var content any = convertedContent
-	if len(references) > 0 {
-		content = references
-	}
-	result := map[string]any{
+// convertToolResult builds a tool_result block (port of pi's convertToolResult).
+func convertToolResult(tr ai.ToolResultMessage) map[string]any {
+	return map[string]any{
 		"type":        "tool_result",
 		"tool_use_id": tr.ToolCallID,
-		"content":     content,
+		"content":     convertContentBlocks(tr.Content),
 		"is_error":    tr.IsError,
 	}
-
-	var sibling []any
-	if len(references) > 0 {
-		switch cv := convertedContent.(type) {
-		case string:
-			sibling = []any{map[string]any{"type": "text", "text": cv}}
-		case []any:
-			sibling = cv
-		}
-	}
-	return convertedToolResult{toolResult: result, siblingContent: sibling}
 }
 
 // convertContentBlocks returns either a concatenated string (text-only) or a
@@ -2063,7 +1964,7 @@ func flattenHeaders(h http.Header) map[string]string {
 func RegisterAnthropic() {
 	ai.RegisterApiProvider(ai.ApiProvider{
 		Api: ai.APIAnthropicMessages,
-		Stream: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
+		Stream: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
 			aopts := &AnthropicOptions{}
 			if opts != nil {
 				aopts.StreamOptions = *opts

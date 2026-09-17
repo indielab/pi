@@ -26,9 +26,11 @@ func TestRetryDefaultIsZeroRetries(t *testing.T) {
 	defer server.Close()
 
 	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 100}
-	final := StreamOpenAICompletions(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
+	final := StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).
+		Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error with zero default retries, got %s", final.StopReason)
@@ -54,9 +56,11 @@ func TestProviderRetriesOn429ThenSucceeds(t *testing.T) {
 	defer server.Close()
 
 	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 100}
-	final := StreamOpenAICompletions(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", MaxRetries: 2}}}).Result()
+	final := StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", MaxRetries: 2}}}).
+		Result()
 
 	if final.StopReason == ai.StopError {
 		t.Fatalf("expected success after retry, got error: %s", final.ErrorMessage)
@@ -77,9 +81,11 @@ func TestProviderStopsRetryingPastLimit(t *testing.T) {
 	defer server.Close()
 
 	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, MaxTokens: 100}
-	final := StreamOpenAICompletions(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", MaxRetries: 1}}}).Result()
+	final := StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", MaxRetries: 1}}}).
+		Result()
 
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error after exhausting retries, got %s", final.StopReason)
@@ -559,9 +565,11 @@ func TestResponsesPromptCacheKey(t *testing.T) {
 	defer server.Close()
 
 	model := &ai.Model{ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "openai", BaseURL: server.URL, MaxTokens: 100}
-	StreamOpenAIResponses(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}, SessionID: "sess-123", CacheRetention: ai.CacheShort}}).Result()
+	StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}, SessionID: "sess-123", CacheRetention: ai.CacheShort}}).
+		Result()
 
 	if gotBody["prompt_cache_key"] != "sess-123" {
 		t.Fatalf("prompt_cache_key not sent: %v", gotBody["prompt_cache_key"])
@@ -643,5 +651,5 @@ func googleRetryStream(t *testing.T, baseURL string, opts ai.StreamOptions) *ai.
 	t.Helper()
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: baseURL}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	return StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: opts})
+	return StreamGoogle(context.Background(), model, ai.NormalizeContext(req), &GoogleOptions{StreamOptions: opts})
 }

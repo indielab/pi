@@ -46,7 +46,7 @@ type GoogleOptions struct {
 }
 
 // StreamSimpleGoogle maps unified reasoning to GoogleOptions then streams.
-func StreamSimpleGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+func StreamSimpleGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 	g := &GoogleOptions{}
 	if opts != nil {
 		g.StreamOptions = opts.StreamOptions
@@ -331,12 +331,15 @@ func modelSupportsImageInput(model *ai.Model) bool {
 	return false
 }
 
-// StreamGoogle streams from the Gemini generateContent SSE endpoint.
-func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *GoogleOptions) *ai.AssistantMessageEventStream {
+// StreamGoogle streams from the Gemini generateContent SSE endpoint. Gemini has
+// no mid-conversation system messages, so the transcript is always collapsed:
+// the replayed prompt is the systemInstruction.
+func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *GoogleOptions) *ai.AssistantMessageEventStream {
 	stream := ai.NewAssistantMessageEventStream()
 	if opts == nil {
 		opts = &GoogleOptions{}
 	}
+	normalized := ai.CollapseSystemMessages(req)
 
 	go func() {
 		output := &ai.AssistantMessage{
@@ -368,7 +371,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 			return
 		}
 
-		body, err := buildGoogleParams(model, req, opts)
+		body, err := buildGoogleParams(model, normalized, opts)
 		if err != nil {
 			fail(err)
 			return
@@ -656,7 +659,9 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.Context, opts *Go
 // generativelanguage.googleapis.com. The SDK lifts systemInstruction / tools /
 // toolConfig to the top level (alongside contents) and keeps generation params
 // (temperature, maxOutputTokens, thinkingConfig) under generationConfig.
-func buildGoogleParams(model *ai.Model, req ai.Context, opts *GoogleOptions) (map[string]any, error) {
+func buildGoogleParams(model *ai.Model, req ai.TranscriptContext, opts *GoogleOptions) (map[string]any, error) {
+	initialSystemMessage, hasInitialSystemMessage := ai.GetInitialSystemMessage(req.Messages)
+	currentTools := ai.GetCurrentTools(req.Messages)
 	params := map[string]any{
 		"contents": googleContents(model, req),
 	}
@@ -690,20 +695,24 @@ func buildGoogleParams(model *ai.Model, req ai.Context, opts *GoogleOptions) (ma
 	params["generationConfig"] = gen
 
 	// systemInstruction / tools / toolConfig are lifted to the top level by the SDK.
-	if req.SystemPrompt != "" {
+	systemInstruction := ""
+	if hasInitialSystemMessage {
+		systemInstruction = ai.GetSystemMessageText(initialSystemMessage)
+	}
+	if systemInstruction != "" {
 		params["systemInstruction"] = map[string]any{
 			"role":  "user",
-			"parts": []any{map[string]any{"text": sanitizeSurrogates(req.SystemPrompt)}},
+			"parts": []any{map[string]any{"text": sanitizeSurrogates(systemInstruction)}},
 		}
 	}
-	if len(req.Tools) > 0 {
+	if len(currentTools) > 0 {
 		supportsStrictMode := supportsGoogleStrictToolSampling(model.ID)
-		tools, err := googleTools(req.Tools, useParameters(model.ID), supportsStrictMode)
+		tools, err := googleTools(currentTools, useParameters(model.ID), supportsStrictMode)
 		if err != nil {
 			return nil, err
 		}
 		params["tools"] = tools
-		mode, err := resolveGoogleFunctionCallingMode(req.Tools, opts.ToolChoice, supportsStrictMode)
+		mode, err := resolveGoogleFunctionCallingMode(currentTools, opts.ToolChoice, supportsStrictMode)
 		if err != nil {
 			return nil, err
 		}
@@ -779,14 +788,17 @@ func useParameters(modelID string) bool {
 	return false
 }
 
-func googleContents(model *ai.Model, req ai.Context) []any {
+func googleContents(model *ai.Model, req ai.TranscriptContext) []any {
+	// Gemini has no mid-conversation system messages; the leading prompt is sent
+	// as systemInstruction.
+	conversation := ai.WithoutInitialSystemMessage(ai.CollapseSystemMessages(req).Messages)
 	normalizeID := func(id string) string {
 		if !requiresToolCallID(model.ID) {
 			return id
 		}
 		return normalizeToolCallID(id)
 	}
-	transformed := transformMessages(req.Messages, model, normalizeID)
+	transformed := transformMessages(conversation, model, normalizeID)
 	var contents []any
 	for _, m := range transformed {
 		if um, ok := asUserMsg(m); ok {
@@ -1197,7 +1209,7 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 func RegisterGoogle() {
 	ai.RegisterApiProvider(ai.ApiProvider{
 		Api: ai.APIGoogleGenerativeAI,
-		Stream: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
+		Stream: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
 			g := &GoogleOptions{}
 			if opts != nil {
 				g.StreamOptions = *opts

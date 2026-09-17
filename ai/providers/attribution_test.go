@@ -38,7 +38,7 @@ func captureOpenAICompletionsHeaders(t *testing.T, provider ai.ProviderId, sessi
 		Input: []string{"text"}, MaxTokens: 4096,
 	}
 	opts := &OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", Headers: optsHeaders}, SessionID: sessionID}}
-	StreamOpenAICompletions(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, opts).Result()
+	StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}), opts).Result()
 	return got
 }
 
@@ -129,7 +129,7 @@ func TestAttributionTelemetryDisabled(t *testing.T) {
 	defer server.Close()
 	model := &ai.Model{ID: "or", Api: ai.APIOpenAICompletions, Provider: "openrouter", BaseURL: server.URL, MaxTokens: 4096}
 	opts := &OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}
-	StreamOpenAICompletions(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, opts).Result()
+	StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}), opts).Result()
 	if v := got.Get("HTTP-Referer"); v != "" {
 		t.Fatalf("HTTP-Referer must be absent when telemetry disabled, got %q", v)
 	}
@@ -179,7 +179,7 @@ func TestAttributionModelHeadersOverrideDefaults(t *testing.T) {
 		Headers: ai.ProviderHeaders{"HTTP-Referer": strPtr("https://custom.example")},
 	}
 	opts := &OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}
-	StreamOpenAICompletions(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, opts).Result()
+	StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}), opts).Result()
 	if v := got.Get("HTTP-Referer"); v != "https://custom.example" {
 		t.Fatalf("model.Headers must override attribution default: HTTP-Referer = %q, want https://custom.example", v)
 	}
@@ -234,8 +234,9 @@ func TestAttributionResponsesVercelNone(t *testing.T) {
 	}))
 	defer server.Close()
 	model := &ai.Model{ID: "m", Api: ai.APIOpenAIResponses, Provider: "vercel-ai-gateway", BaseURL: server.URL, MaxTokens: 4096}
-	StreamOpenAIResponses(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
+	StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).
+		Result()
 	if got.Get("http-referer") != "" || got.Get("x-title") != "" {
 		t.Fatalf("responses vercel attribution should be absent: http-referer=%q x-title=%q", got.Get("http-referer"), got.Get("x-title"))
 	}
@@ -263,8 +264,9 @@ func TestAttributionGoogleVercelNone(t *testing.T) {
 	}))
 	defer server.Close()
 	model := &ai.Model{ID: "gemini", Api: ai.APIGoogleGenerativeAI, Provider: "vercel-ai-gateway", BaseURL: server.URL, MaxTokens: 4096}
-	StreamGoogle(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).Result()
+	StreamGoogle(context.Background(), model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).
+		Result()
 	if got.Get("http-referer") != "" || got.Get("x-title") != "" {
 		t.Fatalf("google vercel attribution should be absent: http-referer=%q x-title=%q", got.Get("http-referer"), got.Get("x-title"))
 	}

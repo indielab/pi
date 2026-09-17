@@ -113,8 +113,9 @@ func TestDiffSessionAffinityHeaders(t *testing.T) {
 		m.BaseURL = server.URL
 		m.Compat = json.RawMessage(`{"sendSessionAffinityHeaders":true}`)
 	})
-	StreamOpenAICompletions(context.Background(), model, baseReq(),
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}, SessionID: "session-affinity"}}).Result()
+	StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(baseReq()),
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}, SessionID: "session-affinity"}}).
+		Result()
 
 	for _, h := range []string{"Session_id", "X-Client-Request-Id", "X-Session-Affinity"} {
 		if gotHeaders.Get(h) != "session-affinity" {
@@ -135,8 +136,9 @@ func TestDiffSessionAffinityOmittedWhenCacheNone(t *testing.T) {
 		m.BaseURL = server.URL
 		m.Compat = json.RawMessage(`{"sendSessionAffinityHeaders":true}`)
 	})
-	StreamOpenAICompletions(context.Background(), model, baseReq(),
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}, SessionID: "s", CacheRetention: ai.CacheNone}}).Result()
+	StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(baseReq()),
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}, SessionID: "s", CacheRetention: ai.CacheNone}}).
+		Result()
 	if gotHeaders.Get("Session_id") != "" {
 		t.Fatalf("affinity headers should be omitted when cacheRetention=none")
 	}
@@ -507,8 +509,9 @@ func TestDiffCloudflareAiGatewayAuthHeader(t *testing.T) {
 		m.Provider = "cloudflare-ai-gateway"
 		m.BaseURL = server.URL
 	})
-	StreamOpenAICompletions(context.Background(), model, baseReq(),
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cf-key"}}}).Result()
+	StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(baseReq()),
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cf-key"}}}).
+		Result()
 	if gotHeaders.Get("cf-aig-authorization") != "Bearer cf-key" {
 		t.Fatalf("cf-aig-authorization = %q, want Bearer cf-key", gotHeaders.Get("cf-aig-authorization"))
 	}

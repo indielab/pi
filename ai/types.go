@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"reflect"
+	"slices"
 	"time"
 
 	"github.com/sky-valley/pi/telemetry"
@@ -209,6 +210,7 @@ type DeferredCancelOptions = ProviderRequestOptions
 type Role string
 
 const (
+	RoleSystem     Role = "system"
 	RoleUser       Role = "user"
 	RoleAssistant  Role = "assistant"
 	RoleToolResult Role = "toolResult"
@@ -339,20 +341,29 @@ func (t *ToolCall) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
-// marshalContent serializes a content block with its "type" discriminator.
+// marshalContent serializes a content block with its "type" discriminator
+// first and the block's own fields after it in declaration order — pi's literal
+// shape (`{type: "text", text}`), and so the key order a pi session file
+// carries. The block types hold no "type" field of their own.
 func marshalContent(c Content) ([]byte, error) {
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return nil, err
 	}
-	// Splice the type field into the object.
-	var obj map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &obj); err != nil {
-		return nil, err
+	raw = bytes.TrimSpace(raw)
+	if len(raw) < 2 || raw[0] != '{' || raw[len(raw)-1] != '}' {
+		return nil, fmt.Errorf("ai: %s content block did not serialize to a JSON object: %s", c.contentType(), raw)
 	}
 	t, _ := json.Marshal(c.contentType())
-	obj["type"] = t
-	return json.Marshal(obj)
+	var buf bytes.Buffer
+	buf.WriteString(`{"type":`)
+	buf.Write(t)
+	if fields := bytes.TrimSpace(raw[1 : len(raw)-1]); len(fields) > 0 {
+		buf.WriteByte(',')
+		buf.Write(fields)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
 }
 
 // unmarshalContent decodes a content block based on its "type" discriminator.
@@ -465,9 +476,265 @@ type Usage struct {
 // Messages
 // ---------------------------------------------------------------------------
 
-// Message is a UserMessage, AssistantMessage, or ToolResultMessage.
+// Message is a SystemMessage, UserMessage, AssistantMessage, or
+// ToolResultMessage.
 type Message interface {
 	MessageRole() Role
+}
+
+// SystemMessage carries system instructions and tool declarations at one point
+// in the transcript (pi SystemMessage, upstream 9e05370b2).
+//
+// The leading system message is the system prompt. Later system messages change
+// it: Content adds instructions from that point on, Sections replace or remove
+// named prompt sections, and ToolsAdded/ToolsRemoved change the tool set.
+// Replaying every system message in order yields the current prompt and tools.
+// Providers that accept system messages mid-conversation send each one in
+// place; other providers rebuild the leading system message from the replayed
+// state.
+//
+// JSON: pi's content is `string | TextContent[]`. Content decoded from the
+// string form, or built with NewSystemText, is re-emitted as a string; so is a
+// nil Content, which is how pi's own producers spell an empty prompt (`""`).
+// ToolsAdded, ToolsRemoved and Sections are omitted when nil and emitted when
+// non-nil, even empty, as a JS object carrying `toolsAdded: []` would be.
+//
+// Key order follows the producer, because pi serializes a plain object and the
+// bytes are shared with pi on the pi-messages wire and in session files: a
+// message decoded from JSON keeps its document order, WithToolChanges appends
+// the tool keys after everything else (agent-loop.ts `withToolChanges`), and
+// every other message uses role, content, sections, toolsAdded, toolsRemoved,
+// timestamp — the order of pi's createInitialSystemMessage and
+// getCurrentSystemMessage literals. Decoded and WithToolChanges messages are JS
+// objects with an own-key order, so a key a caller later sets that the message
+// did not carry is appended after the recorded ones, as a JS property
+// assignment appends — even when the recorded keys happen to be in default
+// order. Several such keys follow in default order (Go cannot see the order
+// they were assigned in). A constructed message has no recorded order: its
+// keys take their default slots whenever they are set.
+type SystemMessage struct {
+	// Content is instruction text (TextContent blocks). On the leading message
+	// this is the base prompt; later, additional instructions.
+	Content ContentList
+	// Sections are named, ordered prompt sections rendered verbatim after
+	// Content. The leading message declares them; later messages replace
+	// sections by name, and a nil value removes one. Nil means absent.
+	Sections SystemSections
+	// ToolsAdded holds complete definitions of tools that become available at
+	// this point.
+	ToolsAdded []Tool
+	// ToolsRemoved names tools that stop being available at this point.
+	ToolsRemoved []ToolReference
+	// Timestamp is the Unix timestamp in milliseconds.
+	Timestamp int64
+
+	// contentWasString records that Content is pi's string form (decoded from
+	// a JSON string, or built by NewSystemText).
+	contentWasString bool
+	// keyOrder is the JSON key order recorded by decoding or WithToolChanges;
+	// nil is the default literal order. See the type comment.
+	keyOrder []string
+}
+
+func (SystemMessage) MessageRole() Role { return RoleSystem }
+
+// NewSystemText builds a system message whose content is the plain-string form
+// pi's producers use (`content: systemPrompt ?? ""`).
+func NewSystemText(text string, timestamp int64) SystemMessage {
+	return SystemMessage{Content: ContentList{TextContent{Text: text}}, Timestamp: timestamp, contentWasString: true}
+}
+
+// StringContent reports whether the message's content is the plain-string form,
+// returning that string. A nil Content is the empty string.
+func (m SystemMessage) StringContent() (string, bool) {
+	if m.Content == nil {
+		return "", true
+	}
+	if m.contentWasString && len(m.Content) == 1 {
+		if t, ok := m.Content[0].(TextContent); ok {
+			return t.Text, true
+		}
+	}
+	return "", false
+}
+
+// systemMessageKeys is the default key order: pi's createInitialSystemMessage
+// and getCurrentSystemMessage literals, which every other literal producer in
+// range agrees with.
+var systemMessageKeys = []string{"role", "content", "sections", "toolsAdded", "toolsRemoved", "timestamp"}
+
+// hasKey reports whether key is one of the message's own JSON properties.
+func (m SystemMessage) hasKey(key string) bool {
+	switch key {
+	case "role", "content", "timestamp":
+		return true
+	case "sections":
+		return m.Sections != nil
+	case "toolsAdded":
+		return m.ToolsAdded != nil
+	case "toolsRemoved":
+		return m.ToolsRemoved != nil
+	}
+	return false
+}
+
+// layout is the message's JSON key order: the recorded order, then any key it
+// does not name in default order (a JS property assignment appends).
+func (m SystemMessage) layout() []string {
+	if m.keyOrder == nil {
+		return systemMessageKeys
+	}
+	out := append([]string(nil), m.keyOrder...)
+	for _, key := range systemMessageKeys {
+		if !slices.Contains(m.keyOrder, key) {
+			out = append(out, key)
+		}
+	}
+	return out
+}
+
+// withKeyOrder records order as the message's own-key order. It is kept even
+// when it matches the default order: a key set later appends after it.
+func (m SystemMessage) withKeyOrder(order []string) SystemMessage {
+	m.keyOrder = append(make([]string, 0, len(order)), order...)
+	return m
+}
+
+// WithToolChanges returns a copy of m whose tool fields are replaced by changes,
+// omitting an empty list. It is the Go home of agent-loop.ts `withToolChanges`,
+// `{...rest, toolsAdded?, toolsRemoved?}`: the spread keeps every other own key
+// in place and the tool keys follow them, after timestamp.
+func (m SystemMessage) WithToolChanges(changes ToolStateChanges) SystemMessage {
+	var order []string
+	for _, key := range m.layout() {
+		if key != "toolsAdded" && key != "toolsRemoved" && m.hasKey(key) {
+			order = append(order, key)
+		}
+	}
+	m.ToolsAdded, m.ToolsRemoved = nil, nil
+	if len(changes.ToolsAdded) > 0 {
+		m.ToolsAdded = changes.ToolsAdded
+		order = append(order, "toolsAdded")
+	}
+	if len(changes.ToolsRemoved) > 0 {
+		m.ToolsRemoved = changes.ToolsRemoved
+		order = append(order, "toolsRemoved")
+	}
+	return m.withKeyOrder(order)
+}
+
+// MarshalJSON writes the role discriminator and the producer's key order.
+func (m SystemMessage) MarshalJSON() ([]byte, error) {
+	var buf bytes.Buffer
+	buf.WriteByte('{')
+	first := true
+	for _, key := range m.layout() {
+		if !m.hasKey(key) {
+			continue
+		}
+		var value any
+		switch key {
+		case "role":
+			value = RoleSystem
+		case "content":
+			if s, ok := m.StringContent(); ok {
+				value = s
+			} else {
+				value = m.Content
+			}
+		case "sections":
+			value = m.Sections
+		case "toolsAdded":
+			value = m.ToolsAdded
+		case "toolsRemoved":
+			value = m.ToolsRemoved
+		case "timestamp":
+			value = m.Timestamp
+		}
+		raw, err := json.Marshal(value)
+		if err != nil {
+			return nil, err
+		}
+		if !first {
+			buf.WriteByte(',')
+		}
+		first = false
+		buf.WriteString(`"` + key + `":`)
+		buf.Write(raw)
+	}
+	buf.WriteByte('}')
+	return buf.Bytes(), nil
+}
+
+// UnmarshalJSON accepts content as a string, a text-block array, or null
+// (read as the empty string), and records the document's key order. Keys the
+// type does not model are dropped.
+func (m *SystemMessage) UnmarshalJSON(data []byte) error {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	if tok, err := dec.Token(); err != nil {
+		return err
+	} else if delim, ok := tok.(json.Delim); !ok || delim != '{' {
+		return fmt.Errorf("ai: system message must be a JSON object, got %s", bytes.TrimSpace(data))
+	}
+	out := SystemMessage{}
+	var order []string
+	for dec.More() {
+		tok, err := dec.Token()
+		if err != nil {
+			return err
+		}
+		key, _ := tok.(string)
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			return err
+		}
+		switch key {
+		case "role":
+		case "content":
+			out.Content, out.contentWasString = nil, false
+			switch {
+			case string(raw) == "null":
+			case raw[0] == '"':
+				var s string
+				if err := json.Unmarshal(raw, &s); err != nil {
+					return err
+				}
+				out.Content, out.contentWasString = ContentList{TextContent{Text: s}}, true
+			default:
+				if err := json.Unmarshal(raw, &out.Content); err != nil {
+					return fmt.Errorf("ai: system message content: %w", err)
+				}
+			}
+		case "sections":
+			if err := json.Unmarshal(raw, &out.Sections); err != nil {
+				return err
+			}
+		case "toolsAdded":
+			out.ToolsAdded = nil
+			if err := json.Unmarshal(raw, &out.ToolsAdded); err != nil {
+				return fmt.Errorf("ai: system message toolsAdded: %w", err)
+			}
+		case "toolsRemoved":
+			out.ToolsRemoved = nil
+			if err := json.Unmarshal(raw, &out.ToolsRemoved); err != nil {
+				return fmt.Errorf("ai: system message toolsRemoved: %w", err)
+			}
+		case "timestamp":
+			if err := json.Unmarshal(raw, &out.Timestamp); err != nil {
+				return fmt.Errorf("ai: system message timestamp: %w", err)
+			}
+		default:
+			continue
+		}
+		if !slices.Contains(order, key) {
+			order = append(order, key)
+		}
+	}
+	if _, err := dec.Token(); err != nil {
+		return err
+	}
+	*m = out.withKeyOrder(order)
+	return nil
 }
 
 // UserMessage is a message authored by the user.
@@ -609,13 +876,9 @@ type ToolResultMessage struct {
 	// for that. pi has carried it since 2026-05-04 and no pi code path sets it;
 	// it is an affordance for SDK callers, and the server bridge puts it on the
 	// wire when it is there (pi: ToolResultMessage.usage, optional).
-	Usage *Usage `json:"usage,omitempty"`
-	// AddedToolNames lists names from Context.Tools that became available after
-	// this result. Providers with native deferred tool loading use this as the
-	// load point; other providers ignore it and use Context.Tools normally.
-	AddedToolNames []string `json:"addedToolNames,omitempty"`
-	IsError        bool     `json:"isError"`
-	Timestamp      int64    `json:"timestamp"`
+	Usage     *Usage `json:"usage,omitempty"`
+	IsError   bool   `json:"isError"`
+	Timestamp int64  `json:"timestamp"`
 }
 
 func (ToolResultMessage) MessageRole() Role { return RoleToolResult }
@@ -638,6 +901,10 @@ func UnmarshalMessage(data []byte) (Message, error) {
 		return nil, err
 	}
 	switch head.Role {
+	case RoleSystem:
+		var m SystemMessage
+		err := json.Unmarshal(data, &m)
+		return m, err
 	case RoleUser:
 		var m UserMessage
 		err := json.Unmarshal(data, &m)
@@ -772,11 +1039,40 @@ type Tool struct {
 	ConstrainedSampling *ConstrainedSamplingConfig `json:"constrainedSampling,omitempty"`
 }
 
-// Context is the input to a stream call: system prompt, transcript, and tools.
+// ToolReference names a tool without its definition (pi ToolReference).
+type ToolReference struct {
+	Name string `json:"name"`
+}
+
+// Context is the request input the public stream entry points accept
+// (Stream, StreamSimple, Models.Stream, ...). SystemPrompt and Tools are
+// shorthand for a leading system message; NormalizeContext folds them into one
+// before the request reaches a provider.
 type Context struct {
 	SystemPrompt string    `json:"systemPrompt,omitempty"`
 	Messages     []Message `json:"messages"`
 	Tools        []Tool    `json:"tools,omitempty"`
+}
+
+// TranscriptContext is the normalized request context passed to providers and
+// API implementations: the prompt and tool declarations are carried by the
+// transcript's system messages. Only NormalizeContext produces one — pi brands
+// the type so a raw Context cannot reach provider code by accident; Go cannot
+// brand a struct, so the contract is this comment and the distinct type.
+type TranscriptContext struct {
+	Messages []Message `json:"messages"`
+}
+
+// MarshalJSON writes `{"messages":[...]}`, with a nil transcript as the empty
+// array a pi TranscriptContext always carries.
+func (c TranscriptContext) MarshalJSON() ([]byte, error) {
+	messages := c.Messages
+	if messages == nil {
+		messages = []Message{}
+	}
+	return json.Marshal(struct {
+		Messages []Message `json:"messages"`
+	}{messages})
 }
 
 // ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf16"
 
 	"github.com/sky-valley/pi/ai"
 )
@@ -73,11 +74,11 @@ func FauxAssistantMessage(content ai.ContentList, stopReason ai.StopReason) *ai.
 }
 
 // FauxResponseStep produces the assistant message for one stream call.
-type FauxResponseStep func(req ai.Context, opts *ai.SimpleStreamOptions, state *FauxState, model *ai.Model) *ai.AssistantMessage
+type FauxResponseStep func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, state *FauxState, model *ai.Model) *ai.AssistantMessage
 
 // FauxStatic wraps a fixed assistant message as a response step.
 func FauxStatic(msg *ai.AssistantMessage) FauxResponseStep {
-	return func(ai.Context, *ai.SimpleStreamOptions, *FauxState, *ai.Model) *ai.AssistantMessage {
+	return func(ai.TranscriptContext, *ai.SimpleStreamOptions, *FauxState, *ai.Model) *ai.AssistantMessage {
 		return msg
 	}
 }
@@ -142,7 +143,7 @@ type fauxDeferredEntry struct {
 	mu             sync.Mutex
 	handle         ai.DeferredHandle
 	step           FauxResponseStep
-	req            ai.Context
+	req            ai.TranscriptContext
 	opts           *ai.SimpleStreamOptions
 	model          *ai.Model
 	pendingFetches int
@@ -267,7 +268,7 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 		reg.deferredCfg.PendingFetches = max(0, reg.deferredCfg.PendingFetches)
 	}
 
-	streamSimple := func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+	streamSimple := func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
 		outer := ai.NewAssistantMessageEventStream()
 		reg.mu.Lock()
 		var step FauxResponseStep
@@ -355,7 +356,7 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 
 	ai.RegisterApiProvider(ai.ApiProvider{
 		Api: api,
-		Stream: func(ctx context.Context, model *ai.Model, req ai.Context, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
+		Stream: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.StreamOptions) *ai.AssistantMessageEventStream {
 			var simple *ai.SimpleStreamOptions
 			if opts != nil {
 				simple = &ai.SimpleStreamOptions{StreamOptions: *opts}
@@ -374,7 +375,7 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 // real provider would (identity fields plus a usage estimate).
 func (r *FauxProviderRegistration) resolveResponse(
 	step FauxResponseStep,
-	req ai.Context,
+	req ai.TranscriptContext,
 	opts *ai.SimpleStreamOptions,
 	model *ai.Model,
 ) *ai.AssistantMessage {
@@ -542,7 +543,7 @@ func (r *FauxProviderRegistration) scheduleChunk(chunk string) {
 	time.Sleep(delay)
 }
 
-func (r *FauxProviderRegistration) withUsageEstimate(message *ai.AssistantMessage, req ai.Context, opts *ai.SimpleStreamOptions) *ai.AssistantMessage {
+func (r *FauxProviderRegistration) withUsageEstimate(message *ai.AssistantMessage, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessage {
 	promptText := serializeContext(req)
 	promptTokens := estimateTokens(promptText)
 	outputTokens := estimateTokens(assistantContentToText(message.Content))
@@ -560,9 +561,12 @@ func (r *FauxProviderRegistration) withUsageEstimate(message *ai.AssistantMessag
 		r.mu.Lock()
 		prev := r.promptCache[sessionID]
 		if prev != "" {
-			cachedChars := commonPrefixLength(prev, promptText)
-			cacheRead = estimateTokens(prev[:cachedChars])
-			cacheWrite = estimateTokens(promptText[cachedChars:])
+			// JS string indices count UTF-16 code units, so the shared prefix and
+			// both token counts are measured in them too.
+			promptUnits := utf16.Encode([]rune(promptText))
+			cachedChars := commonPrefixLength(utf16.Encode([]rune(prev)), promptUnits)
+			cacheRead = estimateCodeUnitTokens(cachedChars)
+			cacheWrite = estimateCodeUnitTokens(len(promptUnits) - cachedChars)
 			input = promptTokens - cacheRead
 			if input < 0 {
 				input = 0
@@ -583,8 +587,14 @@ func (r *FauxProviderRegistration) withUsageEstimate(message *ai.AssistantMessag
 
 // ---- helpers ----
 
+// estimateTokens is pi's `Math.ceil(text.length / 4)`, over the JS length in
+// UTF-16 code units.
 func estimateTokens(text string) int {
-	return int(math.Ceil(float64(len(text)) / 4))
+	return estimateCodeUnitTokens(utf16Length(text))
+}
+
+func estimateCodeUnitTokens(codeUnits int) int {
+	return int(math.Ceil(float64(codeUnits) / 4))
 }
 
 func randomID(prefix string) string {
@@ -615,7 +625,7 @@ func splitByTokenSize(text string, minT, maxT int) []string {
 	return chunks
 }
 
-func commonPrefixLength(a, b string) int {
+func commonPrefixLength(a, b []uint16) int {
 	n := len(a)
 	if len(b) < n {
 		n = len(b)
@@ -683,30 +693,51 @@ func assistantContentToText(content ai.ContentList) string {
 }
 
 func messageToText(m ai.Message) string {
-	switch v := m.(type) {
-	case ai.UserMessage:
-		return contentToText(v.Content)
-	case *ai.AssistantMessage:
-		return assistantContentToText(v.Content)
-	case ai.AssistantMessage:
-		return assistantContentToText(v.Content)
-	case ai.ToolResultMessage:
-		return strings.Join(append([]string{v.ToolName}, contentToText(v.Content)), "\n")
+	if sm, ok := asSystemMsg(m); ok {
+		// getSystemMessageText, then one `tool-:` line per removal and one `tool+:`
+		// line per addition, empty parts dropped (faux.ts, upstream 9e05370b2).
+		parts := []string{ai.GetSystemMessageText(sm)}
+		for _, tool := range sm.ToolsRemoved {
+			tj, _ := json.Marshal(tool)
+			parts = append(parts, "tool-:"+string(tj))
+		}
+		for _, tool := range sm.ToolsAdded {
+			tj, _ := json.Marshal(tool)
+			parts = append(parts, "tool+:"+string(tj))
+		}
+		nonEmpty := parts[:0]
+		for _, part := range parts {
+			if part != "" {
+				nonEmpty = append(nonEmpty, part)
+			}
+		}
+		return strings.Join(nonEmpty, "\n")
+	}
+	if um, ok := asUserMsg(m); ok {
+		return contentToText(um.Content)
+	}
+	if am, ok := asAssistantMsg(m); ok {
+		return assistantContentToText(am.Content)
+	}
+	if tr, ok := asToolResultMsg(m); ok {
+		// `[toolName, ...content.map(block => contentToText([block]))].join("\n")`:
+		// no content leaves the tool name alone.
+		parts := []string{tr.ToolName}
+		for _, block := range tr.Content {
+			parts = append(parts, contentToText(ai.ContentList{block}))
+		}
+		return strings.Join(parts, "\n")
 	}
 	return ""
 }
 
-func serializeContext(req ai.Context) string {
-	var parts []string
-	if req.SystemPrompt != "" {
-		parts = append(parts, "system:"+req.SystemPrompt)
-	}
-	for _, m := range req.Messages {
-		parts = append(parts, string(m.MessageRole())+":"+messageToText(m))
-	}
-	if len(req.Tools) > 0 {
-		tj, _ := json.Marshal(req.Tools)
-		parts = append(parts, "tools:"+string(tj))
+// serializeContext renders the transcript as the faux prompt text: `role:text`
+// per message, joined by a blank line (the prompt and tools ride the system
+// messages, upstream 9e05370b2).
+func serializeContext(req ai.TranscriptContext) string {
+	parts := make([]string, len(req.Messages))
+	for i, m := range req.Messages {
+		parts[i] = string(m.MessageRole()) + ":" + messageToText(m)
 	}
 	return strings.Join(parts, "\n\n")
 }

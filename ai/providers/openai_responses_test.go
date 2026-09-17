@@ -67,7 +67,7 @@ func TestOpenAIResponsesProviderParsesStream(t *testing.T) {
 		Messages:     []ai.Message{ai.NewUserText("what is 6*7?", 1)},
 		Tools:        []ai.Tool{{Name: "calc", Description: "calc", Parameters: ai.Object(ai.Prop("x", ai.Integer()))}},
 	}
-	final := StreamOpenAIResponses(context.Background(), model, req, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}, ReasoningEffort: "medium"}).Result()
+	final := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(req), &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}, ReasoningEffort: "medium"}).Result()
 
 	if final.StopReason != ai.StopToolUse {
 		t.Fatalf("expected toolUse, got %s (%s)", final.StopReason, final.ErrorMessage)
@@ -159,7 +159,7 @@ func TestResponsesToolChoiceForwarded(t *testing.T) {
 	if with["tool_choice"] != "required" {
 		t.Fatalf("tool_choice = %v, want required", with["tool_choice"])
 	}
-	if names := dtResponsesToolNames(with); len(names) != 1 || names[0] != "ping" {
+	if names := responsesToolNames(with); len(names) != 1 || names[0] != "ping" {
 		t.Fatalf("tools = %v, want [ping]", names)
 	}
 
@@ -169,13 +169,21 @@ func TestResponsesToolChoiceForwarded(t *testing.T) {
 	}
 }
 
+// responsesToolNames reads the names of a built body's top-level tools.
+func responsesToolNames(body map[string]any) []string {
+	tools, _ := body["tools"].([]map[string]any)
+	out := make([]string, len(tools))
+	for i, tool := range tools {
+		out[i], _ = tool["name"].(string)
+	}
+	return out
+}
+
 // mustResponsesInput converts messages, failing the test on conversion errors.
+// The context is normalized first, as every stream entry point does.
 func mustResponsesInput(t *testing.T, model *ai.Model, req ai.Context) []any {
 	t.Helper()
-	// Same gate as buildResponsesParams, so a helper-driven test sees the
-	// deferral the production path would.
-	placement := ai.SplitDeferredTools(req, responsesDeferredToolsMode(getResponsesCompat(model)) != deferredToolsNone, nil)
-	in, err := responsesInput(model, req, placement.ByName)
+	in, err := responsesInput(model, ai.NormalizeContext(req))
 	if err != nil {
 		t.Fatalf("responsesInput: %v", err)
 	}
@@ -185,7 +193,7 @@ func mustResponsesInput(t *testing.T, model *ai.Model, req ai.Context) []any {
 // mustBuildResponsesParams builds request params, failing the test on errors.
 func mustBuildResponsesParams(t *testing.T, model *ai.Model, req ai.Context, opts *OpenAIResponsesOptions) map[string]any {
 	t.Helper()
-	params, err := buildResponsesParams(model, req, opts)
+	params, err := buildResponsesParams(model, ai.NormalizeContext(req), opts)
 	if err != nil {
 		t.Fatalf("buildResponsesParams: %v", err)
 	}
@@ -203,8 +211,9 @@ func runResponsesSSE(t *testing.T, model *ai.Model, req ai.Context, sse string) 
 	t.Cleanup(server.Close)
 	m := *model
 	m.BaseURL = server.URL
-	return StreamOpenAIResponses(context.Background(), &m, req,
-		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
+	return StreamOpenAIResponses(context.Background(), &m, ai.NormalizeContext(req),
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).
+		Result()
 }
 
 func reasoningModel() *ai.Model {
@@ -372,8 +381,9 @@ data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
 		t.Cleanup(server.Close)
 		m := *model
 		m.BaseURL = server.URL
-		return StreamOpenAIResponses(context.Background(), &m, req,
+		return StreamOpenAIResponses(context.Background(), &m, ai.NormalizeContext(req),
 			&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
+
 	}()
 	for ev := range stream.Events() {
 		if ev.Type == ai.EventToolCallDelta && ev.Delta == `{"x":7}` {
@@ -855,7 +865,7 @@ func runResponsesSSEOpts(t *testing.T, model *ai.Model, req ai.Context, sse stri
 	if opts.APIKey == "" {
 		opts.APIKey = "sk"
 	}
-	return StreamOpenAIResponses(context.Background(), &m, req, opts).Result()
+	return StreamOpenAIResponses(context.Background(), &m, ai.NormalizeContext(req), opts).Result()
 }
 
 func findResponsesItem(in []any, itemType string) map[string]any {
@@ -1039,7 +1049,7 @@ func TestResponsesSessionCacheHeaders(t *testing.T) {
 		m := *model
 		m.BaseURL = server.URL
 		opts.APIKey = "sk"
-		StreamOpenAIResponses(context.Background(), &m, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, opts).Result()
+		StreamOpenAIResponses(context.Background(), &m, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}), opts).Result()
 		return got
 	}
 
@@ -1180,7 +1190,7 @@ func TestResponsesCopilotDynamicHeaders(t *testing.T) {
 	model := &ai.Model{ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "github-copilot", Reasoning: true, BaseURL: server.URL}
 
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	StreamOpenAIResponses(context.Background(), model, req, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
+	StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(req), &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
 	if got.Get("X-Initiator") != "user" || got.Get("Openai-Intent") != "conversation-edits" {
 		t.Fatalf("copilot headers missing: X-Initiator=%q Openai-Intent=%q", got.Get("X-Initiator"), got.Get("Openai-Intent"))
 	}
@@ -1193,7 +1203,7 @@ func TestResponsesCopilotDynamicHeaders(t *testing.T) {
 		ai.NewUserText("done?", 2),
 	}}
 	model.Input = []string{"text", "image"}
-	StreamOpenAIResponses(context.Background(), model, visionReq, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
+	StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(visionReq), &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
 	if got.Get("Copilot-Vision-Request") != "true" {
 		t.Fatalf("vision header missing with image input")
 	}
@@ -1216,7 +1226,7 @@ func TestResponsesCloudflareAIGateway(t *testing.T) {
 	model := &ai.Model{ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "cloudflare-ai-gateway",
 		BaseURL: server.URL + "/{CLOUDFLARE_ACCOUNT_ID}"}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	final := StreamOpenAIResponses(context.Background(), model, req, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cfkey"}}}).Result()
+	final := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(req), &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cfkey"}}}).Result()
 	if final.StopReason != ai.StopStop {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}
@@ -1236,8 +1246,9 @@ func TestResponsesCloudflareMissingEnvFailsStream(t *testing.T) {
 	t.Setenv("CLOUDFLARE_ACCOUNT_ID", "")
 	model := &ai.Model{ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "cloudflare-ai-gateway",
 		BaseURL: "https://gateway.example/{CLOUDFLARE_ACCOUNT_ID}"}
-	final := StreamOpenAIResponses(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cfkey"}}}).Result()
+	final := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "cfkey"}}}).
+		Result()
 	if final.StopReason != ai.StopError {
 		t.Fatalf("expected error, got %s", final.StopReason)
 	}
@@ -1258,8 +1269,9 @@ func responsesHTTPError(t *testing.T, provider string, status int, body string) 
 	m := *reasoningModel()
 	m.Provider = provider
 	m.BaseURL = server.URL
-	final := StreamOpenAIResponses(context.Background(), &m, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
+	final := StreamOpenAIResponses(context.Background(), &m, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).
+		Result()
 	return final.ErrorMessage
 }
 
@@ -1498,7 +1510,7 @@ func TestResponsesInvalidThinkingSignatureFailsStream(t *testing.T) {
 		},
 		ai.NewUserText("again", 2),
 	}}
-	if _, err := responsesInput(model, req, nil); err == nil {
+	if _, err := responsesInput(model, ai.NormalizeContext(req)); err == nil {
 		t.Fatalf("expected responsesInput to error on invalid thinkingSignature")
 	}
 	final := runResponsesSSE(t, model, req, "")
@@ -1528,8 +1540,9 @@ data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
 	defer server.Close()
 	m := *reasoningModel()
 	m.BaseURL = server.URL
-	stream := StreamOpenAIResponses(context.Background(), &m, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+	stream := StreamOpenAIResponses(context.Background(), &m, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
 		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
+
 	var end *ai.ToolCall
 	var sawStart bool
 	for ev := range stream.Events() {
@@ -1614,9 +1627,10 @@ func TestResponsesOnPayloadOnResponsePropagation(t *testing.T) {
 	defer server.Close()
 	m := *model
 	m.BaseURL = server.URL
-	StreamOpenAIResponses(context.Background(), &m, req, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{
+	StreamOpenAIResponses(context.Background(), &m, ai.NormalizeContext(req), &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{
 		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk", OnPayload: func(payload any, mm *ai.Model) (any, error) { return map[string]any{"replaced": true}, nil }},
-	}}).Result()
+	}}).
+		Result()
 	if gotBody == nil || gotBody["replaced"] != true || len(gotBody) != 1 {
 		t.Fatalf("onPayload replacement must be wholesale: %#v", gotBody)
 	}
@@ -1693,7 +1707,7 @@ data: {"type":"response.completed","response":{"id":"r","status":"completed","us
 	model := reasoningModel()
 	model.BaseURL = server.URL
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	stream := StreamOpenAIResponses(context.Background(), model, req,
+	stream := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(req),
 		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
 
 	var startStop, textEndStop ai.StopReason
@@ -1746,7 +1760,7 @@ data: {"type":"response.completed","response":{"id":"r","status":"completed","us
 	model := reasoningModel()
 	model.BaseURL = server.URL
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	stream := StreamOpenAIResponses(context.Background(), model, req,
+	stream := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(req),
 		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
 
 	var textStartStop ai.StopReason
@@ -1985,7 +1999,7 @@ data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
 	defer server.Close()
 	m := *reasoningModel()
 	m.BaseURL = server.URL
-	stream := StreamOpenAIResponses(context.Background(), &m, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+	stream := StreamOpenAIResponses(context.Background(), &m, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
 		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
 
 	var thinkingDeltaIndex = -1
@@ -2066,7 +2080,7 @@ func TestOpenAIResponsesUsageCacheWrite(t *testing.T) {
 		MaxTokens: 4096, Cost: ai.ModelCost{Input: 1.25, Output: 10},
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
-	final := StreamOpenAIResponses(context.Background(), model, req, &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
+	final := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(req), &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
 
 	if final.Usage.Input != 15 || final.Usage.CacheRead != 2 || final.Usage.CacheWrite != 3 ||
 		final.Usage.Output != 7 || final.Usage.TotalTokens != 27 {
@@ -2250,7 +2264,7 @@ data: [DONE]
 	model := grammarResponsesModel(`{"supportsOpenAIGrammarTools":true}`)
 	model.BaseURL = server.URL
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
-	stream := StreamOpenAIResponses(context.Background(), model, req,
+	stream := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(req),
 		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
 
 	var deltas []string
@@ -2492,8 +2506,9 @@ func runResponsesGrammarStream(t *testing.T, sse string) *ai.AssistantMessageEve
 	model := grammarResponsesModel(`{"supportsOpenAIGrammarTools":true}`)
 	model.BaseURL = server.URL
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{grammarSamplingTool()}}
-	return StreamOpenAIResponses(context.Background(), model, req,
+	return StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(req),
 		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}})
+
 }
 
 func runResponsesGrammarSSE(t *testing.T, sse string) ([]string, *ai.AssistantMessage) {
@@ -2705,41 +2720,6 @@ func TestResponsesEmptyNamespaceDroppedDivergence(t *testing.T) {
 	}
 }
 
-// ...unless the tool is one this request defers, in which case the namespace is
-// the loaded tool's and replays regardless of which model called it.
-func TestResponsesNamespaceReplayedForDeferredTool(t *testing.T) {
-	model := reasoningModel()
-	model.Compat = json.RawMessage(`{"supportsToolSearch":true}`)
-	req := ai.Context{
-		Tools: []ai.Tool{{Name: "calc", Description: "calc", Parameters: ai.Object(ai.Prop("x", ai.Integer()))}},
-		Messages: []ai.Message{
-			ai.NewUserText("hi", 1),
-			// The marker precedes the call, so "calc" is deferred, not immediate.
-			ai.ToolResultMessage{
-				ToolCallID: "call_0|fc_0", ToolName: "loader", AddedToolNames: []string{"calc"},
-				Content: ai.ContentList{ai.TextContent{Text: "loaded"}}, Timestamp: 2,
-			},
-			ai.AssistantMessage{
-				Content: ai.ContentList{ai.ToolCall{
-					ID: "call_1|fc_1", Name: "calc", Arguments: map[string]any{}, Namespace: "mcp_math",
-				}},
-				Api:        ai.APIOpenAIResponses,
-				Provider:   "openai",
-				Model:      "gpt-4.1", // different model id
-				StopReason: ai.StopToolUse,
-			},
-			ai.ToolResultMessage{ToolCallID: "call_1|fc_1", ToolName: "calc", Content: ai.ContentList{ai.TextContent{Text: "ok"}}, Timestamp: 3},
-		},
-	}
-	fc := findResponsesItem(mustResponsesInput(t, model, req), "function_call")
-	if fc == nil {
-		t.Fatalf("no function_call item")
-	}
-	if fc["namespace"] != "mcp_math" {
-		t.Fatalf("deferred-tool namespace = %v, want mcp_math", fc["namespace"])
-	}
-}
-
 // TestResponsesStopReasonWithoutErrorMessageOmitsTheField pins pi 1a7bc80e7:
 // when the mapped stop reason carries no error message, upstream now DELETES
 // output.errorMessage instead of assigning undefined, because the field is
@@ -2795,9 +2775,11 @@ func TestResponsesStopReasonWithoutErrorMessageOmitsTheField(t *testing.T) {
 
 			model := reasoningModel()
 			model.BaseURL = server.URL
-			final := StreamOpenAIResponses(context.Background(), model,
-				ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-				&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).Result()
+			final := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(
+				ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+				&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk"}}}).
+				Result()
 
 			if final.StopReason != tt.wantStop {
 				t.Fatalf("stopReason = %s (err %q), want %s", final.StopReason, final.ErrorMessage, tt.wantStop)

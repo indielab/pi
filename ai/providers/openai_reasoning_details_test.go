@@ -538,8 +538,9 @@ data: {"choices":[{"delta":{"reasoning_details":[` + rdSummary + `]}}]}
 	t.Cleanup(server.Close)
 
 	model := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL, Reasoning: true}
-	stream := StreamOpenAICompletions(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
+	stream := StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
 		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}})
 
 	var failed *ai.AssistantMessage

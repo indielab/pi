@@ -69,7 +69,8 @@ func project(payload any, comparePaths []string) (any, error) {
 }
 
 // rawContext mirrors pi's Context on the wire; Messages needs the
-// role-discriminated decoding that ai.UnmarshalMessage provides.
+// role-discriminated decoding that ai.UnmarshalMessage provides (system
+// messages included).
 type rawContext struct {
 	SystemPrompt string            `json:"systemPrompt"`
 	Messages     []json.RawMessage `json:"messages"`
@@ -174,7 +175,14 @@ var errHalt = errors.New("payload captured")
 
 // capture runs a stream entry point far enough to build the request body and
 // returns it. OnPayload's error aborts the stream before any network call.
-func capture(sc scenario, model *ai.Model, req ai.Context, o scenarioOptions) (any, error) {
+//
+// The adapter entry points take a normalized transcript, so the scenario's
+// context is normalized first — what the pi arm does for a "src" scenario at a
+// sha that has normalizeContext, and what the public entry points do on both
+// sides. For a "dist" scenario pi's adapter takes the raw context, which carries
+// no system messages there, and normalizing it changes nothing it sends.
+func capture(sc scenario, model *ai.Model, raw ai.Context, o scenarioOptions) (any, error) {
+	req := ai.NormalizeContext(raw)
 	var captured any
 	hook := func(payload any, _ *ai.Model) (any, error) {
 		captured = payload

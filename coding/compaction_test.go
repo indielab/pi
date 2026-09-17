@@ -249,8 +249,8 @@ func TestCompactionExtendsWithPreviousSummary(t *testing.T) {
 
 	var captured string
 	reg.SetResponses([]providers.FauxResponseStep{
-		func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
-			captured = textOf(req.Messages[0].(ai.UserMessage).Content)
+		func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+			captured = textOf(ai.WithoutInitialSystemMessage(req.Messages)[0].(ai.UserMessage).Content)
 			return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "## Goal\nupdated summary"}}, ai.StopStop)
 		},
 	})
@@ -339,8 +339,8 @@ func TestCompactionSplitTurnSummaries(t *testing.T) {
 	}
 	var calls []call
 	step := func(text string) providers.FauxResponseStep {
-		return func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
-			c := call{text: textOf(req.Messages[0].(ai.UserMessage).Content)}
+		return func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+			c := call{text: textOf(ai.WithoutInitialSystemMessage(req.Messages)[0].(ai.UserMessage).Content)}
 			if opts != nil && opts.MaxTokens != nil {
 				c.maxTokens = *opts.MaxTokens
 			}
@@ -397,7 +397,7 @@ func TestCompactionRoutingSessionIDForwarded(t *testing.T) {
 	sess, reg := newCompactionTestSession(t)
 	var sessionIDs []string
 	var retentions []ai.CacheRetention
-	capture := func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+	capture := func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
 		sessionIDs = append(sessionIDs, opts.SessionID)
 		retentions = append(retentions, opts.CacheRetention)
 		return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "## Goal\nsummary"}}, ai.StopStop)
@@ -514,7 +514,7 @@ func TestSummarizationPassesReasoningAndHeaders(t *testing.T) {
 
 	var gotReasoning ai.ThinkingLevel
 	var gotHeaders ai.ProviderHeaders
-	capture := func(req ai.Context, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
+	capture := func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, st *providers.FauxState, m *ai.Model) *ai.AssistantMessage {
 		gotReasoning = opts.Reasoning
 		gotHeaders = opts.Headers
 		return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "ok"}}, ai.StopStop)

@@ -47,11 +47,11 @@ func TestTelemetryContextSurvivesDispatch(t *testing.T) {
 		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("telemetry-provider", "K")},
 		Models: []*Model{{Provider: "telemetry-provider", ID: "model", Api: "telemetry-test"}},
 		API: ptrStreams(ProviderStreams{
-			Stream: func(_ context.Context, model *Model, _ Context, opts *StreamOptions) *AssistantMessageEventStream {
+			Stream: func(_ context.Context, model *Model, _ TranscriptContext, opts *StreamOptions) *AssistantMessageEventStream {
 				observed = append(observed, opts.TelemetryContext)
 				return done(model)
 			},
-			StreamSimple: func(_ context.Context, model *Model, _ Context, opts *SimpleStreamOptions) *AssistantMessageEventStream {
+			StreamSimple: func(_ context.Context, model *Model, _ TranscriptContext, opts *SimpleStreamOptions) *AssistantMessageEventStream {
 				observed = append(observed, opts.TelemetryContext)
 				return done(model)
 			},
@@ -71,8 +71,8 @@ func TestTelemetryContextSurvivesDispatch(t *testing.T) {
 	handle := DeferredHandle{Provider: model.Provider, ModelID: model.ID, Api: model.Api, ID: "response"}
 	request := ProviderRequestOptions{TelemetryContext: telemetryContext}
 
-	p.Stream(ctx, model, Context{}, &StreamOptions{ProviderRequestOptions: request}).Result()
-	p.StreamSimple(ctx, model, Context{}, &SimpleStreamOptions{StreamOptions: StreamOptions{ProviderRequestOptions: request}}).Result()
+	p.Stream(ctx, model, TranscriptContext{}, &StreamOptions{ProviderRequestOptions: request}).Result()
+	p.StreamSimple(ctx, model, TranscriptContext{}, &SimpleStreamOptions{StreamOptions: StreamOptions{ProviderRequestOptions: request}}).Result()
 	p.(DeferredFetcher).FetchDeferred(ctx, model, handle, &DeferredFetchOptions{ProviderRequestOptions: request}).Result()
 	cancelOptions := DeferredCancelOptions(request)
 	if err := p.(DeferredCanceller).CancelDeferred(ctx, model, handle, &cancelOptions); err != nil {

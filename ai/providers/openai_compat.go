@@ -73,12 +73,6 @@ type openAICompletionsCompat struct {
 	// from StreamOptions.SessionID. Default: true for OpenRouter endpoints,
 	// false otherwise (pi bbb61e34a).
 	SendSessionAffinityHeaders bool
-	// DeferredToolsMode selects a provider-specific deferred-tool serialization
-	// (pi OpenAICompletionsCompat.deferredToolsMode). "kimi" withholds tools
-	// introduced by a tool result's addedToolNames from the top-level tools
-	// param and re-declares them in a system message after that tool-result
-	// run. "" (pi undefined) disables deferral.
-	DeferredToolsMode string
 	// SessionAffinityFormat selects the session-affinity header shape (pi
 	// SessionAffinityFormat). Auto-detected: openrouter → sessionAffinityOpenRouter,
 	// else sessionAffinityOpenAI.
@@ -186,7 +180,6 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		ThinkingTokenBudgetField:                    "",
 		SupportsThinkingTokenBudget:                 false,
 		SendSessionAffinityHeaders:                  isOpenRouter,
-		DeferredToolsMode:                           "",
 		SessionAffinityFormat:                       sessionAffinityFormatFor(isOpenRouter),
 		CacheControlFormat:                          cacheControlFormat,
 		// pi defaults these routing objects to {} (no routing emitted).
@@ -219,7 +212,6 @@ func getOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	applyCompat(o, "thinkingTokenBudgetField", &c.ThinkingTokenBudgetField)
 	applyCompat(o, "supportsThinkingTokenBudget", &c.SupportsThinkingTokenBudget)
 	applyCompat(o, "sendSessionAffinityHeaders", &c.SendSessionAffinityHeaders)
-	applyCompat(o, "deferredToolsMode", &c.DeferredToolsMode)
 	applyCompat(o, "sessionAffinityFormat", &c.SessionAffinityFormat)
 	applyCompat(o, "cacheControlFormat", &c.CacheControlFormat)
 	applyCompat(o, "vercelGatewayRouting", &c.VercelGatewayRouting)

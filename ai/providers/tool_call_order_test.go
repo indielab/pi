@@ -66,7 +66,7 @@ func TestToolCallArgumentsSurviveSessionRoundTrip(t *testing.T) {
 // text (and shifts the prompt-cache prefix).
 func TestOpenAIReplaysToolCallArgumentsInModelOrder(t *testing.T) {
 	model := &ai.Model{ID: "gpt-4o-mini", Api: ai.APIOpenAICompletions, Provider: "openai", MaxTokens: 1024}
-	params, err := buildOpenAIParams(model, loadOrderedToolCallContext(t), &OpenAIOptions{})
+	params, err := buildOpenAIParams(model, ai.NormalizeContext(loadOrderedToolCallContext(t)), &OpenAIOptions{})
 	if err != nil {
 		t.Fatalf("buildOpenAIParams: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestOpenAIReplaysToolCallArgumentsInModelOrder(t *testing.T) {
 
 func TestOpenAIResponsesReplaysToolCallArgumentsInModelOrder(t *testing.T) {
 	model := &ai.Model{ID: "gpt-5", Api: ai.APIOpenAIResponses, Provider: "openai", MaxTokens: 1024}
-	params, err := buildResponsesParams(model, loadOrderedToolCallContext(t), &OpenAIResponsesOptions{})
+	params, err := buildResponsesParams(model, ai.NormalizeContext(loadOrderedToolCallContext(t)), &OpenAIResponsesOptions{})
 	if err != nil {
 		t.Fatalf("buildResponsesParams: %v", err)
 	}
@@ -92,7 +92,7 @@ func TestOpenAIResponsesReplaysToolCallArgumentsInModelOrder(t *testing.T) {
 
 func TestAnthropicReplaysToolCallArgumentsInModelOrder(t *testing.T) {
 	model := &ai.Model{ID: "claude-sonnet-4", Api: ai.APIAnthropicMessages, Provider: "anthropic", MaxTokens: 1024}
-	params, err := buildAnthropicParams(model, loadOrderedToolCallContext(t), false, &AnthropicOptions{})
+	params, err := buildAnthropicParams(model, ai.NormalizeContext(loadOrderedToolCallContext(t)), false, &AnthropicOptions{})
 	if err != nil {
 		t.Fatalf("buildAnthropicParams: %v", err)
 	}
@@ -104,7 +104,7 @@ func TestAnthropicReplaysToolCallArgumentsInModelOrder(t *testing.T) {
 
 func TestGoogleReplaysToolCallArgumentsInModelOrder(t *testing.T) {
 	model := &ai.Model{ID: "gemini-2.5-pro", Api: ai.APIGoogleGenerativeAI, Provider: "google", MaxTokens: 1024}
-	params, err := buildGoogleParams(model, loadOrderedToolCallContext(t), &GoogleOptions{})
+	params, err := buildGoogleParams(model, ai.NormalizeContext(loadOrderedToolCallContext(t)), &GoogleOptions{})
 	if err != nil {
 		t.Fatalf("buildGoogleParams: %v", err)
 	}
@@ -130,14 +130,16 @@ func TestOpenAIStreamedToolCallKeepsArgumentOrder(t *testing.T) {
 		ID: "gpt-4o-mini", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL,
 		MaxTokens: 1024,
 	}
-	final := StreamOpenAICompletions(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("what is in /tmp?", 1)}},
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}}).Result()
+	final := StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("what is in /tmp?", 1)}}),
+
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk-test"}}}).
+		Result()
 	if final.StopReason != ai.StopToolUse {
 		t.Fatalf("expected toolUse, got %s (%s)", final.StopReason, final.ErrorMessage)
 	}
 
-	params, err := buildOpenAIParams(model, ai.Context{Messages: []ai.Message{final}}, &OpenAIOptions{})
+	params, err := buildOpenAIParams(model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{final}}), &OpenAIOptions{})
 	if err != nil {
 		t.Fatalf("buildOpenAIParams: %v", err)
 	}

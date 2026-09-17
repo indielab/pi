@@ -34,9 +34,11 @@ func captureOpenAIResponsesHeaders(t *testing.T, model *ai.Model, opts ai.Stream
 	}))
 	defer server.Close()
 	model.BaseURL = server.URL
-	final := StreamOpenAIResponses(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&OpenAIResponsesOptions{StreamOptions: opts}).Result()
+	final := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+		&OpenAIResponsesOptions{StreamOptions: opts}).
+		Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}
@@ -55,9 +57,11 @@ func captureGoogleHeaders(t *testing.T, model *ai.Model, opts ai.StreamOptions) 
 	}))
 	defer server.Close()
 	model.BaseURL = server.URL
-	final := StreamGoogle(context.Background(), model,
-		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},
-		&GoogleOptions{StreamOptions: opts}).Result()
+	final := StreamGoogle(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+
+		&GoogleOptions{StreamOptions: opts}).
+		Result()
 	if final.StopReason == ai.StopError {
 		t.Fatalf("stream failed: %s", final.ErrorMessage)
 	}
