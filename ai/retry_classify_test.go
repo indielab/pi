@@ -1,6 +1,99 @@
 package ai
 
-import "testing"
+import (
+	"encoding/json"
+	"os"
+	"testing"
+)
+
+// retryClassifyCaptureFile is written by testdata/retry-classify/capture.mts,
+// which runs upstream's own packages/ai/src/utils/retry.ts under node.
+const retryClassifyCaptureFile = "testdata/retry-classify/classify-e5d18382a.json"
+
+type capturedPattern struct {
+	Source string `json:"source"`
+	Flags  string `json:"flags"`
+}
+
+type retryClassifyCapture struct {
+	SHA      string `json:"sha"`
+	Patterns struct {
+		Limit     capturedPattern `json:"NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN"`
+		Retryable capturedPattern `json:"RETRYABLE_PROVIDER_ERROR_PATTERN"`
+	} `json:"patterns"`
+	Rows []struct {
+		Covers       string     `json:"covers"`
+		StopReason   StopReason `json:"stopReason"`
+		ErrorMessage string     `json:"errorMessage"`
+		// LimitPattern and RetryablePattern are RegExp.prototype.test of the
+		// two patterns; absent when the message carries no error text.
+		LimitPattern     *bool `json:"limitPattern"`
+		RetryablePattern *bool `json:"retryablePattern"`
+		Retryable        bool  `json:"retryable"`
+	} `json:"rows"`
+}
+
+func loadRetryClassifyCapture(t *testing.T) retryClassifyCapture {
+	t.Helper()
+	data, err := os.ReadFile(retryClassifyCaptureFile)
+	if err != nil {
+		t.Fatalf("read %s: %v (regenerate it with testdata/retry-classify/capture.mts)", retryClassifyCaptureFile, err)
+	}
+	var capture retryClassifyCapture
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatalf("decode %s: %v", retryClassifyCaptureFile, err)
+	}
+	if len(capture.Rows) == 0 {
+		t.Fatalf("%s has no rows", retryClassifyCaptureFile)
+	}
+	return capture
+}
+
+// TestProviderErrorPatternSourcesMatchPi keeps both alternative lists equal to
+// upstream's, in order, and pins the flags the JavaScript-semantics translation
+// in buildProviderErrorPattern assumes.
+func TestProviderErrorPatternSourcesMatchPi(t *testing.T) {
+	capture := loadRetryClassifyCapture(t)
+	for _, tc := range []struct {
+		name string
+		got  providerErrorPattern
+		want capturedPattern
+	}{
+		{"NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN", nonRetryableProviderLimitErrorPattern, capture.Patterns.Limit},
+		{"RETRYABLE_PROVIDER_ERROR_PATTERN", retryableProviderErrorPattern, capture.Patterns.Retryable},
+	} {
+		if tc.got.source != tc.want.Source {
+			t.Errorf("%s source differs from pi at %s:\n got: %s\nwant: %s", tc.name, capture.SHA, tc.got.source, tc.want.Source)
+		}
+		if tc.want.Flags != "i" {
+			t.Errorf("%s flags at %s = %q; buildProviderErrorPattern ports \"i\" without \"u\" and must be re-derived", tc.name, capture.SHA, tc.want.Flags)
+		}
+	}
+}
+
+// TestIsRetryableAssistantErrorMatchesPi asserts every row pi classified: each
+// pattern alternative alone, the stop-reason guard, near-misses, and the inputs
+// where a JavaScript RegExp and RE2 disagree ("." on \r, U+2028, U+2029 and
+// astral characters; "i" on U+212A and U+017F).
+func TestIsRetryableAssistantErrorMatchesPi(t *testing.T) {
+	capture := loadRetryClassifyCapture(t)
+	for i, row := range capture.Rows {
+		if row.LimitPattern != nil {
+			if got := nonRetryableProviderLimitErrorPattern.MatchString(row.ErrorMessage); got != *row.LimitPattern {
+				t.Errorf("row %d (%s): limit pattern on %+q = %v, pi at %s = %v", i, row.Covers, row.ErrorMessage, got, capture.SHA, *row.LimitPattern)
+			}
+		}
+		if row.RetryablePattern != nil {
+			if got := retryableProviderErrorPattern.MatchString(row.ErrorMessage); got != *row.RetryablePattern {
+				t.Errorf("row %d (%s): retryable pattern on %+q = %v, pi at %s = %v", i, row.Covers, row.ErrorMessage, got, capture.SHA, *row.RetryablePattern)
+			}
+		}
+		msg := AssistantMessage{StopReason: row.StopReason, ErrorMessage: row.ErrorMessage}
+		if got := IsRetryableAssistantError(msg); got != row.Retryable {
+			t.Errorf("row %d (%s): IsRetryableAssistantError(stop=%s, %+q) = %v, pi at %s = %v", i, row.Covers, row.StopReason, row.ErrorMessage, got, capture.SHA, row.Retryable)
+		}
+	}
+}
 
 func TestIsRetryableAssistantError(t *testing.T) {
 	cases := []struct {

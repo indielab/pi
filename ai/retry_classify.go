@@ -1,14 +1,82 @@
 package ai
 
 import (
+	"fmt"
 	"regexp"
 	"strings"
 )
 
+// providerErrorPattern is pi's buildProviderErrorPattern result,
+// new RegExp(patterns.join("|"), "i"), matched with that RegExp's semantics
+// rather than RE2's. A JavaScript RegExp without the "u" flag differs from RE2
+// in two ways these patterns can observe:
+//
+//   - "i" compares the toUpperCase of each character but never lets a
+//     non-ASCII character canonicalize to an ASCII one, so against all-ASCII
+//     patterns it folds ASCII letters only. RE2's (?i) folds by Unicode, under
+//     which U+212A KELVIN SIGN matches "k" and U+017F LATIN SMALL LETTER LONG S
+//     matches "s". The alternatives are therefore compiled lowercased, without
+//     (?i), and matched against the input with only A-Z lowercased.
+//   - "." matches one UTF-16 code unit other than a line terminator (\n, \r,
+//     U+2028, U+2029), where RE2's matches one code point other than \n. Every
+//     "." in these lists sits between ASCII literals. A surrogate always has
+//     its partner on one side, so it never sits between two ASCII characters,
+//     and the code units such a "." can match are exactly the BMP code points:
+//     an astral character is excluded, not counted as two. Go strings cannot
+//     hold a lone surrogate; an invalid UTF-8 byte decodes as one U+FFFD,
+//     which "." matches in both.
+type providerErrorPattern struct {
+	source string // RegExp.prototype.source: the alternatives joined with "|"
+	re     *regexp.Regexp
+}
+
+// jsDot is "." of a JavaScript RegExp without the "u" flag, as the RE2 class
+// matching the same text where every "." is flanked by ASCII literals.
+const jsDot = `[^\n\r\x{2028}\x{2029}\x{10000}-\x{10FFFF}]`
+
+func buildProviderErrorPattern(patterns []string) providerErrorPattern {
+	alternatives := make([]string, len(patterns))
+	for i, pattern := range patterns {
+		if strings.ContainsAny(pattern, `\^$|*+()[]{}`) {
+			// Lowercasing would corrupt escapes and classes (\S is not \s), and
+			// RE2 and JavaScript disagree on several of them.
+			panic(fmt.Sprintf("ai: provider error pattern %q uses RegExp syntax beyond literals, \".\" and \"?\"; "+
+				"teach buildProviderErrorPattern its JavaScript semantics before adding it", pattern))
+		}
+		alternatives[i] = strings.ReplaceAll(asciiLower(pattern), ".", jsDot)
+	}
+	return providerErrorPattern{
+		source: strings.Join(patterns, "|"),
+		re:     regexp.MustCompile(strings.Join(alternatives, "|")),
+	}
+}
+
+// MatchString is RegExp.prototype.test on s.
+func (p providerErrorPattern) MatchString(s string) bool {
+	return p.re.MatchString(asciiLower(s))
+}
+
+// asciiLower lowercases A-Z and leaves every other byte as it is, so UTF-8
+// sequences pass through untouched.
+func asciiLower(s string) string {
+	for i := 0; i < len(s); i++ {
+		if 'A' <= s[i] && s[i] <= 'Z' {
+			b := []byte(s)
+			for j := i; j < len(b); j++ {
+				if 'A' <= b[j] && b[j] <= 'Z' {
+					b[j] += 'a' - 'A'
+				}
+			}
+			return string(b)
+		}
+	}
+	return s
+}
+
 // nonRetryableProviderLimitErrorPattern matches provider error text that
 // indicates a subscription/account/billing limit rather than a transient
 // failure. Matches here suppress retries.
-var nonRetryableProviderLimitErrorPattern = regexp.MustCompile(`(?i)` + strings.Join([]string{
+var nonRetryableProviderLimitErrorPattern = buildProviderErrorPattern([]string{
 	// OpenCode Go/free-tier limits returned as 429 JSON error types by OpenCode's
 	// Zen API. These are subscription/account limits, not transient throttles.
 	"GoUsageLimitError",
@@ -25,11 +93,11 @@ var nonRetryableProviderLimitErrorPattern = regexp.MustCompile(`(?i)` + strings.
 	"out of budget",
 	"quota exceeded",
 	"billing",
-}, "|"))
+})
 
 // retryableProviderErrorPattern matches provider/transport error text that
 // looks like a transient failure worth retrying.
-var retryableProviderErrorPattern = regexp.MustCompile(`(?i)` + strings.Join([]string{
+var retryableProviderErrorPattern = buildProviderErrorPattern([]string{
 	// Generic provider load, HTTP status, and server-side transient failures.
 	"overloaded",
 	"rate.?limit",
@@ -96,7 +164,7 @@ var retryableProviderErrorPattern = regexp.MustCompile(`(?i)` + strings.Join([]s
 	// gRPC based providers (e.g. NVIDIA NIM) surface transient throttles as a
 	// ResourceExhausted status (#6449).
 	"ResourceExhausted",
-}, "|"))
+})
 
 // IsRetryableAssistantError classifies whether a failed assistant message looks
 // like a transient provider or transport error, so callers can decide if the

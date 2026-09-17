@@ -3,110 +3,262 @@ package ai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"reflect"
 	"testing"
 )
 
 func errResp(msg string) *AssistantMessage {
 	return &AssistantMessage{StopReason: StopError, ErrorMessage: msg}
 }
-func okResp() *AssistantMessage {
-	return &AssistantMessage{StopReason: StopStop}
+
+// textResp is pi's fauxAssistantMessage(text): a completed message carrying
+// one text block.
+func textResp(text string) *AssistantMessage {
+	return &AssistantMessage{Content: ContentList{TextContent{Text: text}}, StopReason: StopStop}
 }
 
-// TestRetryAssistantCall locks pi's retryAssistantCall (upstream 65dd2e0e):
-// success/non-retryable/abort short-circuits, bounded retry with backoff, and
-// callback ordering.
+func abortedResp() *AssistantMessage {
+	return &AssistantMessage{StopReason: StopAborted}
+}
+
+type retryFinishedCall struct {
+	success    bool
+	attempt    int
+	finalError string
+}
+
+// retryRecorder stands in for pi's vi.fn() callbacks: it records every call so
+// a case can assert counts and arguments the way the vitest suite does.
+type retryRecorder struct {
+	scheduled     []int // the attempt of each OnRetryScheduled
+	attemptStarts int
+	finished      []retryFinishedCall
+}
+
+func (r *retryRecorder) callbacks() *RetryCallbacks {
+	return &RetryCallbacks{
+		OnRetryScheduled:    func(attempt, _, _ int, _ string) { r.scheduled = append(r.scheduled, attempt) },
+		OnRetryAttemptStart: func() { r.attemptStarts++ },
+		OnRetryFinished: func(success bool, attempt int, finalError string) {
+			r.finished = append(r.finished, retryFinishedCall{success, attempt, finalError})
+		},
+	}
+}
+
+// finishedWith is vitest's toHaveBeenCalledWith on OnRetryFinished. pi calls it
+// with two arguments on success and on an abort; Go's empty finalError is that
+// missing third argument.
+func (r *retryRecorder) finishedWith(t *testing.T, want retryFinishedCall) {
+	t.Helper()
+	for _, call := range r.finished {
+		if call == want {
+			return
+		}
+	}
+	t.Fatalf("OnRetryFinished calls = %+v, want one with %+v", r.finished, want)
+}
+
+// TestRetryAssistantCall transliterates pi's retryAssistantCall suite
+// (packages/ai/test/retry.test.ts at e5d18382a) with its fixtures: "terminated"
+// is the transient error and "insufficient_quota" the non-retryable one.
 func TestRetryAssistantCall(t *testing.T) {
-	policy := &RetryPolicy{Enabled: true, MaxRetries: 3, BaseDelayMs: 0}
+	disabled := &RetryPolicy{Enabled: false, MaxRetries: 3, BaseDelayMs: 0}
+	enabled := &RetryPolicy{Enabled: true, MaxRetries: 3, BaseDelayMs: 0}
 
-	t.Run("nil policy is passthrough", func(t *testing.T) {
+	t.Run("returns a successful response immediately without retrying", func(t *testing.T) {
 		calls := 0
-		got := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return errResp("overloaded") }, nil, nil)
-		if calls != 1 || got.StopReason != StopError {
-			t.Fatalf("calls=%d stop=%v", calls, got.StopReason)
+		res := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return textResp("ok") }, enabled, nil)
+		if want := (ContentList{TextContent{Text: "ok"}}); !reflect.DeepEqual(res.Content, want) {
+			t.Fatalf("content = %+v, want %+v", res.Content, want)
+		}
+		if calls != 1 {
+			t.Fatalf("produce calls = %d, want 1", calls)
 		}
 	})
 
-	t.Run("success returns immediately", func(t *testing.T) {
+	t.Run("does not retry an aborted message", func(t *testing.T) {
 		calls := 0
-		got := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return okResp() }, policy, nil)
-		if calls != 1 || got.StopReason != StopStop {
-			t.Fatalf("calls=%d stop=%v", calls, got.StopReason)
+		var rec retryRecorder
+		res := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return abortedResp() }, enabled, rec.callbacks())
+		if res.StopReason != StopAborted {
+			t.Fatalf("stop = %v, want aborted", res.StopReason)
+		}
+		if calls != 1 {
+			t.Fatalf("produce calls = %d, want 1", calls)
+		}
+		if len(rec.scheduled) != 0 {
+			t.Fatalf("OnRetryScheduled called for attempts %v, want never", rec.scheduled)
 		}
 	})
 
-	t.Run("non-retryable error fails fast", func(t *testing.T) {
+	t.Run("does not retry a non-retryable error (quota/billing)", func(t *testing.T) {
 		calls := 0
-		got := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return errResp("insufficient_quota") }, policy, nil)
-		if calls != 1 || got.ErrorMessage != "insufficient_quota" {
-			t.Fatalf("non-retryable retried: calls=%d", calls)
+		var rec retryRecorder
+		res := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return errResp("insufficient_quota") }, enabled, rec.callbacks())
+		if res.StopReason != StopError {
+			t.Fatalf("stop = %v, want error", res.StopReason)
+		}
+		if calls != 1 {
+			t.Fatalf("produce calls = %d, want 1", calls)
+		}
+		if len(rec.scheduled) != 0 || len(rec.finished) != 0 {
+			t.Fatalf("callbacks fired: scheduled=%v finished=%+v, want none", rec.scheduled, rec.finished)
 		}
 	})
 
-	t.Run("retries transient then succeeds", func(t *testing.T) {
+	t.Run("retries a transient error up to maxRetries then returns the final error", func(t *testing.T) {
 		calls := 0
-		var scheduled, started, finished int
-		var finishedSuccess bool
-		cb := &RetryCallbacks{
-			OnRetryScheduled:    func(a, m, d int, e string) { scheduled++ },
-			OnRetryAttemptStart: func() { started++ },
-			OnRetryFinished:     func(s bool, a int, e string) { finished++; finishedSuccess = s },
+		var rec retryRecorder
+		res := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return errResp("terminated") }, enabled, rec.callbacks())
+		if res.StopReason != StopError {
+			t.Fatalf("stop = %v, want error", res.StopReason)
 		}
-		got := RetryAssistantCall(context.Background(), func() *AssistantMessage {
-			calls++
-			if calls < 3 {
-				return errResp("overloaded")
-			}
-			return okResp()
-		}, policy, cb)
-		if calls != 3 || got.StopReason != StopStop {
-			t.Fatalf("calls=%d stop=%v", calls, got.StopReason)
+		if calls != 4 { // 1 initial + 3 retries
+			t.Fatalf("produce calls = %d, want 4", calls)
 		}
-		if scheduled != 2 || started != 2 || finished != 1 || !finishedSuccess {
-			t.Fatalf("callbacks: scheduled=%d started=%d finished=%d success=%v", scheduled, started, finished, finishedSuccess)
+		if len(rec.scheduled) != 3 {
+			t.Fatalf("OnRetryScheduled calls = %d, want 3", len(rec.scheduled))
 		}
-	})
-
-	t.Run("exhausts budget and returns last error", func(t *testing.T) {
-		calls := 0
-		var finished int
-		var finalErr string
-		cb := &RetryCallbacks{OnRetryFinished: func(s bool, a int, e string) { finished++; finalErr = e }}
-		got := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return errResp("overloaded") }, policy, cb)
-		// initial call + 3 retries = 4 produce() calls.
-		if calls != 4 || got.StopReason != StopError {
-			t.Fatalf("calls=%d stop=%v", calls, got.StopReason)
-		}
-		if finished != 1 || finalErr != "overloaded" {
-			t.Fatalf("finished=%d finalErr=%q", finished, finalErr)
-		}
+		rec.finishedWith(t, retryFinishedCall{false, 3, "terminated"})
 		// The positive counterpart to the absence pin in the abort case below:
 		// an exhausted budget keeps the last error under pi's own key. Without
 		// this, that pin would survive the field losing its key entirely.
-		if raw, present := marshalField(t, got, "errorMessage"); !present || string(raw) != `"overloaded"` {
-			t.Fatalf("errorMessage = %s (present=%v), want \"overloaded\"", raw, present)
+		if raw, present := marshalField(t, res, "errorMessage"); !present || string(raw) != `"terminated"` {
+			t.Fatalf("errorMessage = %s (present=%v), want \"terminated\"", raw, present)
 		}
 	})
 
-	t.Run("abort during backoff normalizes to aborted", func(t *testing.T) {
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel() // ctx.Done ready before the sleep
-		longPolicy := &RetryPolicy{Enabled: true, MaxRetries: 3, BaseDelayMs: 1_000_000}
+	t.Run("stops retrying once a call succeeds", func(t *testing.T) {
+		n := 0
+		var rec retryRecorder
+		res := RetryAssistantCall(context.Background(), func() *AssistantMessage {
+			n++
+			if n < 3 {
+				return errResp("terminated")
+			}
+			return textResp("recovered")
+		}, enabled, rec.callbacks())
+		if want := (ContentList{TextContent{Text: "recovered"}}); !reflect.DeepEqual(res.Content, want) {
+			t.Fatalf("content = %+v, want %+v", res.Content, want)
+		}
+		if n != 3 {
+			t.Fatalf("produce calls = %d, want 3", n)
+		}
+		rec.finishedWith(t, retryFinishedCall{true, 2, ""})
+	})
+
+	t.Run("reports an aborted retried call as unsuccessful", func(t *testing.T) {
+		n := 0
+		var rec retryRecorder
+		res := RetryAssistantCall(context.Background(), func() *AssistantMessage {
+			n++
+			if n == 1 {
+				return errResp("terminated")
+			}
+			return abortedResp()
+		}, enabled, rec.callbacks())
+		if res.StopReason != StopAborted {
+			t.Fatalf("stop = %v, want aborted", res.StopReason)
+		}
+		if n != 2 {
+			t.Fatalf("produce calls = %d, want 2", n)
+		}
+		rec.finishedWith(t, retryFinishedCall{false, 1, ""})
+	})
+
+	t.Run("does not retry when policy is disabled", func(t *testing.T) {
 		calls := 0
-		got := RetryAssistantCall(ctx, func() *AssistantMessage { calls++; return errResp("overloaded") }, longPolicy, nil)
-		if got.StopReason != StopAborted || got.ErrorMessage != "" {
-			t.Fatalf("expected normalized abort, got stop=%v err=%q", got.StopReason, got.ErrorMessage)
+		var rec retryRecorder
+		res := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return errResp("terminated") }, disabled, rec.callbacks())
+		if res.StopReason != StopError {
+			t.Fatalf("stop = %v, want error", res.StopReason)
 		}
 		if calls != 1 {
-			t.Fatalf("aborted during first backoff should call produce once, got %d", calls)
+			t.Fatalf("produce calls = %d, want 1", calls)
+		}
+		if len(rec.scheduled) != 0 || len(rec.finished) != 0 {
+			t.Fatalf("callbacks fired: scheduled=%v finished=%+v, want none", rec.scheduled, rec.finished)
+		}
+	})
+
+	// Go-only: pi's policy parameter is `RetryPolicy | undefined`, and nil is
+	// the Go spelling of undefined.
+	t.Run("nil policy does not retry", func(t *testing.T) {
+		calls := 0
+		res := RetryAssistantCall(context.Background(), func() *AssistantMessage { calls++; return errResp("terminated") }, nil, nil)
+		if calls != 1 || res.StopReason != StopError {
+			t.Fatalf("produce calls = %d, stop = %v; want 1, error", calls, res.StopReason)
+		}
+	})
+
+	t.Run("emits onRetryAttemptStart after backoff before each retried call", func(t *testing.T) {
+		var events []string
+		scheduled, attemptStarts, n := 0, 0, 0
+		callbacks := &RetryCallbacks{
+			OnRetryScheduled: func(attempt, _, _ int, _ string) {
+				scheduled++
+				events = append(events, fmt.Sprintf("retry:%d", attempt))
+			},
+			OnRetryAttemptStart: func() {
+				attemptStarts++
+				events = append(events, "attempt-start")
+			},
+		}
+		res := RetryAssistantCall(context.Background(), func() *AssistantMessage {
+			events = append(events, fmt.Sprintf("produce:%d", n))
+			n++
+			if n < 3 {
+				return errResp("terminated")
+			}
+			return textResp("recovered")
+		}, enabled, callbacks)
+		if want := (ContentList{TextContent{Text: "recovered"}}); !reflect.DeepEqual(res.Content, want) {
+			t.Fatalf("content = %+v, want %+v", res.Content, want)
+		}
+		if scheduled != 2 || attemptStarts != 2 {
+			t.Fatalf("OnRetryScheduled calls = %d, OnRetryAttemptStart calls = %d; want 2, 2", scheduled, attemptStarts)
+		}
+		want := []string{"produce:0", "retry:1", "attempt-start", "produce:1", "retry:2", "attempt-start", "produce:2"}
+		if !reflect.DeepEqual(events, want) {
+			t.Fatalf("events = %q, want %q", events, want)
+		}
+	})
+
+	t.Run("aborts backoff sleep via signal, returns an aborted message, and emits onRetryFinished(false)", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		policy := &RetryPolicy{Enabled: true, MaxRetries: 5, BaseDelayMs: 10_000}
+		var rec retryRecorder
+		// pi awaits the first produce() and then aborts, so the abort lands in
+		// the first backoff sleep.
+		produced := make(chan struct{})
+		calls := 0
+		go func() {
+			<-produced
+			cancel()
+		}()
+		res := RetryAssistantCall(ctx, func() *AssistantMessage {
+			calls++
+			if calls == 1 {
+				close(produced)
+			}
+			return errResp("terminated")
+		}, policy, rec.callbacks())
+		if res.StopReason != StopAborted {
+			t.Fatalf("stop = %v, want aborted", res.StopReason)
 		}
 		// pi 86bac52f9 destructures errorMessage away rather than setting it to
 		// undefined, so the aborted message carries no errorMessage key at all —
 		// the field is observable in serialized session JSON. Go's omitempty on
 		// the cleared string is the same wire shape; this pins it.
-		if raw, present := marshalField(t, got, "errorMessage"); present {
+		if raw, present := marshalField(t, res, "errorMessage"); present {
 			t.Fatalf("errorMessage must be absent on an aborted retry, got %s", raw)
 		}
+		if calls != 1 {
+			t.Fatalf("produce calls = %d, want 1", calls)
+		}
+		rec.finishedWith(t, retryFinishedCall{false, 1, "terminated"})
 	})
 }
 
@@ -138,7 +290,7 @@ func TestRetryAssistantCallCapsBackoff(t *testing.T) {
 	callbacks := &RetryCallbacks{
 		OnRetryScheduled: func(_, _, delayMs int, _ string) { got = append(got, delayMs) },
 	}
-	RetryAssistantCall(ctx, func() *AssistantMessage { return errResp("overloaded") }, policy, callbacks)
+	RetryAssistantCall(ctx, func() *AssistantMessage { return errResp("terminated") }, policy, callbacks)
 	if len(got) != 1 || got[0] != 60_000 {
 		t.Fatalf("scheduled delays = %v, want [60000] (pi caps the agent backoff at DEFAULT_MAX_AGENT_RETRY_DELAY_MS)", got)
 	}
@@ -200,9 +352,9 @@ func TestRetryAssistantCallReportsCappedDelays(t *testing.T) {
 	produce := func() *AssistantMessage {
 		calls++
 		if calls == 5 {
-			return okResp()
+			return textResp("recovered")
 		}
-		return errResp("overloaded")
+		return errResp("terminated")
 	}
 	res := RetryAssistantCall(context.Background(), produce, policy, callbacks)
 	if res.StopReason != StopStop {
