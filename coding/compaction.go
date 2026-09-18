@@ -399,11 +399,18 @@ type compactionState struct {
 // session's agent using the given settings. When the estimated context exceeds
 // the model's window minus ReserveTokens, older turns are summarized (via the
 // session's model) into a single checkpoint message and recent turns are kept.
+//
+// The forced-prompt projection is re-wrapped around it rather than clobbered,
+// so enabling compaction after the session is built keeps it — and keeps pi's
+// order, where the projection is installed over the existing transform and so
+// rewrites the head last.
 func (s *Session) EnableCompaction(settings CompactionSettings) {
 	state := &compactionState{settings: settings}
-	s.Agent.TransformContext = func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage {
-		return s.compact(ctx, state, messages)
-	}
+	s.Agent.TransformContext = s.withForcedPromptProjection(
+		func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage {
+			return s.compact(ctx, state, messages)
+		},
+	)
 }
 
 // compactionCheckpoint is one compaction as pi's session file records it.

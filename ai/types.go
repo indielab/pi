@@ -489,36 +489,29 @@ type Message interface {
 // it: Content adds instructions from that point on, Sections replace or remove
 // named prompt sections, and ToolsAdded/ToolsRemoved change the tool set.
 // Replaying every system message in order yields the current prompt and tools.
-// A message with Replace discards the replayed state first, so it is a complete
-// new baseline. Providers that accept system messages mid-conversation send
-// each one in place; other providers, and every provider after a replacement,
-// rebuild the leading system message from the replayed state (upstream
-// e4c75a732).
+// Providers that accept system messages mid-conversation send each one in
+// place; other providers rebuild the leading system message from the replayed
+// state.
 //
 // JSON: pi's content is `string | TextContent[]`. Content decoded from the
 // string form, or built with NewSystemText, is re-emitted as a string; so is a
 // nil Content, which is how pi's own producers spell an empty prompt (`""`).
 // ToolsAdded, ToolsRemoved and Sections are omitted when nil and emitted when
 // non-nil, even empty, as a JS object carrying `toolsAdded: []` would be.
-// Replace is emitted when true, and when false only if the message was decoded
-// with the key (pi's producers write `replace: true` or nothing; a decoded
-// null is re-emitted as false).
 //
 // Key order follows the producer, because pi serializes a plain object and the
 // bytes are shared with pi on the pi-messages wire and in session files: a
 // message decoded from JSON keeps its document order, WithToolChanges appends
 // the tool keys after everything else (agent-loop.ts `withToolChanges`), and
 // every other message uses role, content, sections, toolsAdded, toolsRemoved,
-// replace, timestamp — the order of pi's createInitialSystemMessage and
-// getCurrentSystemMessage literals, and of agent-session.ts's replacement
-// `{role, ...{content, sections}, replace: true, timestamp}`. Decoded and
-// WithToolChanges messages are JS objects with an own-key order, so a key a
-// caller later sets that the message did not carry is appended after the
-// recorded ones, as a JS property assignment appends — even when the recorded
-// keys happen to be in default order. Several such keys follow in default
-// order (Go cannot see the order they were assigned in). A constructed message
-// has no recorded order: its keys take their default slots whenever they are
-// set.
+// timestamp — the order of pi's createInitialSystemMessage and
+// getCurrentSystemMessage literals. Decoded and WithToolChanges messages are JS
+// objects with an own-key order, so a key a caller later sets that the message
+// did not carry is appended after the recorded ones, as a JS property
+// assignment appends — even when the recorded keys happen to be in default
+// order. Several such keys follow in default order (Go cannot see the order
+// they were assigned in). A constructed message has no recorded order: its
+// keys take their default slots whenever they are set.
 type SystemMessage struct {
 	// Content is instruction text (TextContent blocks). On the leading message
 	// this is the base prompt; later, additional instructions.
@@ -532,10 +525,6 @@ type SystemMessage struct {
 	ToolsAdded []Tool
 	// ToolsRemoved names tools that stop being available at this point.
 	ToolsRemoved []ToolReference
-	// Replace discards every earlier system message before this one applies,
-	// so its Content, Sections and ToolsAdded are the complete prompt and tool
-	// state from here on.
-	Replace bool
 	// Timestamp is the Unix timestamp in milliseconds.
 	Timestamp int64
 
@@ -571,9 +560,8 @@ func (m SystemMessage) StringContent() (string, bool) {
 
 // systemMessageKeys is the default key order: pi's createInitialSystemMessage
 // and getCurrentSystemMessage literals, which every other literal producer in
-// range agrees with (the replacement literal carries no tool keys and puts
-// replace just before timestamp).
-var systemMessageKeys = []string{"role", "content", "sections", "toolsAdded", "toolsRemoved", "replace", "timestamp"}
+// range agrees with.
+var systemMessageKeys = []string{"role", "content", "sections", "toolsAdded", "toolsRemoved", "timestamp"}
 
 // hasKey reports whether key is one of the message's own JSON properties.
 func (m SystemMessage) hasKey(key string) bool {
@@ -586,9 +574,6 @@ func (m SystemMessage) hasKey(key string) bool {
 		return m.ToolsAdded != nil
 	case "toolsRemoved":
 		return m.ToolsRemoved != nil
-	case "replace":
-		// A decoded `replace: false` is an own property too.
-		return m.Replace || slices.Contains(m.keyOrder, "replace")
 	}
 	return false
 }
@@ -663,8 +648,6 @@ func (m SystemMessage) MarshalJSON() ([]byte, error) {
 			value = m.ToolsAdded
 		case "toolsRemoved":
 			value = m.ToolsRemoved
-		case "replace":
-			value = m.Replace
 		case "timestamp":
 			value = m.Timestamp
 		}
@@ -684,9 +667,8 @@ func (m SystemMessage) MarshalJSON() ([]byte, error) {
 }
 
 // UnmarshalJSON accepts content as a string, a text-block array, or null
-// (read as the empty string), and replace as a boolean (null reads as false),
-// and records the document's key order. Keys the type does not model are
-// dropped.
+// (read as the empty string), and records the document's key order. Keys the
+// type does not model are dropped.
 func (m *SystemMessage) UnmarshalJSON(data []byte) error {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	if tok, err := dec.Token(); err != nil {
@@ -736,13 +718,6 @@ func (m *SystemMessage) UnmarshalJSON(data []byte) error {
 			out.ToolsRemoved = nil
 			if err := json.Unmarshal(raw, &out.ToolsRemoved); err != nil {
 				return fmt.Errorf("ai: system message toolsRemoved: %w", err)
-			}
-		case "replace":
-			// Reset first: null leaves the bool untouched, and a repeated key's
-			// last value wins.
-			out.Replace = false
-			if err := json.Unmarshal(raw, &out.Replace); err != nil {
-				return fmt.Errorf("ai: system message replace must be true or false (or omitted), got %s", raw)
 			}
 		case "timestamp":
 			if err := json.Unmarshal(raw, &out.Timestamp); err != nil {

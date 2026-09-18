@@ -13,11 +13,10 @@ import (
 	"github.com/sky-valley/pi/ai"
 )
 
-// The transcript-owned system prompt and tool loadout (upstream 9e05370b2, and
-// e4c75a732's replacements).
+// The transcript-owned system prompt and tool loadout (upstream 9e05370b2).
 //
-// Expected values come from testdata/transcript/agent-e4c75a732.json, captured
-// by running pi's Agent and agent loop at e4c75a732 under node
+// Expected values come from testdata/transcript/agent-16292398a.json, captured
+// by running pi's Agent and agent loop at 16292398a under node
 // (testdata/transcript/capture.mts, which names the upstream test each scenario
 // transliterates). pi stamps Date.now() pinned to the golden's "now"; the Go
 // side maps its own wall-clock stamps onto that value before comparing bytes.
@@ -65,7 +64,7 @@ var (
 func golden(t *testing.T, name string) transcriptScenario {
 	t.Helper()
 	transcriptGoldenOnce.Do(func() {
-		raw, err := os.ReadFile("testdata/transcript/agent-e4c75a732.json")
+		raw, err := os.ReadFile("testdata/transcript/agent-16292398a.json")
 		if err != nil {
 			transcriptGoldenErr = err
 			return
@@ -608,48 +607,6 @@ func TestAgentRewritesPendingToolDeclarationsToMatchTheExecutableSet(t *testing.
 	assertEqualStrings(t, "current tools", names, want.CurrentTools)
 }
 
-// A pending replacement replays from nothing (upstream e4c75a732), so the loop
-// gives it the full executable set even when the committed transcript already
-// declares every tool; the tool keys follow timestamp and replace keeps its
-// slot. A replacement leaving no tools gets no tool fields.
-func TestAgentPendingReplacementDeclaresTheFullToolSet(t *testing.T) {
-	want := golden(t, "pendingReplacementDeclaresTheFullToolSet")
-	a := NewAgent(AgentOptions{
-		InitialState: &AgentState{SystemPrompt: "You are helpful.", Model: testModel, Tools: []AgentTool{echoTool(), createTool("second")}},
-		StreamFn:     textStreamFn("done"),
-	})
-	if err := a.Prompt(context.Background(), "one"); err != nil {
-		t.Fatal(err)
-	}
-	forced := ai.NewSystemText("Exact prompt.", 1)
-	forced.Replace = true
-	if err := a.PromptMessages(context.Background(), []AgentMessage{forced, ai.NewUserText("two", 2)}); err != nil {
-		t.Fatal(err)
-	}
-	sections := ai.NewSystemText("", 3)
-	sections.Sections = ai.SystemSections{{Name: "preamble", Value: strPtr("You are pi.")}}
-	sections.ToolsAdded = []ai.Tool{declaration(createTool("ghost"))}
-	sections.Replace = true
-	if err := a.PromptMessages(context.Background(), []AgentMessage{sections, ai.NewUserText("three", 4)}); err != nil {
-		t.Fatal(err)
-	}
-	a.SetTools(nil)
-	bare := ai.NewSystemText("Bare.", 5)
-	bare.Replace = true
-	if err := a.PromptMessages(context.Background(), []AgentMessage{bare, ai.NewUserText("four", 6)}); err != nil {
-		t.Fatal(err)
-	}
-	st := a.State()
-	assertEqualStrings(t, "roles", roleNames(st.Messages), want.Roles)
-	assertEqualStrings(t, "system messages", systemMessagesJSON(t, st.Messages), canonicalPiMessages(t, want.System))
-	if want.SystemPrompt == nil || st.SystemPrompt != *want.SystemPrompt {
-		t.Fatalf("systemPrompt = %q, want %v", st.SystemPrompt, want.SystemPrompt)
-	}
-}
-
-// A pending message that already declares exactly the missing tools is rebuilt
-// all the same: its declarations are intent, replaced by the delta, and the
-// tool keys move after timestamp as withToolChanges' spread puts them.
 func TestAgentPendingDeclarationOfTheDeltaIsRebuilt(t *testing.T) {
 	want := golden(t, "pendingDeclaresTheDelta")
 	a := NewAgent(AgentOptions{

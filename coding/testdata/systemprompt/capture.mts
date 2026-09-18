@@ -2,7 +2,7 @@
 // coding/systemprompt_golden_test.go.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> systemprompt-e4c75a732.json e4c75a732
+//   e.g. ... capture.mts <dir> systemprompt-16292398a.json 16292398a
 //
 // <extraction> holds packages/ai and packages/coding-agent at <sha>
 // (`git archive <sha> packages/ai packages/coding-agent` from the upstream

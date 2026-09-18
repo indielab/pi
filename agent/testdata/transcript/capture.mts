@@ -2,7 +2,7 @@
 // prompts and tool loadouts — the oracle behind agent/transcript_test.go.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> agent-e4c75a732.json e4c75a732
+//   e.g. ... capture.mts <dir> agent-16292398a.json 16292398a
 //
 // <extraction> holds packages/agent and packages/ai at <sha>
 // (`git archive <sha> packages/agent packages/ai` from the upstream clone), a
@@ -10,8 +10,10 @@
 // packages/agent/node_modules/@earendil-works/pi-ai resolving to
 // packages/ai/src. The npm build 0.85.1 predates upstream 9e05370b2, so these
 // are src captures: re-verify them against the first build that ships it (the
-// BUILD wins). Every scenario but the pending replacement (upstream e4c75a732)
-// captures the same bytes at 9e05370b2.
+// BUILD wins). packages/agent/src is unchanged between 9e05370b2 and
+// 16292398a, so every scenario captures the same bytes at either sha; the
+// pending-replacement scenario e4c75a732 added went away with `replace` itself
+// (upstream 16292398a).
 //
 // Each scenario is the fixture of a packages/agent/test case at the sha
 // (agent.test.ts, agent-loop.test.ts) or a direct probe of agent-loop.ts's
@@ -254,44 +256,6 @@ const out: Record<string, unknown> = { sha, now: NOW };
 	out.rewritesPendingDeclarations = {
 		system: systemJSON(agent.state.messages),
 		currentTools: getCurrentSystemMessage(agent.state.messages)?.toolsAdded?.map((tool: any) => tool.name),
-	};
-}
-
-// A pending replacement (upstream e4c75a732) replays from nothing, so the delta
-// it carries is the full executable set even though the committed transcript
-// already declares every tool; its own tool fields are intent and are
-// replaced, and replace keeps its slot ahead of timestamp. A pending
-// replacement with sections, and one leaving the loadout empty, likewise.
-{
-	const agent = new Agent({
-		initialState: { systemPrompt: "You are helpful.", tools: [echoTool(), createTool("second")] },
-		streamFn: () => reply(assistant([{ type: "text", text: "done" }])),
-	});
-	await agent.prompt("one");
-	await agent.prompt([
-		{ role: "system", content: "Exact prompt.", replace: true, timestamp: 1 },
-		{ role: "user", content: "two", timestamp: 2 },
-	]);
-	await agent.prompt([
-		{
-			role: "system",
-			content: "",
-			sections: { preamble: "You are pi." },
-			toolsAdded: [toToolDeclaration(createTool("ghost"))],
-			replace: true,
-			timestamp: 3,
-		},
-		{ role: "user", content: "three", timestamp: 4 },
-	]);
-	agent.state.tools = [];
-	await agent.prompt([
-		{ role: "system", content: "Bare.", replace: true, timestamp: 5 },
-		{ role: "user", content: "four", timestamp: 6 },
-	]);
-	out.pendingReplacementDeclaresTheFullToolSet = {
-		roles: roles(agent.state.messages),
-		system: systemJSON(agent.state.messages),
-		systemPrompt: agent.state.systemPrompt,
 	};
 }
 

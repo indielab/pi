@@ -462,8 +462,59 @@ func NewSession(opts SessionOptions) *Session {
 	sess.Agent = a
 	if opts.Compaction != nil && opts.Compaction.Enabled {
 		sess.EnableCompaction(*opts.Compaction)
+	} else {
+		a.TransformContext = sess.withForcedPromptProjection(nil)
 	}
 	return sess
+}
+
+// withForcedPromptProjection wraps a per-request transform with pi's
+// _installAgentForcedPromptProjection (upstream 16292398a), which always runs
+// last — pi installs it over whatever transformContext is already there, after
+// the `context` extension handlers.
+//
+// A before_agent_start handler that forces the whole prompt needs that exact
+// text at the head of the REQUEST; a mid-conversation system message would
+// leave the original prompt in place, and recording the forced text would lose
+// the structured sections the transcript is built from. So the forced text is
+// projected onto the request instead: the system messages collapse into one
+// head holding it and the tools the transcript currently declares, keeping the
+// head's timestamp so a stable forced prompt is a stable cache prefix.
+//
+// The port's public options carry no forced prompt — pi's comes from a
+// before_agent_start handler, which is Scope entry 12 — so today only
+// systemPromptOptions.ForceSystemPrompt reaches this, as it does
+// BuildSystemPromptState.
+func (s *Session) withForcedPromptProjection(
+	inner func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage,
+) func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage {
+	return func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage {
+		transformed := messages
+		if inner != nil {
+			transformed = inner(ctx, messages)
+		}
+		forced := s.systemPromptOptions.ForceSystemPrompt
+		if forced == nil {
+			return transformed
+		}
+		timestamp := nowMillisCoding()
+		head := ai.NewSystemText(*forced, timestamp)
+		if current, found := ai.GetCurrentSystemMessage(transformed); found {
+			// pi spreads `toolsAdded` only when the replayed head has one, so a
+			// transcript that declares no tools yields a head without the key.
+			head.ToolsAdded = current.ToolsAdded
+			head.Timestamp = current.Timestamp
+		}
+		out := make([]agent.AgentMessage, 0, len(transformed)+1)
+		out = append(out, head)
+		for _, message := range transformed {
+			if _, isSystem := message.(ai.SystemMessage); isSystem {
+				continue
+			}
+			out = append(out, message)
+		}
+		return out
+	}
 }
 
 // withToolResultImageNormalization wraps the caller's AfterToolCall hook so that
@@ -553,50 +604,34 @@ func (s *Session) Run(ctx context.Context, prompt string, images ...ai.ImageCont
 }
 
 // systemPromptUpdate is pi's _preparePromptAndToolLoadout for the session's
-// fixed loadout: the prompt state built from the session's options is compared
-// with the one messages replay, and a change becomes a
+// fixed loadout: the sections built from the session's options are diffed
+// against the ones messages replay, and a change becomes a
 // {role: "system", content: "", sections: patch} message; it reports false
 // when the prompt is unchanged. The agent loop attaches any tool declarations
 // to the message.
 //
-// A prompt without sections is opaque and cannot be patched (upstream
-// e4c75a732): when the replayed prompt has none (a transcript whose system
-// messages carry only content or tools, such as the tools-only declaration a
-// continued run makes before its prompt is declared) or the desired prompt is
-// forced, the update is a {role: "system", content, sections?, replace: true}
-// message holding the whole desired state, and the loop gives it the full tool
-// set, since replay through a replacement starts empty. Staying on the same
-// forced text declares nothing. The port's options carry no forced prompt
-// (pi's comes from a before_agent_start handler, Scope entry 12), so the
-// session reaches only the opaque-transcript half today.
+// A forced prompt plays no part here (upstream 16292398a): it never reaches the
+// transcript, which keeps recording the structured sections. The request gets
+// the forced text from forcedPromptProjection instead.
 func (s *Session) systemPromptUpdate(messages []agent.AgentMessage) (ai.SystemMessage, bool, error) {
-	desired, err := BuildSystemPromptState(s.systemPromptOptions)
+	sections, err := BuildSystemPromptSections(s.systemPromptOptions)
 	if err != nil {
 		return ai.SystemMessage{}, false, err
 	}
-	current, found := ai.GetCurrentSystemMessage(messages)
-	currentIsOpaque := found && current.Sections == nil
-	if desired.Sections == nil || currentIsOpaque {
-		unchanged := currentIsOpaque && desired.Sections == nil && ai.ContentText(current.Content) == desired.Content
-		if unchanged {
-			return ai.SystemMessage{}, false, nil
-		}
-		replacement := ai.NewSystemText(desired.Content, nowMillisCoding())
-		replacement.Sections = desired.Sections
-		replacement.Replace = true
-		return replacement, true, nil
+	var previous ai.SystemSections
+	if current, found := ai.GetCurrentSystemMessage(messages); found {
+		previous = current.Sections
 	}
-	patch, changed := DiffSystemPromptSections(current.Sections, desired.Sections)
+	patch, changed := DiffSystemPromptSections(previous, sections)
 	if !changed {
 		return ai.SystemMessage{}, false, nil
 	}
 	return ai.SystemMessage{Sections: patch, Timestamp: nowMillisCoding()}, true, nil
 }
 
-// declareSystemPrompt puts the system prompt update — the sections the model
-// does not have yet, or a replacement — ahead of prompts (pi
-// AgentSession.prompt → _preparePromptAndToolLoadout). An unchanged prompt adds
-// nothing.
+// declareSystemPrompt puts the system prompt sections the model does not have
+// yet ahead of prompts (pi AgentSession.prompt → _preparePromptAndToolLoadout).
+// An unchanged prompt adds nothing.
 func (s *Session) declareSystemPrompt(prompts []agent.AgentMessage) ([]agent.AgentMessage, error) {
 	update, ok, err := s.systemPromptUpdate(s.Agent.State().Messages)
 	if err != nil || !ok {
@@ -613,9 +648,7 @@ func (s *Session) declareSystemPrompt(prompts []agent.AgentMessage) ([]agent.Age
 // thinking level, so a mid-run model or thinking-level change reaches the next
 // request. A transcript without a system message that Continue resumes is
 // declared from its second request, as in pi, whose agent.continue() declares
-// nothing up front: by then the first request's tools-only declaration makes
-// the replayed prompt opaque, so the declaration is a replacement.
-// Compaction stays in the per-request TransformContext
+// nothing up front. Compaction stays in the per-request TransformContext
 // (docs/UPSTREAM.md D4) instead of running here first.
 //
 // The session's options carry no custom sections, the only input

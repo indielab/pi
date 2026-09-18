@@ -342,13 +342,14 @@ func jsonKeys(t *testing.T, raw json.RawMessage) []string {
 	return keys
 }
 
-// system-prompt-updates.test.ts at e4c75a732, 'a forced prompt replaces the
-// prompt and tool state and is replayed as the leading prompt'. The port has no
+// system-prompt-updates.test.ts at 16292398a, 'a forced prompt is sent as the
+// leading prompt for the run and never recorded'. The port has no
 // before_agent_start (Scope entry 12), so prompts two and three set the options
 // a handler returning that systemPrompt leaves, for their run only, as pi's run
-// options are. The recorder writes each replacement in its producer's key
-// order: role, content, sections, replace, timestamp, then the loop's tools.
-func TestSessionForcedPromptReplacesThePromptAndToolState(t *testing.T) {
+// options are, and prompt three also adds the section pi's handler adds. Every
+// recorded system message keeps the ordinary producer key order — a forced
+// prompt writes none of its own.
+func TestSessionForcedPromptIsSentButNeverRecorded(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
 	defer reg.Unregister()
@@ -376,6 +377,16 @@ func TestSessionForcedPromptReplacesThePromptAndToolState(t *testing.T) {
 		if turn == 1 || turn == 2 {
 			sess.systemPromptOptions.ForceSystemPrompt = &force
 		}
+		// pi's handler adds a section on the third turn, so the transcript has
+		// something to record WHILE the prompt is forced.
+		if turn == 2 {
+			plan := "Plan only."
+			sess.systemPromptOptions.Sections = ai.SystemSections{}
+			sess.systemPromptOptions.Sections.Set("plan_mode", &plan)
+		}
+		if turn == 3 {
+			sess.systemPromptOptions.Sections = nil
+		}
 		_, err := sess.Run(context.Background(), text)
 		sess.systemPromptOptions.ForceSystemPrompt = nil
 		if err != nil {
@@ -394,32 +405,32 @@ func TestSessionForcedPromptReplacesThePromptAndToolState(t *testing.T) {
 		}
 		counts[i] = len(systemMessages[i])
 	}
-	if want := []int{1, 2, 2, 3}; !reflect.DeepEqual(counts, want) {
+	// Forced turns collapse to one leading message; the unforced fourth turn
+	// passes the recorded head and both plan_mode patches through.
+	if want := []int{1, 1, 1, 3}; !reflect.DeepEqual(counts, want) {
 		t.Fatalf("system messages per request = %v, want %v", counts, want)
 	}
 
 	declared := systemMessages[0][0]
 	forced := systemMessages[1][len(systemMessages[1])-1]
-	if content, ok := forced.StringContent(); !ok || content != force || !forced.Replace || forced.Sections != nil || forced.ToolsRemoved != nil ||
-		jsonText(t, forced.ToolsAdded) != jsonText(t, declared.ToolsAdded) {
-		t.Fatalf("forced message = %s, want {role: system, content: %q, toolsAdded: the declared tools, replace: true}", jsonText(t, forced), force)
+	if content, ok := forced.StringContent(); !ok || content != force || forced.Sections != nil || forced.ToolsRemoved != nil ||
+		jsonText(t, forced.ToolsAdded) != jsonText(t, declared.ToolsAdded) || forced.Timestamp != declared.Timestamp {
+		t.Fatalf("forced message = %s, want {role: system, content: %q, toolsAdded: the declared tools, timestamp: the head's}", jsonText(t, forced), force)
+	}
+	// The third request forces the same text over a transcript that has grown a
+	// section patch: the projection still yields exactly the same head.
+	if got := systemMessages[2][len(systemMessages[2])-1]; jsonText(t, got) != jsonText(t, forced) {
+		t.Fatalf("third request head = %s, want the forced message %s", jsonText(t, got), jsonText(t, forced))
 	}
 	if got := ai.GetCurrentSystemPrompt(requests[2].Messages); got != force {
 		t.Fatalf("replayed prompt of request three = %q, want %q", got, force)
 	}
-	// Anthropic-style providers keep later system messages in place, but a
-	// replacement collapses.
-	if got, want := messageRoles(ai.ResolveTranscript(requests[2], true).Messages), []string{"system", "user", "assistant", "user", "assistant", "user"}; !reflect.DeepEqual(got, want) {
-		t.Fatalf("resolved roles = %v, want %v", got, want)
+	// The projection leaves one system message, so there is nothing for a
+	// native provider to keep in place.
+	if got, want := messageRoles(requests[2].Messages), []string{"system", "user", "assistant", "user", "assistant", "user"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("request roles = %v, want %v", got, want)
 	}
 
-	restored := systemMessages[3][len(systemMessages[3])-1]
-	if content, _ := restored.StringContent(); content != "" || !restored.Replace || jsonText(t, restored.Sections) != jsonText(t, declared.Sections) {
-		t.Fatalf("restored message = %s, want content \"\", replace true and the declared sections", jsonText(t, restored))
-	}
-	if jsonText(t, restored.ToolsAdded) != jsonText(t, forced.ToolsAdded) {
-		t.Fatalf("restored toolsAdded = %s, want the forced message's %s", jsonText(t, restored.ToolsAdded), jsonText(t, forced.ToolsAdded))
-	}
 	prompt, err := sess.SystemPrompt()
 	if err != nil {
 		t.Fatal(err)
@@ -428,27 +439,45 @@ func TestSessionForcedPromptReplacesThePromptAndToolState(t *testing.T) {
 		t.Fatalf("replayed prompt drift from SystemPrompt():\n--- replayed ---\n%s\n--- SystemPrompt ---\n%s", got, prompt)
 	}
 
-	var recorded [][]string
+	// The transcript records only the structured sections, never the forced text.
 	messages, err := LoadSessionMessages(rec.Path())
 	if err != nil {
 		t.Fatal(err)
 	}
+	var recordedSections []string
+	var recordedKeys [][]string
 	for _, message := range messages {
-		if system, ok := message.(ai.SystemMessage); ok {
-			raw, err := json.Marshal(system)
-			if err != nil {
-				t.Fatal(err)
-			}
-			recorded = append(recorded, jsonKeys(t, raw))
+		system, ok := message.(ai.SystemMessage)
+		if !ok {
+			continue
 		}
+		recordedSections = append(recordedSections, jsonText(t, system.Sections))
+		raw, err := json.Marshal(system)
+		if err != nil {
+			t.Fatal(err)
+		}
+		recordedKeys = append(recordedKeys, jsonKeys(t, raw))
 	}
-	want := [][]string{
+	planAdded := ai.SystemSections{}
+	planText := "<plan_mode>\nPlan only.\n</plan_mode>"
+	planAdded.Set("plan_mode", &planText)
+	planRemoved := ai.SystemSections{}
+	planRemoved.Set("plan_mode", nil)
+	wantSections := []string{
+		jsonText(t, declared.Sections),
+		jsonText(t, planAdded),
+		jsonText(t, planRemoved),
+	}
+	if !reflect.DeepEqual(recordedSections, wantSections) {
+		t.Fatalf("recorded sections = %v, want %v", recordedSections, wantSections)
+	}
+	wantKeys := [][]string{
 		{"role", "content", "sections", "timestamp", "toolsAdded"},
-		{"role", "content", "replace", "timestamp", "toolsAdded"},
-		{"role", "content", "sections", "replace", "timestamp", "toolsAdded"},
+		{"role", "content", "sections", "timestamp"},
+		{"role", "content", "sections", "timestamp"},
 	}
-	if !reflect.DeepEqual(recorded, want) {
-		t.Fatalf("recorded system message keys = %v, want %v", recorded, want)
+	if !reflect.DeepEqual(recordedKeys, wantKeys) {
+		t.Fatalf("recorded system message keys = %v, want %v", recordedKeys, wantKeys)
 	}
 	if got := ai.GetCurrentSystemPrompt(messages); got != prompt {
 		t.Fatalf("reloaded prompt drift:\n--- got ---\n%s\n--- want ---\n%s", got, prompt)

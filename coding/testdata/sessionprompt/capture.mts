@@ -3,7 +3,7 @@
 // coding/session_next_turn_test.go.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> sessionprompt-e4c75a732.json e4c75a732
+//   e.g. ... capture.mts <dir> sessionprompt-16292398a.json 16292398a
 //
 // <extraction> holds packages/ai, packages/agent and packages/coding-agent at
 // <sha> (`git archive <sha> packages/ai packages/agent packages/coding-agent`
@@ -19,7 +19,8 @@
 // (theme, export-html, tools/index), so the script runs the REAL upstream Agent
 // (packages/agent/src/agent.ts) under the AgentSession members that decide the
 // declaration, taken verbatim from core/agent-session.ts at <sha> and
-// type-stripped: _installAgentNextTurnRefresh, _preparePromptAndToolLoadout,
+// type-stripped: _installAgentNextTurnRefresh,
+// _installAgentForcedPromptProjection, _preparePromptAndToolLoadout,
 // _normalizePromptGuidelines, getActiveToolNames and the systemPrompt getter.
 // Transcribed around them (each marked below): sdk.ts's Agent with no prompt and
 // no tools, _buildRuntime's loadout for the default tools, prompt()'s declaration
@@ -37,8 +38,13 @@
 // checks the replayed prompt against Session.SystemPrompt.
 //
 // A message's projection is its role, and for a system message its content
-// text when non-empty, its section names, its declared tool names and its
-// replace flag when set.
+// text when non-empty, its section names and its declared tool names.
+//
+// Since upstream 16292398a a forced prompt never reaches the transcript: it is
+// projected onto the REQUEST by _installAgentForcedPromptProjection, which the
+// script installs as the constructor does. So a forced step's requests show one
+// collapsed system head holding the forced text, while the transcript keeps
+// recording only the structured sections.
 //
 // Per request the script records the messages' projection and the state the
 // refresh hands the loop: the model, the reasoning level and the tools the
@@ -98,6 +104,7 @@ function member(signature: string): string {
 
 const members = [
 	"private _installAgentNextTurnRefresh(): void {",
+	"private _installAgentForcedPromptProjection(): void {",
 	"private _preparePromptAndToolLoadout(",
 	"private _normalizePromptGuidelines(",
 	"getActiveToolNames(): string[] {",
@@ -117,6 +124,8 @@ const AgentSessionMembers = new Function(
 	systemPrompt.buildSystemPrompt,
 	systemPrompt.buildSystemPromptSections,
 	// Added by upstream e4c75a732; undefined at earlier shas, whose members do not use it.
+	// 16292398a's _preparePromptAndToolLoadout went back to buildSystemPromptSections;
+	// the export stays (buildSystemPrompt renders through it).
 	systemPrompt.buildSystemPromptState,
 	systemPrompt.diffSystemPromptSections,
 	getCurrentSystemMessage,
@@ -160,7 +169,6 @@ function project(message: any) {
 		sections: Object.keys(message.sections ?? {}),
 		...(message.toolsAdded ? { toolsAdded: message.toolsAdded.map((tool: any) => tool.name) } : {}),
 		...(message.toolsRemoved ? { toolsRemoved: message.toolsRemoved.map((tool: any) => tool.name) } : {}),
-		...(message.replace !== undefined ? { replace: message.replace } : {}),
 	};
 }
 
@@ -223,8 +231,10 @@ function createSession(requests: unknown[][], requestState: unknown[], replies: 
 		toolSnippets,
 		toolGuidelines,
 	});
-	// The constructor installs the next-turn refresh.
+	// The constructor installs the next-turn refresh, then the forced-prompt
+	// projection over it (upstream 16292398a).
 	session._installAgentNextTurnRefresh();
+	session._installAgentForcedPromptProjection();
 	return session;
 }
 
@@ -328,12 +338,13 @@ const scenarios: Array<{ name: string; loadoutChange?: boolean; steps: Step[] }>
 		],
 	},
 	{
-		// system-prompt-updates.test.ts 'a forced prompt replaces the prompt and
-		// tool state and is replayed as the leading prompt' (upstream e4c75a732):
-		// prompts two and three are forced. Entering the forced prompt replaces
-		// the declared sections (the loop fills in the full tool set), staying in
-		// it declares nothing, and leaving it replaces again with the sections.
-		name: "forced-prompt-replaces-and-restores",
+		// system-prompt-updates.test.ts 'a forced prompt is sent as the leading
+		// prompt for the run and never recorded' (upstream 16292398a): prompts two
+		// and three are forced. Each forced request collapses to one system head
+		// holding the forced text and the transcript's current tools; the
+		// transcript records nothing for it, so leaving the forced prompt needs no
+		// restoring declaration.
+		name: "forced-prompt-projects-and-is-not-recorded",
 		steps: [
 			{ kind: "prompt", text: "one", replies: [{ text: "one" }] },
 			{ kind: "prompt", text: "two", force: "Exact prompt.", replies: [{ text: "two" }] },
@@ -342,8 +353,8 @@ const scenarios: Array<{ name: string; loadoutChange?: boolean; steps: Step[] }>
 		],
 	},
 	{
-		// A forced prompt changing to another forced prompt replaces again; within
-		// a forced run the refresh before a tool turn's follow-up finds it unchanged.
+		// A forced prompt changing to another forced prompt projects the new text;
+		// within a forced run every request of the turn carries the same head.
 		name: "forced-prompt-changes-and-refreshes",
 		steps: [
 			{ kind: "prompt", text: "one", force: "Prompt A.", replies: [readCall, { text: "done" }] },
@@ -352,8 +363,8 @@ const scenarios: Array<{ name: string; loadoutChange?: boolean; steps: Step[] }>
 	},
 	{
 		// A transcript whose replayed prompt has no sections (an Agent seeded with
-		// a plain systemPrompt) is opaque: the first prompt replaces it with the
-		// sections and the full tool set instead of patching sections onto it.
+		// a plain systemPrompt): the first prompt patches the full section set onto
+		// it, and the content it already carries stays in the replay.
 		name: "prompt-over-an-opaque-system-message",
 		steps: [
 			{

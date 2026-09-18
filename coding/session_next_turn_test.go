@@ -17,14 +17,14 @@ import (
 // prompt() puts a sections patch ahead of the user message, and the next-turn
 // refresh its constructor installs on the agent (_installAgentNextTurnRefresh)
 // re-diffs before every later turn of a run, prompt's and continue's alike.
-// When the prompt the model has is opaque (it replays with no sections) or the
-// desired one is (a forced prompt), the declaration is a replacement instead of
-// a patch (upstream e4c75a732). testdata/sessionprompt/capture.mts runs the
-// real upstream Agent under AgentSession's own members at e4c75a732; these
-// tests replay the same steps through a Session and compare what each request
-// carries.
+// A forced prompt is never declared into the transcript: it is projected onto
+// the request by the forced-prompt projection the constructor installs, so the
+// transcript keeps recording the structured sections (upstream 16292398a).
+// testdata/sessionprompt/capture.mts runs the real upstream Agent under
+// AgentSession's own members at 16292398a; these tests replay the same steps
+// through a Session and compare what each request carries.
 
-const sessionPromptCaptureFile = "testdata/sessionprompt/sessionprompt-e4c75a732.json"
+const sessionPromptCaptureFile = "testdata/sessionprompt/sessionprompt-16292398a.json"
 
 type sessionPromptThen struct {
 	Model         string   `json:"model"`
@@ -52,15 +52,14 @@ type sessionPromptStep struct {
 }
 
 // promptProjection is a message as the capture projects it: the role, and for
-// a system message its content text when non-empty, its section names, its
-// declared tool names and its replace flag when set.
+// a system message its content text when non-empty, its section names and its
+// declared tool names.
 type promptProjection struct {
 	Role         string   `json:"role"`
 	Content      string   `json:"content,omitempty"`
 	Sections     []string `json:"sections,omitempty"`
 	ToolsAdded   []string `json:"toolsAdded,omitempty"`
 	ToolsRemoved []string `json:"toolsRemoved,omitempty"`
-	Replace      bool     `json:"replace,omitempty"`
 }
 
 // requestState is what the refresh hands the loop, as the provider sees it.
@@ -140,7 +139,6 @@ func projectPromptMessages[M agent.AgentMessage](messages []M) []promptProjectio
 			Role:     "system",
 			Content:  ai.ContentText(system.Content),
 			Sections: sectionNames(system.Sections),
-			Replace:  system.Replace,
 		}
 		if system.ToolsAdded != nil {
 			projection.ToolsAdded = toolNames(system.ToolsAdded)

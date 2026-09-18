@@ -1,5 +1,5 @@
 {
-	"sha": "e4c75a732",
+	"sha": "16292398a",
 	"now": 1700000000000,
 	"defaultState": {
 		"messages": "[]",
@@ -80,29 +80,6 @@
 		"currentTools": [
 			"first"
 		]
-	},
-	"pendingReplacementDeclaresTheFullToolSet": {
-		"roles": [
-			"system",
-			"user",
-			"assistant",
-			"system",
-			"user",
-			"assistant",
-			"system",
-			"user",
-			"assistant",
-			"system",
-			"user",
-			"assistant"
-		],
-		"system": [
-			"{\"role\":\"system\",\"content\":\"You are helpful.\",\"toolsAdded\":[{\"name\":\"echo\",\"description\":\"Echo input\",\"parameters\":{\"type\":\"object\",\"properties\":{}}},{\"name\":\"second\",\"description\":\"second tool\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}],\"timestamp\":0}",
-			"{\"role\":\"system\",\"content\":\"Exact prompt.\",\"replace\":true,\"timestamp\":1,\"toolsAdded\":[{\"name\":\"echo\",\"description\":\"Echo input\",\"parameters\":{\"type\":\"object\",\"properties\":{}}},{\"name\":\"second\",\"description\":\"second tool\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}]}",
-			"{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"You are pi.\"},\"replace\":true,\"timestamp\":3,\"toolsAdded\":[{\"name\":\"echo\",\"description\":\"Echo input\",\"parameters\":{\"type\":\"object\",\"properties\":{}}},{\"name\":\"second\",\"description\":\"second tool\",\"parameters\":{\"type\":\"object\",\"properties\":{}}}]}",
-			"{\"role\":\"system\",\"content\":\"Bare.\",\"replace\":true,\"timestamp\":5}"
-		],
-		"systemPrompt": "Bare."
 	},
 	"pendingDeclaresTheDelta": {
 		"system": [

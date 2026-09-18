@@ -18,7 +18,7 @@ import (
 // and records what they return. npm 0.85.1 predates the sectioned prompt, so
 // these are src captures: re-verify them against the first build that ships it.
 
-const systemPromptCaptureFile = "testdata/systemprompt/systemprompt-e4c75a732.json"
+const systemPromptCaptureFile = "testdata/systemprompt/systemprompt-16292398a.json"
 
 // sectionPairs is a JS object written as [name, value] pairs, so its key order
 // survives JSON.
