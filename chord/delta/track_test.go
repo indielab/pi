@@ -1604,3 +1604,384 @@ func TestTrackEmptySliceIdentity(t *testing.T) {
 	}
 	wantOps(t, tr.Flush(), `[]`)
 }
+
+// ─── references held across structural mutation ──────────────────────────────
+//
+// delta.test.ts "references held across structural mutation" and "one object
+// at several positions". Goldens from pi under node at c4289b20e.
+
+// held runs one mutation window and returns the batch, the replica it builds
+// and the producer's own value, which must agree.
+func held(t *testing.T, initial string, mutate func(s State)) (ops []Op, replica, live any) {
+	t.Helper()
+	tr := tracked(t, initial)
+	mutate(tr.State())
+	ops = tr.Flush()
+	return ops, replay(t, initial, ops), tr.Target()
+}
+
+// A cursor must not address its old index after the array is renumbered.
+func TestTrackRenumbersAHeldElement(t *testing.T) {
+	initial := `{"xs": [{"k": "v0"}, {"k": "v1"}, {"k": "v2"}, {"k": "v3"}, {"k": "v4"}]}`
+	byKey := func(a, b any) int {
+		if a.(map[string]any)["k"].(string) < b.(map[string]any)["k"].(string) {
+			return 1
+		}
+		return -1
+	}
+	mutators := []struct {
+		name   string
+		mutate func(xs State)
+	}{
+		{"push", func(xs State) { xs.Push(map[string]any{"k": "n"}) }},
+		{"pop", func(xs State) { xs.Pop() }},
+		{"shift", func(xs State) { xs.Shift() }},
+		{"unshift", func(xs State) { xs.Unshift(map[string]any{"k": "n"}) }},
+		{"splice insert", func(xs State) { xs.Splice(2, 0, map[string]any{"k": "n"}) }},
+		{"splice remove", func(xs State) { xs.Splice(2, 1) }},
+		{"splice replace", func(xs State) { xs.Splice(2, 1, map[string]any{"k": "n"}) }},
+		{"splice remove two", func(xs State) { xs.Splice(1, 2) }},
+		{"sort", func(xs State) { xs.Sort(byKey) }},
+		{"reverse", func(xs State) { xs.Reverse() }},
+		{"length truncate", func(xs State) { xs.SetLen(3) }},
+		{"length grow", func(xs State) { xs.SetLen(7) }},
+	}
+	for _, tc := range mutators {
+		for _, hold := range []int{0, 2, 4} {
+			t.Run(fmt.Sprintf("%s (held %d)", tc.name, hold), func(t *testing.T) {
+				_, replica, live := held(t, initial, func(s State) {
+					element := s.At("xs").At(hold)
+					tc.mutate(s.At("xs"))
+					element.Set("k", "EDITED")
+				})
+				wantJSON(t, replica, live)
+			})
+		}
+	}
+}
+
+// The exact batches pi emits for four of those windows: the renumbered index
+// is on the wire, not only in the replica.
+func TestTrackRenumberedPathsAreOnTheWire(t *testing.T) {
+	initial := `{"xs": [{"k": "v0"}, {"k": "v1"}, {"k": "v2"}, {"k": "v3"}, {"k": "v4"}]}`
+	cases := []struct {
+		name   string
+		hold   int
+		mutate func(xs State)
+		want   string
+	}{
+		{"unshift moves index 2 to 3", 2, func(xs State) { xs.Unshift(map[string]any{"k": "n"}) },
+			`[["p", ["xs"], 0, 0, [{"k": "n"}]], ["s", ["xs", 3, "k"], "EDITED"]]`},
+		{"shift moves index 4 to 3", 4, func(xs State) { xs.Shift() },
+			`[["p", ["xs"], 0, 1, []], ["s", ["xs", 3, "k"], "EDITED"]]`},
+		{"splice remove two moves index 4 to 2", 4, func(xs State) { xs.Splice(1, 2) },
+			`[["p", ["xs"], 1, 2, []], ["s", ["xs", 2, "k"], "EDITED"]]`},
+		{"a truncated-away element records nothing", 4, func(xs State) { xs.SetLen(3) },
+			`[["p", ["xs"], 3, 2, []]]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ops, replica, live := held(t, initial, func(s State) {
+				element := s.At("xs").At(tc.hold)
+				tc.mutate(s.At("xs"))
+				element.Set("k", "EDITED")
+			})
+			wantOps(t, ops, tc.want)
+			wantJSON(t, replica, live)
+		})
+	}
+}
+
+// Renumbering one element corrects every descendant of it, because a cursor
+// walks its path from its cell rather than remembering one.
+func TestTrackRenumbersAHeldNestedObjectAndArray(t *testing.T) {
+	initial := `{"xs": [{"k": "a", "obj": {"deep": 1}, "arr": [1]},
+	                   {"k": "b", "obj": {"deep": 2}, "arr": [2]}]}`
+	ops, replica, live := held(t, initial, func(s State) {
+		obj := s.At("xs").At(1).At("obj")
+		arr := s.At("xs").At(1).At("arr")
+		s.At("xs").Unshift(tree(t, `{"k": "n", "obj": {"deep": 0}, "arr": []}`))
+		obj.Set("deep", float64(99))
+		arr.Push(float64(99))
+	})
+	wantOps(t, ops, `[
+		["p", ["xs"], 0, 0, [{"k": "n", "obj": {"deep": 0}, "arr": []}]],
+		["s", ["xs", 2, "obj", "deep"], 99],
+		["p", ["xs", 2, "arr"], 1, 0, [99]]
+	]`)
+	wantJSON(t, replica, live)
+}
+
+// sort/reverse/fill/copyWithin permute rather than shift, so a held child is
+// relocated by identity. Here it is a nested array, whose Go header changed
+// when it was pushed to.
+func TestTrackRelocatesAHeldChildAcrossASort(t *testing.T) {
+	initial := `{"xs": [{"k": "b", "arr": [1]}, {"k": "a", "arr": [2]}]}`
+	ops, replica, live := held(t, initial, func(s State) {
+		arr := s.At("xs").At(0).At("arr")
+		s.At("xs").Sort(func(a, b any) int {
+			if a.(map[string]any)["k"].(string) < b.(map[string]any)["k"].(string) {
+				return -1
+			}
+			return 1
+		})
+		arr.Push(float64(9))
+	})
+	wantOps(t, ops, `[["s", ["xs"], [{"k": "a", "arr": [2]}, {"k": "b", "arr": [1, 9]}]]]`)
+	wantJSON(t, replica, live)
+}
+
+// A held ARRAY re-headers when it is appended to, which a JavaScript array
+// never does. The position must remember the current header, or the identity
+// relocation a permuting mutator performs would not find it.
+func TestTrackRelocatesAHeldArrayThatReHeadered(t *testing.T) {
+	initial := `{"xs": [[1], [2]]}`
+	cases := []struct {
+		name   string
+		mutate func(xs State)
+		want   string
+	}{
+		{"reverse relocates by identity", func(xs State) { xs.Reverse() },
+			`[["s", ["xs"], [[2], [1, 8, 9]]]]`},
+		{"unshift shifts by one", func(xs State) { xs.Unshift(tree(t, `[0]`)) },
+			`[["p", ["xs", 0], 1, 0, [8]], ["p", ["xs"], 0, 0, [[0]]], ["p", ["xs", 1], 2, 0, [9]]]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ops, replica, live := held(t, initial, func(s State) {
+				first := s.At("xs").At(0)
+				first.Push(float64(8))
+				tc.mutate(s.At("xs"))
+				first.Push(float64(9))
+			})
+			wantOps(t, ops, tc.want)
+			wantJSON(t, replica, live)
+		})
+	}
+}
+
+// A write through an element that left the document mutates it and records
+// nothing, as a plain Go write does.
+func TestTrackDropsWritesThroughADetachedElement(t *testing.T) {
+	initial := `{"xs": [{"k": "v0"}, {"k": "v1"}, {"k": "v2"}]}`
+	ops, replica, live := held(t, initial, func(s State) {
+		element := s.At("xs").At(1)
+		s.At("xs").Splice(1, 1)
+		element.Set("k", "EDITED")
+		if got := element.Get("k"); got != "EDITED" {
+			t.Errorf("the detached element was not mutated: %v", got)
+		}
+	})
+	wantOps(t, ops, `[["p", ["xs"], 1, 1, []]]`)
+	wantJSON(t, replica, live)
+}
+
+// The array methods go quiet the same way.
+func TestTrackDropsArrayMutatorsOnADetachedElement(t *testing.T) {
+	initial := `{"xs": [{"k": "v", "arr": [1]}]}`
+	ops, replica, live := held(t, initial, func(s State) {
+		arr := s.At("xs").At(0).At("arr")
+		s.At("xs").Splice(0, 1)
+		arr.Push(float64(9))
+	})
+	wantOps(t, ops, `[["s", ["xs"], []]]`)
+	wantJSON(t, replica, live)
+}
+
+// Reinserting a removed element gives it a position again, and the payload
+// carries the writes it took while it had none.
+func TestTrackRecordsAgainWhenARemovedElementIsReinserted(t *testing.T) {
+	initial := `{"xs": [{"k": "v0"}, {"k": "v1"}, {"k": "v2"}]}`
+	ops, replica, live := held(t, initial, func(s State) {
+		element := s.At("xs").At(1)
+		s.At("xs").Splice(1, 1)
+		element.Set("k", "EDITED")
+		s.At("xs").Push(element.Value())
+	})
+	wantOps(t, ops, `[["p", ["xs"], 1, 1, []], ["p", ["xs"], 2, 0, [{"k": "EDITED"}]]]`)
+	wantJSON(t, replica, live)
+}
+
+// ─── one object at several positions ─────────────────────────────────────────
+
+// A tracked object assigned elsewhere occupies both positions, and a write
+// through it publishes each.
+func TestTrackEmitsAnOpPerPosition(t *testing.T) {
+	initial := `{"xs": [{"k": "v0"}, {"k": "v1"}], "a": null}`
+	ops, replica, live := held(t, initial, func(s State) {
+		element := s.At("xs").At(1)
+		s.Set("a", element.Value())
+		element.Set("k", "EDITED")
+	})
+	wantOps(t, ops, `[["s", ["a"], {"k": "EDITED"}], ["s", ["xs", 1, "k"], "EDITED"]]`)
+	wantJSON(t, replica, live)
+}
+
+// A write through the second position publishes the same batch: the ops are
+// the positions', not the cursor's. The batch is built from the first live
+// position, whichever cursor the producer used.
+func TestTrackEmitsAnOpPerPositionThroughEither(t *testing.T) {
+	initial := `{"xs": [{"k": "v"}], "a": null}`
+	cases := []struct {
+		name   string
+		mutate func(s State)
+		want   string
+	}{
+		{"a string through the alias", func(s State) {
+			s.Set("a", s.At("xs").At(0).Value())
+			s.At("a").Set("k", "E")
+		}, `[["s", ["a"], {"k": "E"}], ["s", ["xs", 0, "k"], "E"]]`},
+		{"a number through the alias", func(s State) {
+			s.Set("a", s.At("xs").At(0).Value())
+			s.At("a").Set("n", float64(2))
+		}, `[["s", ["a"], {"k": "v", "n": 2}], ["s", ["xs", 0, "n"], 2]]`},
+		{"a number through the primary", func(s State) {
+			element := s.At("xs").At(0)
+			s.Set("a", element.Value())
+			element.Set("n", float64(2))
+		}, `[["s", ["a"], {"k": "v", "n": 2}], ["s", ["xs", 0, "n"], 2]]`},
+		{"a delete through the alias", func(s State) {
+			s.Set("a", s.At("xs").At(0).Value())
+			s.At("a").Set("d", float64(1))
+			s.At("a").Delete("d")
+		}, `[["s", ["a"], {"k": "v"}], ["d", ["xs", 0, "d"]]]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ops, replica, live := held(t, initial, tc.mutate)
+			wantOps(t, ops, tc.want)
+			wantJSON(t, replica, live)
+		})
+	}
+}
+
+// CHARACTERIZATION. A position belongs to the container it names, not to its
+// members: a write to a MEMBER of an aliased object is published at that
+// object's primary position only. pi does the same (probed under node), and
+// its README says so — object identity is not replicated, so a replica holds
+// a distinct value at each path. The producer's own tree, where both paths
+// are one object, therefore leads the replica here.
+func TestTrackAliasingIsNotInheritedByMembers(t *testing.T) {
+	initial := `{"xs": [{"k": "v", "arr": [1]}], "a": null}`
+	tr := tracked(t, initial)
+	s := tr.State()
+	s.Set("a", s.At("xs").At(0).Value())
+	s.At("a").At("arr").Push(float64(2))
+	ops := tr.Flush()
+	wantOps(t, ops, `[["s", ["a"], {"k": "v", "arr": [1]}], ["p", ["xs", 0, "arr"], 1, 0, [2]]]`)
+	wantTree(t, replay(t, initial, ops), `{"xs": [{"k": "v", "arr": [1, 2]}], "a": {"k": "v", "arr": [1]}}`)
+	wantTree(t, tr.Target(), `{"xs": [{"k": "v", "arr": [1, 2]}], "a": {"k": "v", "arr": [1, 2]}}`)
+}
+
+// An inserted value that already lives elsewhere gains a position too.
+func TestTrackEmitsAnOpPerPositionAfterAPush(t *testing.T) {
+	initial := `{"xs": [{"k": "v0"}]}`
+	ops, replica, live := held(t, initial, func(s State) {
+		element := s.At("xs").At(0)
+		s.At("xs").Push(element.Value())
+		element.Set("k", "EDITED")
+	})
+	wantOps(t, ops, `[["p", ["xs"], 1, 0, [{"k": "EDITED"}]], ["s", ["xs", 0, "k"], "EDITED"]]`)
+	wantJSON(t, replica, live)
+}
+
+// Removing one position keeps the other.
+func TestTrackKeepsTheSurvivingPosition(t *testing.T) {
+	initial := `{"xs": [{"k": "v0"}, {"k": "v1"}], "a": null}`
+	ops, replica, live := held(t, initial, func(s State) {
+		element := s.At("xs").At(1)
+		s.Set("a", element.Value())
+		s.At("xs").Splice(1, 1)
+		element.Set("k", "EDITED")
+	})
+	wantOps(t, ops, `[["s", ["a"], {"k": "EDITED"}], ["p", ["xs"], 1, 1, []]]`)
+	wantJSON(t, replica, live)
+}
+
+// A string keeps an anchor per position: each one's anchor is the value the
+// replica holds there.
+func TestTrackAnchorsAStringAtEveryPosition(t *testing.T) {
+	initial := `{"xs": [{"k": "ab"}], "a": null}`
+	ops, replica, live := held(t, initial, func(s State) {
+		element := s.At("xs").At(0)
+		s.Set("a", element.Value())
+		concat(element, "k", "cd")
+	})
+	wantOps(t, ops, `[["s", ["a"], {"k": "abcd"}], ["a", ["xs", 0, "k"], "cd"]]`)
+	wantJSON(t, replica, live)
+}
+
+// So does a delete.
+func TestTrackDeletesAtEveryPosition(t *testing.T) {
+	initial := `{"xs": [{"k": "v", "d": 1}], "a": null}`
+	ops, replica, live := held(t, initial, func(s State) {
+		element := s.At("xs").At(0)
+		s.Set("a", element.Value())
+		element.Delete("d")
+	})
+	wantOps(t, ops, `[["s", ["a"], {"k": "v"}], ["d", ["xs", 0, "d"]]]`)
+	wantJSON(t, replica, live)
+}
+
+// Assigning an object back to its own key registers the position it already
+// has; the duplicate must not double the op.
+func TestTrackSelfAssignmentDoesNotDoubleAnOp(t *testing.T) {
+	initial := `{"o": {"a": 1}}`
+	ops, replica, live := held(t, initial, func(s State) {
+		s.Set("o", s.At("o").Value())
+		s.At("o").Set("a", float64(2))
+	})
+	wantOps(t, ops, `[["s", ["o", "a"], 2]]`)
+	wantJSON(t, replica, live)
+}
+
+// The position registry holds its containers, so their addresses can never be
+// reused while it names them — which means it has to shed the ones that left
+// the document. pi needs no counterpart: its registry is a WeakMap.
+func TestTrackPositionRegistryStaysBounded(t *testing.T) {
+	tr := Track(map[string]any{"xs": []any{}})
+	tr.Flush()
+	xs := tr.State().At("xs")
+	for i := range 20_000 {
+		xs.Push(map[string]any{"i": float64(i)})
+		xs.At(0).Set("i", float64(i)) // a cursor at a container that is about to go
+		xs.Shift()
+		if i%1_000 == 0 {
+			tr.Flush()
+		}
+	}
+	tr.Flush()
+	if n := len(tr.core.positions); n > 4_096 {
+		t.Errorf("the registry holds %d containers after 20000 churned elements", n)
+	}
+}
+
+// delta.test.ts "one object at several positions" → "still blocks a reserved
+// key reached after a safe alias". The guard is a property of how the object
+// was reached, not of the object, so warming a safe alias to it does not
+// unblock the reserved path.
+//
+// Upstream's counterpart also refuses a write THROUGH the safe alias, because
+// `state.safe = blocked` stores pi's Proxy in the tree and every later write
+// re-enters the blocked trap (verified under node: t.state.safe.x = 2 throws
+// UnsafePathError). A Go cursor is not a value and Value() hands back the map
+// itself, so the safe path is an ordinary member here — which is what pi's
+// own README prescribes: replace the nearest ordinarily named parent.
+func TestTrackBlocksAReservedKeyReachedAfterASafeAlias(t *testing.T) {
+	initial := `{"safe": null, "holder": {"__proto__": {"x": 1}}}`
+	tr := tracked(t, initial)
+	s := tr.State()
+	blocked := s.At("holder").At("__proto__")
+	s.Set("safe", blocked.Value())
+	if s.At("safe").Get("x") != float64(1) { // warm the unblocked cursor
+		t.Fatal("the safe alias does not read")
+	}
+	err := mustPanic(t, func() { blocked.Set("x", float64(9)) })
+	var unsafe *UnsafePathError
+	if !errors.As(err, &unsafe) {
+		t.Fatalf("got %v, want *UnsafePathError", err)
+	}
+	ops := tr.Flush()
+	wantOps(t, ops, `[["s", ["safe"], {"x": 1}]]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+}

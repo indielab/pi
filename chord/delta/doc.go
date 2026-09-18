@@ -77,11 +77,34 @@
 // — not payload bytes or peak allocation — and trades one full snapshot for
 // an additional recovery point.
 //
+// # State ownership
+//
 // The value handed to Track is tracker-owned, as is anything later assigned
-// into it or inserted into one of its arrays. Mutating such a value outside
-// the cursor bypasses tracking and silently diverges from the replica. Object
-// identity is not replicated: one container reachable at several paths is
-// published at each, and a replica holds a distinct value at each.
+// into it or inserted into one of its arrays. Mutating such a value outside a
+// cursor bypasses tracking and silently diverges from the replica.
+//
+// A cursor retained from tracked state stays correct across operations that
+// renumber it, and across the removal of the element it points at:
+//
+//	held := tracker.State().At("items").At(2)
+//	tracker.State().At("items").Unshift(other)
+//	held.Set("name", "edited") // publishes items[3].name
+//
+//	tracker.State().At("items").Splice(3, 1)
+//	held.Set("name", "gone") // no longer in the tree: mutated, nothing published
+//
+// One object may occupy several positions, and each live position is
+// published — but only positions the tracker has seen, which means a cursor
+// was taken at one of them before the other was assigned:
+//
+//	first := tracker.State().At("items").At(0)
+//	tracker.State().Set("a", first.Value())
+//	first.Set("k", 1) // publishes both a.k and items[0].k
+//
+// Object identity is itself not replicated: a replica holds a distinct value
+// at each path, and a write to a MEMBER of an object at several positions is
+// published at the first of them only. Do not compare or hash replicas by
+// serialized key order either — object key insertion order is not replicated.
 //
 // # Paths and safety
 //

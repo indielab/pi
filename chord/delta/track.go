@@ -79,6 +79,17 @@ type tracker struct {
 	lastAddedSlot *slot
 	hasPending    bool
 	forceBase     bool
+
+	// Where the cursors point. rootCell is the root position; shape is bumped
+	// by every structural mutation and invalidates the cells' cached paths.
+	// positions holds the known positions of each tracked object, and aliased
+	// says whether anything has more than one — until it does, a write has
+	// exactly one path and the lookup is skipped.
+	rootCell        *cell
+	shape           uint64
+	positions       map[uintptr]*positionSet
+	positionsPruned int
+	aliased         bool
 }
 
 // Track starts tracking root, which must be a JSON object (map[string]any)
@@ -94,7 +105,9 @@ func Track[T any](root T, opts ...Option) *Tracker[T] {
 	return &Tracker[T]{core: core}
 }
 
-// adopt takes v as the tracked root, refusing anything but a container.
+// adopt takes v as the tracked root, refusing anything but a container, and
+// starts a fresh position graph over it: the cursors into the old tree address
+// a value that is gone.
 func (t *tracker) adopt(v any) {
 	switch c := v.(type) {
 	case map[string]any:
@@ -106,11 +119,15 @@ func (t *tracker) adopt(v any) {
 		panic(fmt.Errorf("delta: tracked state must be a JSON object (map[string]any) or array ([]any), got %s (decode the value with encoding/json, or build it from those two types)", describe(v)))
 	}
 	t.root = v
+	t.shape++
+	t.positions, t.positionsPruned, t.aliased = nil, 0, false
+	t.rootCell = &cell{target: v}
+	t.register(v, t.rootCell)
 }
 
 // State is a cursor at the root of the tracked value. Read and mutate the
 // value through it.
-func (t *Tracker[T]) State() State { return State{t: t.core} }
+func (t *Tracker[T]) State() State { return State{t: t.core, c: t.core.rootCell} }
 
 // Target is the untracked current value. Mutating it bypasses change
 // tracking. A root array is re-headered by an append, so read Target again
@@ -772,11 +789,15 @@ func hasReservedKey(m map[string]any) bool {
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
-// State is a cursor into a tracked value: the tracker plus a path. It is the
-// Go form of upstream's proxy — reads resolve the path on each call, so a
-// cursor follows a replaced child rather than pointing at the old one, and
-// after an array operation that moves indices a cursor at an index addresses
-// whatever now sits there.
+// State is a cursor into a tracked value: the tracker plus one position in
+// its tree. It is the Go form of upstream's proxy. A cursor holds a cell — a
+// parent link plus a segment — and walks its path at use time, so:
+//
+//   - it follows a replaced child rather than pointing at the old one;
+//   - it stays correct across an array operation that renumbers it, so a
+//     cursor taken at index 2 addresses index 3 after an Unshift;
+//   - once the element it addresses leaves the document, a write through it
+//     mutates that value and publishes nothing, as a plain Go write would.
 //
 // Segments are given as any: a string is an object key, an int (or any
 // integral Go number) an array index, and a Key or Index is taken as is. On
@@ -785,11 +806,15 @@ func hasReservedKey(m map[string]any) bool {
 //
 // Values inserted through a State are adopted: a map becomes part of the
 // tracked tree and may be read through a retained reference, but must not be
-// mutated outside the tracker or inserted at a second live path. A slice is
-// adopted by its header — the tracker's appends do not reach the caller's
-// variable. A number of any Go kind is one JSON number. A State itself is
-// not a value: assigning one to its own slot is a no-op, anywhere else a
-// panic.
+// mutated outside the tracker. One map MAY occupy several positions, and each
+// live position is published — but only positions the tracker has seen, which
+// means a cursor was taken at one of them before the other was assigned. A
+// slice is adopted by its header, so it cannot occupy two positions (D62).
+// A number of any Go kind is one JSON number. A State itself is not a value:
+// assigning one to its own slot is a no-op, anywhere else a panic.
+//
+// A Tracker and its cursors are not safe for concurrent use: a cursor caches
+// its path, and a mutation renumbers cells.
 //
 // Misuse panics rather than returning an error, as an out-of-range index
 // does: these are the producer's own programming errors, not data. The panic
@@ -800,33 +825,63 @@ func hasReservedKey(m map[string]any) bool {
 // index; and a plain error for a delete on an array, a negative length, or a
 // State inserted as a value.
 type State struct {
-	t    *tracker
-	path Path
+	t *tracker
+	c *cell
 	// blocked is the reserved key this cursor was reached through, if any: the
 	// subtree can be read and serialised but not mutated through that key.
 	blocked Seg
 }
 
-// Path is the cursor's path from the root; empty at the root.
-func (s State) Path() Path { return slices.Clone(s.path) }
+// path is the cursor's current position, walked from its cell.
+func (s State) path() Path { return s.t.pathOf(s.c) }
 
-// At is the cursor for a child. It does not resolve the path: a child that
-// does not exist reads as absent and refuses to be written to.
+// Path is the cursor's path from the root; empty at the root. It is the
+// cursor's position NOW, which a structural mutation of an array above it
+// changes. A cursor taken below a container that occupies several positions
+// reports the first of them, which is the position its ops address.
+func (s State) Path() Path { return slices.Clone(s.path()) }
+
+// container is the value at the cursor and whether there is one. A cursor
+// whose position has left the document still names the container it was taken
+// at — that value is readable and mutable, it is simply no longer published.
+func (s State) container() (any, bool) {
+	if s.c.detached() {
+		return s.c.target, s.c.target != nil
+	}
+	return resolveValue(s.t.root, s.path())
+}
+
+// At is the cursor for a child. It does not require the child to exist: one
+// that does not reads as absent and refuses to be written to.
 func (s State) At(seg any) State {
-	container, _ := resolveValue(s.t.root, s.path)
+	container, _ := s.container()
 	key := normSeg(mustSeg(seg), container)
 	blocked := s.blocked
 	if k, ok := key.(Key); ok && blocked == nil && ReservedSegments[string(k)] {
 		blocked = k
 	}
-	return State{t: s.t, path: childPath(s.path, key), blocked: blocked}
+	value := ownValue(container, key)
+	if value == missing {
+		value = nil
+	}
+	// A member hangs off the container's primary position, not off the cursor
+	// it was reached through: upstream shares one wrapper — and one child
+	// cache — across every position of an object, so the members of an
+	// aliased object are addressed through its first live position.
+	parent := s.c
+	if _, primary := s.t.positionsAt(s.c); primary != nil {
+		parent = primary
+	}
+	_, inArray := container.([]any)
+	return State{t: s.t, c: s.t.childCell(parent, key, value, inArray, blocked != nil), blocked: blocked}
 }
 
 // Value is the current value at the cursor, or nil when the path does not
 // resolve. A container is returned as is — the tracked tree itself, to be
-// read and not mutated.
+// read and not mutated. A cursor whose element has left the document still
+// reads that element.
 func (s State) Value() any {
-	v, _ := resolveValue(s.t.root, s.path)
+	v, _ := s.container()
 	return v
 }
 
@@ -838,7 +893,7 @@ func (s State) Get(seg any) any {
 
 // Lookup is the member's value and whether it is present.
 func (s State) Lookup(seg any) (any, bool) {
-	container, ok := resolveValue(s.t.root, s.path)
+	container, ok := s.container()
 	if !ok {
 		return nil, false
 	}
@@ -871,12 +926,19 @@ func (s State) Len() int {
 func (s State) Set(seg any, value any) {
 	s.mutate(func(container any) any {
 		key := s.segFor(seg, container)
-		at := childPath(s.path, key)
 		if cursor, ok := value.(State); ok {
-			if cursor.t == s.t && slices.Equal(cursor.path, at) {
+			if cursor.t == s.t && slices.Equal(cursor.path(), childPath(s.path(), key)) {
 				return container // the child assigned back to its own slot
 			}
 			panic(errAliasedCursor)
+		}
+		// The assigned container may already live elsewhere in the document.
+		// This becomes another of its positions, so later writes through it
+		// emit an op for each.
+		if set := s.t.positionsOf(value); set != nil {
+			if _, primary := s.t.positionsAt(s.c); primary != nil {
+				s.t.alias(set, &cell{parent: primary, seg: key, target: value})
+			}
 		}
 		switch c := container.(type) {
 		case []any:
@@ -886,13 +948,13 @@ func (s State) Set(seg any, value any) {
 				panic(&UnsafePathError{Segment: key})
 			}
 			if int(i) == len(c) {
-				s.t.record(Splice{Path: slices.Clone(s.path), Items: []any{cloneJSON(value)}, Index: len(c)})
+				s.emit(Splice{Path: slices.Clone(s.writePath()), Items: []any{cloneJSON(value)}, Index: len(c)})
 				return append(c, value)
 			}
 			if same(c[i], value) {
 				return c
 			}
-			s.assign(at, c[i], value)
+			s.assign(key, c[i], value)
 			c[i] = value
 			return c
 		case map[string]any:
@@ -904,30 +966,42 @@ func (s State) Set(seg any, value any) {
 			if !has {
 				previous = missing
 			}
-			s.assign(at, previous, value)
+			s.assign(key, previous, value)
 			c[k] = value
 			return c
 		}
-		panic(&PathError{Ref: s.path})
+		panic(&PathError{Ref: s.path()})
 	})
 	s.t.collapsePending()
 }
 
 // assign records one member write, choosing the op quality upstream's set
 // trap chooses: a local diff between two containers, an anchored string, or a
-// whole-value set.
-func (s State) assign(at Path, previous, value any) {
+// whole-value set. A container diff addresses the primary position only, as
+// upstream's does; a string is anchored at every live position, because each
+// one's anchor is the value the replica holds there.
+func (s State) assign(key Seg, previous, value any) {
+	many, primary := s.t.positionsAt(s.c)
+	if primary == nil {
+		return
+	}
 	if isContainer(previous) && isContainer(value) {
-		s.t.diffInto(previous, value, at)
+		s.t.diffInto(previous, value, childPath(s.t.pathOf(primary), key))
 		return
 	}
 	if p, ok := previous.(string); ok {
 		if v, ok := value.(string); ok {
-			s.t.recordString(at, p, v)
+			if many == nil {
+				s.t.recordString(childPath(s.t.pathOf(primary), key), p, v)
+				return
+			}
+			for _, c := range many {
+				s.t.recordString(childPath(s.t.pathOf(c), key), p, v)
+			}
 			return
 		}
 	}
-	s.t.record(Set{Path: at, Value: cloneJSON(value)})
+	s.emit(Set{Path: childPath(s.t.pathOf(primary), key), Value: cloneJSON(value)})
 }
 
 // Delete removes an object property. Deleting one that is absent records
@@ -945,12 +1019,12 @@ func (s State) Delete(seg any) {
 		case map[string]any:
 			k := propertyKey(key)
 			if _, ok := c[k]; ok {
-				s.t.record(Delete{Path: childPath(s.path, key)})
+				s.emit(Delete{Path: childPath(s.writePath(), key)})
 			}
 			delete(c, k)
 			return c
 		}
-		panic(&PathError{Ref: s.path})
+		panic(&PathError{Ref: s.path()})
 	})
 	s.t.collapsePending()
 }
@@ -959,61 +1033,62 @@ func (s State) Delete(seg any) {
 // one flush normally coalesce into one tail splice.
 func (s State) Push(items ...any) (length int) {
 	adoptItems(items)
-	s.array("Push", func(xs []any) []any {
+	s.arrayOp("Push", func(xs []any) ([]any, structural) {
+		before := len(xs)
 		if len(items) > 0 {
-			s.t.record(Splice{Path: slices.Clone(s.path), Index: len(xs), Items: cloneItems(items)})
+			s.emit(Splice{Path: slices.Clone(s.writePath()), Index: before, Items: cloneItems(items)})
 		}
 		xs = append(xs, items...)
 		length = len(xs)
-		return xs
+		// An append shifts nothing, so no cell needs renumbering.
+		return xs, structural{insertAt: before, insertCount: len(items)}
 	})
-	s.t.collapsePending()
 	return length
 }
 
 // Unshift inserts at the front and returns the new length.
 func (s State) Unshift(items ...any) (length int) {
 	adoptItems(items)
-	s.array("Unshift", func(xs []any) []any {
+	s.arrayOp("Unshift", func(xs []any) ([]any, structural) {
 		if len(items) > 0 {
-			s.t.record(Splice{Path: slices.Clone(s.path), Items: cloneItems(items)})
+			s.emit(Splice{Path: slices.Clone(s.writePath()), Items: cloneItems(items)})
 		}
 		xs = slices.Insert(xs, 0, items...)
 		length = len(xs)
-		return xs
+		return xs, structural{shifts: true, insert: len(items), insertCount: len(items)}
 	})
-	s.t.collapsePending()
 	return length
 }
 
 // Pop removes and returns the last element; false when the array is empty.
 // Popping an element pushed since the last flush cancels the push.
 func (s State) Pop() (value any, ok bool) {
-	s.array("Pop", func(xs []any) []any {
-		if len(xs) == 0 {
-			return xs
+	s.arrayOp("Pop", func(xs []any) ([]any, structural) {
+		before := len(xs)
+		shape := structural{shifts: true, index: before - 1, remove: min(before, 1), insertAt: -1}
+		if before == 0 {
+			return xs, shape
 		}
-		last := len(xs) - 1
-		s.t.record(Splice{Path: slices.Clone(s.path), Index: last, Remove: 1, Items: []any{}})
+		last := before - 1
+		s.emit(Splice{Path: slices.Clone(s.writePath()), Index: last, Remove: 1, Items: []any{}})
 		value, ok = xs[last], true
 		xs[last] = nil
-		return xs[:last]
+		return xs[:last], shape
 	})
-	s.t.collapsePending()
 	return value, ok
 }
 
 // Shift removes and returns the first element; false when the array is empty.
 func (s State) Shift() (value any, ok bool) {
-	s.array("Shift", func(xs []any) []any {
+	s.arrayOp("Shift", func(xs []any) ([]any, structural) {
+		shape := structural{shifts: true, remove: min(len(xs), 1), insertAt: -1}
 		if len(xs) == 0 {
-			return xs
+			return xs, shape
 		}
-		s.t.record(Splice{Path: slices.Clone(s.path), Remove: 1, Items: []any{}})
+		s.emit(Splice{Path: slices.Clone(s.writePath()), Remove: 1, Items: []any{}})
 		value, ok = xs[0], true
-		return slices.Delete(xs, 0, 1)
+		return slices.Delete(xs, 0, 1), shape
 	})
-	s.t.collapsePending()
 	return value, ok
 }
 
@@ -1024,20 +1099,23 @@ func (s State) Shift() (value any, ok bool) {
 // the root, a Replace).
 func (s State) Splice(index, remove int, items ...any) (removed []any) {
 	adoptItems(items)
-	s.array("Splice", func(xs []any) []any {
+	s.arrayOp("Splice", func(xs []any) ([]any, structural) {
 		before := len(xs)
 		index, remove = spliceRange(before, index, remove)
 		if remove > 0 || len(items) > 0 {
 			if index == 0 && remove == before {
+				// A splice that clears the whole array is a replacement of it.
 				s.snapshot(cloneItems(items))
 			} else {
-				s.t.record(Splice{Path: slices.Clone(s.path), Index: index, Remove: remove, Items: cloneItems(items)})
+				s.emit(Splice{Path: slices.Clone(s.writePath()), Index: index, Remove: remove, Items: cloneItems(items)})
 			}
 		}
 		removed = slices.Clone(xs[index : index+remove])
-		return splice(xs, index, remove, items)
+		return splice(xs, index, remove, items), structural{
+			shifts: true, index: index, remove: remove, insert: len(items),
+			insertAt: index, insertCount: len(items),
+		}
 	})
-	s.t.collapsePending()
 	return removed
 }
 
@@ -1056,65 +1134,66 @@ func spliceRange(length, index, remove int) (int, int) {
 // The whole-array mutators have no op of their own, so they record what they
 // produced.
 func (s State) snapshot(value []any) {
-	if len(s.path) == 0 {
-		s.t.record(Replace{Value: value})
+	if len(s.writePath()) == 0 {
+		s.emit(Replace{Value: value})
 		return
 	}
-	s.t.record(Set{Path: slices.Clone(s.path), Value: value})
+	s.emit(Set{Path: slices.Clone(s.writePath()), Value: value})
 }
+
+// permuted is what sort, reverse, fill and copyWithin report: they move
+// elements without a uniform shift, so a held child is relocated by identity.
+var permuted = structural{permutes: true, insertAt: -1}
 
 // Sort sorts the array in place, stably, by cmp. JavaScript's default order
 // — by string form, in UTF-16 code units — is a footgun on numbers, so there
 // is no default; pass the order you mean.
 func (s State) Sort(cmp func(a, b any) int) {
-	s.array("Sort", func(xs []any) []any {
+	s.arrayOp("Sort", func(xs []any) ([]any, structural) {
 		slices.SortStableFunc(xs, cmp)
 		s.snapshot(cloneItems(xs))
-		return xs
+		return xs, permuted
 	})
-	s.t.collapsePending()
 }
 
 // Reverse reverses the array in place.
 func (s State) Reverse() {
-	s.array("Reverse", func(xs []any) []any {
+	s.arrayOp("Reverse", func(xs []any) ([]any, structural) {
 		slices.Reverse(xs)
 		s.snapshot(cloneItems(xs))
-		return xs
+		return xs, permuted
 	})
-	s.t.collapsePending()
 }
 
 // Fill is Array.prototype.fill: it sets the elements in [start, end) to
 // value, with negative bounds counted from the end and both clamped. A map
-// filled into several slots lives at several paths; fill scalars.
+// filled into several slots lives at several positions and is published at
+// each, as JavaScript's reference semantics require.
 func (s State) Fill(value any, start, end int) {
 	adoptItems([]any{value})
-	s.array("Fill", func(xs []any) []any {
+	s.arrayOp("Fill", func(xs []any) ([]any, structural) {
 		from, to := relativeIndex(start, len(xs)), relativeIndex(end, len(xs))
 		for i := from; i < to; i++ {
 			xs[i] = value
 		}
 		s.snapshot(cloneItems(xs))
-		return xs
+		return xs, permuted
 	})
-	s.t.collapsePending()
 }
 
 // CopyWithin is Array.prototype.copyWithin: it copies the elements in
 // [start, end) to target, within the array, with the same bounds rules as
 // Fill. Reference semantics apply, as they do in JavaScript.
 func (s State) CopyWithin(target, start, end int) {
-	s.array("CopyWithin", func(xs []any) []any {
+	s.arrayOp("CopyWithin", func(xs []any) ([]any, structural) {
 		to := relativeIndex(target, len(xs))
 		from, final := relativeIndex(start, len(xs)), relativeIndex(end, len(xs))
 		if count := min(final-from, len(xs)-to); count > 0 {
 			copy(xs[to:to+count], xs[from:from+count])
 		}
 		s.snapshot(cloneItems(xs))
-		return xs
+		return xs, permuted
 	})
-	s.t.collapsePending()
 }
 
 // relativeIndex is JavaScript's relative-index rule: negative counts from the
@@ -1129,7 +1208,7 @@ func relativeIndex(i, length int) int {
 // SetLen is `array.length = n`: it truncates, or grows with explicit nulls.
 // A negative length panics, as the RangeError does.
 func (s State) SetLen(n int) {
-	s.array("SetLen", func(xs []any) []any {
+	s.arrayOp("SetLen", func(xs []any) ([]any, structural) {
 		before := len(xs)
 		switch {
 		case n < 0:
@@ -1138,17 +1217,17 @@ func (s State) SetLen(n int) {
 			if n == 0 {
 				s.snapshot([]any{})
 			} else {
-				s.t.record(Splice{Path: slices.Clone(s.path), Index: n, Remove: before - n, Items: []any{}})
+				s.emit(Splice{Path: slices.Clone(s.writePath()), Index: n, Remove: before - n, Items: []any{}})
 			}
 			clear(xs[n:])
-			return xs[:n]
+			// Truncation removes elements, so held children shift like a splice.
+			return xs[:n], structural{shifts: true, index: n, remove: before - n, insertAt: -1}
 		case n > before:
-			s.t.record(Splice{Path: slices.Clone(s.path), Index: before, Items: make([]any, n-before)})
-			return append(xs, make([]any, n-before)...)
+			s.emit(Splice{Path: slices.Clone(s.writePath()), Index: before, Items: make([]any, n-before)})
+			return append(xs, make([]any, n-before)...), structural{insertAt: -1}
 		}
-		return xs
+		return xs, structural{insertAt: -1}
 	})
-	s.t.collapsePending()
 }
 
 var (
@@ -1156,29 +1235,61 @@ var (
 	errAliasedCursor = errors.New("delta: a State cursor is not a value; insert a copy of its Value() instead")
 )
 
-// mutate resolves the cursor's path, hands fn the container there, and
+// mutate resolves the container the cursor addresses, hands it to fn, and
 // stores what fn returns in its place — an append re-headers a slice, so the
 // write back is what keeps a root or nested array attached.
+//
+// A cursor whose container has no live position mutates that container
+// directly and records nothing: it has left the document, and a plain Go
+// write through a removed element behaves the same way.
 func (s State) mutate(fn func(container any) any) {
 	if s.blocked != nil {
 		panic(&UnsafePathError{Segment: s.blocked})
 	}
-	root, err := walk(s.t.root, s.path, false, func(node any) (any, error) { return fn(node), nil })
+	_, primary := s.t.positionsAt(s.c)
+	if primary == nil && isContainer(s.c.target) {
+		s.t.refreshTarget(s.c, fn(s.c.target))
+		return
+	}
+	at := s.path()
+	if primary != nil {
+		at = s.t.pathOf(primary)
+	}
+	root, err := walk(s.t.root, at, false, func(node any) (any, error) {
+		out := fn(node)
+		s.t.refreshTarget(s.c, out)
+		return out, nil
+	})
 	if err != nil {
 		panic(err)
 	}
 	s.t.root = root
 }
 
-// array is mutate for the array methods, which have no meaning elsewhere.
-func (s State) array(verb string, fn func(xs []any) []any) {
+// arrayOp is mutate for the array methods, which have no meaning elsewhere.
+// fn mutates the array and records what it did; the shape it reports drives
+// the renumbering of the cells held through that array, and the registration
+// of an inserted value that already lives elsewhere.
+func (s State) arrayOp(verb string, fn func(xs []any) ([]any, structural)) {
+	var after []any
+	var shape structural
 	s.mutate(func(container any) any {
 		xs, ok := container.([]any)
 		if !ok {
-			panic(fmt.Errorf("delta: %s on %s, which is %s, not an array", verb, s.path, describe(container)))
+			panic(fmt.Errorf("delta: %s on %s, which is %s, not an array", verb, s.path(), describe(container)))
 		}
-		return fn(xs)
+		after, shape = fn(xs)
+		return after
 	})
+	_, primary := s.t.positionsAt(s.c)
+	if primary == nil {
+		// The array has left the document: nothing about the tree it is no
+		// longer part of needs correcting.
+		return
+	}
+	s.t.collapsePending()
+	s.t.renumber(s.c, after, shape)
+	s.t.registerInserted(primary, after, shape.insertAt, shape.insertCount)
 }
 
 // segFor is a mutation's segment: normalised for the container, and refused
