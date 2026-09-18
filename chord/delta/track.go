@@ -809,7 +809,7 @@ func hasReservedKey(m map[string]any) bool {
 // mutated outside the tracker. One map MAY occupy several positions, and each
 // live position is published — but only positions the tracker has seen, which
 // means a cursor was taken at one of them before the other was assigned. A
-// slice is adopted by its header, so it cannot occupy two positions (D62).
+// slice is adopted by its header, so it cannot occupy two positions (D65).
 // A number of any Go kind is one JSON number. A State itself is not a value:
 // assigning one to its own slot is a no-op, anywhere else a panic.
 //

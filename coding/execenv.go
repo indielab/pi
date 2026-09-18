@@ -427,21 +427,31 @@ func (e *LocalEnv) Exec(ctx context.Context, command string, options *ShellExecO
 // every Exec starts and reaps its own process — so there is nothing to release.
 func (e *LocalEnv) Cleanup() error { return nil }
 
-// exitCode renders a finished process's wait status the way pi does (upstream
-// c2d3dc55b, pi#8992):
+// exitCode renders a finished process's wait status the way pi INTENDS to
+// (upstream c2d3dc55b, pi#8992, and a8b3dd199 for the bash tool):
 //
 //	code ?? (exitSignal ? 128 + signals[exitSignal] : 1)
 //
 // A process killed by a signal — the OOM killer, say — has no exit code of its
 // own, so it takes the conventional 128 + signal number rather than being
-// mistaken for a clean exit. Node reports that case as a null code plus a
-// signal name; Go folds both into (*os.ProcessState).ExitCode, which returns
-// -1 when the process was signalled, hence the explicit second look.
+// mistaken for a clean exit. Go reads the status directly:
+// (*os.ProcessState).ExitCode returns -1 when the process was signalled, hence
+// the explicit second look at the signal.
 //
-// The trailing 1 is pi's "neither code nor signal" fallback. Here it is only
-// the default the compiler requires: this runs on an *exec.ExitError, so the
-// process has certainly exited, and an exited process's status is either an
-// exit code or a terminating signal.
+// **This deliberately diverges from pi for a signal Node cannot NAME (D68).**
+// pi reads Node's `close` event, not the raw status, and `??` falls through
+// only on null/undefined. For a signal outside Node's own signals table — 7
+// (SIGEMT) on darwin, the realtime signals on Linux — Node reports
+// `code: 0, signal: null`, so pi's expression short-circuits to 0 and the bash
+// tool calls a killed command SUCCESSFUL. Measured under node v26.4.0:
+// `kill -EMT $$` gives close(code=0, signal=null) and pi exit code 0, where
+// this returns 135. The port keeps 135 — pi's stated intent, not its
+// accident — and the Divergences row says so.
+//
+// The trailing 1 is pi's "neither code nor signal" fallback, and here it is
+// only the default the compiler requires: this runs on an *exec.ExitError, so
+// the process has exited, and an exited process's status is either an exit
+// code or a terminating signal.
 func exitCode(state *os.ProcessState) int {
 	if code := state.ExitCode(); code >= 0 {
 		return code

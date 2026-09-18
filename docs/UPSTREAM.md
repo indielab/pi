@@ -2082,13 +2082,44 @@ and `node/bundle*.ts` (JS facet bundling; no Go subject).
 
 ### chord/delta operation log (ported 2026-09-18, upstream `2c995acf4` + `c4289b20e`)
 
-**D61 — chord/delta.** `same()` (the mirror of `previous === value`) compares two slices by backing-array pointer and length, because `&x[0]` does not exist at length zero — the S10.4 fix. Two empty Go slices allocated separately both carry the zero-size base pointer and are therefore indistinguishable, so `Set("xs", []any{})` over an empty array reports `Dirty()` false where pi reports true (verified under node: `track({xs:[]})` then `state.xs = []` → dirty true, ops `[]`). No wire effect on either side — neither emits an op. Unfixable without boxing every array in the tracked tree (`*[]any`), which would change the value model `Apply`, the codec and every consumer share; the alternative was the pre-fix behaviour, which got the common case (`Set("xs", Get("xs"))`) wrong instead.
+**D64 — chord/delta.** `same()` (the mirror of `previous === value`) compares two slices by backing-array pointer and length, because `&x[0]` does not exist at length zero — the S10.4 fix. Two empty Go slices allocated separately both carry the zero-size base pointer and are therefore indistinguishable, so `Set("xs", []any{})` over an empty array reports `Dirty()` false where pi reports true (verified under node: `track({xs:[]})` then `state.xs = []` → dirty true, ops `[]`). No wire effect on either side — neither emits an op. Unfixable without boxing every array in the tracked tree (`*[]any`), which would change the value model `Apply`, the codec and every consumer share; the alternative was the pre-fix behaviour, which got the common case (`Set("xs", Get("xs"))`) wrong instead.
 
-**D62 — chord/delta.** Only an OBJECT can occupy several positions. pi's `wrappers` WeakMap is keyed by object identity and covers arrays too; `containerRef` (cell.go) admits `map[string]any` only, because a Go slice is a header and "the same array at two positions" has no Go meaning — `Push` through one position re-headers it and the two stop being the same array, where a JavaScript array's identity never changes. A Go producer that assigns one slice to two paths therefore gets pi's *baseline-diff* behaviour there (each path diffed on its own) rather than pi's current per-position fan-out. Unfixable without boxing arrays, as D61. Worth noting that pi's own array fan-out is broken anyway: probed under node, `state.a = state.xs[0]; state.a[1] = 2` on `{xs:[[1]],a:null}` emits `[["s",["a"],[1]],["p",["xs",0],1,0,[2,2]],["p",["a"],1,0,[2,2]]]` — the shared items payload is pushed onto itself — so the port is not missing working behaviour.
+**D65 — chord/delta.** Only an OBJECT can occupy several positions. pi's `wrappers` WeakMap is keyed by object identity and covers arrays too; `containerRef` (cell.go) admits `map[string]any` only, because a Go slice is a header and "the same array at two positions" has no Go meaning — `Push` through one position re-headers it and the two stop being the same array, where a JavaScript array's identity never changes. A Go producer that assigns one slice to two paths therefore gets pi's *baseline-diff* behaviour there (each path diffed on its own) rather than pi's current per-position fan-out. Unfixable without boxing arrays, as D64. Worth noting that pi's own array fan-out is broken anyway: probed under node, `state.a = state.xs[0]; state.a[1] = 2` on `{xs:[[1]],a:null}` emits `[["s",["a"],[1]],["p",["xs",0],1,0,[2,2]],["p",["a"],1,0,[2,2]]]` — the shared items payload is pushed onto itself — so the port is not missing working behaviour.
 
-**D63 — chord/delta.** A `State` cursor is still refused as a VALUE (`errAliasedCursor`), where pi's canonical spelling for a second position is `tracker.state.a = tracker.state.items[0]` — assigning the Proxy itself, which pi's `wrappers` map resolves back to its target. Go has no such indirection to hide: `Value()` hands back the container, so the equivalent is `s.Set("a", s.At("items").At(0).Value())`, and that registers the position exactly as pi's assignment does (pinned by TestTrackEmitsAnOpPerPosition). Keeping the refusal preserves one rule — a cursor is never a JSON value — and avoids a silent dereference of something that also carries a reserved-key block. Consequence: pi's block propagates through an assigned blocked proxy (probed: `state.safe = state.holder["__proto__"]` then `state.safe.x = 2` throws UnsafePathError), while in Go `safe` is an ordinary member and writable, which is what pi's own README prescribes — replace the nearest ordinarily named parent.
+**D66 — chord/delta.** A `State` cursor is still refused as a VALUE (`errAliasedCursor`), where pi's canonical spelling for a second position is `tracker.state.a = tracker.state.items[0]` — assigning the Proxy itself, which pi's `wrappers` map resolves back to its target. Go has no such indirection to hide: `Value()` hands back the container, so the equivalent is `s.Set("a", s.At("items").At(0).Value())`, and that registers the position exactly as pi's assignment does (pinned by TestTrackEmitsAnOpPerPosition). Keeping the refusal preserves one rule — a cursor is never a JSON value — and avoids a silent dereference of something that also carries a reserved-key block. Consequence: pi's block propagates through an assigned blocked proxy (probed: `state.safe = state.holder["__proto__"]` then `state.safe.x = 2` throws UnsafePathError), while in Go `safe` is an ordinary member and writable, which is what pi's own README prescribes — replace the nearest ordinarily named parent.
 
-**D64 — chord/delta.** The position registry (`tracker.positions`) is a `map[uintptr]*positionSet` that holds each container, so its address can never be reused by another while the set names it; pi uses a WeakMap and needs nothing more. To keep a long-lived tracker over a churning tree from retaining every container a cursor ever visited, `prunePositions` drops sets whose cells are all detached or no longer resolve to the container, on a doubling schedule (pinned by TestTrackPositionRegistryStaysBounded, verified red with pruning disabled: 20001 retained containers). Dropping a set only loses alias knowledge, which degrades to the un-aliased behaviour a container no cursor visited already has.
+**D67 — chord/delta.** The position registry (`tracker.positions`) is a `map[uintptr]*positionSet` that holds each container, so its address can never be reused by another while the set names it; pi uses a WeakMap and needs nothing more. To keep a long-lived tracker over a churning tree from retaining every container a cursor ever visited, `prunePositions` drops sets whose cells are all detached or no longer resolve to the container, on a doubling schedule (pinned by TestTrackPositionRegistryStaysBounded, verified red with pruning disabled: 20001 retained containers). Dropping a set only loses alias knowledge, which degrades to the un-aliased behaviour a container no cursor visited already has.
+
+### coding shell exit status (ported 2026-09-18, upstream `a8b3dd199`)
+
+**D68 — coding/execenv.go + coding/tooloperations.go.** A shell killed by a
+signal **Node cannot name** is a FAILED command in the port (128 + the signal
+number) and a SUCCESSFUL one in pi. pi reads Node's `close` event rather than
+the raw wait status, and `??` falls through only on null/undefined: for a signal
+outside Node's own 31-entry `os.constants.signals` table — **7 (SIGEMT) on
+darwin, the realtime signals (34–64) on Linux** — Node reports
+`code: 0, signal: null`, so `code ?? (signalCode ? 128 + … : 1)`
+short-circuits to `0` and `bash.ts`'s `exitCode !== 0` test passes the
+termination off as a clean exit with whatever partial output the command
+produced. Measured under node v26.4.0 on darwin: `printf 'before\n'; kill -EMT $$`
+→ `close(code=0, signal=null)` → pi exit code **0**, tool SUCCESS; the port
+returns **135**, tool FAIL. Named signals agree on both sides (KILL 137,
+TERM 143, ABRT 134).
+
+**Kept deliberately, against pi's observable behaviour and with pi's stated
+intent.** `a8b3dd199`'s own commit message is "Use the standard shell convention
+so callers do not mistake the termination for a successful command" — which is
+exactly what pi fails to do here, because Node's table, not pi's logic, decides.
+Reproducing pi would mean importing an accident that reports a killed command as
+successful, in the one commit whose purpose was to stop doing that.
+
+**Worth stating plainly: `a8b3dd199` is what introduced this gap.** Before it
+the port returned a nil exit code for every signal and the tool treated that as
+success, so it agreed with pi on the unnamed case by accident too. The port
+traded agreement on a rare case for agreement on the common one, and this row is
+the record of that trade rather than a claim that the two now match. Pinned by
+`TestLocalBashOperationsUnnamedSignalStillFails`. Revisit if upstream ever reads
+the raw status or widens its table — the port would then simply match again.
 
 ## Open re-judgements
 
@@ -2119,6 +2150,24 @@ Places the port is KNOWN WRONG and pi is right, with no fix scheduled. Distinct
 from Divergences: these are bugs, not decisions. **Not
 `difftest/known-divergences.json`** — that file excuses one scenario at one
 request-body JSON path, and only D3/D9-class items can ever be entries in it.
+
+**K19 — `ai/transcript.go` `GetCurrentSystemMessage` latches the FIRST system
+message's timestamp; pi's `??=` keeps looking.** pi does
+`timestamp ??= message.timestamp`, so a system message carrying no `timestamp`
+key leaves the latch unset and a later message's timestamp wins, and
+`getCurrentSystemMessage` returns `undefined` outright when no timestamp was
+ever seen and no tools were declared. Go decodes an absent `timestamp` to `0`
+and latches unconditionally. Measured: `[{role:system,content:"a"},
+{role:system,content:"b",timestamp:1000}, user]` yields a replayed timestamp of
+**1000 in pi and 0 in Go**, and `[{role:system,content:"base"}, user]` yields
+**`undefined` in pi and `{…,"timestamp":0}` in Go** — which the forced-prompt
+projection then reads for its head. **Debt, not a divergence row, because it is
+unreachable from pi:** `SystemMessage.timestamp` is REQUIRED in pi's `types.ts`
+at `16292398a`, so no pi producer emits a system message without it; it takes a
+hand-edited or foreign session file, the same class as D21/K4. Fixable without
+guessing — `SystemMessage` already records its own key order, so the replay
+could latch on key presence rather than on the first message — and that is the
+shape to use if a reachable case ever appears.
 
 **K1 — openai max-token handling: truthiness gate and out-of-union field.**
 `ai/providers/openai.go:928` gates on `*opts.MaxTokens > 0`; pi gates on JS

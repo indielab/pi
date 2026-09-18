@@ -338,6 +338,35 @@ func TestLocalBashOperationsSignalExitCode(t *testing.T) {
 	}
 }
 
+// D68: a signal Node cannot NAME. pi reads Node's close event, where such a
+// signal arrives as code 0 / signal null, so pi's `code ?? …` short-circuits to
+// 0 and the bash tool reports a killed command as successful. The port reads the
+// raw wait status and keeps 128 + the signal number, which is pi's stated intent
+// (a8b3dd199: "so callers do not mistake the termination for a successful
+// command"). Pinned so the divergence cannot be flipped back toward pi's
+// accident without a deliberate edit.
+//
+// Signal 7 is the measured gap on darwin (SIGEMT, absent from Node's 31-entry
+// table); on Linux 7 is SIGBUS and Node names it, while the gap moves to the
+// realtime signals. The Go answer is 135 either way, because it never consults
+// a name table — which is the whole point.
+func TestLocalBashOperationsUnnamedSignalStillFails(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX signals")
+	}
+	if _, _, _, err := getShellConfig(); err != nil {
+		t.Skipf("no shell available: %v", err)
+	}
+	ops := LocalBashOperations(bashShellConfig)
+	code, err := ops.Exec(context.Background(), "kill -7 $$", t.TempDir(), BashExecOptions{Env: os.Environ()})
+	if err != nil {
+		t.Fatalf("Exec: %v", err)
+	}
+	if code == nil || *code != 135 {
+		t.Fatalf("exit code = %v, want 135 (128+7); pi would report 0 here on darwin", code)
+	}
+}
+
 // Abort must win over timeout when both fired — pi's precedence.
 func TestLocalBashOperationsAbortWinsOverTimeout(t *testing.T) {
 	if _, _, _, err := getShellConfig(); err != nil {

@@ -211,7 +211,7 @@ type positionSet struct {
 // containerRef identifies a tracked container. Only an object qualifies: a Go
 // slice is a header, so "the same array at two positions" has no Go meaning —
 // an append through one position re-headers it and the two stop being the
-// same array (D62).
+// same array (D65).
 func containerRef(v any) (uintptr, bool) {
 	if m, ok := v.(map[string]any); ok && m != nil {
 		return reflect.ValueOf(m).Pointer(), true
