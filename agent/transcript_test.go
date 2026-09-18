@@ -607,6 +607,9 @@ func TestAgentRewritesPendingToolDeclarationsToMatchTheExecutableSet(t *testing.
 	assertEqualStrings(t, "current tools", names, want.CurrentTools)
 }
 
+// A pending message that already declares exactly the missing tools is rebuilt
+// all the same: its declarations are intent, replaced by the delta, and the tool
+// keys move after timestamp as withToolChanges' spread puts them.
 func TestAgentPendingDeclarationOfTheDeltaIsRebuilt(t *testing.T) {
 	want := golden(t, "pendingDeclaresTheDelta")
 	a := NewAgent(AgentOptions{

@@ -269,6 +269,14 @@ type Session struct {
 	// (pi AgentSession._baseSystemPromptOptions). They are fixed for the
 	// session: the tool loadout does not change after NewSession.
 	systemPromptOptions BuildSystemPromptOptions
+	// compactTransform is the compaction stage of the chain
+	// installTransformContext installs, filled by EnableCompaction. It is a slot
+	// rather than the Agent.TransformContext field so enabling compaction after
+	// NewSession neither discards the chain nor reorders it.
+	compactTransform func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage
+	// compactState is the compaction checkpoint, kept across EnableCompaction
+	// calls so a re-enable cannot drop a summary already taken.
+	compactState *compactionState
 }
 
 // bashSessionEnv returns the PI_* session metadata exposed to bash commands
@@ -460,18 +468,40 @@ func NewSession(opts SessionOptions) *Session {
 
 	a.SetTools(tools)
 	sess.Agent = a
+	sess.installTransformContext()
 	if opts.Compaction != nil && opts.Compaction.Enabled {
 		sess.EnableCompaction(*opts.Compaction)
-	} else {
-		a.TransformContext = sess.withForcedPromptProjection(nil)
 	}
 	return sess
 }
 
-// withForcedPromptProjection wraps a per-request transform with pi's
-// _installAgentForcedPromptProjection (upstream 16292398a), which always runs
-// last — pi installs it over whatever transformContext is already there, after
-// the `context` extension handlers.
+// installTransformContext installs the session's single per-request transform,
+// as pi's AgentSession constructor installs _installAgentForcedPromptProjection
+// over whatever transformContext is already there. Order, outermost last:
+// whatever was installed before, then compaction (docs/UPSTREAM.md D4 — pi
+// compacts in the prompt path instead), then the forced-prompt projection,
+// which must be last because it rewrites the head the others produce.
+//
+// Compaction lives in a SLOT rather than in the field, so EnableCompaction can
+// be called later without discarding this chain — and so an embedder who wraps
+// Agent.TransformContext after NewSession keeps their wrapper, since nothing
+// reassigns the field afterwards.
+func (s *Session) installTransformContext() {
+	previous := s.Agent.TransformContext
+	s.Agent.TransformContext = func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage {
+		transformed := messages
+		if previous != nil {
+			transformed = previous(ctx, messages)
+		}
+		if compact := s.compactTransform; compact != nil {
+			transformed = compact(ctx, transformed)
+		}
+		return s.projectForcedPrompt(ctx, transformed)
+	}
+}
+
+// projectForcedPrompt is pi's _installAgentForcedPromptProjection (upstream
+// 16292398a).
 //
 // A before_agent_start handler that forces the whole prompt needs that exact
 // text at the head of the REQUEST; a mid-conversation system message would
@@ -485,14 +515,8 @@ func NewSession(opts SessionOptions) *Session {
 // before_agent_start handler, which is Scope entry 12 — so today only
 // systemPromptOptions.ForceSystemPrompt reaches this, as it does
 // BuildSystemPromptState.
-func (s *Session) withForcedPromptProjection(
-	inner func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage,
-) func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage {
-	return func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage {
-		transformed := messages
-		if inner != nil {
-			transformed = inner(ctx, messages)
-		}
+func (s *Session) projectForcedPrompt(_ context.Context, transformed []agent.AgentMessage) []agent.AgentMessage {
+	{
 		forced := s.systemPromptOptions.ForceSystemPrompt
 		if forced == nil {
 			return transformed
@@ -508,7 +532,12 @@ func (s *Session) withForcedPromptProjection(
 		out := make([]agent.AgentMessage, 0, len(transformed)+1)
 		out = append(out, head)
 		for _, message := range transformed {
-			if _, isSystem := message.(ai.SystemMessage); isSystem {
+			// By ROLE, as pi's `m.role !== "system"` is, and as
+			// CollapseSystemMessages and withoutSystemMessages are. A concrete-type
+			// check would miss a *ai.SystemMessage — which GetCurrentSystemMessage
+			// two lines up DOES read — and leave the prompt this head replaces in
+			// the request beside it.
+			if message.MessageRole() == ai.RoleSystem {
 				continue
 			}
 			out = append(out, message)

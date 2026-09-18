@@ -395,22 +395,30 @@ type compactionState struct {
 	modifiedFiles []string
 }
 
-// EnableCompaction installs an automatic compaction TransformContext on the
-// session's agent using the given settings. When the estimated context exceeds
-// the model's window minus ReserveTokens, older turns are summarized (via the
-// session's model) into a single checkpoint message and recent turns are kept.
+// EnableCompaction fills the compaction stage of the session's per-request
+// transform chain (installTransformContext) with the given settings. When the
+// estimated context exceeds the model's window minus ReserveTokens, older turns
+// are summarized (via the session's model) into a single checkpoint message and
+// recent turns are kept.
 //
-// The forced-prompt projection is re-wrapped around it rather than clobbered,
-// so enabling compaction after the session is built keeps it — and keeps pi's
-// order, where the projection is installed over the existing transform and so
-// rewrites the head last.
+// It does NOT assign Agent.TransformContext, so calling it after NewSession
+// keeps the chain — including a wrapper an embedder installed on the field —
+// and keeps the forced-prompt projection last.
+//
+// Re-enabling compaction updates the settings and KEEPS the existing
+// checkpoint, because compaction is permanent (see compact below): a fresh
+// state would drop the summary and let dropped turns reappear.
 func (s *Session) EnableCompaction(settings CompactionSettings) {
-	state := &compactionState{settings: settings}
-	s.Agent.TransformContext = s.withForcedPromptProjection(
-		func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage {
-			return s.compact(ctx, state, messages)
-		},
-	)
+	if s.compactState == nil {
+		s.compactState = &compactionState{}
+	}
+	state := s.compactState
+	state.mu.Lock()
+	state.settings = settings
+	state.mu.Unlock()
+	s.compactTransform = func(ctx context.Context, messages []agent.AgentMessage) []agent.AgentMessage {
+		return s.compact(ctx, state, messages)
+	}
 }
 
 // compactionCheckpoint is one compaction as pi's session file records it.

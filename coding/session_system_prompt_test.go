@@ -492,3 +492,85 @@ func jsonText(t *testing.T, v any) string {
 	}
 	return string(raw)
 }
+
+// The forced-prompt projection drops the transcript's system messages by ROLE,
+// as pi's `messages.filter(m => m.role !== "system")` does. A concrete-type
+// check misses a *ai.SystemMessage, which GetCurrentSystemMessage — called in
+// the same function — does read, so the prompt the head replaces would be left
+// in the request beside it and the forced text would read as an ADDITION to it.
+func TestSessionForcedPromptProjectionDropsPointerSystemMessages(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+	sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir()})
+	force := "Exact forced prompt."
+	sess.systemPromptOptions.ForceSystemPrompt = &force
+
+	recorded := ai.NewSystemText("ORIGINAL RECORDED PROMPT", 1000)
+	sess.Agent.SetMessages([]agent.AgentMessage{&recorded, ai.NewUserText("hi", 2)})
+
+	out := sess.Agent.TransformContext(context.Background(), sess.Agent.State().Messages)
+	systems := 0
+	for _, message := range out {
+		if message.MessageRole() == ai.RoleSystem {
+			systems++
+		}
+	}
+	if systems != 1 {
+		t.Fatalf("system messages after the projection = %d, want 1", systems)
+	}
+	if got := ai.GetCurrentSystemPrompt(out); got != force {
+		t.Fatalf("replayed prompt = %q, want %q", got, force)
+	}
+}
+
+// Compaction lives in a slot, not in Agent.TransformContext, so EnableCompaction
+// after NewSession keeps a wrapper an embedder installed on the field — the only
+// correct embedder pattern now that NewSession always installs a transform.
+func TestSessionEnableCompactionKeepsAnEmbeddersTransform(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+	sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir()})
+
+	called := false
+	previous := sess.Agent.TransformContext
+	sess.Agent.TransformContext = func(ctx context.Context, m []agent.AgentMessage) []agent.AgentMessage {
+		called = true
+		return previous(ctx, m)
+	}
+	sess.EnableCompaction(CompactionSettings{Enabled: true})
+	sess.Agent.TransformContext(context.Background(), []agent.AgentMessage{ai.NewUserText("hi", 1)})
+	if !called {
+		t.Fatal("EnableCompaction dropped the embedder's TransformContext wrapper")
+	}
+}
+
+// Re-enabling compaction updates the settings and keeps the checkpoint:
+// compaction is permanent, so a fresh state would drop a summary already taken
+// and let the turns it replaced reappear.
+func TestSessionReEnableCompactionKeepsTheCheckpoint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+	sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir()})
+
+	sess.EnableCompaction(CompactionSettings{Enabled: true, ReserveTokens: 1000})
+	first := sess.compactState
+	first.mu.Lock()
+	first.prefixLen, first.compactedLen, first.summary = 3, 7, "an existing summary"
+	first.mu.Unlock()
+
+	sess.EnableCompaction(CompactionSettings{Enabled: true, ReserveTokens: 2000})
+	if sess.compactState != first {
+		t.Fatal("re-enabling compaction replaced the checkpoint state")
+	}
+	first.mu.Lock()
+	defer first.mu.Unlock()
+	if first.summary != "an existing summary" || first.prefixLen != 3 || first.compactedLen != 7 {
+		t.Fatalf("checkpoint lost: prefixLen=%d compactedLen=%d summary=%q", first.prefixLen, first.compactedLen, first.summary)
+	}
+	if first.settings.ReserveTokens != 2000 {
+		t.Fatalf("settings not updated: ReserveTokens = %d, want 2000", first.settings.ReserveTokens)
+	}
+}
