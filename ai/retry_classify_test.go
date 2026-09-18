@@ -8,7 +8,7 @@ import (
 
 // retryClassifyCaptureFile is written by testdata/retry-classify/capture.mts,
 // which runs upstream's own packages/ai/src/utils/retry.ts under node.
-const retryClassifyCaptureFile = "testdata/retry-classify/classify-e5d18382a.json"
+const retryClassifyCaptureFile = "testdata/retry-classify/classify-e98f287ee.json"
 
 type capturedPattern struct {
 	Source string `json:"source"`
@@ -182,6 +182,13 @@ func TestIsRetryableAssistantError(t *testing.T) {
 			// (message byte-identical to pi's vitest literal).
 			name: "cloudflare 520 unknown error is retryable",
 			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "520 status code (no body)"},
+			want: true,
+		},
+		{
+			// pi e98f287ee (#9669): Azure's peak-load capacity refusal
+			// (message byte-identical to pi's vitest literal).
+			name: "azure peak-load capacity error is retryable",
+			msg:  AssistantMessage{StopReason: StopError, ErrorMessage: "The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput."},
 			want: true,
 		},
 		{

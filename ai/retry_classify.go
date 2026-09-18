@@ -100,6 +100,9 @@ var nonRetryableProviderLimitErrorPattern = buildProviderErrorPattern([]string{
 var retryableProviderErrorPattern = buildProviderErrorPattern([]string{
 	// Generic provider load, HTTP status, and server-side transient failures.
 	"overloaded",
+	// Azure OpenAI's peak-load capacity refusal (#9669): a transient capacity
+	// message, not an account limit.
+	"currently experiencing high demand",
 	"rate.?limit",
 	"too many requests",
 	"429",

@@ -3,13 +3,13 @@
 // in package ai.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> classify-e5d18382a.json e5d18382a
+//   e.g. ... capture.mts <dir> classify-e98f287ee.json e98f287ee
 //
 // <extraction> holds packages/ai at <sha> (`git archive <sha> packages/ai` from
 // the upstream clone) and a node_modules resolving pi-ai's dependencies (the npm
-// build's). The npm build 0.85.1 predates upstream e5d18382a ("520"), so this is
-// a src capture: re-verify it against the first build that ships it (the BUILD
-// wins).
+// build's). The npm build 0.85.1 predates upstream e98f287ee (Azure's peak-load
+// message) and e5d18382a ("520"), so this is a src capture: re-verify it
+// against the first build that ships them (the BUILD wins).
 //
 // Every row records three answers: isRetryableAssistantError on the message
 // retry.test.ts would build (fauxAssistantMessage), and RegExp.prototype.test of
@@ -69,6 +69,8 @@ const bunFetchSocketClosedMessage =
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
 const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
+const azurePeakLoadError =
+	"The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.";
 
 const rows: Row[] = [
 	// retry.test.ts "provider retry classification" and retryAssistantCall literals.
@@ -85,6 +87,7 @@ const rows: Row[] = [
 	error("pi: limit wins over a retryable status", "429 quota exceeded"),
 	error("pi: overloaded_error", "overloaded_error"),
 	error("pi: Cloudflare 520 (#9627)", "520 status code (no body)"),
+	error("pi: Azure peak load (#9669)", azurePeakLoadError),
 	error("pi: Cloudflare 524", "524 status code (no body)"),
 	{ covers: "pi: not an error", content: "not an error" },
 	error("pi: retryAssistantCall non-retryable", "insufficient_quota"),
@@ -100,6 +103,7 @@ const rows: Row[] = [
 
 	// One row per retryable alternative that no other alternative matches.
 	error("overloaded", "Overloaded"),
+	error("currently experiencing high demand", "Currently Experiencing High Demand"),
 	error("rate.?limit", "rate_limit_error"),
 	error("too many requests", "Too Many Requests"),
 	error("429", "HTTP 429"),

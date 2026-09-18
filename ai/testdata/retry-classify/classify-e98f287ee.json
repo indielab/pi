@@ -1,12 +1,12 @@
 {
-	"sha": "e5d18382a",
+	"sha": "e98f287ee",
 	"patterns": {
 		"NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN": {
 			"source": "GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing",
 			"flags": "i"
 		},
 		"RETRYABLE_PROVIDER_ERROR_PATTERN": {
-			"source": "overloaded|rate.?limit|too many requests|429|500|502|503|504|520|524|service.?unavailable|server.?error|internal.?error|provider.?returned.?error|exceeded request buffer limit while retrying upstream|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response|retry delay|you can retry your request|try your request again|please retry your request|ResourceExhausted",
+			"source": "overloaded|currently experiencing high demand|rate.?limit|too many requests|429|500|502|503|504|520|524|service.?unavailable|server.?error|internal.?error|provider.?returned.?error|exceeded request buffer limit while retrying upstream|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response|retry delay|you can retry your request|try your request again|please retry your request|ResourceExhausted",
 			"flags": "i"
 		}
 	},
@@ -116,6 +116,14 @@
 			"retryable": true
 		},
 		{
+			"covers": "pi: Azure peak load (#9669)",
+			"stopReason": "error",
+			"errorMessage": "The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.",
+			"limitPattern": false,
+			"retryablePattern": true,
+			"retryable": true
+		},
+		{
 			"covers": "pi: Cloudflare 524",
 			"stopReason": "error",
 			"errorMessage": "524 status code (no body)",
@@ -193,6 +201,14 @@
 			"covers": "overloaded",
 			"stopReason": "error",
 			"errorMessage": "Overloaded",
+			"limitPattern": false,
+			"retryablePattern": true,
+			"retryable": true
+		},
+		{
+			"covers": "currently experiencing high demand",
+			"stopReason": "error",
+			"errorMessage": "Currently Experiencing High Demand",
 			"limitPattern": false,
 			"retryablePattern": true,
 			"retryable": true
