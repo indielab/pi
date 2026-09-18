@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -342,26 +343,44 @@ func TestBashNoOutputOnNonZeroExit(t *testing.T) {
 	}
 }
 
-func TestBashSignalKilledIsSuccess(t *testing.T) {
+// pi a8b3dd199 (#9577) 'should reject signal-killed commands while preserving
+// partial output': a signal termination is 128 + the signal number, so the
+// command FAILS and the output produced before the signal is kept.
+func TestBashSignalKilledFails(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX signals")
 	}
 	dir := t.TempDir()
-	// The shell kills itself → exit code is null in pi (-1 in Go) → success.
-	r, err := run(t, bashTool(dir, nil), map[string]any{"command": "echo before; kill -KILL $$"})
-	if err != nil {
-		t.Fatalf("signal-killed child must be success like pi (exitCode null): %v", err)
-	}
-	if !strings.Contains(resultText(r), "before") {
-		t.Fatalf("expected captured output, got %q", resultText(r))
+	for _, tt := range []struct {
+		signal string
+		exit   int
+	}{
+		{signal: "KILL", exit: 137},
+		{signal: "TERM", exit: 143},
+	} {
+		t.Run(tt.signal, func(t *testing.T) {
+			_, err := run(t, bashTool(dir, nil), map[string]any{
+				"command": "printf 'before-kill\n'; kill -" + tt.signal + " $$",
+			})
+			if err == nil {
+				t.Fatal("a signal-killed command must fail")
+			}
+			// pi asserts this with a whitespace-tolerant regex, so the port
+			// does too: the blank-line convention between output and status is
+			// appendStatus's, pinned elsewhere, and not what this case is about.
+			want := regexp.MustCompile(fmt.Sprintf(`before-kill\s+Command exited with code %d$`, tt.exit))
+			if got := err.Error(); !want.MatchString(got) {
+				t.Fatalf("signal-killed error text %q does not match %v", got, want)
+			}
+		})
 	}
 	// With no output at all, "(no output)" still applies.
-	r, err = run(t, bashTool(dir, nil), map[string]any{"command": "kill -KILL $$"})
-	if err != nil {
-		t.Fatalf("signal-killed child must be success: %v", err)
+	_, err := run(t, bashTool(dir, nil), map[string]any{"command": "kill -KILL $$"})
+	if err == nil {
+		t.Fatal("a signal-killed command must fail")
 	}
-	if got := resultText(r); got != "(no output)" {
-		t.Fatalf("expected (no output), got %q", got)
+	if got, want := err.Error(), "(no output)\n\nCommand exited with code 137"; got != want {
+		t.Fatalf("no-output signal error text\n got: %q\nwant: %q", got, want)
 	}
 }
 

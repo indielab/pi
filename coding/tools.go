@@ -989,10 +989,17 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 				}
 				return agent.AgentToolResult{}, execErr
 			}
-			// A signal-killed child has no exit code (pi: exitCode === null) and is
-			// treated as success with whatever output was produced
-			// (bash.ts:397 `exitCode !== 0 && exitCode !== null`).
-			if exitCode != nil && *exitCode != 0 {
+			// pi a8b3dd199 (#9577): a command with no exit code at all fails
+			// rather than reporting partial output as a success. The local shell
+			// no longer produces one — a signal termination arrives as
+			// 128 + signal — so this is reachable only through custom
+			// BashOperations, e.g. a remote runner that lost the status
+			// (bash.ts:366-371).
+			if exitCode == nil {
+				text, _ := formatOutput("(no output)")
+				return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, "Command terminated without an exit code"))
+			}
+			if *exitCode != 0 {
 				text, _ := formatOutput("(no output)")
 				return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, fmt.Sprintf("Command exited with code %d", *exitCode)))
 			}

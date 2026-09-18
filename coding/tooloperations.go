@@ -101,10 +101,11 @@ type BashExecOptions struct {
 // BashOperations`), so the port does too.
 type BashOperations struct {
 	// Exec runs a command, streaming output through OnData, and reports the
-	// exit code. A NIL exit code with a nil error is pi's `exitCode: null` — the
-	// child was signal-killed, which pi treats as success with whatever output
-	// was produced. Abort and timeout come back as ErrShellAborted and
-	// *ShellTimeoutError.
+	// exit code. A signal termination is reported as 128 + the signal number,
+	// pi's shell convention. A NIL exit code with a nil error is pi's
+	// `exitCode: null`, which only a custom implementation can produce and which
+	// the tool treats as a FAILED command. Abort and timeout come back as
+	// ErrShellAborted and *ShellTimeoutError.
 	Exec func(ctx context.Context, command, cwd string, options BashExecOptions) (exitCode *int, err error)
 }
 
@@ -162,7 +163,9 @@ func LocalBashOperations(config shellToolConfig) BashOperations {
 //
 //   - Abort wins over timeout when both fired (bash.ts:112-117).
 //   - Both are checked BEFORE the exit status, as pi's try/catch is.
-//   - A signal-killed child has no exit code (pi: `exitCode === null`).
+//   - A signal-killed child takes 128 + the signal number (pi a8b3dd199,
+//     bash.ts:139 `exitCode ?? (signalCode ? 128 + signals[signalCode] : 1)`),
+//     so the termination is never mistaken for a clean exit.
 func classifyShellRun(ctxErr, runCtxErr, runErr error, timeoutSeconds float64) (*int, error) {
 	if ctxErr != nil {
 		return nil, ErrShellAborted
@@ -175,10 +178,8 @@ func classifyShellRun(ctxErr, runCtxErr, runErr error, timeoutSeconds float64) (
 		if !errors.As(runErr, &exitErr) {
 			return nil, runErr
 		}
-		if code := exitErr.ExitCode(); code != -1 {
-			return &code, nil
-		}
-		return nil, nil
+		code := exitCode(exitErr.ProcessState)
+		return &code, nil
 	}
 	zero := 0
 	return &zero, nil

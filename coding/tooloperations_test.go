@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -232,17 +234,21 @@ func TestShellToolRendersTimeoutWithRawSeconds(t *testing.T) {
 	}
 }
 
-// A nil exit code is pi's `exitCode === null` — signal-killed, treated as
-// SUCCESS with whatever output was produced (bash.ts:397).
-func TestShellToolNilExitCodeIsSuccess(t *testing.T) {
-	ops := fakeShellOps("killed but produced this\n", nil, nil)
+// pi a8b3dd199 (#9577) 'should reject a null exit code from custom operations':
+// the local shell no longer reports one — a signal termination is 128 + signal —
+// so a nil exit code now means a custom BashOperations lost the status, and the
+// command FAILS with the partial output preserved (bash.ts:366-368).
+func TestShellToolNilExitCodeFails(t *testing.T) {
+	ops := fakeShellOps("partial\n", nil, nil)
 	tool := shellToolOps("/nowhere", bashShellConfig, nil, &ops)
-	res, err := tool.Execute(context.Background(), "1", map[string]any{"command": "x"}, nil)
-	if err != nil {
-		t.Fatalf("a signal-killed child must not be an error, got %v", err)
+	_, err := tool.Execute(context.Background(), "1", map[string]any{"command": "x"}, nil)
+	if err == nil {
+		t.Fatal("a nil exit code must be an error")
 	}
-	if !strings.Contains(resultText(res), "killed but produced this") {
-		t.Fatalf("output lost: %q", resultText(res))
+	// pi asserts this with /partial\s+Command terminated without an exit code$/.
+	want := regexp.MustCompile(`partial\s+Command terminated without an exit code$`)
+	if got := err.Error(); !want.MatchString(got) {
+		t.Fatalf("nil-exit error text %q does not match %v", got, want)
 	}
 }
 
@@ -297,6 +303,38 @@ func TestLocalBashOperationsRunsAndReportsExit(t *testing.T) {
 	}
 	if got.String() != "hey" {
 		t.Fatalf("streamed %q, want %q", got.String(), "hey")
+	}
+}
+
+// pi a8b3dd199 (#9577) 'should map signal-killed commands to 128 plus the
+// signal number': the local shell reports a signal termination with the
+// conventional 128 + signal rather than pi's old null exit code.
+func TestLocalBashOperationsSignalExitCode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX signals")
+	}
+	if _, _, _, err := getShellConfig(); err != nil {
+		t.Skipf("no shell available: %v", err)
+	}
+	ops := LocalBashOperations(bashShellConfig)
+	for _, tt := range []struct {
+		signal string
+		want   int
+	}{
+		{signal: "KILL", want: 137},
+		{signal: "TERM", want: 143},
+	} {
+		t.Run(tt.signal, func(t *testing.T) {
+			code, err := ops.Exec(context.Background(), "kill -"+tt.signal+" $$", t.TempDir(), BashExecOptions{
+				Env: os.Environ(),
+			})
+			if err != nil {
+				t.Fatalf("Exec: %v", err)
+			}
+			if code == nil || *code != tt.want {
+				t.Fatalf("exit code = %v, want %d", code, tt.want)
+			}
+		})
 	}
 }
 
