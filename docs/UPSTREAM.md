@@ -2080,6 +2080,10 @@ and `node/bundle*.ts` (JS facet bundling; no Go subject).
 
 **D60 — protocol/cbor RawItem (reviewer).** RawItem relay is byte-exact even for maps with integer-like keys authored out of JS enumeration order; a Node peer relaying the same frame re-emits integer-like keys first. The Go port is strictly more faithful to the wire than pi is to itself. Interop-safe (CBOR maps are order-independent; pi's decoder accepts any order) and no wire a Node peer produces can exhibit it, so no change is warranted — recorded so nobody 'fixes' it toward JS semantics.
 
+### chord/delta operation log (ported 2026-09-18, upstream `2c995acf4` + `c4289b20e`)
+
+**D61 — chord/delta.** `same()` (the mirror of `previous === value`) compares two slices by backing-array pointer and length, because `&x[0]` does not exist at length zero — the S10.4 fix. Two empty Go slices allocated separately both carry the zero-size base pointer and are therefore indistinguishable, so `Set("xs", []any{})` over an empty array reports `Dirty()` false where pi reports true (verified under node: `track({xs:[]})` then `state.xs = []` → dirty true, ops `[]`). No wire effect on either side — neither emits an op. Unfixable without boxing every array in the tracked tree (`*[]any`), which would change the value model `Apply`, the codec and every consumer share; the alternative was the pre-fix behaviour, which got the common case (`Set("xs", Get("xs"))`) wrong instead.
+
 ## Open re-judgements
 
 Two entries carry a re-judge instruction rather than a settled decision. They are

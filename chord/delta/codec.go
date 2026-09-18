@@ -87,10 +87,12 @@ func (e *Encoder) Encode(ops []Op) []WireOp {
 	return out
 }
 
-// opPath is the path a decoded op addresses. Replace has none and is handled
-// before this is reached.
+// opPath is the path a decoded op addresses. Replace addresses the root and
+// has no path of its own; the encoder handles it before this is reached.
 func opPath(op Op) Path {
 	switch op := op.(type) {
+	case Replace:
+		return nil
 	case Set:
 		return op.Path
 	case Delete:

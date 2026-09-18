@@ -1,6 +1,7 @@
 package delta
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
@@ -13,27 +14,33 @@ import (
 
 // ─── Tracker ─────────────────────────────────────────────────────────────────
 //
-// Upstream tracks dirtiness ON MUTATION rather than diffing a snapshot at
-// flush, for a measured reason: this state flushes per streamed token, and a
-// 200 KB string growing 8 bytes per flush went from 845 µs to 42 µs. Its
-// producer mutates a Proxy that records a dirty path per write; flush walks
-// only the dirty paths, comparing the published baseline with the current
-// value there.
+// Upstream records ops ON MUTATION and coalesces them, rather than diffing a
+// published baseline at flush. Its producer mutates a Proxy whose traps append
+// to a pending operation log; flush replays that log. Keeping no baseline is
+// what makes the streaming case cheap — this state flushes per streamed token,
+// and a baseline has to be advanced on every one of them.
 //
 // Go has no Proxy, and no way to intercept an assignment to a map or slice
-// element. The mirror is a cursor: a State addresses one path in the tracked
-// tree and offers the same mutations the Proxy traps — set, delete, and the
-// array methods — each of which records the same dirty mark upstream's trap
-// records. The tracked tree is the any-tree encoding/json produces (the form
-// Apply works on), so no per-type code generation is needed: a producer's
-// state is JSON on the wire, and JSON in memory keeps one diff and one walk
-// for every state shape. The dirty tree, the flush walk and the baseline sync
-// are upstream's, and the ops a flush emits are the ops pi's tracker emits for
-// the same logical mutation.
+// element. The mirror is a cursor: a State addresses one position in the
+// tracked tree and offers the same mutations the Proxy traps — set, delete and
+// the array methods — each of which records the op upstream's trap records.
+// The tracked tree is the any-tree encoding/json produces (the form Apply works
+// on), so no per-type code generation is needed: a producer's state is JSON on
+// the wire, and JSON in memory keeps one log and one walk for every state
+// shape.
+//
+// A flush guarantees convergence, not a minimal or canonical batch. Mutations
+// that cancel out can still publish, and a long mutation window collapses to a
+// complete base batch so the log and its path trie stay bounded.
 
 // defaultMaxOverlapScan is how far back a string diff looks for a rolling
 // window, in UTF-16 code units, when no option says otherwise.
 const defaultMaxOverlapScan = 65_536
+
+// maxPendingLog bounds the pending log and its path trie. Past it the window
+// collapses to one complete base batch: the log stops growing, at the price of
+// a whole-value snapshot and an extra recovery point.
+const maxPendingLog = 4_096
 
 // Option configures a Tracker.
 type Option struct{ apply func(*tracker) }
@@ -51,27 +58,35 @@ func WithMaxOverlapScan(units int) Option {
 //
 // The first Flush is a base batch — one Replace carrying the complete value.
 // Each later Flush is the ops that transform the previously published value
-// into the current one, or an empty batch when nothing changed. Mutate the
+// into the current one, or an empty batch when nothing was mutated. Mutate the
 // value through State; the object handed to Track, and every value later
 // inserted, becomes tracker-owned.
 type Tracker[T any] struct{ core *tracker }
 
 type tracker struct {
-	scan        int
-	root        any
-	pending     *dirtyNode
-	hasPending  bool
-	baseline    any
-	hasBaseline bool
-	forceBase   bool
-	stamp       uint64 // orders sibling dirty nodes; a re-touched path moves last
+	scan int
+	root any
+
+	// The pending operation log. log is flush order with tombstones; trie
+	// indexes it by path so a later op can supersede or fold into an earlier
+	// one.
+	log           []*slot
+	trie          *logNode
+	nextOrder     int
+	tombstones    int
+	liveSlots     int
+	nodeCount     int
+	lastAddedSlot *slot
+	hasPending    bool
+	forceBase     bool
 }
 
 // Track starts tracking root, which must be a JSON object (map[string]any)
 // or array ([]any) — anything else panics, as a Proxy over a non-object
 // would. The value is adopted, not copied: mutate it only through State.
 func Track[T any](root T, opts ...Option) *Tracker[T] {
-	core := &tracker{scan: defaultMaxOverlapScan, pending: newDirtyNode(), forceBase: true}
+	core := &tracker{scan: defaultMaxOverlapScan, forceBase: true}
+	core.clearPending()
 	core.adopt(root)
 	for _, opt := range opts {
 		opt.apply(core)
@@ -108,7 +123,6 @@ func (t *Tracker[T]) Target() T { return t.core.root.(T) }
 func (t *Tracker[T]) SetState(next T) {
 	t.core.adopt(next)
 	t.core.clearPending()
-	t.core.baseline, t.core.hasBaseline = nil, false
 	t.core.forceBase = true
 }
 
@@ -120,17 +134,14 @@ func (t *Tracker[T]) Rebase() {
 	t.core.forceBase = true
 }
 
-// Discard accepts pending mutations into the local baseline without
-// publishing them. Replicas that exist never see them; use it only when they
+// Discard drops the pending ops without publishing them. The value keeps its
+// mutations; replicas that exist never learn of them, so use it only when they
 // need not.
-func (t *Tracker[T]) Discard() {
-	t.core.baseline, t.core.hasBaseline = cloneJSON(t.core.root), true
-	t.core.clearPending()
-}
+func (t *Tracker[T]) Discard() { t.core.clearPending() }
 
 // Dirty reports whether a Flush would emit anything: a base batch is owed, or
-// a path has been touched since the last one. A touched path whose value is
-// back where it was still counts; Flush is what compares values.
+// something was mutated since the last one. It is conservative — mutations
+// that cancel each other out still count.
 func (t *Tracker[T]) Dirty() bool { return t.core.forceBase || t.core.hasPending }
 
 // Flush publishes the changes since the previous flush as decoded ops with
@@ -144,168 +155,619 @@ func (t *Tracker[T]) Flush() []Op { return t.core.flush() }
 func (t *tracker) flush() []Op {
 	if t.forceBase {
 		value := cloneJSON(t.root)
-		t.baseline, t.hasBaseline = cloneJSON(t.root), true
 		t.forceBase = false
 		t.clearPending()
 		return []Op{Replace{Value: value}}
 	}
-	if !t.hasPending || !t.hasBaseline {
+	if !t.hasPending {
 		return []Op{}
 	}
 	d := differ{scan: t.scan, out: []Op{}}
-	d.walkDirty(t.baseline, t.root, t.pending, nil)
-	// Advance the baseline by SHARING references from root where that is
-	// cheap and exact — scalars, strings, and array appends. Replaying the
-	// ops rebuilds every touched string via slice + concat: two window-sized
-	// allocations per flush. For anything the sync cannot express cheaply (a
-	// non-append array change), it declines and the replay runs instead.
-	if !t.syncBaseline() && len(d.out) > 0 {
-		next, err := applyOps(t.baseline, cloneOps(d.out), false)
-		if err != nil {
-			// The batch was derived from this very baseline; a failure is a
-			// tracker bug, not a producer mistake.
-			panic(fmt.Errorf("delta: replaying a flushed batch onto the baseline failed: %w", err))
+	for _, s := range t.log {
+		if s == nil || s.dead {
+			continue
 		}
-		t.baseline = next
+		if s.str != nil {
+			// An anchored string slot holds the value the path had at the
+			// first write in this window and the value it holds now; the pair
+			// diffs once, here, into the same append or truncate+append a
+			// baseline would have produced.
+			d.diffValue(s.str.anchor, s.str.value, opPath(s.op))
+			continue
+		}
+		d.out = append(d.out, s.op)
 	}
 	t.clearPending()
 	return d.out
 }
 
+// ─── Pending operation log ───────────────────────────────────────────────────
+
+// strAnchor is an anchored string slot: the value at the path when this window
+// first wrote it, and the value it holds now.
+type strAnchor struct{ anchor, value string }
+
+// slot is one recorded op. order is the record order, which decides dominance
+// between a path and its ancestors; index is the slot's place in the log, so
+// killing it can tombstone that place in O(1).
+type slot struct {
+	op    Op
+	dead  bool
+	order int
+	index int
+	str   *strAnchor
+}
+
+// logNode is one path in the pending log's trie. retiredKids are generations
+// detached by a splice: their ops stay live and ordered, but nothing folds
+// into them any more, because the splice renumbered what they address.
+type logNode struct {
+	slots       []*slot
+	kids        map[Seg]*logNode
+	retiredKids []map[Seg]*logNode
+	lastOrder   int // -1 until something is recorded here
+}
+
+func newLogNode() *logNode { return &logNode{lastOrder: -1} }
+
 func (t *tracker) clearPending() {
-	t.pending = newDirtyNode()
+	t.log = nil
+	t.trie = newLogNode()
+	t.nextOrder = 0
+	t.tombstones = 0
+	t.liveSlots = 0
+	t.nodeCount = 1
+	t.lastAddedSlot = nil
 	t.hasPending = false
 }
 
-// ─── Dirty tree ──────────────────────────────────────────────────────────────
-
-// arrayDirty is what an array node remembers of its structural changes.
-type arrayDirty uint8
-
-const (
-	arrayClean   arrayDirty = iota
-	arrayAppend             // the tail grew from start; older elements carry their own marks
-	arrayDiff               // indices moved: compare positionally at flush
-	arrayReplace            // replaced whole: one set, or nothing when deeply equal
-)
-
-// dirtyNode is one touched path. valueDirty means the value here was
-// assigned or deleted and must be diffed whole; array is an array node's
-// structural mark; children are the touched paths below it.
-type dirtyNode struct {
-	valueDirty bool
-	array      arrayDirty
-	start      int // arrayAppend: the length before the first append
-	children   map[Seg]*dirtyNode
-	touched    uint64 // upstream's Map order: a re-touched child moves last
-}
-
-func newDirtyNode() *dirtyNode { return &dirtyNode{children: map[Seg]*dirtyNode{}} }
-
-// ordered is the children in touch order, which is the order their ops are
-// emitted: upstream deletes and re-inserts a Map entry on every touch.
-func (n *dirtyNode) ordered() []dirtyChild {
-	out := make([]dirtyChild, 0, len(n.children))
-	for seg, child := range n.children {
-		out = append(out, dirtyChild{seg, child})
+// logNodeAt is the trie node for path, created along the way.
+func (t *tracker) logNodeAt(path Path) *logNode {
+	at := t.trie
+	for _, seg := range path {
+		if at.kids == nil {
+			at.kids = map[Seg]*logNode{}
+		}
+		next, ok := at.kids[seg]
+		if !ok {
+			next = newLogNode()
+			at.kids[seg] = next
+			t.nodeCount++
+		}
+		at = next
 	}
-	slices.SortFunc(out, func(a, b dirtyChild) int {
-		return int(a.node.touched - b.node.touched) // stamps are distinct and increasing
-	})
-	return out
+	return at
 }
 
-type dirtyChild struct {
-	seg  Seg
-	node *dirtyNode
+// findLogNode is logNodeAt without creating anything; nil when the path has
+// never been recorded.
+func (t *tracker) findLogNode(path Path) *logNode {
+	at := t.trie
+	for _, seg := range path {
+		next, ok := at.kids[seg]
+		if !ok {
+			return nil
+		}
+		at = next
+	}
+	return at
 }
 
-// ensureNode finds or creates the node for path, moving every node along the
-// way last among its siblings. It returns nil when an ancestor is already
-// dirty whole — a value mark, or an array diff or replace — because the
-// ancestor's diff covers this path.
-func (t *tracker) ensureNode(path Path) *dirtyNode {
+// compactLog drops tombstones once they dominate the log.
+func (t *tracker) compactLog() {
+	if t.tombstones < 1_024 || t.tombstones*2 < len(t.log) {
+		return
+	}
+	compacted := make([]*slot, 0, t.liveSlots)
+	for _, s := range t.log {
+		if s == nil {
+			continue
+		}
+		s.index = len(compacted)
+		compacted = append(compacted, s)
+	}
+	t.log = compacted
+	t.tombstones = 0
+}
+
+func (t *tracker) killSlot(s *slot) {
+	if s.dead {
+		return
+	}
+	s.dead = true
+	t.liveSlots--
+	if s.index < len(t.log) && t.log[s.index] == s {
+		t.log[s.index] = nil
+		t.tombstones++
+	}
+}
+
+// liveSlot is the newest op recorded at this node, or nil.
+func liveSlot(at *logNode) *slot {
+	for len(at.slots) > 0 && at.slots[len(at.slots)-1].dead {
+		at.slots = at.slots[:len(at.slots)-1]
+	}
+	if len(at.slots) == 0 {
+		at.slots = nil
+		return nil
+	}
+	return at.slots[len(at.slots)-1]
+}
+
+// killHere drops every op recorded at this node, keeping its children.
+func (t *tracker) killHere(at *logNode) {
+	if at.slots == nil {
+		return
+	}
+	for _, s := range at.slots {
+		t.killSlot(s)
+	}
+	at.slots = nil
+}
+
+func (t *tracker) addSlot(at *logNode, s *slot) {
+	t.compactLog()
+	s.order = t.nextOrder
+	t.nextOrder++
+	s.index = len(t.log)
+	at.lastOrder = s.order
+	at.slots = append(at.slots, s)
+	t.log = append(t.log, s)
+	t.liveSlots++
+	t.lastAddedSlot = s
+}
+
+// collapsePending bounds a long mutation window. Without it the log and the
+// retired path generations grow for as long as the producer mutates without
+// flushing. Past the bound the window becomes one complete snapshot: metadata
+// stops accumulating, at the cost of a full payload and an extra recovery
+// point. Payload bytes and peak allocation stay workload-dependent.
+func (t *tracker) collapsePending() {
+	if t.forceBase || (t.liveSlots <= maxPendingLog && t.nodeCount <= maxPendingLog) {
+		return
+	}
+	value := cloneJSON(t.root)
+	t.clearPending()
 	t.hasPending = true
-	node := t.pending
-	for _, seg := range path {
-		if node.valueDirty || node.array == arrayDiff || node.array == arrayReplace {
-			return nil
-		}
-		child := node.children[seg]
-		if child == nil {
-			child = newDirtyNode()
-			node.children[seg] = child
-		}
-		t.stamp++
-		child.touched = t.stamp
-		node = child
-	}
-	return node
+	t.addSlot(t.trie, &slot{op: Replace{Value: value}})
 }
 
-func (t *tracker) findNode(path Path) *dirtyNode {
-	node := t.pending
-	for _, seg := range path {
-		if node = node.children[seg]; node == nil {
-			return nil
+// killSubtree drops every op at and below this node, retired generations
+// included: a replacement here dominates all of them.
+func (t *tracker) killSubtree(at *logNode) {
+	t.killHere(at)
+	for _, child := range at.kids {
+		t.killSubtree(child)
+	}
+	at.kids = nil
+	for _, generation := range at.retiredKids {
+		for _, child := range generation {
+			t.killSubtree(child)
 		}
 	}
-	return node
+	at.retiredKids = nil
 }
 
-// markValue: the value at path was assigned or deleted. Whatever was known
-// below it no longer matters.
-func (t *tracker) markValue(path Path) {
-	node := t.ensureNode(path)
-	if node == nil {
+// retireKids detaches this node's children. A splice keeps their ops — they
+// were recorded against the indices of an earlier generation and must still
+// apply in order — but nothing may fold into them afterwards.
+func retireKids(at *logNode) {
+	if at.kids == nil {
 		return
 	}
-	node.valueDirty = true
-	node.array = arrayClean
-	clear(node.children)
+	at.retiredKids = append(at.retiredKids, at.kids)
+	at.kids = nil
 }
 
-// markArrayAppend: the array at path grew from start. A later append keeps
-// the first start; a stronger mark already there wins.
-func (t *tracker) markArrayAppend(path Path, start int) {
-	node := t.ensureNode(path)
-	if node == nil || node.valueDirty || node.array == arrayDiff || node.array == arrayReplace {
+// foldSite is where a later write belongs INSIDE an already-recorded payload.
+// item is the index within a splice's inserted items, or -1 when the payload
+// is a set or a replacement.
+type foldSite struct {
+	slot *slot
+	rest Path
+	item int
+}
+
+// foldTarget is the deepest live ancestor op carrying a payload a later write
+// can be folded into. Set and Replace carry the whole subtree; a Splice
+// carries the items it inserted, so a write to one of those indices belongs
+// inside the payload rather than after it.
+func (t *tracker) foldTarget(path Path) (foldSite, bool) {
+	at := t.trie
+	var found *slot
+	foundDepth, foundItem := 0, -1
+	ancestorMax := -1
+	for depth := 0; depth < len(path); depth++ {
+		if found != nil && at.lastOrder > found.order {
+			found = nil
+		}
+		// A fold is sound only if nothing has been recorded at this path or
+		// above it since: a later op there (a splice on the same array, a
+		// replacement of an ancestor) would have to apply after this write,
+		// not before it. Writes to other branches are irrelevant, which is why
+		// this is not "the most recent op".
+		if s := liveSlot(at); s != nil && s.order >= ancestorMax && at.lastOrder == s.order {
+			switch op := s.op.(type) {
+			case Set, Replace:
+				found, foundDepth, foundItem = s, depth, -1
+			case Splice:
+				if i, ok := path[depth].(Index); ok && int(i) >= op.Index && int(i) < op.Index+len(op.Items) {
+					found, foundDepth, foundItem = s, depth+1, int(i)-op.Index
+				}
+			}
+		}
+		if at.lastOrder > ancestorMax {
+			ancestorMax = at.lastOrder
+		}
+		next, ok := at.kids[path[depth]]
+		if !ok {
+			break
+		}
+		at = next
+	}
+	if found == nil {
+		return foldSite{}, false
+	}
+	return foldSite{slot: found, rest: path[foundDepth:], item: foundItem}, true
+}
+
+// payload is the container a fold writes into: a Replace's or Set's value, or
+// one of a Splice's inserted items.
+func (site foldSite) payload() any {
+	if site.item >= 0 {
+		return site.slot.op.(Splice).Items[site.item]
+	}
+	if r, ok := site.slot.op.(Replace); ok {
+		return r.Value
+	}
+	return site.slot.op.(Set).Value
+}
+
+// setItem replaces one of a splice's inserted items, for a fold whose rest is
+// empty — the write lands on the item itself.
+func (site foldSite) setItem(value any) { site.slot.op.(Splice).Items[site.item] = value }
+
+// foldInto applies op to container at rest, reporting whether it could.
+// Failure is not an error: the caller records the op instead.
+func foldInto(container any, rest Path, op Op) bool {
+	if len(rest) == 0 {
+		return false
+	}
+	target := container
+	for _, seg := range rest[:len(rest)-1] {
+		if !isContainer(target) {
+			return false
+		}
+		target = ownValue(target, seg)
+	}
+	if !isContainer(target) {
+		return false
+	}
+	key := rest[len(rest)-1]
+	switch op := op.(type) {
+	case Set:
+		// A Go map has no prototype, so writing __proto__ is an ordinary
+		// member write — but the payload crosses to replicas that do, and
+		// nothing may address it by path there.
+		if k, ok := key.(Key); ok && string(k) == "__proto__" {
+			return false
+		}
+		return writeMember(target, key, cloneJSON(op.Value))
+	case Delete:
+		return deleteMember(target, key)
+	case Append:
+		s, ok := ownValue(target, key).(string)
+		if !ok {
+			return false
+		}
+		return writeMember(target, key, s+op.Text)
+	case Truncate:
+		s, ok := ownValue(target, key).(string)
+		if !ok {
+			return false
+		}
+		return writeMember(target, key, truncateUTF16(s, op.Count))
+	case Splice:
+		xs, ok := ownValue(target, key).([]any)
+		if !ok {
+			return false
+		}
+		return writeMember(target, key, splice(xs, op.Index, op.Remove, cloneItems(op.Items)))
+	}
+	return false
+}
+
+// writeMember is parent[key] = value inside a pending payload. A slice index
+// past the end is refused rather than grown: the holder cannot re-header its
+// parent, and the caller records the op instead.
+func writeMember(parent any, key Seg, value any) bool {
+	switch p := parent.(type) {
+	case map[string]any:
+		p[propertyKey(key)] = value
+		return true
+	case []any:
+		if i, ok := key.(Index); ok && i >= 0 && int(i) < len(p) {
+			p[i] = value
+			return true
+		}
+	}
+	return false
+}
+
+// deleteMember is `delete parent[key]` inside a pending payload. An array
+// element is refused: removing one would renumber the payload, and no op the
+// tracker records deletes through an array.
+func deleteMember(parent any, key Seg) bool {
+	if p, ok := parent.(map[string]any); ok {
+		delete(p, propertyKey(key))
+		return true
+	}
+	return false
+}
+
+// recordString records a write of one string at path, anchored to the value
+// the path held when this window first wrote it. Every later write updates the
+// anchored value, and flush diffs anchor → final once. That yields the same
+// truncate/append pair a baseline diff would, without keeping a baseline for
+// the whole document.
+func (t *tracker) recordString(path Path, previous, value string) {
+	if t.forceBase {
 		return
 	}
-	if node.array == arrayClean {
-		node.array, node.start = arrayAppend, start
+	t.hasPending = true
+	// A string inside a pending payload belongs in that payload, as for any
+	// other write.
+	if site, ok := t.foldTarget(path); ok {
+		if site.item >= 0 && len(site.rest) == 0 {
+			site.setItem(value)
+			return
+		}
+		if foldInto(site.payload(), site.rest, Set{Path: path, Value: value}) {
+			return
+		}
 	}
-}
-
-// markArrayDiff: indices moved. Element marks below are dropped; flush
-// compares positionally.
-func (t *tracker) markArrayDiff(path Path) {
-	node := t.ensureNode(path)
-	if node == nil || node.valueDirty || node.array == arrayReplace {
+	at := t.logNodeAt(path)
+	live := liveSlot(at)
+	if live != nil && live.str != nil {
+		live.str.value = value
 		return
 	}
-	node.array = arrayDiff
-	clear(node.children)
+	if live != nil {
+		// A pending set or delete at this path already replaced the value;
+		// keep that op and carry the new value in it rather than anchoring to
+		// a value the replica will never hold.
+		switch op := live.op.(type) {
+		case Replace:
+			live.op = Replace{Value: value}
+			return
+		case Set:
+			live.op = Set{Path: op.Path, Value: value}
+			return
+		case Delete:
+			t.killHere(at)
+			t.addSlot(at, &slot{op: Set{Path: path, Value: value}})
+			return
+		}
+		// A truncate/append pair from an earlier string diff: both must go.
+		t.killHere(at)
+	}
+	t.killSubtree(at)
+	t.addSlot(at, &slot{op: Set{Path: path, Value: value}, str: &strAnchor{anchor: previous, value: value}})
 }
 
-// markArrayReplace: every element was removed. Flush sets the array whole
-// unless it is deeply equal to the published one.
-func (t *tracker) markArrayReplace(path Path) {
-	node := t.ensureNode(path)
-	if node == nil || node.valueDirty {
+// record adds op to the pending log, superseding, folding or coalescing it
+// with what is already recorded where that is sound.
+func (t *tracker) record(op Op) {
+	if t.forceBase {
 		return
 	}
-	node.array = arrayReplace
-	clear(node.children)
+	t.hasPending = true
+	path := opPath(op)
+	existing := t.findLogNode(path)
+	var anchored *slot
+	if existing != nil {
+		anchored = liveSlot(existing)
+	}
+	if anchored != nil && anchored.str != nil {
+		switch op := op.(type) {
+		case Append:
+			anchored.str.value += op.Text
+			return
+		case Truncate:
+			anchored.str.value = truncateUTF16(anchored.str.value, op.Count)
+			return
+		case Set:
+			if s, ok := op.Value.(string); ok {
+				anchored.str.value = s
+				return
+			}
+		}
+		t.killSubtree(existing)
+	} else if existing != nil && replaces(op) {
+		// A replacement absorbed into an ancestor payload must still
+		// invalidate ops already recorded at and below its destination.
+		t.killSubtree(existing)
+	}
+
+	if len(path) > 0 {
+		if site, ok := t.foldTarget(path); ok {
+			if site.item >= 0 && len(site.rest) == 0 {
+				if s, ok := op.(Set); ok {
+					site.setItem(cloneJSON(s.Value))
+					return
+				}
+			} else if foldInto(site.payload(), site.rest, op) {
+				return
+			}
+		}
+	}
+
+	at := t.logNodeAt(path)
+	if live := liveSlot(at); live != nil {
+		if t.coalesce(live, op) {
+			return
+		}
+		if replaces(op) {
+			t.killHere(at)
+		}
+	}
+	if replaces(op) {
+		// Replacements dominate all earlier descendants, including
+		// generations detached by array splices.
+		t.killSubtree(at)
+	} else if _, ok := op.(Splice); ok {
+		// Splices preserve earlier writes but form a barrier for later
+		// folding.
+		retireKids(at)
+	}
+	t.addSlot(at, &slot{op: op})
 }
 
-// appendStart is the start of the array at path's pending append, if it has
-// one.
-func (t *tracker) appendStart(path Path) (int, bool) {
-	if node := t.findNode(path); node != nil && node.array == arrayAppend {
-		return node.start, true
+// replaces reports whether op supersedes everything recorded below its path.
+func replaces(op Op) bool {
+	switch op.(type) {
+	case Set, Delete, Replace:
+		return true
 	}
-	return 0, false
+	return false
+}
+
+// coalesce folds op into the newest op at the same path where that is exactly
+// equivalent, reporting whether it did. The splice rewrites are sound only for
+// adjacent recorded ops; a tombstoned op in between remains a barrier through
+// lastAddedSlot.
+func (t *tracker) coalesce(live *slot, op Op) bool {
+	switch op := op.(type) {
+	case Append:
+		switch prev := live.op.(type) {
+		case Append:
+			live.op = Append{Path: prev.Path, Text: prev.Text + op.Text}
+			return true
+		case Replace:
+			if s, ok := prev.Value.(string); ok {
+				live.op = Replace{Value: s + op.Text}
+				return true
+			}
+		case Set:
+			if s, ok := prev.Value.(string); ok {
+				live.op = Set{Path: prev.Path, Value: s + op.Text}
+				return true
+			}
+		}
+	case Truncate:
+		switch prev := live.op.(type) {
+		case Replace:
+			if s, ok := prev.Value.(string); ok {
+				live.op = Replace{Value: truncateUTF16(s, op.Count)}
+				return true
+			}
+		case Set:
+			if s, ok := prev.Value.(string); ok {
+				live.op = Set{Path: prev.Path, Value: truncateUTF16(s, op.Count)}
+				return true
+			}
+		}
+	case Splice:
+		prev, ok := live.op.(Splice)
+		if !ok || t.lastAddedSlot != live || prev.Remove != 0 {
+			return false
+		}
+		items := prev.Items
+		// An adjacent tail insert extends the pending one.
+		if op.Remove == 0 && prev.Index+len(items) == op.Index {
+			live.op = Splice{Path: prev.Path, Index: prev.Index, Items: append(slices.Clip(items), op.Items...)}
+			return true
+		}
+		// A splice inside the pending insert edits its payload.
+		if op.Index >= prev.Index && op.Index+op.Remove <= prev.Index+len(items) {
+			t.replaceItems(live, prev, splice(items, op.Index-prev.Index, op.Remove, op.Items))
+			return true
+		}
+		// A removal off the pending insert's tail shortens it.
+		if op.Remove > 0 && len(op.Items) == 0 && len(items) > 0 {
+			if from := op.Index - prev.Index; from >= 0 && from+op.Remove == len(items) {
+				t.replaceItems(live, prev, items[:from])
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// replaceItems rewrites a pending insert's payload, dropping the op when the
+// rewrite leaves it inserting nothing and removing nothing.
+func (t *tracker) replaceItems(live *slot, prev Splice, items []any) {
+	live.op = Splice{Path: prev.Path, Index: prev.Index, Items: items}
+	if len(items) == 0 {
+		t.killSlot(live)
+	}
+}
+
+// diffInto records what turns before into after at path. It is the local diff
+// used when a whole container is assigned: it keeps op quality without a
+// baseline by comparing the outgoing value with the incoming one at the moment
+// of the write. String leaves go through recordString so every string path
+// keeps a single anchored slot; otherwise a later write to the same string
+// would have to supersede ops whose starting value it no longer knows.
+func (t *tracker) diffInto(before, after any, at Path) {
+	if t.forceBase {
+		return
+	}
+	t.hasPending = true
+	if same(before, after) {
+		return
+	}
+	if b, ok := before.(string); ok {
+		if a, ok := after.(string); ok {
+			t.recordString(at, b, a)
+			return
+		}
+	}
+	if b, ok := before.([]any); ok {
+		if a, ok := after.([]any); ok && len(b) == len(a) {
+			for i := range a {
+				t.diffInto(b[i], a[i], childPath(at, Index(i)))
+			}
+			return
+		}
+	}
+	if b, ok := before.(map[string]any); ok {
+		if a, ok := after.(map[string]any); ok {
+			if hasReservedKey(b) || hasReservedKey(a) {
+				t.record(Set{Path: at, Value: cloneJSON(after)})
+				return
+			}
+			for _, key := range keyOrder(a) {
+				child := childPath(at, Key(key))
+				if previous, ok := b[key]; ok {
+					t.diffInto(previous, a[key], child)
+				} else {
+					t.record(Set{Path: child, Value: cloneJSON(a[key])})
+				}
+			}
+			for _, key := range keyOrder(b) {
+				if _, ok := a[key]; !ok {
+					t.record(Delete{Path: childPath(at, Key(key))})
+				}
+			}
+			return
+		}
+	}
+	// Arrays of differing length, and everything else: chord's own diff.
+	d := differ{scan: t.scan}
+	d.diffValue(before, after, at)
+	for _, op := range d.out {
+		t.record(op)
+	}
+}
+
+func hasReservedKey(m map[string]any) bool {
+	for key := range m {
+		if ReservedSegments[key] {
+			return true
+		}
+	}
+	return false
 }
 
 // ─── State ───────────────────────────────────────────────────────────────────
@@ -318,7 +780,8 @@ func (t *tracker) appendStart(path Path) (int, bool) {
 //
 // Segments are given as any: a string is an object key, an int (or any
 // integral Go number) an array index, and a Key or Index is taken as is. On
-// an array a numeric string is the index it spells, as JavaScript coerces it.
+// an array a numeric string is the index it spells, and on an object an index
+// is the key it spells, as JavaScript coerces them.
 //
 // Values inserted through a State are adopted: a map becomes part of the
 // tracked tree and may be read through a retained reference, but must not be
@@ -399,8 +862,12 @@ func (s State) Len() int {
 
 // Set assigns a member: an object property, or an array element at an
 // existing index or exactly one past the end. Assigning a member the value it
-// already has (a scalar by value, a map by identity) records nothing. nil is
-// JSON null; absence is spelled with Delete.
+// already has (a scalar by value, a container by identity) records nothing.
+// nil is JSON null; absence is spelled with Delete.
+//
+// A whole-container assignment is diffed against the outgoing value at the
+// moment of the write, so a producer that rebuilds its partial each frame
+// still publishes appends rather than replacements.
 func (s State) Set(seg any, value any) {
 	s.mutate(func(container any) any {
 		key := s.segFor(seg, container)
@@ -419,33 +886,53 @@ func (s State) Set(seg any, value any) {
 				panic(&UnsafePathError{Segment: key})
 			}
 			if int(i) == len(c) {
-				s.t.markArrayAppend(s.path, len(c))
+				s.t.record(Splice{Path: slices.Clone(s.path), Items: []any{cloneJSON(value)}, Index: len(c)})
 				return append(c, value)
 			}
 			if same(c[i], value) {
 				return c
 			}
-			if start, ok := s.t.appendStart(s.path); !ok || int(i) < start {
-				s.t.markValue(at)
-			}
+			s.assign(at, c[i], value)
 			c[i] = value
 			return c
 		case map[string]any:
 			k := propertyKey(key)
-			if previous, ok := c[k]; ok && same(previous, value) {
+			previous, has := c[k]
+			if has && same(previous, value) {
 				return c
 			}
-			s.t.markValue(at)
+			if !has {
+				previous = missing
+			}
+			s.assign(at, previous, value)
 			c[k] = value
 			return c
 		}
 		panic(&PathError{Ref: s.path})
 	})
+	s.t.collapsePending()
 }
 
-// Delete removes an object property. Deleting one that is absent still marks
-// the path, as `delete` does. An array element cannot be deleted — that would
-// leave a hole; use Splice.
+// assign records one member write, choosing the op quality upstream's set
+// trap chooses: a local diff between two containers, an anchored string, or a
+// whole-value set.
+func (s State) assign(at Path, previous, value any) {
+	if isContainer(previous) && isContainer(value) {
+		s.t.diffInto(previous, value, at)
+		return
+	}
+	if p, ok := previous.(string); ok {
+		if v, ok := value.(string); ok {
+			s.t.recordString(at, p, v)
+			return
+		}
+	}
+	s.t.record(Set{Path: at, Value: cloneJSON(value)})
+}
+
+// Delete removes an object property. Deleting one that is absent records
+// nothing, as `delete` on a missing property publishes nothing. An array
+// element cannot be deleted — that would leave a hole; use Splice.
 func (s State) Delete(seg any) {
 	s.mutate(func(container any) any {
 		key := s.segFor(seg, container)
@@ -456,26 +943,31 @@ func (s State) Delete(seg any) {
 			}
 			panic(errSparseDelete)
 		case map[string]any:
-			s.t.markValue(childPath(s.path, key))
-			delete(c, propertyKey(key))
+			k := propertyKey(key)
+			if _, ok := c[k]; ok {
+				s.t.record(Delete{Path: childPath(s.path, key)})
+			}
+			delete(c, k)
 			return c
 		}
 		panic(&PathError{Ref: s.path})
 	})
+	s.t.collapsePending()
 }
 
-// Push appends to an array and returns the new length. Pushes before one
-// flush publish as one tail splice.
+// Push appends to an array and returns the new length. Adjacent pushes before
+// one flush normally coalesce into one tail splice.
 func (s State) Push(items ...any) (length int) {
 	adoptItems(items)
 	s.array("Push", func(xs []any) []any {
 		if len(items) > 0 {
-			s.t.markArrayAppend(s.path, len(xs))
+			s.t.record(Splice{Path: slices.Clone(s.path), Index: len(xs), Items: cloneItems(items)})
 		}
 		xs = append(xs, items...)
 		length = len(xs)
 		return xs
 	})
+	s.t.collapsePending()
 	return length
 }
 
@@ -484,12 +976,13 @@ func (s State) Unshift(items ...any) (length int) {
 	adoptItems(items)
 	s.array("Unshift", func(xs []any) []any {
 		if len(items) > 0 {
-			s.t.markArrayDiff(s.path)
+			s.t.record(Splice{Path: slices.Clone(s.path), Items: cloneItems(items)})
 		}
 		xs = slices.Insert(xs, 0, items...)
 		length = len(xs)
 		return xs
 	})
+	s.t.collapsePending()
 	return length
 }
 
@@ -501,13 +994,12 @@ func (s State) Pop() (value any, ok bool) {
 			return xs
 		}
 		last := len(xs) - 1
-		if start, has := s.t.appendStart(s.path); !has || last < start {
-			s.t.markArrayDiff(s.path)
-		}
+		s.t.record(Splice{Path: slices.Clone(s.path), Index: last, Remove: 1, Items: []any{}})
 		value, ok = xs[last], true
 		xs[last] = nil
 		return xs[:last]
 	})
+	s.t.collapsePending()
 	return value, ok
 }
 
@@ -517,39 +1009,35 @@ func (s State) Shift() (value any, ok bool) {
 		if len(xs) == 0 {
 			return xs
 		}
-		s.t.markArrayDiff(s.path)
+		s.t.record(Splice{Path: slices.Clone(s.path), Remove: 1, Items: []any{}})
 		value, ok = xs[0], true
 		return slices.Delete(xs, 0, 1)
 	})
+	s.t.collapsePending()
 	return value, ok
 }
 
 // Splice is Array.prototype.splice: remove `remove` elements at index and
 // insert items there, returning the removed elements. A negative index counts
 // from the end; an index past the end appends; a remove count past the end
-// is clamped. A splice covering the whole array publishes as a set (or, on
-// the root, a Replace); one at the pending append's tail folds into it.
+// is clamped. A splice that clears the whole array publishes as a set (or, on
+// the root, a Replace).
 func (s State) Splice(index, remove int, items ...any) (removed []any) {
 	adoptItems(items)
 	s.array("Splice", func(xs []any) []any {
 		before := len(xs)
 		index, remove = spliceRange(before, index, remove)
 		if remove > 0 || len(items) > 0 {
-			start, has := s.t.appendStart(s.path)
-			switch {
-			case index == 0 && remove == before:
-				s.t.markArrayReplace(s.path)
-			case has && index >= start:
-				// The final append payload includes all tail edits.
-			case index == before && remove == 0:
-				s.t.markArrayAppend(s.path, before)
-			default:
-				s.t.markArrayDiff(s.path)
+			if index == 0 && remove == before {
+				s.snapshot(cloneItems(items))
+			} else {
+				s.t.record(Splice{Path: slices.Clone(s.path), Index: index, Remove: remove, Items: cloneItems(items)})
 			}
 		}
 		removed = slices.Clone(xs[index : index+remove])
 		return splice(xs, index, remove, items)
 	})
+	s.t.collapsePending()
 	return removed
 }
 
@@ -564,39 +1052,53 @@ func spliceRange(length, index, remove int) (int, int) {
 	return index, max(0, min(remove, length-index))
 }
 
+// snapshot publishes the array whole — a Replace at the root, a Set below it.
+// The whole-array mutators have no op of their own, so they record what they
+// produced.
+func (s State) snapshot(value []any) {
+	if len(s.path) == 0 {
+		s.t.record(Replace{Value: value})
+		return
+	}
+	s.t.record(Set{Path: slices.Clone(s.path), Value: value})
+}
+
 // Sort sorts the array in place, stably, by cmp. JavaScript's default order
 // — by string form, in UTF-16 code units — is a footgun on numbers, so there
 // is no default; pass the order you mean.
 func (s State) Sort(cmp func(a, b any) int) {
 	s.array("Sort", func(xs []any) []any {
-		s.t.markArrayDiff(s.path)
 		slices.SortStableFunc(xs, cmp)
+		s.snapshot(cloneItems(xs))
 		return xs
 	})
+	s.t.collapsePending()
 }
 
 // Reverse reverses the array in place.
 func (s State) Reverse() {
 	s.array("Reverse", func(xs []any) []any {
-		s.t.markArrayDiff(s.path)
 		slices.Reverse(xs)
+		s.snapshot(cloneItems(xs))
 		return xs
 	})
+	s.t.collapsePending()
 }
 
 // Fill is Array.prototype.fill: it sets the elements in [start, end) to
 // value, with negative bounds counted from the end and both clamped. A map
-// filled into several slots would live at several paths; fill scalars.
+// filled into several slots lives at several paths; fill scalars.
 func (s State) Fill(value any, start, end int) {
 	adoptItems([]any{value})
 	s.array("Fill", func(xs []any) []any {
-		s.t.markArrayDiff(s.path)
 		from, to := relativeIndex(start, len(xs)), relativeIndex(end, len(xs))
 		for i := from; i < to; i++ {
 			xs[i] = value
 		}
+		s.snapshot(cloneItems(xs))
 		return xs
 	})
+	s.t.collapsePending()
 }
 
 // CopyWithin is Array.prototype.copyWithin: it copies the elements in
@@ -604,14 +1106,15 @@ func (s State) Fill(value any, start, end int) {
 // Fill. Reference semantics apply, as they do in JavaScript.
 func (s State) CopyWithin(target, start, end int) {
 	s.array("CopyWithin", func(xs []any) []any {
-		s.t.markArrayDiff(s.path)
 		to := relativeIndex(target, len(xs))
 		from, final := relativeIndex(start, len(xs)), relativeIndex(end, len(xs))
 		if count := min(final-from, len(xs)-to); count > 0 {
 			copy(xs[to:to+count], xs[from:from+count])
 		}
+		s.snapshot(cloneItems(xs))
 		return xs
 	})
+	s.t.collapsePending()
 }
 
 // relativeIndex is JavaScript's relative-index rule: negative counts from the
@@ -633,23 +1136,24 @@ func (s State) SetLen(n int) {
 			panic(fmt.Errorf("delta: invalid array length %d", n))
 		case n < before:
 			if n == 0 {
-				s.t.markArrayReplace(s.path)
-			} else if start, has := s.t.appendStart(s.path); !has || n < start {
-				s.t.markArrayDiff(s.path)
+				s.snapshot([]any{})
+			} else {
+				s.t.record(Splice{Path: slices.Clone(s.path), Index: n, Remove: before - n, Items: []any{}})
 			}
 			clear(xs[n:])
 			return xs[:n]
 		case n > before:
-			s.t.markArrayAppend(s.path, before)
+			s.t.record(Splice{Path: slices.Clone(s.path), Index: before, Items: make([]any, n-before)})
 			return append(xs, make([]any, n-before)...)
 		}
 		return xs
 	})
+	s.t.collapsePending()
 }
 
 var (
 	errSparseDelete  = errors.New("delta: delete would create a sparse array; use Splice instead")
-	errAliasedCursor = errors.New("delta: a State cursor is not a value; one value cannot live at two paths, so insert a copy of its Value() instead")
+	errAliasedCursor = errors.New("delta: a State cursor is not a value; insert a copy of its Value() instead")
 )
 
 // mutate resolves the cursor's path, hands fn the container there, and
@@ -698,16 +1202,21 @@ func mustSeg(v any) Seg {
 	return seg
 }
 
-// normSeg is upstream's norm: on an array a canonical numeric string is the
-// index it spells. Everywhere else the segment is what it was — an object's
-// key stays a string however it spells, and an Index on an object is the
-// property it coerces to when written.
+// normSeg is upstream's norm: a property key in JavaScript is always a
+// string, and only an array coerces a canonical numeric one back to an index.
+// So on an array a numeric string is the index it spells, and on an object an
+// index is the key it spells — which is the key a pi replica writes.
 func normSeg(seg Seg, container any) Seg {
-	if k, ok := seg.(Key); ok {
-		if _, isArray := container.([]any); isArray {
+	switch container.(type) {
+	case []any:
+		if k, ok := seg.(Key); ok {
 			if i, ok := canonicalIndex(string(k)); ok {
 				return Index(i)
 			}
+		}
+	case map[string]any:
+		if i, ok := seg.(Index); ok {
+			return Key(strconv.Itoa(int(i)))
 		}
 	}
 	return seg
@@ -750,9 +1259,12 @@ func resolveValue(root any, path Path) (any, bool) {
 	return node, true
 }
 
-// same is `previous === value`: scalars by value, a map by identity, a slice
-// by identity of its header. Assigning a member what it already holds is not
-// a change.
+// same is `previous === value`: scalars by value, a container by identity.
+// Assigning a member what it already holds is not a change.
+//
+// A Go slice is its header, so identity is the backing array it points at
+// together with its length; two independently allocated empty slices are
+// therefore indistinguishable, where two empty JavaScript arrays are not.
 func same(a, b any) bool {
 	switch x := a.(type) {
 	case nil:
@@ -768,7 +1280,7 @@ func same(a, b any) bool {
 		return ok && reflect.ValueOf(x).Pointer() == reflect.ValueOf(y).Pointer()
 	case []any:
 		y, ok := b.([]any)
-		return ok && len(x) == len(y) && len(x) > 0 && &x[0] == &y[0]
+		return ok && len(x) == len(y) && reflect.ValueOf(x).Pointer() == reflect.ValueOf(y).Pointer()
 	}
 	if fa, ok := number(a); ok {
 		fb, ok := number(b)
@@ -777,7 +1289,7 @@ func same(a, b any) bool {
 	return false
 }
 
-// ─── Flush: dirty walk and diff ──────────────────────────────────────────────
+// ─── Flush: the value diff ───────────────────────────────────────────────────
 
 // missingValue is upstream's MISSING: a member that is not there, distinct
 // from one that is null.
@@ -921,17 +1433,9 @@ func (d *differ) diffValue(before, after any, path Path) {
 // insertion order, which a Go map does not have. Either order yields the
 // same replica.
 func (d *differ) diffObject(before, after map[string]any, path Path) {
-	for key := range before {
-		if ReservedSegments[key] {
-			d.emitSet(path, after)
-			return
-		}
-	}
-	for key := range after {
-		if ReservedSegments[key] {
-			d.emitSet(path, after)
-			return
-		}
+	if hasReservedKey(before) || hasReservedKey(after) {
+		d.emitSet(path, after)
+		return
 	}
 	for _, key := range keyOrder(after) {
 		previous, ok := before[key]
@@ -998,192 +1502,6 @@ func (d *differ) diffArray(before, after []any, path Path) {
 	}
 }
 
-// walkDirty descends the dirty tree, diffing at each marked node: a dirty
-// value whole; an array replace as one set unless equal; an array diff, or
-// an append whose premise no longer holds, positionally; an append as its
-// older elements' own marks followed by one tail splice; and an unmarked
-// container by its children.
-func (d *differ) walkDirty(before, after any, node *dirtyNode, path Path) {
-	if node.valueDirty {
-		d.diffValue(before, after, path)
-		return
-	}
-	if node.array != arrayClean {
-		if node.array == arrayReplace {
-			if !jsonEqual(before, after) {
-				d.emitSet(path, after)
-			}
-			return
-		}
-		b, bok := before.([]any)
-		a, aok := after.([]any)
-		if !bok || !aok || node.array == arrayDiff {
-			d.diffValue(before, after, path)
-			return
-		}
-		start := node.start
-		if len(b) != start || len(a) < start {
-			d.diffValue(before, after, path)
-			return
-		}
-		for _, child := range node.ordered() {
-			i, ok := child.seg.(Index)
-			if !ok || int(i) >= start {
-				continue
-			}
-			d.walkChild(b, a, child, path)
-		}
-		if items := a[start:]; len(items) > 0 {
-			d.out = append(d.out, Splice{Path: path, Index: start, Items: cloneItems(items)})
-		}
-		return
-	}
-	for _, child := range node.ordered() {
-		d.walkChild(before, after, child, path)
-	}
-}
-
-// walkChild diffs one touched member: whole when it appeared, vanished, was
-// assigned, or is not a container on both sides; by its own marks otherwise.
-func (d *differ) walkChild(before, after any, child dirtyChild, path Path) {
-	previous := ownValue(before, child.seg)
-	current := ownValue(after, child.seg)
-	at := childPath(path, child.seg)
-	if previous == missing || current == missing || child.node.valueDirty ||
-		!isContainer(previous) || !isContainer(current) {
-		d.diffValue(previous, current, at)
-		return
-	}
-	d.walkDirty(previous, current, child.node, at)
-}
-
-// ─── Baseline sync ───────────────────────────────────────────────────────────
-
-// syncBaseline brings the baseline up to root along the dirty paths by
-// sharing references. It returns false — having changed nothing — if any
-// dirty node is an array change other than a pure append, so the caller can
-// replay ops instead: cloning a whole array there is O(n) per flush, replay
-// is O(changes).
-//
-// Strings are immutable, so root's value is shared outright. Maps and slices
-// are cloned because root keeps mutating them.
-func (t *tracker) syncBaseline() bool {
-	if !canSync(t.pending) {
-		return false
-	}
-	t.baseline = syncInto(t.baseline, t.root, t.pending)
-	return true
-}
-
-func canSync(node *dirtyNode) bool {
-	if node.array != arrayClean && node.array != arrayAppend {
-		return false
-	}
-	for _, child := range node.children {
-		if !canSync(child) {
-			return false
-		}
-	}
-	return true
-}
-
-// syncInto advances baseline to root below node and returns it — a slice
-// grown by an append is re-headered, so the parent must store the result.
-func syncInto(baseline, root any, node *dirtyNode) any {
-	if node.array == arrayAppend {
-		b, bok := baseline.([]any)
-		r, rok := root.([]any)
-		if bok && rok {
-			for seg, child := range node.children {
-				if i, ok := seg.(Index); ok && int(i) < node.start {
-					b = syncChild(b, r, seg, child).([]any)
-				}
-			}
-			for _, item := range r[node.start:] {
-				b = append(b, cloneJSON(item))
-			}
-			return b
-		}
-	}
-	for seg, child := range node.children {
-		baseline = syncChild(baseline, root, seg, child)
-	}
-	return baseline
-}
-
-// syncChild advances one member of parent to root's and returns the parent:
-// removed when it is gone, replaced by a clone when it was assigned or is
-// not a container of the same kind on both sides, and synced below
-// otherwise.
-func syncChild(parent, root any, seg Seg, child *dirtyNode) any {
-	current := ownValue(root, seg)
-	previous := ownValue(parent, seg)
-	if current == missing {
-		return removeMember(parent, seg)
-	}
-	if child.valueDirty || !isContainer(current) || !isContainer(previous) || isArray(current) != isArray(previous) {
-		return setMember(parent, seg, cloneJSON(current))
-	}
-	return setMember(parent, seg, syncInto(previous, current, child))
-}
-
-func isArray(v any) bool {
-	_, ok := v.([]any)
-	return ok
-}
-
-// setMember is parent[seg] = value on a baseline container, growing a slice
-// by one when the index is its length.
-func setMember(parent any, seg Seg, value any) any {
-	switch p := parent.(type) {
-	case map[string]any:
-		p[propertyKey(seg)] = value
-		return p
-	case []any:
-		if i, ok := seg.(Index); ok {
-			if int(i) < len(p) {
-				p[i] = value
-				return p
-			}
-			return append(p, value)
-		}
-	}
-	return parent
-}
-
-// removeMember is `delete parent[seg]`, or a one-element splice on a slice.
-func removeMember(parent any, seg Seg) any {
-	switch p := parent.(type) {
-	case map[string]any:
-		delete(p, propertyKey(seg))
-		return p
-	case []any:
-		if i, ok := seg.(Index); ok && int(i) < len(p) {
-			return slices.Delete(p, int(i), int(i)+1)
-		}
-	}
-	return parent
-}
-
-// cloneOps copies the payloads of a batch about to be replayed onto the
-// baseline, so the baseline never aliases the batch handed to the consumer.
-func cloneOps(ops []Op) []Op {
-	out := make([]Op, len(ops))
-	for i, op := range ops {
-		switch op := op.(type) {
-		case Replace:
-			out[i] = Replace{Value: cloneJSON(op.Value)}
-		case Set:
-			out[i] = Set{Path: op.Path, Value: cloneJSON(op.Value)}
-		case Splice:
-			out[i] = Splice{Path: op.Path, Index: op.Index, Remove: op.Remove, Items: cloneItems(op.Items)}
-		default:
-			out[i] = op
-		}
-	}
-	return out
-}
-
 // ─── JSON values ─────────────────────────────────────────────────────────────
 
 // cloneJSON deep-copies the containers of a JSON tree; scalars, being
@@ -1242,13 +1560,18 @@ func jsonEqual(a, b any) bool {
 	return same(a, b)
 }
 
-// number reads any Go numeric kind as the one JSON number it is.
+// number reads any Go numeric kind as the one JSON number it is, json.Number
+// included — a UseNumber decoder yields those, and pi holds every JSON number
+// in one type.
 func number(v any) (float64, bool) {
 	switch n := v.(type) {
 	case float64:
 		return n, true
 	case int:
 		return float64(n), true
+	case json.Number:
+		f, err := n.Float64()
+		return f, err == nil
 	}
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {

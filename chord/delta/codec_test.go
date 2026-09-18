@@ -71,6 +71,26 @@ func roundTrip(t *testing.T, batches [][]Op) [][]Op {
 	return out
 }
 
+// cloneOps copies the payloads of a batch about to be applied, so two
+// replicas fed the same in-memory stream never share a container. A real
+// consumer gets its batch off the wire, already detached.
+func cloneOps(ops []Op) []Op {
+	out := make([]Op, len(ops))
+	for i, op := range ops {
+		switch op := op.(type) {
+		case Replace:
+			out[i] = Replace{Value: cloneJSON(op.Value)}
+		case Set:
+			out[i] = Set{Path: op.Path, Value: cloneJSON(op.Value)}
+		case Splice:
+			out[i] = Splice{Path: op.Path, Index: op.Index, Remove: op.Remove, Items: cloneItems(op.Items)}
+		default:
+			out[i] = op
+		}
+	}
+	return out
+}
+
 // replayBoth folds a stream onto a replica twice — once from the original
 // batches, once from the batches that came back through the codec — and
 // checks both against want. The apply half of the round-trip property.

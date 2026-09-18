@@ -38,11 +38,11 @@ func TestFoldsAWholeStreamThroughTheCodec(t *testing.T) {
 	wantJSON(t, replica, tree(t, `{"x": 101, "l": ["xyz"]}`))
 }
 
-// delta.test.ts "property: flush-time tracking" → "converges across mixed
+// delta.test.ts "property: operation-log tracking" → "converges across mixed
 // nested writes, replacements, and array mutations", with the codec in the
 // loop as upstream runs it: one encoder/decoder pair per stream, the replica
 // checked at random flushes and at the end.
-func TestPropertyFlushTimeTrackingConvergesThroughTheCodec(t *testing.T) {
+func TestPropertyOperationLogTrackingConvergesThroughTheCodec(t *testing.T) {
 	seed := lcg(0x5eed1234)
 	initial := `{"rows": [{"text": "a", "count": 0}, {"text": "b", "count": 0}], "meta": {"revision": 0}}`
 	for round := range 100 {

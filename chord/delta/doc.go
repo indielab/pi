@@ -48,6 +48,41 @@
 // decoded op has the value as its path. Op and WireOp are distinct types with
 // distinct validators (ParseOp, ParseWireOp) for exactly that reason.
 //
+// # Producing changes
+//
+// Read and mutate the tracked value through a State cursor: Set, Delete and
+// the array methods. Each mutation records an op, and ops are coalesced within
+// a flush window where that is cheap and safe — three writes to one property
+// publish as one set.
+//
+// The op sequence is not canonical. Equivalent changes may use different
+// verbs, and mutations that cancel out can still produce a nonempty batch: a
+// flush guarantees convergence, not a minimal diff. Depend on the resulting
+// value, never on the exact tuples or their minimality. Any nonempty batch
+// advances a replicated-state sequence number and notifies subscribers, even
+// when applying it leaves the value deeply equal to the previous revision.
+//
+// Replacing a whole object or array is valid and cheap: the outgoing value is
+// diffed against the incoming one at assignment time, so unchanged members
+// produce no ops and changed nested strings and arrays still ship as append,
+// truncate and splice. Do not assign large intermediate values repeatedly
+// before one flush — each assignment is diffed immediately.
+//
+// Sorting, reversing, Fill and CopyWithin have no op of their own and publish
+// a snapshot of the array they permuted; cancelling one still publishes.
+// Front or middle insertion and removal are recorded directly, and edits
+// before and after an index-changing op stay ordered against the array
+// generation they addressed. A sufficiently long mutation window collapses to
+// a complete base batch automatically, which bounds accumulated log metadata
+// — not payload bytes or peak allocation — and trades one full snapshot for
+// an additional recovery point.
+//
+// The value handed to Track is tracker-owned, as is anything later assigned
+// into it or inserted into one of its arrays. Mutating such a value outside
+// the cursor bypasses tracking and silently diverges from the replica. Object
+// identity is not replicated: one container reachable at several paths is
+// published at each, and a replica holds a distinct value at each.
+//
 // # Paths and safety
 //
 // Path segments are Key and Index. Three keys are reserved as segments —

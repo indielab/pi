@@ -1,6 +1,7 @@
 package delta
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -244,20 +245,16 @@ func TestTrackNumbersOfAnyGoKindAreOneNumber(t *testing.T) {
 	wantOps(t, tr.Flush(), `[["s", ["n"], 3]]`)
 }
 
-// The baseline never shares a container with the tracked tree — whether the
-// sync advanced it by cloning or the replay adopted a cloned payload — so a
-// later mutation inside that container is still a change.
-func TestTrackBaselineDoesNotAliasRootOrBatch(t *testing.T) {
-	// Sync path: a pure set is synced by cloning.
+// A flushed payload never shares a container with the tracked tree, so a
+// consumer that adopts the batch is not writing into the producer, and a
+// later mutation inside that container is still a change to publish.
+func TestTrackFlushedPayloadsDoNotAliasTheTree(t *testing.T) {
 	tr := tracked(t, `{"o": null}`)
 	tr.State().Set("o", map[string]any{"a": float64(1)})
 	wantOps(t, tr.Flush(), `[["s", ["o"], {"a": 1}]]`)
 	tr.State().At("o").Set("a", float64(2))
 	wantOps(t, tr.Flush(), `[["s", ["o", "a"], 2]]`)
 
-	// Replay path: a structural array change declines the sync, so the batch
-	// is replayed onto the baseline — from cloned payloads, or the consumer
-	// that adopts the batch would be writing into the producer's baseline.
 	tr = tracked(t, `{"xs": [1, 2], "o": null}`)
 	tr.State().At("xs").Shift()
 	tr.State().Set("o", map[string]any{"a": float64(1)})
@@ -334,7 +331,14 @@ func TestTrackSpliceClamps(t *testing.T) {
 	xs.Splice(10, 5, float64(7))
 	ops := tr.Flush()
 	wantJSON(t, tr.Target(), tree(t, `{"xs": [9, 2, 7]}`))
-	wantOps(t, ops, `[["s", ["xs", 0], 9], ["s", ["xs", 2], 7]]`)
+	// Each splice is recorded as it happens; the two that cannot coalesce
+	// with the pending insert stay separate. pi emits the same four.
+	wantOps(t, ops, `[
+		["p", ["xs"], 0, 0, [9]],
+		["p", ["xs"], 1, 1, []],
+		["p", ["xs"], 2, 1, []],
+		["p", ["xs"], 2, 0, [7]]
+	]`)
 	wantJSON(t, replay(t, initial, ops), tr.Target())
 }
 
@@ -497,13 +501,13 @@ func TestTrackCombinesRetainedEditsWithOneAppend(t *testing.T) {
 	}
 	wantOps(t, splices, `[["p", ["messages"], 2, 0, [{"text": "cz"}]]]`)
 	wantJSON(t, replay(t, initial, ops), tr.Target())
-	// The whole batch, as pi emits it: flag first, because messages was
-	// re-touched after it and a re-touched path is emitted last.
+	// The whole batch, as pi emits it: record order, with the write to the
+	// pushed element folded into the push payload.
 	wantOps(t, ops, `[
-		["s", ["flag"], 1],
 		["a", ["messages", 0, "text"], "x"],
-		["a", ["messages", 1, "text"], "y"],
-		["p", ["messages"], 2, 0, [{"text": "cz"}]]
+		["s", ["flag"], 1],
+		["p", ["messages"], 2, 0, [{"text": "cz"}]],
+		["a", ["messages", 1, "text"], "y"]
 	]`)
 }
 
@@ -615,12 +619,13 @@ func TestTrackStructuralOpsOnPublishedElements(t *testing.T) {
 		{"shift", `{"xs": [1, 2, 3]}`, func(xs State) { xs.Shift() }, `[["p", ["xs"], 0, 1, []]]`},
 		{"unshift", `{"xs": [1, 2, 3]}`, func(xs State) { xs.Unshift(float64(0)) }, `[["p", ["xs"], 0, 0, [0]]]`},
 		{"shrink", `{"xs": [1, 2, 3]}`, func(xs State) { xs.SetLen(2) }, `[["p", ["xs"], 2, 1, []]]`},
-		{"push then shrink", `{"xs": [1, 2, 3]}`, func(xs State) { xs.Push(float64(4)); xs.SetLen(2) }, `[["p", ["xs"], 2, 1, []]]`},
+		{"push then shrink", `{"xs": [1, 2, 3]}`, func(xs State) { xs.Push(float64(4)); xs.SetLen(2) },
+			`[["p", ["xs"], 3, 0, [4]], ["p", ["xs"], 2, 2, []]]`},
 		{"edit, push, shrink below start", `{"xs": [{"k": 1}, {"k": 2}]}`, func(xs State) {
 			xs.At(0).Set("k", float64(5))
 			xs.Push(map[string]any{"k": float64(3)})
 			xs.SetLen(1)
-		}, `[["s", ["xs", 0, "k"], 5], ["p", ["xs"], 1, 1, []]]`},
+		}, `[["s", ["xs", 0, "k"], 5], ["p", ["xs"], 2, 0, [{"k": 3}]], ["p", ["xs"], 1, 2, []]]`},
 		{"grow", `{"xs": [1, 2, 3]}`, func(xs State) { xs.SetLen(5) }, `[["p", ["xs"], 3, 0, [null, null]]]`},
 		{"same length", `{"xs": [1]}`, func(xs State) { xs.SetLen(1) }, `[]`},
 	}
@@ -773,8 +778,8 @@ func TestTrackUntouchedEmitsNothingAfterBase(t *testing.T) {
 	wantOps(t, tr.Flush(), `[]`)
 }
 
-// delta.test.ts "the first flush" → "discard accepts pending changes into the
-// local baseline".
+// delta.test.ts "the first flush" → "discard accepts pending changes without
+// publishing them".
 func TestTrackDiscard(t *testing.T) {
 	tr := tracked(t, `{"x": 0, "y": 0}`)
 	tr.State().Set("x", float64(1))
@@ -921,15 +926,19 @@ func TestTrackFlushTimeMinimization(t *testing.T) {
 	}
 }
 
-// delta.test.ts "flush-time minimization" → "derives an append after
-// delete-then-recreate".
-func TestTrackAppendAfterDeleteThenRecreate(t *testing.T) {
-	tr := tracked(t, `{"x": "", "y": 1}`)
+// delta.test.ts "pending operation coalescing" → "converges after
+// delete-then-recreate without requiring an append". The recreated value has
+// no published anchor to append to, so it is set whole.
+func TestTrackDeleteThenRecreate(t *testing.T) {
+	initial := `{"x": "", "y": 1}`
+	tr := tracked(t, initial)
 	s := tr.State()
 	s.Delete("x")
 	s.Set("x", "ab")
 	concat(s, "x", "cd")
-	wantOps(t, tr.Flush(), `[["a", ["x"], "abcd"]]`)
+	ops := tr.Flush()
+	wantOps(t, ops, `[["s", ["x"], "abcd"]]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
 }
 
 // delta.test.ts "flush-time minimization" → "is linear in the number of ops".
@@ -1110,8 +1119,9 @@ func TestTrackRefusesScalarRoot(t *testing.T) {
 	}
 }
 
-// The remaining array mutators: shift, reverse, fill and copyWithin mark a
-// diff and round-trip.
+// The remaining array mutators: shift records a head splice, and reverse,
+// fill and copyWithin each record a snapshot of the array they permuted —
+// they have no op of their own, and there is no baseline to diff against.
 func TestTrackOtherArrayMutators(t *testing.T) {
 	initial := `{"xs": [1, 2, 3, 4, 5]}`
 	tr := tracked(t, initial)
@@ -1128,12 +1138,14 @@ func TestTrackOtherArrayMutators(t *testing.T) {
 	xs.Fill(float64(9), -1, 4)
 	wantJSON(t, xs.Value(), tree(t, `[0, 2, 0, 9]`))
 	ops := tr.Flush()
-	wantOps(t, ops, `[["s", ["xs", 0], 0], ["s", ["xs", 2], 0], ["s", ["xs", 3], 9], ["p", ["xs"], 4, 1, []]]`)
+	// The head splice and the four snapshots coalesce to the last snapshot.
+	wantOps(t, ops, `[["s", ["xs"], [0, 2, 0, 9]]]`)
 	wantJSON(t, replay(t, initial, ops), tr.Target())
 
-	// A structural change is not an append: same length, positional diff.
+	// A whole-array mutator always publishes, even when its result is the
+	// value the replica already holds.
 	xs.Reverse()
-	wantOps(t, tr.Flush(), `[["s", ["xs", 0], 9], ["s", ["xs", 1], 0], ["s", ["xs", 2], 2], ["s", ["xs", 3], 0]]`)
+	wantOps(t, tr.Flush(), `[["s", ["xs"], [9, 0, 2, 0]]]`)
 	// An empty shift or pop marks nothing.
 	tr.State().Set("xs", []any{})
 	tr.Flush()
@@ -1362,10 +1374,10 @@ func TestTrackWithMaxOverlapScan(t *testing.T) {
 	wantOps(t, tr.Flush(), `[["t", ["s"], 6], ["a", ["s"], "XYZ"]]`)
 }
 
-// The baseline is advanced by sharing, not by replay, for scalars, strings
-// and appends; the next flush must still see the true previous value. A long
-// stream of window moves and appends exercises both paths.
-func TestTrackBaselineStaysExactAcrossFlushes(t *testing.T) {
+// Each flush starts a fresh window, and a string anchored in one window must
+// not leak into the next. A long stream of window moves, appends and array
+// churn keeps the replica exactly on the producer.
+func TestTrackConvergesAcrossManyFlushes(t *testing.T) {
 	initial := `{"out": "", "log": [], "n": {"v": 0}}`
 	tr := tracked(t, initial)
 	replica := tree(t, initial)
@@ -1402,4 +1414,193 @@ func TestTrackBaselineStaysExactAcrossFlushes(t *testing.T) {
 	}
 	wantJSON(t, replica, tree(t, `{"out": "chunk288\n|chunk292\nchunk296\n|",
 		"log": [{"i": 282, "touched": true}, {"i": 286}, {"i": 290}, {"i": 294}, {"i": 298}], "n": {"v": 299}}`))
+}
+
+// ─── the pending operation log ───────────────────────────────────────────────
+//
+// Every golden below was taken from pi under node: the same mutation sequence
+// against packages/chord/src/delta/index.ts at c4289b20e.
+
+// delta.test.ts "tracker: intent" → "updates an anchored string through a
+// later container replacement". The anchor survives the replacement: what
+// ships is one append from the value the replica holds.
+func TestTrackAnchoredStringThroughContainerReplacement(t *testing.T) {
+	initial := `{"xs": [{"k": "a"}]}`
+	tr := tracked(t, initial)
+	concat(tr.State().At("xs").At(0), "k", "b")
+	tr.State().Set("xs", tree(t, `[{"k": "abc"}, {"k": "z"}]`))
+	ops := tr.Flush()
+	wantOps(t, ops, `[["a", ["xs", 0, "k"], "bc"], ["p", ["xs"], 1, 0, [{"k": "z"}]]]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+}
+
+// delta.test.ts "tracker: intent" → "front-truncates a pending string set
+// from the correct end". A truncate over a pending set rewrites that set's
+// payload rather than shipping a count the replica would apply to the old
+// value.
+func TestTrackTruncateRewritesAPendingSet(t *testing.T) {
+	initial := `{"xs": [0]}`
+	tr := tracked(t, initial)
+	tr.State().At("xs").Set(0, "abc")
+	tr.State().Set("xs", tree(t, `["bc", 0]`))
+	ops := tr.Flush()
+	wantOps(t, ops, `[["s", ["xs", 0], "bc"], ["p", ["xs"], 1, 0, [0]]]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+}
+
+// delta.test.ts "tracker: root ops" → "drops detached element writes when a
+// root array is replaced".
+func TestTrackRootReplacementDropsDetachedWrites(t *testing.T) {
+	initial := `[{"k": "a"}, {"k": "b"}]`
+	tr := tracked(t, initial)
+	concat(tr.State().At(0), "k", "x")
+	tr.State().Unshift(tree(t, `{"k": "head"}`))
+	tr.State().Splice(0, tr.State().Len(), tree(t, `{"k": "final"}`))
+	ops := tr.Flush()
+	wantOps(t, ops, `[["r", [{"k": "final"}]]]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+}
+
+// delta.test.ts "tracker: root ops" → "keeps nested writes ordered across an
+// inserted array reindex". The shift renumbered the pushed payload, so the
+// later element write must ship as its own op rather than fold into a payload
+// that was current before it.
+func TestTrackNestedWritesOrderedAcrossReindex(t *testing.T) {
+	initial := `[]`
+	tr := tracked(t, initial)
+	tr.State().Push(tree(t, `[10, 20]`))
+	tr.State().At(0).Shift()
+	tr.State().At(0).Set(0, float64(30))
+	ops := tr.Flush()
+	wantOps(t, ops, `[["p", [], 0, 0, [[10, 20]]], ["p", [0], 0, 1, []], ["s", [0, 0], 30]]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+}
+
+// delta.test.ts "tracker: root ops" → "invalidates nested operations folded
+// into an inserted payload on replacement / clear".
+func TestTrackInvalidatesOpsFoldedIntoAnInsertedPayload(t *testing.T) {
+	cases := []struct {
+		name    string
+		replace func(s State)
+		want    string
+	}{
+		{"replacement", func(s State) { s.Set(0, float64(0)) }, `[["p", [], 0, 0, [0]]]`},
+		{"clear", func(s State) { s.At(0).SetLen(0) }, `[["p", [], 0, 0, [[]]]]`},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tr := tracked(t, `[]`)
+			tr.State().Push([]any{})
+			tr.State().At(0).Push(float64(1))
+			tc.replace(tr.State())
+			ops := tr.Flush()
+			wantOps(t, ops, tc.want)
+			wantJSON(t, replay(t, `[]`, ops), tr.Target())
+		})
+	}
+}
+
+// Deleting a property that is not there records nothing and does not make the
+// tracker dirty — pi's `delete` trap emits only for an own property, and a
+// "d" on an absent member is an op no replica can apply.
+func TestTrackDeleteOfAnAbsentPropertyRecordsNothing(t *testing.T) {
+	initial := `{"x": 1}`
+	tr := tracked(t, initial)
+	tr.State().Delete("nope")
+	if tr.Dirty() {
+		t.Error("deleting an absent property marked dirty")
+	}
+	ops := tr.Flush()
+	wantOps(t, ops, `[]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+}
+
+// delta.test.ts "pending operation coalescing" → "may publish a redundant
+// batch when mutations restore the prior value". A flush guarantees
+// convergence, not minimality: there is no baseline left to notice that the
+// window cancelled out.
+func TestTrackPublishesARedundantBatch(t *testing.T) {
+	initial := `{"x": 1, "xs": [1, 2]}`
+	tr := tracked(t, initial)
+	tr.State().Set("x", float64(2))
+	tr.State().Set("x", float64(1))
+	tr.State().At("xs").Reverse()
+	tr.State().At("xs").Reverse()
+	ops := tr.Flush()
+	wantOps(t, ops, `[["s", ["x"], 1], ["s", ["xs"], [1, 2]]]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+}
+
+// delta.test.ts "pending operation coalescing" → "bounds long structural
+// windows by collapsing them to a base". Without the collapse the log and its
+// path trie grow for as long as the producer mutates without flushing.
+func TestTrackCollapsesALongWindowToABase(t *testing.T) {
+	initial := `{"xs": [{"value": 0}, {"value": 1}]}`
+	tr := tracked(t, initial)
+	xs := tr.State().At("xs")
+	for i := range 5000 {
+		xs.At(0).Set("value", float64(i))
+		xs.Shift()
+		xs.Push(map[string]any{"value": float64(i)})
+	}
+	ops := tr.Flush()
+	if !IsBase(ops) {
+		t.Fatalf("a 5000-step structural window did not collapse to a base batch: %d ops", len(ops))
+	}
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+}
+
+// delta.test.ts "flush" → "replaces the safe parent when an assigned object
+// removes a reserved value key". The outgoing value holds a reserved key, so
+// the diff cannot address its members: the parent is set whole.
+func TestTrackAssignmentOverAReservedValueKey(t *testing.T) {
+	initial := `{"value": {"constructor": {"label": "data"}, "x": 1}}`
+	tr := tracked(t, initial)
+	tr.State().Set("value", tree(t, `{"x": 2}`))
+	ops := tr.Flush()
+	wantOps(t, ops, `[["s", ["value"], {"x": 2}]]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+}
+
+// S10.1: a property key in JavaScript is always a string, so an integral
+// segment on an OBJECT is the key it spells. pi emits ["s", ["o", "5"], 2];
+// an Index there would make Index(5) and Key("5") two paths for one property.
+func TestTrackIntegerSegmentOnAnObjectIsAKey(t *testing.T) {
+	initial := `{"o": {}}`
+	tr := tracked(t, initial)
+	tr.State().At("o").Set(5, float64(2))
+	tr.State().At("o").Set("5", float64(3))
+	ops := tr.Flush()
+	wantOps(t, ops, `[["s", ["o", "5"], 3]]`)
+	wantJSON(t, replay(t, initial, ops), tr.Target())
+	if p := tr.State().At("o").At(5).Path(); jsonText(t, p) != `["o","5"]` {
+		t.Errorf("cursor path %s, want [\"o\",\"5\"]", jsonText(t, p))
+	}
+}
+
+// S10.2: json.Number is one JSON number like every other Go numeric kind, so
+// assigning an equal one is not a change. A UseNumber decoder yields these.
+func TestTrackJSONNumberIsANumber(t *testing.T) {
+	tr := Track(map[string]any{"count": json.Number("1"), "xs": []any{json.Number("1")}})
+	tr.Flush()
+	tr.State().Set("count", json.Number("1"))
+	tr.State().Set("count", float64(1))
+	if tr.Dirty() {
+		t.Error("assigning an equal json.Number marked dirty")
+	}
+	wantOps(t, tr.Flush(), `[]`)
+	tr.State().At("xs").Unshift(float64(0))
+	wantOps(t, tr.Flush(), `[["p", ["xs"], 0, 0, [0]]]`)
+}
+
+// S10.4: a Go slice is its header, so identity is the backing array together
+// with the length — including at length zero, where &x[0] does not exist.
+func TestTrackEmptySliceIdentity(t *testing.T) {
+	tr := Track(map[string]any{"xs": []any{}})
+	tr.Flush()
+	tr.State().Set("xs", tr.State().Get("xs"))
+	if tr.Dirty() {
+		t.Error("assigning an empty slice back to its own key marked dirty")
+	}
+	wantOps(t, tr.Flush(), `[]`)
 }
