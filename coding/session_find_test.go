@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 // writeSessionFile writes lines to dir/name as a JSONL session file, creating
@@ -314,5 +315,56 @@ func TestListSessionsBreaksTimestampTiesByFileName(t *testing.T) {
 		if !reflect.DeepEqual(got, want) {
 			t.Fatalf("run %d: ListSessions = %v; want file-name-descending %v", run, got, want)
 		}
+	}
+}
+
+// TestLatestSessionOrdersByFileMtime pins pi's continueRecent path
+// (findMostRecentSession, reworked by upstream dd01f5b24): `--continue`
+// reopens the session whose FILE was written last, taking the first header
+// that parses and matches cwd after ordering the directory by mtime. The port
+// answered this out of ListSessions, which orders by the header timestamp — a
+// key written once at creation, so it stops tracking recency the moment a
+// session is resumed and `--continue` could reopen an older session than the
+// one last written to.
+func TestLatestSessionOrdersByFileMtime(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+	dir := DefaultSessionDir(cwd)
+	header := func(id, ts string) string {
+		return fmt.Sprintf(`{"type":"session","version":3,"id":%q,"timestamp":%q,"cwd":%q}`, id, ts, cwd)
+	}
+	// "resumed" was created first and written to most recently; "fresh" carries
+	// the newer header and the older mtime.
+	resumed := writeSessionFile(t, dir, "resumed.jsonl", header("resumed-id", "2026-01-01T00:00:00.000Z"), sessionMessageLine)
+	fresh := writeSessionFile(t, dir, "fresh.jsonl", header("fresh-id", "2026-09-19T00:00:00.000Z"), sessionMessageLine)
+	now := time.Now()
+	if err := os.Chtimes(fresh, now.Add(-time.Hour), now.Add(-time.Hour)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(resumed, now, now); err != nil {
+		t.Fatal(err)
+	}
+
+	latest, ok := LatestSession(cwd, "")
+	if !ok || latest.ID != "resumed-id" {
+		t.Fatalf("LatestSession = %+v, %v; want resumed-id, the newest mtime", latest, ok)
+	}
+	if latest.Path != resumed {
+		t.Fatalf("LatestSession path = %q; want %q", latest.Path, resumed)
+	}
+
+	// A file the cwd filter rejects is skipped rather than ending the scan, so
+	// the next-newest matching session still wins.
+	other := filepath.Join(t.TempDir(), "elsewhere")
+	sessionDir := t.TempDir()
+	writeSessionFile(t, sessionDir, "mine.jsonl", header("mine-id", "2026-01-01T00:00:00.000Z"), sessionMessageLine)
+	theirs := writeSessionFile(t, sessionDir, "theirs.jsonl",
+		fmt.Sprintf(`{"type":"session","version":3,"id":"theirs-id","timestamp":"2026-01-01T00:00:00.000Z","cwd":%q}`, other),
+		sessionMessageLine)
+	if err := os.Chtimes(theirs, now, now); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := LatestSession(cwd, sessionDir); !ok || got.ID != "mine-id" {
+		t.Fatalf("LatestSession(custom dir) = %+v, %v; want mine-id", got, ok)
 	}
 }

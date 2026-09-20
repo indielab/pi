@@ -942,12 +942,61 @@ func LoadSessionMessages(path string) ([]agent.AgentMessage, error) {
 	return tree.BuildContext().Messages, nil
 }
 
-// LatestSession returns the most recent stored session for cwd, if any;
-// sessionDir is as for ListSessions.
+// LatestSession returns the session `--continue` reopens: the most recently
+// WRITTEN one for cwd, if any. sessionDir is as for ListSessions.
+//
+// This is pi's findMostRecentSession, the discovery step of
+// SessionManager.continueRecent — a different function from list(), ordering
+// by file mtime rather than by the header timestamp, and returning the first
+// header that parses and matches instead of the whole listing. Upstream
+// dd01f5b24 made the header read lazy: every candidate is stat'd up front and
+// headers are read only until one matches, so a large session directory no
+// longer pays a full header scan per `--continue`.
+//
+// The header timestamp is written once, at creation, so answering this from
+// ListSessions — as the port used to — ranked a freshly created session above
+// one that had been resumed and written to for hours.
 func LatestSession(cwd, sessionDir string) (SessionInfo, bool) {
-	infos := ListSessions(cwd, sessionDir)
-	if len(infos) == 0 {
+	dir, filterCwd, resolvedCwd := sessionListingDir(cwd, sessionDir)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
 		return SessionInfo{}, false
 	}
-	return infos[0], true
+	type candidate struct {
+		path  string
+		mtime time.Time
+	}
+	var candidates []candidate
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
+			continue
+		}
+		path := filepath.Join(dir, e.Name())
+		fi, err := os.Stat(path)
+		if err != nil {
+			// pi stats every candidate inside the same try that wraps the whole
+			// scan, so one unreadable entry — a file deleted between readdir and
+			// stat — abandons discovery rather than being skipped.
+			return SessionInfo{}, false
+		}
+		candidates = append(candidates, candidate{path: path, mtime: fi.ModTime()})
+	}
+	// Newest file first, then read headers only until one matches. Ties keep
+	// readdir order, which pi leaves to the OS and Go fixes at ascending name.
+	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].mtime.After(candidates[j].mtime) })
+
+	for _, c := range candidates {
+		h := readSessionHeaderForDiscovery(c.path)
+		if h == nil || (filterCwd && !sessionCwdMatches(h.cwd, resolvedCwd)) {
+			continue
+		}
+		// pi stops here with the path. The port's callers want the listing shape,
+		// so fill it from a full read — and fall back to the discovery header if
+		// that read cannot complete, rather than skipping a file pi would return.
+		if info, ok := readSessionInfo(c.path); ok {
+			return info, true
+		}
+		return SessionInfo{Path: c.path, ID: h.id, Cwd: h.cwd, Timestamp: h.timestamp}, true
+	}
+	return SessionInfo{}, false
 }
