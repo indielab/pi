@@ -687,8 +687,14 @@ func ListSessions(cwd, sessionDir string) []SessionInfo {
 	if err != nil {
 		return nil
 	}
+	// pi orders the directory entries by name DESCENDING before reading any of
+	// them and then sorts the sessions with a STABLE sort, so files sharing a
+	// timestamp come back newest-name-first (upstream dfbf793b7). os.ReadDir
+	// hands entries back ascending, so walk it in reverse; byte order and
+	// localeCompare agree on the hex file names the recorder writes.
 	var infos []SessionInfo
-	for _, e := range entries {
+	for i := len(entries) - 1; i >= 0; i-- {
+		e := entries[i]
 		if e.IsDir() || !strings.HasSuffix(e.Name(), ".jsonl") {
 			continue
 		}
@@ -698,7 +704,7 @@ func ListSessions(cwd, sessionDir string) []SessionInfo {
 		}
 		infos = append(infos, info)
 	}
-	sort.Slice(infos, func(i, j int) bool { return infos[i].Timestamp > infos[j].Timestamp })
+	sort.SliceStable(infos, func(i, j int) bool { return infos[i].Timestamp > infos[j].Timestamp })
 	return infos
 }
 

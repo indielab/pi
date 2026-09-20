@@ -287,3 +287,32 @@ func TestListSessionsDecidesByTheFirstParsedEntry(t *testing.T) {
 		t.Fatalf("ListSessions(cwd, custom) = %+v; want [first]", got)
 	}
 }
+
+// TestListSessionsBreaksTimestampTiesByFileName pins upstream dfbf793b7: the
+// directory listing is pre-sorted by file name DESCENDING before the sessions
+// are ordered, and that order is preserved by a stable sort, so two sessions
+// sharing a timestamp always come back the same way round. Go's sort.Slice is
+// not stable, so the port's tie order was whatever the sort happened to
+// produce — for small inputs the *ascending* readdir order, the reverse of
+// pi's.
+func TestListSessionsBreaksTimestampTiesByFileName(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+	dir := DefaultSessionDir(cwd)
+	header := func(id string) string {
+		return fmt.Sprintf(`{"type":"session","version":3,"id":%q,"timestamp":"2026-09-20T00:00:00.000Z","cwd":%q}`, id, cwd)
+	}
+	for _, name := range []string{"a", "b", "c", "d", "e"} {
+		writeSessionFile(t, dir, name+".jsonl", header(name+"-id"), sessionMessageLine)
+	}
+	want := []string{"e-id", "d-id", "c-id", "b-id", "a-id"}
+	for run := 0; run < 8; run++ {
+		var got []string
+		for _, info := range ListSessions(cwd, "") {
+			got = append(got, info.ID)
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("run %d: ListSessions = %v; want file-name-descending %v", run, got, want)
+		}
+	}
+}
