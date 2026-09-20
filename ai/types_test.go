@@ -627,3 +627,46 @@ func TestAssistantDeferredHandleRoundTrip(t *testing.T) {
 		t.Fatal("Clone must copy the deferred handle, not alias it")
 	}
 }
+
+// TestModelPromptCacheRoundTrips pins upstream c596d09d9: Model.promptCache is
+// catalog data — the best-effort cache lifetime in seconds per retention tier —
+// and the catalog regen emits it for direct Anthropic models. A Model that
+// cannot carry the key silently drops it on decode, so the port would ship a
+// catalog that no longer matches what pi publishes.
+func TestModelPromptCacheRoundTrips(t *testing.T) {
+	const src = `{"id":"m","name":"M","api":"anthropic-messages","provider":"anthropic",` +
+		`"baseUrl":"https://example.invalid","reasoning":false,"input":["text"],` +
+		`"cost":{"input":1,"output":2,"cacheRead":0,"cacheWrite":0},` +
+		`"promptCache":{"short":300,"long":3600},"contextWindow":1000,"maxTokens":100}`
+	var m Model
+	if err := json.Unmarshal([]byte(src), &m); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	out, err := json.Marshal(m)
+	if err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+	if !strings.Contains(string(out), `"promptCache":{"short":300,"long":3600}`) {
+		t.Fatalf("promptCache did not survive the round trip: %s", out)
+	}
+	if m.PromptCache == nil || m.PromptCache.Short == nil || *m.PromptCache.Short != 300 {
+		t.Fatalf("short lifetime not decoded: %#v", m.PromptCache)
+	}
+	if m.PromptCache.Long == nil || *m.PromptCache.Long != 3600 {
+		t.Fatalf("long lifetime not decoded: %#v", m.PromptCache)
+	}
+
+	// A model with no prompt-cache metadata must not grow an empty key: pi
+	// leaves promptCache undefined when the provider's behavior is unknown.
+	var plain Model
+	if err := json.Unmarshal([]byte(`{"id":"m","name":"M","api":"anthropic-messages","provider":"anthropic","baseUrl":"x","reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":1,"maxTokens":1}`), &plain); err != nil {
+		t.Fatalf("decode plain: %v", err)
+	}
+	bare, err := json.Marshal(plain)
+	if err != nil {
+		t.Fatalf("encode plain: %v", err)
+	}
+	if strings.Contains(string(bare), "promptCache") {
+		t.Fatalf("a model without cache metadata must not emit promptCache: %s", bare)
+	}
+}

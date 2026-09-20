@@ -82,6 +82,17 @@ const (
 	CacheLong  CacheRetention = "long"
 )
 
+// ModelPromptCache is the best-effort prompt cache lifetime in seconds for each
+// retention tier a request can ask for (pi ModelPromptCache,
+// `Partial<Record<Exclude<CacheRetention, "none">, number>>`). A nil tier means
+// the lifetime is unknown, which is not the same as zero — pi does not warm a
+// cache whose lifetime it cannot predict, so the distinction is load-bearing
+// and both tiers are pointers.
+type ModelPromptCache struct {
+	Short *float64 `json:"short,omitempty"`
+	Long  *float64 `json:"long,omitempty"`
+}
+
 // ProviderHeaders are custom HTTP headers for provider requests (pi
 // types.ts ProviderHeaders = Record<string, string | null>). A header name has
 // three distinct states:
@@ -1115,8 +1126,11 @@ type Model struct {
 	ThinkingLevelMap ThinkingLevelMap `json:"thinkingLevelMap,omitempty"`
 	Input            []string         `json:"input"` // "text" | "image"
 	Cost             ModelCost        `json:"cost"`
-	ContextWindow    int              `json:"contextWindow"`
-	MaxTokens        int              `json:"maxTokens"`
+	// PromptCache carries the prompt cache lifetimes per retention tier. Unset
+	// when the provider's cache behavior is unknown.
+	PromptCache   *ModelPromptCache `json:"promptCache,omitempty"`
+	ContextWindow int               `json:"contextWindow"`
+	MaxTokens     int               `json:"maxTokens"`
 	// SamplingParams are this model's default sampling parameters. See
 	// StreamOptions.SamplingParams; per-request keys override these.
 	SamplingParams map[string]any  `json:"samplingParams,omitempty"`
