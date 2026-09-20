@@ -1115,6 +1115,41 @@ type ModelCostTier struct {
 	InputTokensAbove int     `json:"inputTokensAbove"`
 }
 
+// ModelImageResizeOptions is the cache-safe resize profile applied to an image
+// before it enters conversation history (pi ModelImageResizeOptions). A nil
+// field keeps the pipeline's own default, so a profile can narrow one limit
+// without restating the rest.
+type ModelImageResizeOptions struct {
+	MaxWidth  *int `json:"maxWidth,omitempty"`
+	MaxHeight *int `json:"maxHeight,omitempty"`
+	// MaxBytes is the maximum base64-encoded payload size in bytes.
+	MaxBytes    *int `json:"maxBytes,omitempty"`
+	JPEGQuality *int `json:"jpegQuality,omitempty"`
+}
+
+// ModelImageInputLimits describes what a provider accepts for image input (pi
+// ModelImageInputLimits).
+type ModelImageInputLimits struct {
+	// Resize is the profile applied before a new image enters conversation
+	// history. It is cache-safe: an image already in the transcript is never
+	// re-processed, because that would invalidate the prompt cache.
+	Resize *ModelImageResizeOptions `json:"resize,omitempty"`
+	// MaxPerMessage is the most images accepted in one provider message.
+	MaxPerMessage *int `json:"maxPerMessage,omitempty"`
+	// MaxPerRequest is the most images accepted across one provider request.
+	MaxPerRequest *int `json:"maxPerRequest,omitempty"`
+}
+
+// ModelInputLimits carries a provider's input limits and the cache-safe
+// preprocessing metadata derived from them (pi ModelInputLimits). MaxPerMessage,
+// MaxPerRequest and MaxRequestBytes have no consumer in pi either — they are
+// catalog data describing the provider, carried so a host can act on them.
+type ModelInputLimits struct {
+	// MaxRequestBytes is the maximum serialized provider request size in bytes.
+	MaxRequestBytes *int                   `json:"maxRequestBytes,omitempty"`
+	Images          *ModelImageInputLimits `json:"images,omitempty"`
+}
+
 // Model describes a concrete model in the unified model system.
 type Model struct {
 	ID               string           `json:"id"`
@@ -1125,7 +1160,10 @@ type Model struct {
 	Reasoning        bool             `json:"reasoning"`
 	ThinkingLevelMap ThinkingLevelMap `json:"thinkingLevelMap,omitempty"`
 	Input            []string         `json:"input"` // "text" | "image"
-	Cost             ModelCost        `json:"cost"`
+	// InputLimits carries the provider's input limits and the cache-safe image
+	// preprocessing profile.
+	InputLimits *ModelInputLimits `json:"inputLimits,omitempty"`
+	Cost        ModelCost         `json:"cost"`
 	// PromptCache carries the prompt cache lifetimes per retention tier. Unset
 	// when the provider's cache behavior is unknown.
 	PromptCache   *ModelPromptCache `json:"promptCache,omitempty"`

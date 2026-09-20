@@ -29,7 +29,7 @@ func TestResizeDownscalesOversizedImage(t *testing.T) {
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatal(err)
 	}
-	out, mime, ok := resizeImageForModel(buf.Bytes(), "image/png")
+	out, mime, ok := resizeImageForModel(buf.Bytes(), "image/png", nil)
 	if !ok {
 		t.Fatal("expected resize to succeed")
 	}
@@ -53,7 +53,7 @@ func TestSmallImagePassesThroughUnchanged(t *testing.T) {
 	var buf bytes.Buffer
 	png.Encode(&buf, img)
 	in := buf.Bytes()
-	out, mime, ok := resizeImageForModel(in, "image/png")
+	out, mime, ok := resizeImageForModel(in, "image/png", nil)
 	if !ok || mime != "image/png" {
 		t.Fatalf("small image should pass through: ok=%v mime=%s", ok, mime)
 	}
@@ -88,7 +88,7 @@ func TestExifOrientationApplied(t *testing.T) {
 	if o := jpegOrientation(withExif); o != 6 {
 		t.Fatalf("orientation not parsed: got %d", o)
 	}
-	resized, ok := resizeImage(withExif, "image/jpeg")
+	resized, ok := resizeImage(withExif, "image/jpeg", nil)
 	if !ok {
 		t.Fatal("resize failed")
 	}
@@ -117,7 +117,7 @@ func TestExifOrientationApplied(t *testing.T) {
 func TestSmallOrientedImagePassesThrough(t *testing.T) {
 	withExif := injectExifOrientation(jpegBytes(t, 40, 20), 6)
 
-	r, ok := resizeImage(withExif, "image/jpeg")
+	r, ok := resizeImage(withExif, "image/jpeg", nil)
 	if !ok {
 		t.Fatal("resize failed")
 	}
@@ -147,7 +147,7 @@ func TestOrientationAfterNonExifAPP1(t *testing.T) {
 		t.Fatalf("orientation after a non-Exif APP1: got %d, want 6", o)
 	}
 
-	r, ok := resizeImage(data, "image/jpeg")
+	r, ok := resizeImage(data, "image/jpeg", nil)
 	if !ok {
 		t.Fatal("resize failed")
 	}
@@ -492,4 +492,73 @@ func TestDecodeNodeBase64MatchesNode(t *testing.T) {
 			t.Errorf("decodeNodeBase64(%q) = %s, want %s", c.in, hex.EncodeToString(got), c.wantHex)
 		}
 	}
+}
+
+// TestResizeHonorsModelProfile pins upstream f5c946480: a model's
+// inputLimits.images.resize narrows the pipeline defaults, so an image that
+// clears the 2000px cap is still downscaled when the model asks for less. The
+// 0.86.1 catalog stamps the historical 2000/2000/4.5MiB/80 profile onto every
+// vision model, so today every profile resolves to the old numbers — but a
+// provider narrowing one limit has to reach the resize, which is what this
+// pins. A nil profile keeps the defaults.
+func TestResizeHonorsModelProfile(t *testing.T) {
+	img := image.NewRGBA(image.Rect(0, 0, 300, 240))
+	for y := 0; y < 240; y++ {
+		for x := 0; x < 300; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 7, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	src := buf.Bytes()
+
+	// Without a profile the image is already inside every default limit.
+	if r, ok := resizeImage(src, "image/png", nil); !ok || r.WasResized || r.Width != 300 {
+		t.Fatalf("nil profile must keep the defaults: %+v ok=%v", r, ok)
+	}
+
+	maxWidth := 100
+	r, ok := resizeImage(src, "image/png", &ai.ModelImageResizeOptions{MaxWidth: &maxWidth})
+	if !ok {
+		t.Fatal("resize with a narrowed profile failed")
+	}
+	if !r.WasResized || r.Width != 100 || r.Height != 80 {
+		t.Fatalf("maxWidth 100 should give 100x80 (aspect preserved), got %dx%d wasResized=%v",
+			r.Width, r.Height, r.WasResized)
+	}
+	if r.OriginalWidth != 300 || r.OriginalHeight != 240 {
+		t.Fatalf("original dimensions lost: %dx%d", r.OriginalWidth, r.OriginalHeight)
+	}
+}
+
+// TestResolveResizeProfileDedupesQualitySteps pins pi's
+// `Array.from(new Set([opts.jpegQuality, 85, 70, 55, 40]))`: the configured
+// quality leads, and a duplicate later in the list drops out rather than being
+// tried twice.
+func TestResolveResizeProfileDedupesQualitySteps(t *testing.T) {
+	if got := resolveResizeProfile(nil).jpegQualities; !equalInts(got, []int{80, 85, 70, 55, 40}) {
+		t.Fatalf("default quality steps = %v, want [80 85 70 55 40]", got)
+	}
+	q := 70
+	if got := resolveResizeProfile(&ai.ModelImageResizeOptions{JPEGQuality: &q}).jpegQualities; !equalInts(got, []int{70, 85, 55, 40}) {
+		t.Fatalf("quality 70 steps = %v, want [70 85 55 40]", got)
+	}
+	q = 55
+	if got := resolveResizeProfile(&ai.ModelImageResizeOptions{JPEGQuality: &q}).jpegQualities; !equalInts(got, []int{55, 85, 70, 40}) {
+		t.Fatalf("quality 55 steps = %v, want [55 85 70 40]", got)
+	}
+}
+
+func equalInts(a, b []int) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }

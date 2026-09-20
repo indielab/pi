@@ -30,10 +30,14 @@ var fauxDefaultUsage = ai.Usage{}
 
 // FauxModelDefinition describes a model exposed by a faux provider.
 type FauxModelDefinition struct {
-	ID            string
-	Name          string
-	Reasoning     bool
-	Input         []string
+	ID        string
+	Name      string
+	Reasoning bool
+	Input     []string
+	// InputLimits carries the model's image resize profile and provider input
+	// limits (pi FauxModelDefinition.inputLimits, upstream f5c946480), so a test
+	// fixture can express a narrowed profile the way the catalog does.
+	InputLimits   *ai.ModelInputLimits
 	Cost          *ai.ModelCost
 	ContextWindow int
 	MaxTokens     int
@@ -247,7 +251,8 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 		}
 		models[i] = &ai.Model{
 			ID: d.ID, Name: name, Api: api, Provider: provider, BaseURL: fauxDefaultBaseURL,
-			Reasoning: d.Reasoning, Input: input, Cost: cost, ContextWindow: cw, MaxTokens: mt,
+			Reasoning: d.Reasoning, Input: input, InputLimits: d.InputLimits,
+			Cost: cost, ContextWindow: cw, MaxTokens: mt,
 		}
 	}
 

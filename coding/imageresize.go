@@ -30,13 +30,59 @@ import (
 // encoders, this uses a pure-Go bilinear resize and the std-lib encoders.
 
 const (
-	imgMaxWidth       = 2000
-	imgMaxHeight      = 2000
-	imgMaxBase64Bytes = int(4.5 * 1024 * 1024) // 4.5MB base64, headroom below Anthropic's 5MB
+	imgMaxWidth           = 2000
+	imgMaxHeight          = 2000
+	imgMaxBase64Bytes     = int(4.5 * 1024 * 1024) // 4.5MB base64, headroom below Anthropic's 5MB
+	imgDefaultJPEGQuality = 80
 )
 
-// Matches pi's qualitySteps = dedupe([jpegQuality(default 80), 85, 70, 55, 40]).
-var jpegQualities = []int{80, 85, 70, 55, 40}
+// resizeProfile is pi's `{ ...DEFAULT_OPTIONS, ...options }` — the resize
+// limits after a model's ai.ModelImageResizeOptions has narrowed the defaults.
+type resizeProfile struct {
+	maxWidth      int
+	maxHeight     int
+	maxBytes      int
+	jpegQualities []int
+}
+
+// resolveResizeProfile applies a model's resize options over the pipeline
+// defaults. A nil profile, or a nil field inside one, keeps the default: the
+// catalog stamps the same 2000/2000/4.5MiB/80 numbers onto every vision model,
+// and a provider narrows individual limits from there (pi f5c946480).
+func resolveResizeProfile(o *ai.ModelImageResizeOptions) resizeProfile {
+	p := resizeProfile{maxWidth: imgMaxWidth, maxHeight: imgMaxHeight, maxBytes: imgMaxBase64Bytes}
+	quality := imgDefaultJPEGQuality
+	if o != nil {
+		if o.MaxWidth != nil {
+			p.maxWidth = *o.MaxWidth
+		}
+		if o.MaxHeight != nil {
+			p.maxHeight = *o.MaxHeight
+		}
+		if o.MaxBytes != nil {
+			p.maxBytes = *o.MaxBytes
+		}
+		if o.JPEGQuality != nil {
+			quality = *o.JPEGQuality
+		}
+	}
+	// pi: Array.from(new Set([opts.jpegQuality, 85, 70, 55, 40])) — insertion
+	// order, first occurrence wins, so a configured 70 moves to the front and
+	// drops out of the tail.
+	for _, q := range []int{quality, 85, 70, 55, 40} {
+		seen := false
+		for _, have := range p.jpegQualities {
+			if have == q {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			p.jpegQualities = append(p.jpegQualities, q)
+		}
+	}
+	return p
+}
 
 // ResizeResult mirrors the object pi's resizeImage returns.
 type ResizeResult struct {
@@ -59,7 +105,8 @@ func jsRound(x float64) int { return int(math.Floor(x + 0.5)) }
 // resizeImage is a faithful port of pi's resizeImageInProcess. It returns the
 // decision result and true, or a zero result and false when the image cannot be
 // brought under the byte limit (pi returns null).
-func resizeImage(inputBytes []byte, mimeType string) (ResizeResult, bool) {
+func resizeImage(inputBytes []byte, mimeType string, opts *ai.ModelImageResizeOptions) (ResizeResult, bool) {
+	p := resolveResizeProfile(opts)
 	inputB64 := base64Size(len(inputBytes))
 
 	img, format, err := image.Decode(bytes.NewReader(inputBytes))
@@ -80,7 +127,7 @@ func resizeImage(inputBytes []byte, mimeType string) (ResizeResult, bool) {
 	// Already within all limits → return the ORIGINAL bytes unchanged (pi does
 	// not bake orientation here; it reports the post-orientation dimensions and
 	// relies on the model honoring EXIF). wasResized = false.
-	if ow <= imgMaxWidth && oh <= imgMaxHeight && inputB64 < imgMaxBase64Bytes {
+	if ow <= p.maxWidth && oh <= p.maxHeight && inputB64 < p.maxBytes {
 		return ResizeResult{
 			Data: inputBytes, MimeType: mimeType,
 			OriginalWidth: ow, OriginalHeight: oh,
@@ -91,13 +138,13 @@ func resizeImage(inputBytes []byte, mimeType string) (ResizeResult, bool) {
 	// Initial target: scale to fit within max dimensions, preserving aspect.
 	// pi uses Math.round for the dependent dimension.
 	tw, th := ow, oh
-	if tw > imgMaxWidth {
-		th = jsRound(float64(th) * float64(imgMaxWidth) / float64(tw))
-		tw = imgMaxWidth
+	if tw > p.maxWidth {
+		th = jsRound(float64(th) * float64(p.maxWidth) / float64(tw))
+		tw = p.maxWidth
 	}
-	if th > imgMaxHeight {
-		tw = jsRound(float64(tw) * float64(imgMaxHeight) / float64(th))
-		th = imgMaxHeight
+	if th > p.maxHeight {
+		tw = jsRound(float64(tw) * float64(p.maxHeight) / float64(th))
+		th = p.maxHeight
 	}
 
 	// Shrink-and-encode loop: at each size try PNG then the JPEG quality steps,
@@ -109,7 +156,7 @@ func resizeImage(inputBytes []byte, mimeType string) (ResizeResult, bool) {
 		if cw != ow || ch != oh {
 			scaled = bilinearResize(oriented, cw, ch)
 		}
-		if enc, mime, fit := encodeUnderLimit(scaled); fit {
+		if enc, mime, fit := encodeUnderLimit(scaled, p); fit {
 			return ResizeResult{
 				Data: enc, MimeType: mime,
 				OriginalWidth: ow, OriginalHeight: oh,
@@ -136,15 +183,15 @@ func resizeImage(inputBytes []byte, mimeType string) (ResizeResult, bool) {
 
 // ResizeImageDecision exposes the image-pipeline decision (dimensions, format,
 // wasResized) for differential-testing tools. It mirrors pi's resizeImage.
-func ResizeImageDecision(data []byte, mimeType string) (ResizeResult, bool) {
-	return resizeImage(data, mimeType)
+func ResizeImageDecision(data []byte, mimeType string, resize *ai.ModelImageResizeOptions) (ResizeResult, bool) {
+	return resizeImage(data, mimeType, resize)
 }
 
 // resizeImageForModel is a thin wrapper retained for the read tool: it returns
 // the bytes + mime to embed, ok=false when the image can't be brought under the
 // limit. (The richer decision is available via resizeImage.)
-func resizeImageForModel(data []byte, mimeType string) (out []byte, outMime string, ok bool) {
-	r, ok := resizeImage(data, mimeType)
+func resizeImageForModel(data []byte, mimeType string, resize *ai.ModelImageResizeOptions) (out []byte, outMime string, ok bool) {
+	r, ok := resizeImage(data, mimeType, resize)
 	if !ok {
 		return nil, "", false
 	}
@@ -219,7 +266,7 @@ func conversionHint(from, to string) string {
 // It normalizes the image to a supported inline mime type (converting BMP→PNG),
 // optionally auto-resizes it below the inline limit, and reports processing
 // hints. The result mirrors pi's discriminated { ok } shape.
-func processImage(data []byte, mimeType string, autoResizeImages bool) ProcessImageResult {
+func processImage(data []byte, mimeType string, autoResizeImages bool, resize *ai.ModelImageResizeOptions) ProcessImageResult {
 	normalizedMime := normalizeSupportedImageMimeType(mimeType)
 	normBytes := data
 	convertedFrom := ""
@@ -237,7 +284,7 @@ func processImage(data []byte, mimeType string, autoResizeImages bool) ProcessIm
 	}
 
 	if autoResizeImages {
-		resized, ok := resizeImage(normBytes, normalizedMime)
+		resized, ok := resizeImage(normBytes, normalizedMime, resize)
 		if !ok {
 			return ProcessImageResult{
 				Ok:      false,
@@ -303,7 +350,7 @@ func decodeNodeBase64(value string) ([]byte, error) {
 	return base64.RawStdEncoding.DecodeString(cleaned)
 }
 
-func normalizeToolResultImages(content ai.ContentList) (ai.ContentList, bool) {
+func normalizeToolResultImages(content ai.ContentList, resize *ai.ModelImageResizeOptions) (ai.ContentList, bool) {
 	hasImage := false
 	for _, block := range content {
 		if _, ok := block.(ai.ImageContent); ok {
@@ -336,7 +383,7 @@ func normalizeToolResultImages(content ai.ContentList) (ai.ContentList, bool) {
 		}
 		// autoResize matches the `read` tool's call: the Go port has no settings
 		// manager, so images.autoResize is always on.
-		processed := processImage(raw, img.MimeType, true)
+		processed := processImage(raw, img.MimeType, true, resize)
 		if !processed.Ok {
 			normalized = append(normalized, block)
 			continue
@@ -376,14 +423,14 @@ func toFixed2(x float64) string {
 	return strconv.FormatFloat(x, 'f', 2, 64)
 }
 
-func encodeUnderLimit(img image.Image) ([]byte, string, bool) {
+func encodeUnderLimit(img image.Image, p resizeProfile) ([]byte, string, bool) {
 	var buf bytes.Buffer
-	if err := png.Encode(&buf, img); err == nil && base64Size(buf.Len()) < imgMaxBase64Bytes {
+	if err := png.Encode(&buf, img); err == nil && base64Size(buf.Len()) < p.maxBytes {
 		return append([]byte(nil), buf.Bytes()...), "image/png", true
 	}
-	for _, q := range jpegQualities {
+	for _, q := range p.jpegQualities {
 		buf.Reset()
-		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: q}); err == nil && base64Size(buf.Len()) < imgMaxBase64Bytes {
+		if err := jpeg.Encode(&buf, img, &jpeg.Options{Quality: q}); err == nil && base64Size(buf.Len()) < p.maxBytes {
 			return append([]byte(nil), buf.Bytes()...), "image/jpeg", true
 		}
 	}

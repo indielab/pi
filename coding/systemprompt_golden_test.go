@@ -243,7 +243,7 @@ func TestSystemPromptMatchesPiCapture(t *testing.T) {
 // ToolSnippets and the resolved tools' guidelines keyed by name, exactly as the
 // default-tools case does.
 func TestSystemPromptCaptureInputsAreTheGoValues(t *testing.T) {
-	tools := resolveTools("/proj", SessionOptions{}, nil)
+	tools := resolveTools("/proj", SessionOptions{}, nil, nil)
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Name)

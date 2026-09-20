@@ -25,7 +25,7 @@ func TestReadToolOperationsAreConsulted(t *testing.T) {
 		Access:              func(context.Context, string) error { accessCalls++; return nil },
 		DetectImageMimeType: func(context.Context, string) string { detectCalls++; return "" },
 	}
-	tool := readToolOps("/nowhere", &ops)
+	tool := readToolOps("/nowhere", &ops, nil)
 	res, err := tool.Execute(context.Background(), "1", map[string]any{"path": "x.txt"}, nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
@@ -48,7 +48,7 @@ func TestReadToolAccessFailureStopsTheRead(t *testing.T) {
 			return nil, nil
 		},
 	}
-	tool := readToolOps("/nowhere", &ops)
+	tool := readToolOps("/nowhere", &ops, nil)
 	if _, err := tool.Execute(context.Background(), "1", map[string]any{"path": "x"}, nil); !errors.Is(err, denied) {
 		t.Fatalf("err = %v, want the Access error", err)
 	}
@@ -111,7 +111,7 @@ func TestOperationsReplaceWholesaleNotPerMember(t *testing.T) {
 	// NIL — not local defaults — so the tool must not silently read the disk.
 	tool := readToolOps(dir, &ReadOperations{
 		DetectImageMimeType: func(context.Context, string) string { return "" },
-	})
+	}, nil)
 	defer func() {
 		if recover() == nil {
 			t.Fatal("a partial override must NOT fall back to local defaults")
@@ -126,7 +126,7 @@ func TestNilOperationsUsesDefaults(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(dir, "f.txt"), []byte("on disk\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	res, err := readToolOps(dir, nil).Execute(context.Background(), "1",
+	res, err := readToolOps(dir, nil, nil).Execute(context.Background(), "1",
 		map[string]any{"path": "f.txt"}, nil)
 	if err != nil {
 		t.Fatalf("execute: %v", err)

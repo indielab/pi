@@ -104,7 +104,7 @@ func TestImageDecisionParityWithPi(t *testing.T) {
 		name := strings.TrimSuffix(filepath.Base(goldenPath), ".golden.json")
 		t.Run(name, func(t *testing.T) {
 			data, mime := imgSample(t, name)
-			r, ok := resizeImage(data, mime)
+			r, ok := resizeImage(data, mime, nil)
 
 			goldenData, err := os.ReadFile(goldenPath)
 			if err != nil {

@@ -173,15 +173,15 @@ var preferStrictToolSampling = &ai.ConstrainedSamplingConfig{
 // read it from, matching pi's `exposeSessionEnvironment && ctx` guard when the
 // tool runs without an extension context.
 func CreateTool(name, cwd string) (agent.AgentTool, error) {
-	return createTool(name, cwd, nil)
+	return createTool(name, cwd, nil, nil)
 }
 
 // createTool is CreateTool with the session-metadata provider the coding
 // session threads into the bash tool (nil for standalone construction).
-func createTool(name, cwd string, sessionEnv sessionEnvFn) (agent.AgentTool, error) {
+func createTool(name, cwd string, sessionEnv sessionEnvFn, resize imageResizeFn) (agent.AgentTool, error) {
 	switch name {
 	case "read":
-		return readTool(cwd), nil
+		return readToolOps(cwd, nil, resize), nil
 	case "bash":
 		return bashTool(cwd, sessionEnv), nil
 	case "powershell":
@@ -423,13 +423,13 @@ func isAnimatedPNG(buf []byte) bool {
 
 // readTool builds the read tool against the local filesystem — the form every
 // existing caller uses. readToolOps is the injection seam.
-func readTool(cwd string) agent.AgentTool { return readToolOps(cwd, nil) }
+func readTool(cwd string) agent.AgentTool { return readToolOps(cwd, nil, nil) }
 
 // readToolOps builds the read tool against injectable file operations, porting
 // pi's ReadOperations seam (core/tools/read.ts:49). pi's own words: "Override
 // these to delegate file reading to remote systems (for example SSH)." A nil
 // member falls back to the local default, which is pi's spread-over-defaults.
-func readToolOps(cwd string, custom *ReadOperations) agent.AgentTool {
+func readToolOps(cwd string, custom *ReadOperations, resize imageResizeFn) agent.AgentTool {
 	ops := resolveReadOperations(custom)
 	return agent.AgentTool{
 		Name:        "read",
@@ -468,7 +468,7 @@ func readToolOps(cwd string, custom *ReadOperations) agent.AgentTool {
 				// model's inline image limits, and apply EXIF orientation (port of
 				// pi's processImage). The note text matches pi's read tool exactly
 				// (utils/image-process.ts).
-				processed := processImage(data, mime, true)
+				processed := processImage(data, mime, true, resize.get())
 				if !processed.Ok {
 					return agent.AgentToolResult{Content: ai.ContentList{ai.TextContent{
 						Text: fmt.Sprintf("Read image file [%s]\n%s", mime, processed.Message),
@@ -795,6 +795,25 @@ var maxBashTimeoutSeconds = strconv.FormatFloat(float64(maxBashTimeoutMs)/1000, 
 // It is called per execution so a mid-session /model or thinking-level change
 // is reflected, mirroring pi reading them off the live ExtensionContext.
 type sessionEnvFn func() map[string]string
+
+// imageResizeFn supplies the resize profile of the model a request is being
+// built for. pi reads it straight off the tool execution context
+// (`ctx?.model?.inputLimits?.images?.resize`, read.ts) and falls back to a
+// construction-time option when the context carries no model. The port's
+// AgentTool.Execute has no model, so this getter — installed by NewSession,
+// the same shape as sessionEnvFn — is that seam, and reading it per call keeps
+// a mid-session SetModel from leaving a stale profile behind. Scope queue entry
+// 18 covers giving the execution context a model outright.
+type imageResizeFn func() *ai.ModelImageResizeOptions
+
+// get resolves the profile, treating a nil getter as "no model metadata" — pi's
+// undefined ctx.model, which falls through to the pipeline defaults.
+func (f imageResizeFn) get() *ai.ModelImageResizeOptions {
+	if f == nil {
+		return nil
+	}
+	return f()
+}
 
 // piSessionEnvKeys are the session metadata variables pi manages for bash
 // commands. They are stripped from the inherited environment before every run

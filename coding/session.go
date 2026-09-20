@@ -112,7 +112,7 @@ var defaultActiveToolNames = []string{"read", "bash", "edit", "write"}
 // then excludeTools denylist). Consequences: NoTools "all" disables custom
 // tools too; a ToolNames allowlist constrains custom tools; ExcludeTools
 // applies to custom tools.
-func resolveTools(cwd string, opts SessionOptions, sessionEnv sessionEnvFn) []agent.AgentTool {
+func resolveTools(cwd string, opts SessionOptions, sessionEnv sessionEnvFn, resize imageResizeFn) []agent.AgentTool {
 	// allowlist: nil = everything allowed (pi: undefined); empty = nothing.
 	var allowed map[string]bool
 	if opts.ToolNames != nil {
@@ -156,7 +156,7 @@ func resolveTools(cwd string, opts SessionOptions, sessionEnv sessionEnvFn) []ag
 			if !isAllowed(name) {
 				continue
 			}
-			if t, err := createTool(name, cwd, sessionEnv); err == nil {
+			if t, err := createTool(name, cwd, sessionEnv, resize); err == nil {
 				addReg(t)
 			}
 		}
@@ -166,7 +166,7 @@ func resolveTools(cwd string, opts SessionOptions, sessionEnv sessionEnvFn) []ag
 			if _, ok := registry[name]; ok || !isAllowed(name) {
 				continue
 			}
-			if t, err := createTool(name, cwd, sessionEnv); err == nil {
+			if t, err := createTool(name, cwd, sessionEnv, resize); err == nil {
 				addReg(t)
 			}
 		}
@@ -291,6 +291,17 @@ type Session struct {
 // models or attaching a recorder, so every field it reads is taken through a
 // synchronized path: the model and thinking level from the agent's guarded
 // state, the recorder under recMu.
+// imageResizeOptions is the resize profile of the session's CURRENT model —
+// pi's `this.model?.inputLimits?.images?.resize` (agent-session.ts). It is read
+// per call rather than captured, so SetModel takes effect on the next image
+// without rebuilding the tools.
+func (s *Session) imageResizeOptions() *ai.ModelImageResizeOptions {
+	if s.Model == nil || s.Model.InputLimits == nil || s.Model.InputLimits.Images == nil {
+		return nil
+	}
+	return s.Model.InputLimits.Images.Resize
+}
+
 func (s *Session) bashSessionEnv() map[string]string {
 	env := map[string]string{}
 	if r := s.recorder(); r != nil {
@@ -400,7 +411,7 @@ func NewSession(opts SessionOptions) *Session {
 	// allocated up front so the closure captures a stable, non-nil pointer; its
 	// Agent is filled in below, before NewSession returns and any tool can run.
 	sess := &Session{Cwd: cwd, Model: opts.Model, apiKey: opts.APIKey, models: opts.Models}
-	tools := resolveTools(cwd, opts, sess.bashSessionEnv)
+	tools := resolveTools(cwd, opts, sess.bashSessionEnv, sess.imageResizeOptions)
 	// A custom SystemPrompt still goes through the prompt builder with discovery:
 	// pi adds project context files, skills and cwd to custom prompts too; only
 	// the tools, rules and docs sections are exclusive to the default prompt.
@@ -463,7 +474,7 @@ func NewSession(opts SessionOptions) *Session {
 		OnPayload:       opts.OnPayload,
 		OnResponse:      opts.OnResponse,
 		BeforeToolCall:  opts.BeforeToolCall,
-		AfterToolCall:   withToolResultImageNormalization(opts.AfterToolCall),
+		AfterToolCall:   withToolResultImageNormalization(opts.AfterToolCall, sess.imageResizeOptions),
 	})
 
 	a.SetTools(tools)
@@ -554,6 +565,7 @@ func (s *Session) projectForcedPrompt(_ context.Context, transformed []agent.Age
 // changed nothing, the tool result is left untouched.
 func withToolResultImageNormalization(
 	hook func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult,
+	resize imageResizeFn,
 ) func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult {
 	return func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult {
 		var hookResult *agent.AfterToolCallResult
@@ -565,7 +577,7 @@ func withToolResultImageNormalization(
 		if hookResult != nil && hookResult.HasContent {
 			content = hookResult.Content
 		}
-		normalized, changed := normalizeToolResultImages(content)
+		normalized, changed := normalizeToolResultImages(content, resize.get())
 		if hookResult == nil && !changed {
 			return nil
 		}
@@ -622,11 +634,57 @@ func (s *Session) Abort() { s.Agent.Abort() }
 // WaitForIdle blocks until the current run and its listeners finish.
 func (s *Session) WaitForIdle() { s.Agent.WaitForIdle() }
 
+// normalizePromptImages is pi's _normalizePromptImages (agent-session.ts,
+// upstream f5c946480): an image entering the transcript is converted to a
+// supported inline type and resized against the CURRENT model's profile before
+// it is recorded, and the pipeline's notes ride back on the user text instead
+// of being dropped. An image the pipeline cannot handle contributes its message
+// and no block, so the turn still goes out.
+//
+// Normalizing here rather than at the caller is the point of that commit: the
+// model is only settled once the turn starts, and an image already in history
+// must never be re-processed — that would invalidate the prompt cache.
+//
+// pi gates auto-resize on settingsManager.getImageAutoResize(); the port has no
+// settings manager, so it is always on, as at the read tool and the tool-result
+// normalizer.
+func (s *Session) normalizePromptImages(images []ai.ImageContent) ([]ai.ImageContent, []string) {
+	if len(images) == 0 {
+		return nil, nil
+	}
+	resize := s.imageResizeOptions()
+	var out []ai.ImageContent
+	var hints []string
+	for _, img := range images {
+		raw, err := decodeNodeBase64(img.Data)
+		if err != nil {
+			// pi's Buffer.from never throws, so undecodable data reaches
+			// processImage and comes back as a conversion failure. Report the same
+			// note rather than passing bytes that are not the caller's image.
+			hints = append(hints, "[Image omitted: could not be converted to a supported inline image format.]")
+			continue
+		}
+		processed := processImage(raw, img.MimeType, true, resize)
+		if !processed.Ok {
+			hints = append(hints, processed.Message)
+			continue
+		}
+		out = append(out, ai.ImageContent{Data: encodeBase64(processed.Data), MimeType: processed.MimeType})
+		hints = append(hints, processed.Hints...)
+	}
+	return out, hints
+}
+
 // Run executes a prompt and returns a structured RunResult. Unlike RunPrint it
 // does not write to an io.Writer — use Subscribe for streaming.
 func (s *Session) Run(ctx context.Context, prompt string, images ...ai.ImageContent) (*RunResult, error) {
-	content := ai.ContentList{ai.TextContent{Text: prompt}}
-	for _, img := range images {
+	normalized, hints := s.normalizePromptImages(images)
+	text := prompt
+	if len(hints) > 0 {
+		text = prompt + "\n\n" + strings.Join(hints, "\n")
+	}
+	content := ai.ContentList{ai.TextContent{Text: text}}
+	for _, img := range normalized {
 		content = append(content, img)
 	}
 	return s.RunMessages(ctx, []agent.AgentMessage{ai.UserMessage{Content: content, Timestamp: nowMillisCoding()}})

@@ -41,7 +41,7 @@ func sectionNames(sections ai.SystemSections) []string {
 // tools in cwd, built independently of the Session.
 func expectedSessionPrompt(t *testing.T, cwd string) string {
 	t.Helper()
-	tools := resolveTools(cwd, SessionOptions{}, nil)
+	tools := resolveTools(cwd, SessionOptions{}, nil, nil)
 	names := make([]string, 0, len(tools))
 	for _, tool := range tools {
 		names = append(names, tool.Name)

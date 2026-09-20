@@ -215,7 +215,7 @@ func TestJSTrimImageMimeTypes(t *testing.T) {
 		t.Fatal(err)
 	}
 	for _, want := range c.Images {
-		got := processImage(png, want.MimeType, false)
+		got := processImage(png, want.MimeType, false, nil)
 		if got.Ok != want.OK || got.MimeType != want.ResultMimeType || !slices.Equal(got.Hints, want.Hints) {
 			t.Errorf("processImage(%+q) = {ok %v %s %+q}, pi = {ok %v %s %+q}", want.MimeType,
 				got.Ok, got.MimeType, got.Hints, want.OK, want.ResultMimeType, want.Hints)

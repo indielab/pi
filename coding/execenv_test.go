@@ -141,7 +141,7 @@ func TestReadToolUsesInjectedEnv(t *testing.T) {
 	env := newFakeEnv(dir)
 	env.files[filepath.Join(dir, "hello.txt")] = []byte("line one\nline two\n")
 
-	tool := readToolOps(env.Cwd(), ptr(EnvReadOperations(env)))
+	tool := readToolOps(env.Cwd(), ptr(EnvReadOperations(env)), nil)
 	res, err := tool.Execute(context.Background(), "1",
 		map[string]any{"path": "hello.txt"}, nil)
 	if err != nil {
@@ -164,7 +164,7 @@ func TestReadToolEnvRejectsDirectory(t *testing.T) {
 	env := newFakeEnv(dir)
 	env.files[filepath.Join(dir, "sub", "a.txt")] = []byte("x")
 
-	tool := readToolOps(env.Cwd(), ptr(EnvReadOperations(env)))
+	tool := readToolOps(env.Cwd(), ptr(EnvReadOperations(env)), nil)
 	_, err := tool.Execute(context.Background(), "1", map[string]any{"path": "sub"}, nil)
 	if err == nil || !strings.Contains(err.Error(), "EISDIR") {
 		t.Fatalf("reading a directory must report EISDIR, got %v", err)
@@ -180,7 +180,7 @@ func TestReadToolLocalEnvMatchesDirectRead(t *testing.T) {
 		t.Fatal(err)
 	}
 	viaWrapper := readTool(dir)
-	viaEnv := readToolOps(dir, ptr(EnvReadOperations(NewLocalEnv(dir))))
+	viaEnv := readToolOps(dir, ptr(EnvReadOperations(NewLocalEnv(dir))), nil)
 
 	a, err := viaWrapper.Execute(context.Background(), "1", map[string]any{"path": "file.txt"}, nil)
 	if err != nil {

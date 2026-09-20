@@ -7,8 +7,12 @@ import (
 	"image"
 	"image/color"
 	"image/png"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/image/bmp"
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
@@ -47,7 +51,7 @@ func pngDimensions(t *testing.T, data string) (int, int) {
 
 func TestNormalizeToolResultImagesNoImages(t *testing.T) {
 	content := ai.ContentList{ai.TextContent{Text: "no images here"}}
-	out, changed := normalizeToolResultImages(content)
+	out, changed := normalizeToolResultImages(content, nil)
 	if changed {
 		t.Fatal("content without images must be reported unchanged")
 	}
@@ -62,7 +66,7 @@ func TestNormalizeToolResultImagesWithinLimits(t *testing.T) {
 		ai.TextContent{Text: "screenshot"},
 		ai.ImageContent{Data: small, MimeType: "image/png"},
 	}
-	out, changed := normalizeToolResultImages(content)
+	out, changed := normalizeToolResultImages(content, nil)
 	if changed {
 		t.Fatal("image within limits must be reported unchanged")
 	}
@@ -74,7 +78,7 @@ func TestNormalizeToolResultImagesWithinLimits(t *testing.T) {
 func TestNormalizeToolResultImagesResizesOversized(t *testing.T) {
 	content := ai.ContentList{ai.ImageContent{Data: grayPNGBase64(t, 2400, 4800), MimeType: "image/png"}}
 
-	out, changed := normalizeToolResultImages(content)
+	out, changed := normalizeToolResultImages(content, nil)
 	if !changed {
 		t.Fatal("oversized image must be normalized")
 	}
@@ -101,7 +105,7 @@ func TestNormalizeToolResultImagesResizesOversized(t *testing.T) {
 func TestNormalizeToolResultImagesConvertsUnsupportedFormat(t *testing.T) {
 	content := ai.ContentList{ai.ImageContent{Data: encodeBase64(tinyBMP1x1Red24bpp()), MimeType: "image/bmp"}}
 
-	out, changed := normalizeToolResultImages(content)
+	out, changed := normalizeToolResultImages(content, nil)
 	if !changed {
 		t.Fatal("unsupported format must be converted")
 	}
@@ -117,7 +121,7 @@ func TestNormalizeToolResultImagesConvertsUnsupportedFormat(t *testing.T) {
 
 func TestNormalizeToolResultImagesKeepsUndecodable(t *testing.T) {
 	content := ai.ContentList{ai.ImageContent{Data: "bm90LWFuLWltYWdl", MimeType: "image/png"}}
-	out, changed := normalizeToolResultImages(content)
+	out, changed := normalizeToolResultImages(content, nil)
 	if changed {
 		t.Fatal("undecodable image must be kept as-is, not dropped")
 	}
@@ -133,7 +137,7 @@ func TestNormalizeToolResultImagesPreservesSurroundingText(t *testing.T) {
 		ai.TextContent{Text: "after"},
 	}
 
-	out, changed := normalizeToolResultImages(content)
+	out, changed := normalizeToolResultImages(content, nil)
 	if !changed {
 		t.Fatal("oversized image must be normalized")
 	}
@@ -268,7 +272,7 @@ func TestNormalizeToolResultImagesLenientBase64(t *testing.T) {
 	for name, payload := range map[string]string{"base64url": urlSafe, "spaces": spaced.String()} {
 		t.Run(name, func(t *testing.T) {
 			content := ai.ContentList{ai.ImageContent{Data: payload, MimeType: "image/png"}}
-			out, changed := normalizeToolResultImages(content)
+			out, changed := normalizeToolResultImages(content, nil)
 			if !changed {
 				t.Fatal("oversized image was not resized; the decode is stricter than Node's")
 			}
@@ -280,5 +284,215 @@ func TestNormalizeToolResultImagesLenientBase64(t *testing.T) {
 				t.Fatalf("resized width = %d, want <= %d", w, imgMaxWidth)
 			}
 		})
+	}
+}
+
+// TestSessionNormalizesPromptImages pins upstream f5c946480's
+// _normalizePromptImages: an image handed to Run is converted and resized
+// against the session model's profile BEFORE it is recorded, and the pipeline's
+// notes ride back on the user text. Previously Run put the caller's bytes into
+// the transcript verbatim, so an oversized or non-inline image went to the
+// provider untouched and its notes were lost.
+func TestSessionNormalizesPromptImages(t *testing.T) {
+	maxWidth, maxHeight := 40, 40
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+		Models: []providers.FauxModelDefinition{{
+			ID:    "faux-vision",
+			Input: []string{"text", "image"},
+			InputLimits: &ai.ModelInputLimits{Images: &ai.ModelImageInputLimits{
+				Resize: &ai.ModelImageResizeOptions{MaxWidth: &maxWidth, MaxHeight: &maxHeight},
+			}},
+		}},
+	})
+	defer reg.Unregister()
+	reg.SetResponses([]providers.FauxResponseStep{
+		providers.FauxStatic(providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "ok"}}, ai.StopStop)),
+	})
+
+	sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir(), NoTools: NoToolsAll})
+
+	// A 300x240 BMP: outside the model's 40px profile AND not an inline type, so
+	// the pipeline both converts and downscales it, and says so.
+	img := image.NewRGBA(image.Rect(0, 0, 300, 240))
+	for y := 0; y < 240; y++ {
+		for x := 0; x < 300; x++ {
+			img.Set(x, y, color.RGBA{R: uint8(x % 256), G: uint8(y % 256), B: 9, A: 255})
+		}
+	}
+	var buf bytes.Buffer
+	if err := bmp.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := sess.Run(context.Background(), "look",
+		ai.ImageContent{Data: encodeBase64(buf.Bytes()), MimeType: "image/bmp"}); err != nil {
+		t.Fatal(err)
+	}
+
+	var user ai.UserMessage
+	found := false
+	for _, m := range sess.History() {
+		if u, ok := m.(ai.UserMessage); ok {
+			user, found = u, true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("no user message recorded: %+v", sess.History())
+	}
+	var gotText string
+	var gotImage *ai.ImageContent
+	for _, c := range user.Content {
+		switch v := c.(type) {
+		case ai.TextContent:
+			gotText = v.Text
+		case ai.ImageContent:
+			gotImage = &v
+		}
+	}
+	if gotImage == nil {
+		t.Fatalf("no image block recorded: %+v", user.Content)
+	}
+	if gotImage.MimeType == "image/bmp" {
+		t.Fatal("BMP must be converted to an inline type before it is recorded")
+	}
+	raw, err := decodeNodeBase64(gotImage.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dec, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := dec.Bounds(); b.Dx() > maxWidth || b.Dy() > maxHeight {
+		t.Fatalf("recorded image %dx%d exceeds the model profile %dx%d", b.Dx(), b.Dy(), maxWidth, maxHeight)
+	}
+	if !strings.HasPrefix(gotText, "look\n\n") {
+		t.Fatalf("pipeline notes must follow the prompt text, got %q", gotText)
+	}
+	if !strings.Contains(gotText, "[Image converted from image/bmp to image/png.]") {
+		t.Fatalf("expected the conversion note, got %q", gotText)
+	}
+	if !strings.Contains(gotText, "original 300x240, displayed at 40x32") {
+		t.Fatalf("expected the dimension note, got %q", gotText)
+	}
+}
+
+// TestSessionResizesToolResultImagesToModelProfile pins the second of
+// f5c946480's two session-side sites (agent-session.ts:547): a tool result's
+// images are resized against the CURRENT model's profile, not just the
+// pipeline defaults. Without the profile reaching normalizeToolResultImages an
+// image well inside the 2000px default sails through a model that asks for 40.
+func TestSessionResizesToolResultImagesToModelProfile(t *testing.T) {
+	maxWidth, maxHeight := 40, 40
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+		Models: []providers.FauxModelDefinition{{
+			ID:    "faux-vision",
+			Input: []string{"text", "image"},
+			InputLimits: &ai.ModelInputLimits{Images: &ai.ModelImageInputLimits{
+				Resize: &ai.ModelImageResizeOptions{MaxWidth: &maxWidth, MaxHeight: &maxHeight},
+			}},
+		}},
+	})
+	defer reg.Unregister()
+	reg.SetResponses([]providers.FauxResponseStep{
+		providers.FauxStatic(providers.FauxAssistantMessage(ai.ContentList{
+			providers.FauxToolCall("screenshot", map[string]any{}, "c1"),
+		}, ai.StopToolUse)),
+		providers.FauxStatic(providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "done"}}, ai.StopStop)),
+	})
+
+	// 300x240 is comfortably inside the 2000px default and outside the model's.
+	sess := NewSession(SessionOptions{
+		Model:       reg.GetModel(),
+		Cwd:         t.TempDir(),
+		CustomTools: []agent.AgentTool{screenshotTool(grayPNGBase64(t, 300, 240))},
+	})
+	res, err := sess.Run(context.Background(), "take a screenshot")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var images []ai.ImageContent
+	for _, m := range res.Messages {
+		if tr, ok := m.(ai.ToolResultMessage); ok {
+			for _, block := range tr.Content {
+				if img, ok := block.(ai.ImageContent); ok {
+					images = append(images, img)
+				}
+			}
+		}
+	}
+	if len(images) != 1 {
+		t.Fatalf("expected one image in history, got %d", len(images))
+	}
+	if w, h := pngDimensions(t, images[0].Data); w > maxWidth || h > maxHeight {
+		t.Fatalf("tool result image %dx%d exceeds the model profile %dx%d", w, h, maxWidth, maxHeight)
+	}
+}
+
+// TestReadToolUsesSessionModelProfile pins f5c946480's read.ts:117 site. pi
+// reads the profile off the tool execution context's model; the port's
+// AgentTool.Execute has no model, so NewSession installs a getter instead
+// (imageResizeFn). Reading it per call is what keeps a mid-session SetModel
+// from leaving the tool on a stale profile.
+func TestReadToolUsesSessionModelProfile(t *testing.T) {
+	maxWidth, maxHeight := 40, 40
+	narrow := &ai.ModelInputLimits{Images: &ai.ModelImageInputLimits{
+		Resize: &ai.ModelImageResizeOptions{MaxWidth: &maxWidth, MaxHeight: &maxHeight},
+	}}
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+		Models: []providers.FauxModelDefinition{
+			{ID: "wide", Input: []string{"text", "image"}},
+			{ID: "narrow", Input: []string{"text", "image"}, InputLimits: narrow},
+		},
+	})
+	defer reg.Unregister()
+
+	cwd := t.TempDir()
+	img := image.NewRGBA(image.Rect(0, 0, 300, 240))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "shot.png"), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	models := reg.Models
+	wide, narrowModel := models[0], models[1]
+	if wide.ID != "wide" {
+		wide, narrowModel = models[1], models[0]
+	}
+
+	sess := NewSession(SessionOptions{Model: wide, Cwd: cwd, ToolNames: []string{"read"}})
+	readImage := func() (int, int) {
+		t.Helper()
+		var tool agent.AgentTool
+		for _, candidate := range sess.Agent.State().Tools {
+			if candidate.Name == "read" {
+				tool = candidate
+			}
+		}
+		res, err := tool.Execute(context.Background(), "1", map[string]any{"path": "shot.png"}, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, block := range res.Content {
+			if got, ok := block.(ai.ImageContent); ok {
+				return pngDimensions(t, got.Data)
+			}
+		}
+		t.Fatalf("read returned no image: %+v", res.Content)
+		return 0, 0
+	}
+
+	// The wide model asks for nothing, so the defaults apply and 300x240 passes.
+	if w, h := readImage(); w != 300 || h != 240 {
+		t.Fatalf("default profile should pass the image through, got %dx%d", w, h)
+	}
+
+	// Switching the model mid-session must reach the already-built tool.
+	sess.SetModel(narrowModel, "")
+	if w, h := readImage(); w > maxWidth || h > maxHeight {
+		t.Fatalf("read image %dx%d exceeds the model profile %dx%d", w, h, maxWidth, maxHeight)
 	}
 }
