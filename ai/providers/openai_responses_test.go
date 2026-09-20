@@ -1287,7 +1287,7 @@ type httpErrorOracleRow struct {
 
 func loadHTTPErrorOracle(t *testing.T) []httpErrorOracleRow {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "httperror", "pi-ai-0.85.1.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "httperror", "pi-ai-0.86.1.json"))
 	if err != nil {
 		t.Fatalf("read oracle: %v", err)
 	}
@@ -1342,21 +1342,34 @@ func TestResponsesHTTPErrorFormat(t *testing.T) {
 
 // TestResponsesHTTPErrorNamesProvider mirrors upstream 0c7bb7c5c (#9298): the
 // label is `${model.provider === "openai" ? "OpenAI" : model.provider}`, so a
-// Grok 403 no longer reads as an OpenAI error. The rule is source-only until
-// the next release (the 0.85.1 build labels every provider "OpenAI"), so the
-// label is asserted here and the tail is the oracle's obj-message row.
+// Grok 403 no longer reads as an OpenAI error.
+//
+// That rule was SOURCE-ONLY until 2026-09-20 — the 0.85.1 build labelled every
+// Responses provider "OpenAI", so this test asserted the label from source and
+// borrowed one oracle row for the tail. 0.86.1 ships it, and the re-captured
+// oracle carries an `openai-responses/xai` column for every row, so the whole
+// table is the oracle now: 35 rows against the build instead of one row against
+// a hand-written string. It is the only column the re-capture moved.
+//
+// `opencode` has no captured column and stays source-derived: same branch, a
+// third provider id, asserting that the label is the id verbatim rather than
+// anything xai-specific.
 func TestResponsesHTTPErrorNamesProvider(t *testing.T) {
-	cases := []struct{ provider, want string }{
-		{"xai", `xai API error (403): {"message":"blocked"}`},
-		{"opencode", `opencode API error (403): {"message":"blocked"}`},
-		{"openai", `OpenAI API error (403): {"message":"blocked"}`},
-	}
-	for _, c := range cases {
-		t.Run(c.provider, func(t *testing.T) {
-			if got := responsesHTTPError(t, c.provider, 403, `{"error":{"message":"blocked"}}`); got != c.want {
-				t.Fatalf("error message = %q, want %q", got, c.want)
+	for _, row := range loadHTTPErrorOracle(t) {
+		t.Run(row.Name, func(t *testing.T) {
+			want, ok := row.ErrorMessage["openai-responses/xai"]
+			if !ok {
+				t.Fatalf("oracle row %q has no openai-responses/xai column; re-capture it", row.Name)
+			}
+			if got := responsesHTTPError(t, "xai", row.Status, row.Body); got != want {
+				t.Fatalf("xai error message = %q, want pi's %q", got, want)
 			}
 		})
+	}
+	const body = `{"error":{"message":"blocked"}}`
+	if got, want := responsesHTTPError(t, "opencode", 403, body),
+		`opencode API error (403): {"message":"blocked"}`; got != want {
+		t.Fatalf("opencode error message = %q, want %q", got, want)
 	}
 }
 
@@ -2796,5 +2809,34 @@ func TestResponsesStopReasonWithoutErrorMessageOmitsTheField(t *testing.T) {
 				t.Fatalf("errorMessage must be absent, got %s", raw)
 			}
 		})
+	}
+}
+
+// TestCopilotGPTModelsUseResponsesApi is the tripwire the ledger asked for.
+// pi 7d8ab31a4 widened github-copilot's needsResponsesApi from a `gpt-5` prefix
+// to `gpt-`, and the 0.86.1 regen carried it: github-copilot/gpt-6-astra moved
+// from openai-completions to openai-responses and so began executing this
+// file's copilot-specific branches for the first time. Nothing pinned any
+// copilot model's api before, so a later regen could have flipped one back with
+// no test going red. Derived from the catalog rather than listing ids, so a new
+// gpt- model is covered the day it appears — and the precondition is asserted
+// so the loop cannot go quietly vacuous.
+func TestCopilotGPTModelsUseResponsesApi(t *testing.T) {
+	models := ai.GetModels("github-copilot")
+	if len(models) == 0 {
+		t.Fatal("the catalog has no github-copilot models; this test would prove nothing")
+	}
+	seen := 0
+	for _, m := range models {
+		if !strings.HasPrefix(m.ID, "gpt-") {
+			continue
+		}
+		seen++
+		if m.Api != ai.APIOpenAIResponses {
+			t.Errorf("github-copilot/%s api = %q, want %q", m.ID, m.Api, ai.APIOpenAIResponses)
+		}
+	}
+	if seen == 0 {
+		t.Fatal("no github-copilot gpt- model in the catalog; the precondition is gone")
 	}
 }

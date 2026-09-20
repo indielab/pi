@@ -33,14 +33,23 @@ function moduleFor(backend, api) {
 /**
  * The context an adapter entry point takes. From upstream 9e05370b2 on, api
  * `stream`/`streamSimple` take a TranscriptContext that only normalizeContext
- * produces (the public entry points normalize before dispatching), so a "src"
- * scenario at such a sha is normalized here exactly as they would; without it
- * the adapter would silently drop the system prompt and tools. The published
- * "dist" build predates the change and takes the raw context.
+ * produces — the public entry points normalize before dispatching — and an
+ * adapter handed the raw context instead silently drops the system prompt and
+ * the tools.
+ *
+ * This is decided by PROBING the backend, not by assuming which one is ahead.
+ * It used to early-return for "dist" on the grounds that the published build
+ * predated the change; 0.86.1 ships it, and that assumption turned 46 of 58
+ * scenarios red in a single npm bump — every one of them reading as a port bug
+ * (pi "missing" the system message and the tools) when the harness was the
+ * thing feeding pi the wrong shape. 0.85.1 has no dist/utils/transcript.js at
+ * all, so the probe is exact in both directions.
  */
 async function adapterContext(scenario) {
-	if (scenario.backend !== "src") return scenario.context;
-	const transcriptPath = path.join(SRC_DIR, "src/utils/transcript.ts");
+	const transcriptPath =
+		scenario.backend === "src"
+			? path.join(SRC_DIR, "src/utils/transcript.ts")
+			: path.join(NPM_DIR, "node_modules/@earendil-works/pi-ai/dist/utils/transcript.js");
 	if (!existsSync(transcriptPath)) return scenario.context;
 	const { normalizeContext } = await import(pathToFileURL(transcriptPath).href);
 	return normalizeContext(scenario.context);

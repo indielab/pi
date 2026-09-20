@@ -143,14 +143,15 @@ func TestOpenAICompatDeepSeekUsesMaxTokens(t *testing.T) {
 		{ID: "custom-deepseek-model", Api: ai.APIOpenAICompletions, Provider: "custom-deepseek", BaseURL: "https://api.deepseek.com"},
 		{ID: "custom-uppercase-deepseek-model", Api: ai.APIOpenAICompletions, Provider: "custom-deepseek-upper", BaseURL: "https://API.DeepSeek.COM"},
 	}
-	// Built-in catalog models, matching pi's native coverage.
-	for _, id := range []string{"deepseek-v4-flash", "deepseek-v4-pro"} {
-		m := ai.GetModel("deepseek", id)
-		if m == nil {
-			t.Fatalf("catalog model deepseek/%s missing", id)
-		}
-		models = append(models, m)
+	// Every built-in deepseek model, derived from the catalog rather than named:
+	// 12f59336a collapsed deepseek-v4-flash and deepseek-v4-flash-vision-exp into
+	// deepseek-flash at 0.86.0, and a regen must not be able to leave this test
+	// either red or quietly vacuous.
+	catalog := ai.GetModels("deepseek")
+	if len(catalog) == 0 {
+		t.Fatal("the catalog has no deepseek models; this test would prove nothing")
 	}
+	models = append(models, catalog...)
 	for _, m := range models {
 		t.Run(m.Provider+"/"+m.ID, func(t *testing.T) {
 			if got := getOpenAICompat(m).MaxTokensField; got != "max_tokens" {
@@ -214,11 +215,11 @@ func TestOpenAICompatDeepSeekSendsMaxTokensInBody(t *testing.T) {
 	// rewrites BaseURL to the stub server. That rewrite also means only the
 	// provider-name route into isDeepSeek is reachable here; the baseUrl route
 	// is covered by the compat table above.
-	m := ai.GetModel("deepseek", "deepseek-v4-flash")
-	if m == nil {
-		t.Fatal("catalog model deepseek/deepseek-v4-flash missing")
+	catalog := ai.GetModels("deepseek")
+	if len(catalog) == 0 {
+		t.Fatal("the catalog has no deepseek models; this test would prove nothing")
 	}
-	model := *m
+	model := *catalog[0]
 	mt := 123
 	body := captureOpenAIBody(t, &model,
 		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}},

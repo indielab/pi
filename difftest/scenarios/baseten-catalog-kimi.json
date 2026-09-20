@@ -1,6 +1,6 @@
 {
   "name": "baseten-catalog-kimi",
-  "note": "Catalog-backed counterpart to baseten-thinking, which uses a synthetic model. This model object is a VERBATIM copy of baseten/moonshotai/Kimi-K2.5 from the pi-ai 0.84.1 catalog (first release to ship baseten data, upstream a5f43bf8a/53fa77ccd). It pins the chatTemplateArgs + supportsUsageInStreaming shape that real shipped models actually carry -- {\"enable_thinking\":{\"$var\":\"thinking.enabled\"}} -- rather than the richer synthetic shape. Backend is dist: unlike baseten-thinking (src, unreleased at the time), this data IS released in 0.84.1 so the published build arbitrates it. Refresh this model object whenever the catalog is regenerated.",
+  "note": "Catalog-backed counterpart to baseten-thinking, which uses a synthetic model. This model object is a VERBATIM copy of baseten/moonshotai/Kimi-K2.5 from the pi-ai catalog -- refreshed at the 0.86.1 regen, which added sendSessionAffinityHeaders (upstream 6671c6047) to every baseten model. It pins the chatTemplateArgs + supportsUsageInStreaming shape that real shipped models actually carry -- {\"enable_thinking\":{\"$var\":\"thinking.enabled\"}} -- rather than the richer synthetic shape. Backend is dist: unlike baseten-thinking (src, unreleased at the time), this data IS released so the published build arbitrates it. Refresh this model object whenever the catalog is regenerated.",
   "backend": "dist",
   "api": "openai-completions",
   "entry": "streamSimple",
@@ -40,6 +40,7 @@
       "supportsUsageInStreaming": true,
       "maxTokensField": "max_tokens",
       "supportsStrictMode": true,
+      "sendSessionAffinityHeaders": true,
       "supportsLongCacheRetention": false,
       "thinkingFormat": "baseten",
       "chatTemplateArgs": {

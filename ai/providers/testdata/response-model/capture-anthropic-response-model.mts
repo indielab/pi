@@ -3,15 +3,21 @@
 // TestAnthropicResponseModel* in this package (upstream 1283afd0d).
 //
 //   node --experimental-strip-types capture-anthropic-response-model.mts <extraction> <out.json> <sha>
-//   e.g. ... capture-anthropic-response-model.mts <dir> anthropic-response-model-1283afd0d.json 1283afd0d
+//   e.g. ... capture-anthropic-response-model.mts <dir> anthropic-response-model-f5c946480.json f5c946480
 //
 // <extraction> holds packages/ai at <sha> (`git archive <sha> packages/ai` from
 // the upstream clone), a node_modules resolving pi-ai's dependencies (the npm
 // build's), and packages/ai/src/providers/data copied from that npm build's
 // dist/providers/data: the generated catalog values are not in git, and the
-// suite reads claude-opus-5 through compat.ts getModel. The npm build 0.85.1
-// predates upstream 1283afd0d, so these are src captures: re-verify them against
-// the first build that ships it (the BUILD wins).
+// suite reads claude-opus-5 through compat.ts getModel.
+//
+// RE-VERIFIED against the build on 2026-09-20. 0.85.1 predated 1283afd0d, so
+// the first capture was src-only and owed a re-check against the first build
+// that shipped it. 0.86.1 does, and re-capturing at the f5c946480 pin — whose
+// api/anthropic-messages.ts, api/transform-messages.ts and compat.ts are
+// identical to the v0.86.1 tag's — reproduced every behavioural entry byte for
+// byte. Only `model` moved, and only because the catalog did: claude-opus-5
+// gained promptCache and two mid-convo compat keys.
 //
 // `relabeled` and `fallbackCost` are the two cases 1283afd0d added to
 // packages/ai/test/anthropic-sse-parsing.test.ts, with the suite's model,

@@ -3,7 +3,7 @@
 // formatting tests in this package (TestResponsesHTTPErrorMatchesPi).
 //
 //   node capture.mjs <pi-ai npm dir> <out.json>
-//   e.g. node capture.mjs ~/.cache/pi-npm/0.85.1 pi-ai-0.85.1.json
+//   e.g. node capture.mjs ~/.cache/pi-npm/0.86.1 pi-ai-0.86.1.json
 //
 // Each adapter streams against a loopback server that answers with the given
 // status and body, so neither side needs a key or the network. The capture is
