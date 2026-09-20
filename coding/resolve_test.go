@@ -395,3 +395,13 @@ func TestResolveModelXaiFallbackDefault(t *testing.T) {
 			r.Model.ContextWindow, tmpl.ContextWindow, r.Model.MaxTokens, tmpl.MaxTokens)
 	}
 }
+
+// pi b73412a37 adds Meta to defaultModelPerProvider. The table is what
+// buildFallbackModel templates a custom id from, and model-resolver.ts is the
+// file whose omissions this port has already been caught by twice, so the
+// entry is pinned on its own.
+func TestMetaFallbackDefault(t *testing.T) {
+	if got := defaultModelPerProvider["meta"]; got != "muse-spark-1.3" {
+		t.Fatalf("meta default = %q, want muse-spark-1.3", got)
+	}
+}
