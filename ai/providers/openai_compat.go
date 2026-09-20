@@ -135,12 +135,15 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 	isCloudflareAiGateway := provider == "cloudflare-ai-gateway" || has("gateway.ai.cloudflare.com")
 	isNvidia := provider == "nvidia" || has("integrate.api.nvidia.com")
 	isAntLing := provider == "ant-ling" || has("api.ant-ling.com")
+	// pi af7359b90 hoisted the cerebras probe so isNonStandard and the strict-mode
+	// resolution read from one place.
+	isCerebras := provider == "cerebras" || has("cerebras.ai")
 	// pi b647d1879: the DeepSeek probe alone folds case, and it is hoisted above
 	// isNonStandard so both disjunctions read from it. Every other probe here
 	// stays case-sensitive, exactly as upstream leaves them.
 	isDeepSeek := provider == "deepseek" || strings.Contains(strings.ToLower(baseURL), "deepseek.com")
 
-	isNonStandard := isNvidia || provider == "cerebras" || has("cerebras.ai") ||
+	isNonStandard := isNvidia || isCerebras ||
 		provider == "xai" || has("api.x.ai") || isTogether || has("chutes.ai") ||
 		isDeepSeek || isZai || isMoonshot || provider == "opencode" ||
 		has("opencode.ai") || isCloudflareWorkersAI || isCloudflareAiGateway || isAntLing
@@ -180,7 +183,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		SupportsFinishReason:                        true,
 		MaxTokensField:                              maxTokensField,
 		ThinkingFormat:                              thinkingFormat,
-		SupportsStrictMode:                          !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia,
+		SupportsStrictMode:                          !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isCerebras,
 		SupportsOpenAIGrammarTools:                  false,
 		SupportsMidConvoSystemMessages:              false,
 		SupportsMidConvoToolAdditions:               false,

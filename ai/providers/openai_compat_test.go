@@ -338,3 +338,34 @@ func TestOpenAICompatVLLMPriority(t *testing.T) {
 		t.Fatalf("priority must be absent when a sibling compat key is set, got %#v", got)
 	}
 }
+
+// pi af7359b90 drops Cerebras from supportsStrictMode — the provider rejects
+// the strict field on tools (#9804). Both halves of that commit move together:
+// the generator emits supportsStrictMode:false onto every catalog cerebras
+// model, and detectCompat's default stops claiming it, so a CUSTOM cerebras
+// model carrying no compat key resolves the same way a catalog one does. Only
+// this second half is hand-written Go; the first arrives with the regen.
+func TestOpenAICompatCerebrasOmitsStrict(t *testing.T) {
+	models := []*ai.Model{
+		{ID: "gpt-oss-120b", Api: ai.APIOpenAICompletions, Provider: "cerebras"},
+		{ID: "custom-model", Api: ai.APIOpenAICompletions, Provider: "custom-cerebras", BaseURL: "https://api.cerebras.ai/v1"},
+	}
+	for _, model := range models {
+		req := baseReq()
+		req.Tools = []ai.Tool{{
+			Name:                "t1",
+			Description:         "strict tool",
+			Parameters:          ai.Object(ai.Prop("x", ai.String())),
+			ConstrainedSampling: &ai.ConstrainedSamplingConfig{Type: ai.ConstrainedSamplingJSONSchema},
+		}}
+		body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
+		tools, _ := body["tools"].([]map[string]any)
+		if len(tools) == 0 {
+			t.Fatalf("%s/%s: expected a tool in the body (keys %v)", model.Provider, model.ID, keysOf(body))
+		}
+		fn, _ := tools[0]["function"].(map[string]any)
+		if has(fn, "strict") {
+			t.Fatalf("%s/%s: cerebras must not be sent strict, got %v", model.Provider, model.ID, fn["strict"])
+		}
+	}
+}
