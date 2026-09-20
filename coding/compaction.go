@@ -269,9 +269,11 @@ func isCutPointMessage(m agent.AgentMessage) bool {
 // accumulate until KeepRecentTokens is reached — a message estimated at zero
 // tokens (a system message) never crosses the budget — and the cut then snaps
 // FORWARD to the first cut point at or after the crossing index (so a boundary
-// tool result goes into the summarized portion). If the budget is never
-// reached, the cut defaults to the first cut point (keep everything). Only
-// messages in [startIndex, endIndex) are considered.
+// tool result goes into the summarized portion), or back to the LAST cut point
+// when the crossing lands past every one of them — trailing tool results big
+// enough to blow the budget alone. If the budget is never reached, the cut
+// defaults to the first cut point (keep everything). Only messages in
+// [startIndex, endIndex) are considered.
 func findCutPoint(messages []agent.AgentMessage, startIndex, endIndex, keepRecentTokens int) cutPointResult {
 	var cutPoints []int
 	for i := startIndex; i < endIndex; i++ {
@@ -293,7 +295,12 @@ func findCutPoint(messages []agent.AgentMessage, startIndex, endIndex, keepRecen
 		}
 		acc += tokens
 		if acc >= keepRecentTokens {
-			// Snap to the closest valid cut point at or after this index.
+			// Prefer the closest valid cut point at or after this index. When the
+			// trailing tool results cross the budget on their own there is none, and
+			// the cut falls back to the LAST cut point — the assistant message that
+			// issued those calls — instead of the first, so older history can still
+			// be summarized (pi 8bdcd4498).
+			cutIndex = cutPoints[len(cutPoints)-1]
 			for _, c := range cutPoints {
 				if c >= i {
 					cutIndex = c

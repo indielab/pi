@@ -89,6 +89,30 @@ func TestFindCutPointSplitTurn(t *testing.T) {
 	}
 }
 
+// TestFindCutPointFallsBackToLastCutPoint pins upstream 8bdcd4498: when the
+// trailing tool results cross the keep-budget on their own, no valid cut point
+// sits at or after the crossing index, and the cut falls back to the LAST cut
+// point — the assistant message that issued those tool calls — rather than the
+// first. Falling back to the first kept everything and summarized nothing, so a
+// transcript whose tail alone overflowed the budget could never shrink (#9740).
+func TestFindCutPointFallsBackToLastCutPoint(t *testing.T) {
+	big := strings.Repeat("x", 4000) // ~1000 tokens
+	messages := []agent.AgentMessage{
+		ai.NewUserText(big, 1),
+		ai.AssistantMessage{Content: ai.ContentList{ai.ToolCall{ID: "t", Name: "read", Arguments: map[string]any{}}}, StopReason: ai.StopToolUse, Timestamp: 2},
+		ai.ToolResultMessage{ToolCallID: "t", ToolName: "read", Content: ai.ContentList{ai.TextContent{Text: big}}, Timestamp: 3},
+	}
+	// The trailing tool result alone (~1000 tokens) crosses a 500-token budget at
+	// index 2; the only cut points are 0 and 1, both before it.
+	cp := findCutPoint(messages, 0, len(messages), 500)
+	if cp.firstKeptIndex != 1 {
+		t.Fatalf("expected fallback to the last cut point (1), got %d", cp.firstKeptIndex)
+	}
+	if !cp.isSplitTurn || cp.turnStartIndex != 0 {
+		t.Fatalf("expected split turn starting at 0, got %+v", cp)
+	}
+}
+
 func TestCompactionSummarizesAndKeepsRecent(t *testing.T) {
 	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
 		Models: []providers.FauxModelDefinition{{ID: "faux-1", ContextWindow: 1000}}, // tiny window forces compaction
