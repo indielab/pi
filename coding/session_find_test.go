@@ -368,3 +368,29 @@ func TestLatestSessionOrdersByFileMtime(t *testing.T) {
 		t.Fatalf("LatestSession(custom dir) = %+v, %v; want mine-id", got, ok)
 	}
 }
+
+// TestLatestSessionEmptyCwdDoesNotFilter pins a truthiness gate that belongs to
+// findMostRecentSession alone. pi resolves the filter as
+// `cwd ? resolvePath(cwd) : undefined`, so an EMPTY cwd turns cwd filtering
+// off and the newest session in the directory wins whatever its cwd. list()
+// has no such gate — it resolves "" to the process cwd and filters by that —
+// so ListSessions keeps filtering, and only LatestSession changes. The port
+// used ListSessions' prologue for both and filtered by the process cwd here.
+// Reachable only by an SDK caller: cmd/pi replaces an empty cwd with
+// os.Getwd() before it gets this far. Found by this cycle's JS-semantics
+// review.
+func TestLatestSessionEmptyCwdDoesNotFilter(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	sessionDir := t.TempDir()
+	elsewhere := filepath.Join(t.TempDir(), "some-other-project")
+	path := writeSessionFile(t, sessionDir, "other.jsonl", sessionHeaderLine("other-id", elsewhere), sessionMessageLine)
+
+	latest, ok := LatestSession("", sessionDir)
+	if !ok || latest.Path != path {
+		t.Fatalf("LatestSession(\"\", dir) = %+v, %v; want %s — pi applies no cwd filter for an empty cwd", latest, ok, path)
+	}
+	// list() is the contrast: it still filters by the process cwd.
+	if got := ListSessions("", sessionDir); len(got) != 0 {
+		t.Fatalf("ListSessions(\"\", dir) = %+v; want none — pi's list() resolves \"\" to the process cwd", got)
+	}
+}

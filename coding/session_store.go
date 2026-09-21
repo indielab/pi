@@ -690,8 +690,16 @@ func ListSessions(cwd, sessionDir string) []SessionInfo {
 	// pi orders the directory entries by name DESCENDING before reading any of
 	// them and then sorts the sessions with a STABLE sort, so files sharing a
 	// timestamp come back newest-name-first (upstream dfbf793b7). os.ReadDir
-	// hands entries back ascending, so walk it in reverse; byte order and
-	// localeCompare agree on the hex file names the recorder writes.
+	// hands entries back ascending, so walk it in reverse.
+	//
+	// That is byte order, and pi's `b.localeCompare(a)` is not: it uses the
+	// host's default ICU collation. Under the root and English-like collations
+	// Node normally runs with, the two agree on the `<timestamp>_<uuid>` names
+	// the recorder writes. Under Danish or Norwegian collation they do not —
+	// "aa" collates as "å", after "z", and a hex uuid can contain "aa" — so pi's
+	// own tie order depends on the machine. The port keeps byte order, which is
+	// the answer pi gives by default and the only deterministic one. It decides
+	// ties alone: sessions whose timestamps are equal to the millisecond.
 	var infos []SessionInfo
 	for i := len(entries) - 1; i >= 0; i-- {
 		e := entries[i]
@@ -958,6 +966,13 @@ func LoadSessionMessages(path string) ([]agent.AgentMessage, error) {
 // one that had been resumed and written to for hours.
 func LatestSession(cwd, sessionDir string) (SessionInfo, bool) {
 	dir, filterCwd, resolvedCwd := sessionListingDir(cwd, sessionDir)
+	// findMostRecentSession gates its filter on TRUTHINESS —
+	// `cwd ? resolvePath(cwd) : undefined` — so an empty cwd means no cwd filter
+	// at all. list() has no such gate and resolves "" to the process cwd, which
+	// is why this lives here and not in the shared prologue.
+	if cwd == "" {
+		filterCwd = false
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return SessionInfo{}, false
