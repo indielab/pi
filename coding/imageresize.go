@@ -329,11 +329,21 @@ func processImage(data []byte, mimeType string, autoResizeImages bool, resize *a
 // Go's base64.StdEncoding is strict about all three, so a whitespace-wrapped or
 // base64url payload failed to decode and the image was passed through
 // unresized — partially defeating the resize of tool-returned images.
+//
+// Node also STOPS at the first `=`: whatever follows it is ignored, alphabet
+// characters included. Filtering `=` out like any other stray byte instead
+// decoded base64 assembled from separately padded chunks ("QUJD=QUJD") as the
+// concatenation of every chunk, and realigned the bit groups across the gap
+// into bytes that appear in none of them. Measured against Node, row by row,
+// in TestDecodeNodeBase64StopsAtPadding.
 func decodeNodeBase64(value string) ([]byte, error) {
 	var b strings.Builder
 	b.Grow(len(value))
+scan:
 	for _, r := range value {
 		switch {
+		case r == '=':
+			break scan
 		case r >= 'A' && r <= 'Z', r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '+', r == '/':
 			b.WriteRune(r)
 		case r == '-': // base64url

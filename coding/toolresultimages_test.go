@@ -496,3 +496,89 @@ func TestReadToolUsesSessionModelProfile(t *testing.T) {
 		t.Fatalf("read image %dx%d exceeds the model profile %dx%d", w, h, maxWidth, maxHeight)
 	}
 }
+
+// TestDecodeNodeBase64StopsAtPadding pins decodeNodeBase64 to what Node's
+// Buffer.from(value, "base64") actually returns. Every want below was captured
+// by running Node, not reasoned: Node decodes the alphabet characters that come
+// BEFORE the first `=` and ignores everything after it. The port used to filter
+// `=` out like any other stray byte and keep going, so base64 built by
+// concatenating separately padded chunks — "QUJD=QUJD" — decoded to both chunks
+// in Go and to the first one only in pi. Found by this cycle's JS-semantics
+// review; this cycle newly routes prompt images through the same decoder.
+func TestDecodeNodeBase64StopsAtPadding(t *testing.T) {
+	cases := []struct {
+		in   string
+		want []byte
+	}{
+		{"QUJD", []byte("ABC")},
+		{"QUJD=QUJD", []byte("ABC")},
+		{"QUJD==QUJD", []byte("ABC")},
+		{"QUJD===", []byte("ABC")},
+		{"QUJDQU=JD", []byte("ABCA")},
+		{"QUJDQ=UJD", []byte("ABC")},
+		{"QU=JD", []byte("A")},
+		{"QUJ=D", []byte("AB")},
+		{"QUI=QUJD", []byte("AB")},
+		{"QQ==QUJD", []byte("A")},
+		{"QU\n=JD", []byte("A")},
+		{"=QUJD", []byte{}},
+		{" =QUJD", []byte{}},
+		{"Q=UJD", []byte{}},
+		// Unchanged behaviour, kept beside the new rule so a regression in
+		// either direction shows up here.
+		{"QUJDA", []byte("ABC")},
+		{"QUJD-_", []byte{65, 66, 67, 251}},
+		{"Q U J D", []byte("ABC")},
+		{"QU!JD", []byte("ABC")},
+		{"!!!!", []byte{}},
+	}
+	for _, c := range cases {
+		got, err := decodeNodeBase64(c.in)
+		if err != nil {
+			t.Fatalf("decodeNodeBase64(%q): unexpected error %v", c.in, err)
+		}
+		if !bytes.Equal(got, c.want) {
+			t.Errorf("decodeNodeBase64(%q) = %v, Node gives %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestSessionReportsUnprocessablePromptImages pins the failure half of
+// _normalizePromptImages: an image the pipeline cannot handle contributes pi's
+// omission note to the user text and no block, and the turn still goes out.
+// The two notes are captured from the 0.86.1 build's processImage over the
+// same bytes ("not an image"), one per branch — a supported inline type that
+// will not decode, and a type that must be converted and cannot be.
+func TestSessionReportsUnprocessablePromptImages(t *testing.T) {
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+		Models: []providers.FauxModelDefinition{{ID: "faux-vision", Input: []string{"text", "image"}}},
+	})
+	defer reg.Unregister()
+	reg.SetResponses([]providers.FauxResponseStep{
+		providers.FauxStatic(providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "ok"}}, ai.StopStop)),
+	})
+	sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir(), NoTools: NoToolsAll})
+
+	const garbage = "bm90IGFuIGltYWdl" // base64("not an image")
+	if _, err := sess.Run(context.Background(), "look",
+		ai.ImageContent{Data: garbage, MimeType: "image/png"},
+		ai.ImageContent{Data: garbage, MimeType: "image/bmp"}); err != nil {
+		t.Fatal(err)
+	}
+	var user ai.UserMessage
+	for _, m := range sess.History() {
+		if u, ok := m.(ai.UserMessage); ok {
+			user = u
+			break
+		}
+	}
+	const want = "look\n\n" +
+		"[Image omitted: could not be resized below the inline image size limit.]\n" +
+		"[Image omitted: could not be converted to a supported inline image format.]"
+	if len(user.Content) != 1 {
+		t.Fatalf("an unprocessable image must contribute no block, got %d blocks: %+v", len(user.Content), user.Content)
+	}
+	if text, _ := user.Content[0].(ai.TextContent); text.Text != want {
+		t.Fatalf("user text = %q, want pi's %q", text.Text, want)
+	}
+}

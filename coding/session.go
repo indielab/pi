@@ -656,14 +656,11 @@ func (s *Session) normalizePromptImages(images []ai.ImageContent) ([]ai.ImageCon
 	var out []ai.ImageContent
 	var hints []string
 	for _, img := range images {
-		raw, err := decodeNodeBase64(img.Data)
-		if err != nil {
-			// pi's Buffer.from never throws, so undecodable data reaches
-			// processImage and comes back as a conversion failure. Report the same
-			// note rather than passing bytes that are not the caller's image.
-			hints = append(hints, "[Image omitted: could not be converted to a supported inline image format.]")
-			continue
-		}
+		// decodeNodeBase64 cannot fail: it keeps only alphabet characters, trims
+		// the orphan remainder, and what is left always decodes. pi's Buffer.from
+		// never throws either, so whatever comes back goes to processImage, which
+		// is what reports a payload that is not an image.
+		raw, _ := decodeNodeBase64(img.Data)
 		processed := processImage(raw, img.MimeType, true, resize)
 		if !processed.Ok {
 			hints = append(hints, processed.Message)
