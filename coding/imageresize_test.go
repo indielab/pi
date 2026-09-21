@@ -483,11 +483,7 @@ func TestDecodeNodeBase64MatchesNode(t *testing.T) {
 		{"YQ", "61"},                   // len%4==2
 	}
 	for _, c := range cases {
-		got, err := decodeNodeBase64(c.in)
-		if err != nil {
-			t.Errorf("decodeNodeBase64(%q) error = %v, want %s", c.in, err, c.wantHex)
-			continue
-		}
+		got := decodeNodeBase64(c.in)
 		if hex.EncodeToString(got) != c.wantHex {
 			t.Errorf("decodeNodeBase64(%q) = %s, want %s", c.in, hex.EncodeToString(got), c.wantHex)
 		}

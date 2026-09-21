@@ -355,11 +355,7 @@ func TestSessionNormalizesPromptImages(t *testing.T) {
 	if gotImage.MimeType == "image/bmp" {
 		t.Fatal("BMP must be converted to an inline type before it is recorded")
 	}
-	raw, err := decodeNodeBase64(gotImage.Data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	dec, _, err := image.Decode(bytes.NewReader(raw))
+	dec, _, err := image.Decode(bytes.NewReader(decodeNodeBase64(gotImage.Data)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -533,11 +529,7 @@ func TestDecodeNodeBase64StopsAtPadding(t *testing.T) {
 		{"!!!!", []byte{}},
 	}
 	for _, c := range cases {
-		got, err := decodeNodeBase64(c.in)
-		if err != nil {
-			t.Fatalf("decodeNodeBase64(%q): unexpected error %v", c.in, err)
-		}
-		if !bytes.Equal(got, c.want) {
+		if got := decodeNodeBase64(c.in); !bytes.Equal(got, c.want) {
 			t.Errorf("decodeNodeBase64(%q) = %v, Node gives %v", c.in, got, c.want)
 		}
 	}
@@ -581,4 +573,56 @@ func TestSessionReportsUnprocessablePromptImages(t *testing.T) {
 	if text, _ := user.Content[0].(ai.TextContent); text.Text != want {
 		t.Fatalf("user text = %q, want pi's %q", text.Text, want)
 	}
+}
+
+// TestImageResizeProfileIsRaceFreeAcrossSetModel pins the synchronization the
+// resize getter needs. pi reads `this.agent.state.model` (agent-session.ts);
+// the getter first shipped reading the plain Session.Model field, which
+// SetModel writes without a lock, from the tool-execution goroutine. An SDK
+// embedder switching models while a turn's read tool loads an image is exactly
+// the case the getter's own comment advertises. Run under -race: the defect is
+// a data race, which only the race detector can see. Filed independently by
+// this cycle's go and parity reviews.
+func TestImageResizeProfileIsRaceFreeAcrossSetModel(t *testing.T) {
+	maxWidth := 40
+	narrow := &ai.ModelInputLimits{Images: &ai.ModelImageInputLimits{
+		Resize: &ai.ModelImageResizeOptions{MaxWidth: &maxWidth},
+	}}
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+		Models: []providers.FauxModelDefinition{
+			{ID: "wide", Input: []string{"text", "image"}},
+			{ID: "narrow", Input: []string{"text", "image"}, InputLimits: narrow},
+		},
+	})
+	defer reg.Unregister()
+
+	cwd := t.TempDir()
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, image.NewRGBA(image.Rect(0, 0, 64, 64))); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(cwd, "shot.png"), buf.Bytes(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sess := NewSession(SessionOptions{Model: reg.Models[0], Cwd: cwd, ToolNames: []string{"read"}})
+	var read agent.AgentTool
+	for _, tool := range sess.Agent.State().Tools {
+		if tool.Name == "read" {
+			read = tool
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for i := 0; i < 200; i++ {
+			sess.SetModel(reg.Models[i%2], "")
+		}
+	}()
+	for i := 0; i < 200; i++ {
+		if _, err := read.Execute(context.Background(), "1", map[string]any{"path": "shot.png"}, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	<-done
 }

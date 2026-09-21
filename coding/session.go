@@ -291,17 +291,6 @@ type Session struct {
 // models or attaching a recorder, so every field it reads is taken through a
 // synchronized path: the model and thinking level from the agent's guarded
 // state, the recorder under recMu.
-// imageResizeOptions is the resize profile of the session's CURRENT model —
-// pi's `this.model?.inputLimits?.images?.resize` (agent-session.ts). It is read
-// per call rather than captured, so SetModel takes effect on the next image
-// without rebuilding the tools.
-func (s *Session) imageResizeOptions() *ai.ModelImageResizeOptions {
-	if s.Model == nil || s.Model.InputLimits == nil || s.Model.InputLimits.Images == nil {
-		return nil
-	}
-	return s.Model.InputLimits.Images.Resize
-}
-
 func (s *Session) bashSessionEnv() map[string]string {
 	env := map[string]string{}
 	if r := s.recorder(); r != nil {
@@ -323,6 +312,24 @@ func (s *Session) bashSessionEnv() map[string]string {
 		env["PI_REASONING_LEVEL"] = string(level)
 	}
 	return env
+}
+
+// imageResizeOptions is the resize profile of the session's CURRENT model —
+// pi's `this.model?.inputLimits?.images?.resize` (agent-session.ts), read per
+// call rather than captured so SetModel reaches the next image without
+// rebuilding the tools. Like bashSessionEnv it runs on the tool-execution
+// goroutine while the caller may be switching models, so it reads the model
+// from ONE snapshot of the agent's guarded state — pi reads
+// `this.agent.state.model` for the same reason — and never the plain
+// Session.Model field, which SetModel writes without a lock. Reading that
+// field raced, and reading it more than once could see two different models
+// between the nil checks and the dereference.
+func (s *Session) imageResizeOptions() *ai.ModelImageResizeOptions {
+	m := s.Agent.State().Model
+	if m == nil || m.InputLimits == nil || m.InputLimits.Images == nil {
+		return nil
+	}
+	return m.InputLimits.Images.Resize
 }
 
 // recorder reads the attached SessionRecorder under recMu. Every read goes
@@ -656,12 +663,9 @@ func (s *Session) normalizePromptImages(images []ai.ImageContent) ([]ai.ImageCon
 	var out []ai.ImageContent
 	var hints []string
 	for _, img := range images {
-		// decodeNodeBase64 cannot fail: it keeps only alphabet characters, trims
-		// the orphan remainder, and what is left always decodes. pi's Buffer.from
-		// never throws either, so whatever comes back goes to processImage, which
-		// is what reports a payload that is not an image.
-		raw, _ := decodeNodeBase64(img.Data)
-		processed := processImage(raw, img.MimeType, true, resize)
+		// Whatever the payload decodes to goes to processImage, which is what
+		// reports one that is not an image — pi's Buffer.from never throws.
+		processed := processImage(decodeNodeBase64(img.Data), img.MimeType, true, resize)
 		if !processed.Ok {
 			hints = append(hints, processed.Message)
 			continue

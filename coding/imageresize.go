@@ -337,7 +337,14 @@ func processImage(data []byte, mimeType string, autoResizeImages bool, resize *a
 // concatenation of every chunk, and realigned the bit groups across the gap
 // into bytes that appear in none of them. Measured against Node, row by row,
 // in TestDecodeNodeBase64StopsAtPadding.
-func decodeNodeBase64(value string) ([]byte, error) {
+//
+// It cannot fail, so it returns no error. The filter keeps only alphabet
+// characters and stops before any `=`, the trim removes a lone remainder, and
+// non-strict raw decoding accepts every length and trailing-bit pattern left
+// after that. Node's Buffer.from never throws either. The impossible error is
+// discarded HERE, beside the filter and trim that make it impossible, so an
+// edit to either one is made next to the proof that depends on it.
+func decodeNodeBase64(value string) []byte {
 	var b strings.Builder
 	b.Grow(len(value))
 scan:
@@ -358,7 +365,8 @@ scan:
 	if len(cleaned)%4 == 1 {
 		cleaned = cleaned[:len(cleaned)-1]
 	}
-	return base64.RawStdEncoding.DecodeString(cleaned)
+	out, _ := base64.RawStdEncoding.DecodeString(cleaned)
+	return out
 }
 
 func normalizeToolResultImages(content ai.ContentList, resize *ai.ModelImageResizeOptions) (ai.ContentList, bool) {
@@ -373,7 +381,6 @@ func normalizeToolResultImages(content ai.ContentList, resize *ai.ModelImageResi
 		return content, false
 	}
 
-	_ = base64.StdEncoding
 	normalized := make(ai.ContentList, 0, len(content))
 	changed := false
 	for _, block := range content {
@@ -382,19 +389,14 @@ func normalizeToolResultImages(content ai.ContentList, resize *ai.ModelImageResi
 			normalized = append(normalized, block)
 			continue
 		}
-		// Unlike `read`, keep the original block whenever processing fails (here:
-		// undecodable base64 or an image processImage cannot handle). The tool
-		// already produced this image and the failure may just be an unsupported
-		// payload, so passing it through preserves the behavior tools have today
-		// instead of silently deleting their output.
-		raw, err := decodeNodeBase64(img.Data)
-		if err != nil {
-			normalized = append(normalized, block)
-			continue
-		}
 		// autoResize matches the `read` tool's call: the Go port has no settings
 		// manager, so images.autoResize is always on.
-		processed := processImage(raw, img.MimeType, true, resize)
+		processed := processImage(decodeNodeBase64(img.Data), img.MimeType, true, resize)
+		// Unlike `read`, keep the original block whenever processing fails. The
+		// tool already produced this image and the failure may just be an
+		// unsupported payload — base64 that decodes to something that is not an
+		// image lands here too — so passing it through preserves the behavior
+		// tools have today instead of silently deleting their output.
 		if !processed.Ok {
 			normalized = append(normalized, block)
 			continue
