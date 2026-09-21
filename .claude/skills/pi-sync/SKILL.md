@@ -121,8 +121,8 @@ but no Go home yet" is a Scope queue row, not a `decide`.
     counter never resets — so it stays distinct from pi's patch and there is no
     minor-vs-patch judgement to make). E.g. syncing pi 0.80.7 after `v0.80.10`
     → `v0.80.11`; if pi later bumps to 0.81.x, the next tag is `v0.81.<n+1>`. The
-    version is git-tag-only; one tag per release-crossing cycle (cycles with no
-    npm bump get no tag).
+    version lives in the tag (no in-source version); one tag per
+    release-crossing cycle (cycles with no npm bump get no tag).
   - Tag the **ledger/pin-advance commit** (the tip of the sync) as an
     **annotated, unsigned** tag, tagger `Noam Y. Tenne <noam@10ne.org>`:
     `git -c user.name="Noam Y. Tenne" -c user.email="noam@10ne.org" tag -a
@@ -132,6 +132,29 @@ but no Go home yet" is a Scope queue row, not a `decide`.
     tag list, backfill the missing tags from their `git tag -n99` messages first.
   - Push the tag: `git -c credential.helper='!gh auth git-credential' push
     https://github.com/sky-valley/pi.git vX.Y.Z` (HTTPS, same as the branch push).
+  - **Publish a GitHub Release for the tag** (since 2026-09-21 — a bare tag
+    notifies nobody; watchers and the repo's "Latest" badge only see Release
+    objects). Body = a short plain-language header, then the RELEASES.md Notes
+    entry verbatim:
+
+    ```
+    Tracks pi **<npm-ver>** (upstream pin `<sha>`).
+
+    ## Highlights
+    - <the same three plain-language changes as the tweet>
+
+    **Breaking:** <only if the release breaks Go API — name it and point at the migration>
+
+    ## Details
+    <the docs/RELEASES.md "### vX.Y.Z" Notes entry>
+    ```
+
+    `gh release create vX.Y.Z -R sky-valley/pi --verify-tag --title "vX.Y.Z —
+    tracking pi <npm-ver>" --notes-file <body.md> --latest`. Create it AFTER the
+    tag is pushed (`--verify-tag` refuses otherwise). Verify with
+    `gh release list -R sky-valley/pi -L 3` that the new tag reads `Latest`.
+    Every tag from `v0.85.21` on has a Release; older tags are deliberately
+    left bare — never backfill them (it would notify watchers about old news).
   - **Draft the release tweet** (we tweet on every release cut). Surface it for
     the human to post — do NOT auto-post (publishing is the owner's action).
     Owner's voice/format, verbatim shape:

@@ -9,7 +9,10 @@ captured from. The commit-by-commit triage/port ledger lives in
   `Noam Y. Tenne <noam@10ne.org>`.
 - A release tag points at the cycle's ledger/pin-advance commit (the tip of the
   sync), so the catalog + ledger are included.
-- Versioning is git-tag-only — there is no `VERSION` file or in-source version
+- Every tag from `v0.85.21` on also has a **GitHub Release** (body: a short
+  highlights header + that tag's Notes entry below), because a bare tag notifies
+  no one. Older tags are deliberately left without one.
+- The version lives in the tag — there is no `VERSION` file or in-source version
   constant. **As of `v0.80.11` the port's `major.minor` follows the upstream
   `pi-ai` catalog `major.minor`; `patch` is the port's own monotonic counter**
   (it never resets, so it stays distinct from pi's patch — e.g. `v0.80.11` syncs
