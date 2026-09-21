@@ -562,3 +562,53 @@ func equalInts(a, b []int) bool {
 	}
 	return true
 }
+
+// TestToFixed2MatchesJS pins toFixed2 to Number.prototype.toFixed(2), whose
+// output feeds the "Multiply coordinates by N" note the model reads. Every want
+// was captured by running Node. The spec picks, of the two nearest candidates
+// for an EXACT tie, the larger — round half UP — where strconv.FormatFloat
+// rounds an exact tie to EVEN. So the odd eighths diverged: a 2250px image
+// under the 2000px limit read 1.12 in the port and 1.13 in pi. Non-ties such as
+// 1.005 (binary 1.00499…) must keep rounding by the exact binary value, which
+// both sides already did; they are here so the fix cannot trade one bug for
+// another. Found by this cycle's JS-semantics review; this cycle also started
+// writing the note into the user's own prompt text, where it is recorded and
+// re-sent on every later request.
+func TestToFixed2MatchesJS(t *testing.T) {
+	cases := []struct {
+		x    float64
+		want string
+	}{
+		{1.125, "1.13"}, {1.625, "1.63"}, {2.125, "2.13"}, {0.125, "0.13"},
+		{1.375, "1.38"}, {1.875, "1.88"},
+		{1.005, "1.00"}, {1.015, "1.01"}, {1.025, "1.02"}, {2.675, "2.67"},
+		{1.1, "1.10"}, {1.0, "1.00"}, {1.5, "1.50"}, {1234.5625, "1234.56"},
+		{0.005, "0.01"}, {9.995, "9.99"}, {1e-7, "0.00"}, {3.14159, "3.14"},
+		{2250.0 / 2000, "1.13"}, {2345.0 / 2000, "1.17"},
+	}
+	for _, c := range cases {
+		if got := toFixed2(c.x); got != c.want {
+			t.Errorf("toFixed2(%v) = %q, JS toFixed(2) gives %q", c.x, got, c.want)
+		}
+	}
+}
+
+// TestDimensionNoteMatchesPiAtTies pins the whole model-visible note at the
+// ties toFixed2 used to round the other way. Both strings were produced by the
+// 0.86.1 build's formatDimensionNote.
+func TestDimensionNoteMatchesPiAtTies(t *testing.T) {
+	cases := []struct {
+		r    ResizeResult
+		want string
+	}{
+		{ResizeResult{OriginalWidth: 2250, OriginalHeight: 1000, Width: 2000, Height: 889, WasResized: true},
+			"[Image: original 2250x1000, displayed at 2000x889. Multiply coordinates by 1.13 to map to original image.]"},
+		{ResizeResult{OriginalWidth: 3250, OriginalHeight: 1000, Width: 2000, Height: 615, WasResized: true},
+			"[Image: original 3250x1000, displayed at 2000x615. Multiply coordinates by 1.63 to map to original image.]"},
+	}
+	for _, c := range cases {
+		if got := formatDimensionNote(c.r); got != c.want {
+			t.Errorf("formatDimensionNote = %q\n want pi's %q", got, c.want)
+		}
+	}
+}

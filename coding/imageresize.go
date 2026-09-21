@@ -11,6 +11,7 @@ import (
 	"image/jpeg"
 	"image/png"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 
@@ -428,9 +429,28 @@ func formatDimensionNote(r ResizeResult) string {
 		r.OriginalWidth, r.OriginalHeight, r.Width, r.Height, toFixed2(scale))
 }
 
-// toFixed2 formats x with exactly two decimals, matching JS Number.toFixed(2).
+// toFixed2 formats x with exactly two decimals the way JS Number.toFixed(2)
+// does. The spec takes the integer n nearest x·100, computed EXACTLY on x's
+// binary value, and of two equally near picks the LARGER — round half up —
+// where strconv.FormatFloat rounds an exact tie to even, so the odd eighths
+// differed (1.125: JS "1.13", FormatFloat "1.12"). Rational arithmetic keeps
+// the non-ties exact as well: 1.005 is 1.00499… in binary and stays "1.00".
+//
+// Callers pass a scale ratio, positive and finite by construction; that is the
+// only range this handles. A value SetFloat64 cannot represent falls back to
+// FormatFloat rather than panicking.
 func toFixed2(x float64) string {
-	return strconv.FormatFloat(x, 'f', 2, 64)
+	r := new(big.Rat).SetFloat64(x)
+	if r == nil || x < 0 {
+		return strconv.FormatFloat(x, 'f', 2, 64)
+	}
+	r.Mul(r, big.NewRat(100, 1))
+	r.Add(r, big.NewRat(1, 2))
+	digits := new(big.Int).Quo(r.Num(), r.Denom()).String() // floor: r is non-negative
+	for len(digits) < 3 {
+		digits = "0" + digits
+	}
+	return digits[:len(digits)-2] + "." + digits[len(digits)-2:]
 }
 
 func encodeUnderLimit(img image.Image, p resizeProfile) ([]byte, string, bool) {
