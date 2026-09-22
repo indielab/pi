@@ -742,7 +742,7 @@ func (s *Session) declareSystemPrompt(prompts []agent.AgentMessage) ([]agent.Age
 // The session's options carry no custom sections, the only input
 // BuildSystemPromptSections rejects, so the build cannot fail here; were it to,
 // the turn would proceed undeclared, and the next Run reports the error.
-func (s *Session) prepareNextTurn(turn agent.ShouldStopAfterTurnContext) *agent.AgentLoopTurnUpdate {
+func (s *Session) prepareNextTurn(turn agent.AgentTurnContext) *agent.AgentLoopTurnUpdate {
 	st := s.Agent.State()
 	next := agent.AgentContext{Messages: turn.Context.Messages, Tools: slices.Clone(st.Tools)}
 	thinkingLevel := st.ThinkingLevel

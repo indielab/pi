@@ -783,7 +783,7 @@ func TestLoopAppendsPreparedMessagesBeforeTheNextRequest(t *testing.T) {
 		AgentLoopConfig{
 			Model:        testModel,
 			ConvertToLlm: identityConverter,
-			PrepareNextTurn: func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
+			PrepareNextTurn: func(c AgentTurnContext) *AgentLoopTurnUpdate {
 				prepareCalls++
 				if prepared {
 					return nil
@@ -838,7 +838,7 @@ func TestLoopPreparedMessagesPrecedeSteeringAndCarryToolChanges(t *testing.T) {
 				}
 				return nil
 			},
-			PrepareNextTurn: func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
+			PrepareNextTurn: func(c AgentTurnContext) *AgentLoopTurnUpdate {
 				if prepared {
 					return nil
 				}
@@ -896,7 +896,7 @@ func TestLoopDeclaresToolsDroppedByAPreparedContext(t *testing.T) {
 		AgentLoopConfig{
 			Model:        testModel,
 			ConvertToLlm: identityConverter,
-			PrepareNextTurn: func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
+			PrepareNextTurn: func(c AgentTurnContext) *AgentLoopTurnUpdate {
 				if prepared {
 					return nil
 				}
@@ -935,7 +935,7 @@ func TestLoopAppendsPreparedMessagesWithoutAContext(t *testing.T) {
 		AgentLoopConfig{
 			Model:        testModel,
 			ConvertToLlm: identityConverter,
-			PrepareNextTurn: func(ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
+			PrepareNextTurn: func(AgentTurnContext) *AgentLoopTurnUpdate {
 				if prepared {
 					return nil
 				}
@@ -990,10 +990,13 @@ func TestLoopDeclarationIsInsertedBeforeAPendingCustomMessage(t *testing.T) {
 	assertEqualStrings(t, "new messages", roleNames(messages), want.Roles)
 }
 
-// agent-loop.test.ts "should stop after the current turn when
-// shouldStopAfterTurn returns true": the context declares no tools, so the loop
-// announces the loadout with a system message ahead of the prompt.
-func TestLoopShouldStopAfterTurnAnnouncesTheLoadoutFirst(t *testing.T) {
+// agent-loop.test.ts "action:end receives finalized turn context and stops
+// before queue polling": the context declares no tools, so the loop announces
+// the loadout with a system message ahead of the prompt. The golden predates
+// the hook's rename (it was captured through shouldStopAfterTurn, which upstream
+// 466db0fec replaced with finishTurn's end action); the observable sequence is
+// the same, since the hook emits no event and stops before the queue polls.
+func TestLoopFinishTurnEndAnnouncesTheLoadoutFirst(t *testing.T) {
 	want := golden(t, "loopShouldStopAfterTurn")
 	var executed []string
 	tool := echoValueTool(func(value string) AgentToolResult {
@@ -1017,12 +1020,12 @@ func TestLoopShouldStopAfterTurnAnnouncesTheLoadoutFirst(t *testing.T) {
 				followUpPolls++
 				return []AgentMessage{ai.NewUserText("follow up should stay queued", 2)}
 			},
-			ShouldStopAfterTurn: func(c ShouldStopAfterTurnContext) bool {
+			FinishTurn: func(_ context.Context, c AgentTurnContext) AgentTurnDecision {
 				for _, r := range c.ToolResults {
 					callbackToolResultIDs = append(callbackToolResultIDs, r.ToolCallID)
 				}
 				callbackContextRoles = roleNames(c.Context.Messages)
-				return true
+				return TurnEnd
 			},
 		},
 		rec.sink,

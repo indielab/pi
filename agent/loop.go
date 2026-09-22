@@ -128,7 +128,10 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 	// lastCompletedTurn is nil until a turn has finished; it doubles as pi's
 	// firstTurn flag and as the context handed to PrepareNextTurn at the head of
 	// the NEXT iteration (agent-loop.ts:166,173).
-	var lastCompletedTurn *ShouldStopAfterTurnContext
+	var lastCompletedTurn *AgentTurnContext
+	// explicitContinuation is a FinishTurn TurnContinue not yet satisfied by a
+	// naturally scheduled request (agent-loop.ts:173).
+	explicitContinuation := false
 	var pending []AgentMessage
 	if config.GetSteeringMessages != nil {
 		pending = config.GetSteeringMessages()
@@ -169,18 +172,39 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 			}
 			pending = nil
 
+			if config.PrepareRequest != nil {
+				thinkingLevel := config.Reasoning
+				if thinkingLevel == "" {
+					thinkingLevel = ThinkOff
+				}
+				if update := config.PrepareRequest(ctx, PrepareRequestContext{Context: current, Model: config.Model, ThinkingLevel: thinkingLevel}); update != nil {
+					update.applyTo(current, &config)
+				}
+			}
+
 			message := streamAssistantResponse(ctx, current, config, emit, streamFn)
 			*newMessages = append(*newMessages, message)
 
 			if message.StopReason == ai.StopError || message.StopReason == ai.StopAborted {
-				// pi emits toolResults: [] here (agent-loop.ts:197), never null.
+				// FinishTurn still sees the failed turn, but its decision is
+				// ignored: error and aborted responses are hard exits.
+				lastCompletedTurn = &AgentTurnContext{
+					Message:     message,
+					ToolResults: []ai.ToolResultMessage{},
+					Context:     current,
+					NewMessages: *newMessages,
+				}
+				if config.FinishTurn != nil {
+					config.FinishTurn(ctx, *lastCompletedTurn)
+				}
+				// pi emits toolResults: [] here (agent-loop.ts:252), never null.
 				mustEmit(emit, AgentEvent{Type: EvTurnEnd, Message: message, ToolResults: []ai.ToolResultMessage{}})
 				mustEmit(emit, AgentEvent{Type: EvAgentEnd, Messages: *newMessages})
 				return
 			}
 
 			toolCalls := filterToolCalls(message)
-			// Non-nil so a no-tool turn_end carries [] like pi (agent-loop.ts:205).
+			// Non-nil so a no-tool turn_end carries [] like pi (agent-loop.ts:260).
 			toolResults := []ai.ToolResultMessage{}
 			hasMoreToolCalls = false
 			if len(toolCalls) > 0 {
@@ -201,27 +225,34 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 				}
 			}
 
-			mustEmit(emit, AgentEvent{Type: EvTurnEnd, Message: message, ToolResults: toolResults})
-
 			// Nothing appends to newMessages between here and the PrepareNextTurn
 			// call at the head of the next iteration, so this snapshot stays
-			// current where pi shares one growing array (agent-loop.ts:245).
-			lastCompletedTurn = &ShouldStopAfterTurnContext{
+			// current where pi shares one growing array (agent-loop.ts:279).
+			lastCompletedTurn = &AgentTurnContext{
 				Message:     message,
 				ToolResults: toolResults,
 				Context:     current,
 				NewMessages: *newMessages,
 			}
+			var decision AgentTurnDecision
+			if config.FinishTurn != nil {
+				decision = config.FinishTurn(ctx, *lastCompletedTurn)
+			}
+			mustEmit(emit, AgentEvent{Type: EvTurnEnd, Message: message, ToolResults: toolResults})
 
-			if config.ShouldStopAfterTurn != nil && config.ShouldStopAfterTurn(*lastCompletedTurn) {
+			if decision == TurnEnd {
 				mustEmit(emit, AgentEvent{Type: EvAgentEnd, Messages: *newMessages})
 				return
 			}
 
+			explicitContinuation = decision == TurnContinue
 			if config.GetSteeringMessages != nil {
 				pending = config.GetSteeringMessages()
 			} else {
 				pending = nil
+			}
+			if hasMoreToolCalls || len(pending) > 0 {
+				explicitContinuation = false
 			}
 		}
 
@@ -230,7 +261,14 @@ func runLoop(ctx context.Context, current *AgentContext, newMessages *[]AgentMes
 			followUps = config.GetFollowUpMessages()
 		}
 		if len(followUps) > 0 {
+			explicitContinuation = false
 			pending = followUps
+			continue
+		}
+		// No natural request was selected, so fulfill the continuation decision
+		// with one context-only turn.
+		if explicitContinuation {
+			explicitContinuation = false
 			continue
 		}
 		break

@@ -70,7 +70,7 @@ func runProbeLoop(t *testing.T, p *nextTurnProbe, cfg AgentLoopConfig, msgs ...*
 func TestPrepareNextTurnRunsOnlyBeforeAnActualNextRequest(t *testing.T) {
 	p := &nextTurnProbe{}
 	runProbeLoop(t, p, AgentLoopConfig{
-		PrepareNextTurn: func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
+		PrepareNextTurn: func(c AgentTurnContext) *AgentLoopTurnUpdate {
 			p.log("prepare")
 			return nil
 		},
@@ -86,28 +86,42 @@ func TestPrepareNextTurnRunsOnlyBeforeAnActualNextRequest(t *testing.T) {
 	}
 }
 
-// TestShouldStopAfterTurnRunsBeforePrepareNextTurn pins the other half of the
-// reordering: the stop check now sees the completed-turn context and runs first,
-// so a run that stops after its turn never prepares a turn it will not take.
-func TestShouldStopAfterTurnRunsBeforePrepareNextTurn(t *testing.T) {
+// TestFinishTurnEndSkipsQueuesAndPrepareNextTurn pins agent-loop.test.ts
+// "action:end skips queue polling and next-turn preparation": the decision sees
+// the completed-turn context and is applied first, so a run that ends after its
+// turn never polls the queues again nor prepares a turn it will not take.
+func TestFinishTurnEndSkipsQueuesAndPrepareNextTurn(t *testing.T) {
 	p := &nextTurnProbe{}
+	var steeringPolls, followUpPolls int
 	runProbeLoop(t, p, AgentLoopConfig{
-		ShouldStopAfterTurn: func(c ShouldStopAfterTurnContext) bool {
-			p.log("should_stop")
-			return true
+		FinishTurn: func(_ context.Context, c AgentTurnContext) AgentTurnDecision {
+			p.log("finish")
+			return TurnEnd
 		},
-		PrepareNextTurn: func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
+		PrepareNextTurn: func(c AgentTurnContext) *AgentLoopTurnUpdate {
 			p.log("prepare")
 			return nil
+		},
+		GetSteeringMessages: func() []AgentMessage {
+			steeringPolls++
+			return nil
+		},
+		GetFollowUpMessages: func() []AgentMessage {
+			followUpPolls++
+			return []AgentMessage{ai.NewUserText("queued", 0)}
 		},
 	},
 		assistantWithToolCall("tool-1", "noop", map[string]any{}),
 		&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "should not run"}}, StopReason: ai.StopStop},
 	)
 
-	want := "turn_start request should_stop"
+	want := "turn_start request finish"
 	if got := p.got(); got != want {
 		t.Fatalf("trace = %q, want %q", got, want)
+	}
+	// Only the startup steering poll ran.
+	if steeringPolls != 1 || followUpPolls != 0 {
+		t.Fatalf("steeringPolls=%d followUpPolls=%d, want 1 0", steeringPolls, followUpPolls)
 	}
 }
 
@@ -135,7 +149,7 @@ func TestPrepareNextTurnPicksUpSteeringQueuedWhilePreparing(t *testing.T) {
 			queued = nil
 			return out
 		},
-		PrepareNextTurn: func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
+		PrepareNextTurn: func(c AgentTurnContext) *AgentLoopTurnUpdate {
 			// The user typed while compaction was running. Once only — this hook
 			// runs before every continued turn.
 			if !typed {
@@ -212,7 +226,7 @@ func TestPrepareNextTurnDoesNotDiscardAlreadyPolledSteering(t *testing.T) {
 	cfg := AgentLoopConfig{
 		Model:               testModel,
 		GetSteeringMessages: poll,
-		PrepareNextTurn:     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate { return nil },
+		PrepareNextTurn:     func(c AgentTurnContext) *AgentLoopTurnUpdate { return nil },
 	}
 	agentCtx := AgentContext{Tools: []AgentTool{noopTool()}}
 	runAgentLoop(context.Background(), []AgentMessage{ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "start"}}}},
@@ -272,7 +286,7 @@ func TestPrepareNextTurnSnapshotReachesTheNextRequest(t *testing.T) {
 	cfg := AgentLoopConfig{
 		Model:     testModel,
 		Reasoning: ThinkingLevel("high"),
-		PrepareNextTurn: func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate {
+		PrepareNextTurn: func(c AgentTurnContext) *AgentLoopTurnUpdate {
 			next := *c.Context
 			next.Messages = append([]AgentMessage{ai.NewSystemText("compacted", 0)}, ai.WithoutInitialSystemMessage(c.Context.Messages)...)
 			return &AgentLoopTurnUpdate{

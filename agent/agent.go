@@ -48,41 +48,47 @@ type pendingQueue struct {
 func (q *pendingQueue) enqueue(m AgentMessage) { q.messages = append(q.messages, m) }
 func (q *pendingQueue) hasItems() bool         { return len(q.messages) > 0 }
 func (q *pendingQueue) clear()                 { q.messages = nil }
-func (q *pendingQueue) drain() []AgentMessage {
+
+// peek returns the messages the next drain would select, without consuming
+// them.
+func (q *pendingQueue) peek() []AgentMessage {
 	if q.mode == QueueAll {
-		drained := q.messages
-		q.messages = nil
-		return drained
+		return slices.Clone(q.messages)
 	}
 	if len(q.messages) == 0 {
 		return nil
 	}
-	first := q.messages[0]
-	q.messages = q.messages[1:]
-	return []AgentMessage{first}
+	return []AgentMessage{q.messages[0]}
+}
+
+func (q *pendingQueue) drain() []AgentMessage {
+	drained := q.peek()
+	q.messages = q.messages[len(drained):]
+	return drained
 }
 
 // AgentOptions configures a new Agent.
 type AgentOptions struct {
-	InitialState        *AgentState
-	ConvertToLlm        func(messages []AgentMessage) []ai.Message
-	TransformContext    func(ctx context.Context, messages []AgentMessage) []AgentMessage
-	StreamFn            StreamFn
-	GetApiKey           func(provider string) string
-	OnPayload           func(payload any, model *ai.Model) (any, error)
-	OnResponse          func(resp ai.ProviderResponse, model *ai.Model) error
-	BeforeToolCall      func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
-	AfterToolCall       func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
-	ShouldStopAfterTurn func(ctx context.Context, c ShouldStopAfterTurnContext) bool
-	PrepareNextTurn     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
-	SteeringMode        QueueMode
-	FollowUpMode        QueueMode
-	SessionID           string
-	ThinkingBudgets     *ai.ThinkingBudgets
-	Transport           ai.Transport
-	MaxRetryDelayMs     *int
-	MaxRetries          int
-	TimeoutMs           int
+	InitialState     *AgentState
+	ConvertToLlm     func(messages []AgentMessage) []ai.Message
+	TransformContext func(ctx context.Context, messages []AgentMessage) []AgentMessage
+	StreamFn         StreamFn
+	GetApiKey        func(provider string) string
+	OnPayload        func(payload any, model *ai.Model) (any, error)
+	OnResponse       func(resp ai.ProviderResponse, model *ai.Model) error
+	BeforeToolCall   func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
+	AfterToolCall    func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+	FinishTurn       FinishTurnFunc
+	PrepareRequest   PrepareRequestFunc
+	PrepareNextTurn  func(c AgentTurnContext) *AgentLoopTurnUpdate
+	SteeringMode     QueueMode
+	FollowUpMode     QueueMode
+	SessionID        string
+	ThinkingBudgets  *ai.ThinkingBudgets
+	Transport        ai.Transport
+	MaxRetryDelayMs  *int
+	MaxRetries       int
+	TimeoutMs        int
 	// WebSocketConnectTimeoutMs and HTTPClient are forwarded to the stream
 	// options (pi AgentLoopConfig extends SimpleStreamOptions).
 	WebSocketConnectTimeoutMs int
@@ -113,16 +119,17 @@ type Agent struct {
 	steeringQueue pendingQueue
 	followUpQueue pendingQueue
 
-	ConvertToLlm        func(messages []AgentMessage) []ai.Message
-	TransformContext    func(ctx context.Context, messages []AgentMessage) []AgentMessage
-	StreamFn            StreamFn
-	GetApiKey           func(provider string) string
-	OnPayload           func(payload any, model *ai.Model) (any, error)
-	OnResponse          func(resp ai.ProviderResponse, model *ai.Model) error
-	BeforeToolCall      func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
-	AfterToolCall       func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
-	ShouldStopAfterTurn func(ctx context.Context, c ShouldStopAfterTurnContext) bool
-	PrepareNextTurn     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
+	ConvertToLlm     func(messages []AgentMessage) []ai.Message
+	TransformContext func(ctx context.Context, messages []AgentMessage) []AgentMessage
+	StreamFn         StreamFn
+	GetApiKey        func(provider string) string
+	OnPayload        func(payload any, model *ai.Model) (any, error)
+	OnResponse       func(resp ai.ProviderResponse, model *ai.Model) error
+	BeforeToolCall   func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
+	AfterToolCall    func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+	FinishTurn       FinishTurnFunc
+	PrepareRequest   PrepareRequestFunc
+	PrepareNextTurn  func(c AgentTurnContext) *AgentLoopTurnUpdate
 
 	SessionID                 string
 	ThinkingBudgets           *ai.ThinkingBudgets
@@ -181,7 +188,8 @@ func NewAgent(opts AgentOptions) *Agent {
 		OnResponse:                opts.OnResponse,
 		BeforeToolCall:            opts.BeforeToolCall,
 		AfterToolCall:             opts.AfterToolCall,
-		ShouldStopAfterTurn:       opts.ShouldStopAfterTurn,
+		FinishTurn:                opts.FinishTurn,
+		PrepareRequest:            opts.PrepareRequest,
 		PrepareNextTurn:           opts.PrepareNextTurn,
 		SessionID:                 opts.SessionID,
 		ThinkingBudgets:           opts.ThinkingBudgets,
@@ -301,6 +309,18 @@ func (a *Agent) HasQueuedMessages() bool {
 	return a.steeringQueue.hasItems() || a.followUpQueue.hasItems()
 }
 
+// PeekQueuedMessages previews the messages selected for the next turn without
+// consuming them: the next steering selection, or the next follow-up selection
+// when no steering is queued.
+func (a *Agent) PeekQueuedMessages() []AgentMessage {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if steering := a.steeringQueue.peek(); len(steering) > 0 {
+		return steering
+	}
+	return a.followUpQueue.peek()
+}
+
 // Abort cancels the current run, if any.
 func (a *Agent) Abort() {
 	a.mu.Lock()
@@ -406,7 +426,7 @@ func (a *Agent) Continue(ctx context.Context) error {
 			return errors.New("Cannot continue from message role: assistant")
 		}
 		return a.executeClaimedRun(run, func(runCtx context.Context) {
-			runAgentLoop(runCtx, drained, a.contextSnapshot(), a.loopConfig(runCtx, skipInitialSteeringPoll), a.processEvent(runCtx), a.StreamFn)
+			runAgentLoop(runCtx, drained, a.contextSnapshot(), a.loopConfig(skipInitialSteeringPoll), a.processEvent(runCtx), a.StreamFn)
 		})
 	}
 	return a.runContinuation(ctx)
@@ -414,13 +434,13 @@ func (a *Agent) Continue(ctx context.Context) error {
 
 func (a *Agent) runPromptMessages(parent context.Context, messages []AgentMessage, skipInitialSteeringPoll bool) error {
 	return a.runWithLifecycle(parent, func(ctx context.Context) {
-		runAgentLoop(ctx, messages, a.contextSnapshot(), a.loopConfig(ctx, skipInitialSteeringPoll), a.processEvent(ctx), a.StreamFn)
+		runAgentLoop(ctx, messages, a.contextSnapshot(), a.loopConfig(skipInitialSteeringPoll), a.processEvent(ctx), a.StreamFn)
 	})
 }
 
 func (a *Agent) runContinuation(parent context.Context) error {
 	return a.runWithLifecycle(parent, func(ctx context.Context) {
-		runAgentLoopContinue(ctx, a.contextSnapshot(), a.loopConfig(ctx, false), a.processEvent(ctx), a.StreamFn)
+		runAgentLoopContinue(ctx, a.contextSnapshot(), a.loopConfig(false), a.processEvent(ctx), a.StreamFn)
 	})
 }
 
@@ -480,23 +500,13 @@ func (a *Agent) contextSnapshot() AgentContext {
 	}
 }
 
-func (a *Agent) loopConfig(ctx context.Context, skipInitialSteeringPoll bool) AgentLoopConfig {
+func (a *Agent) loopConfig(skipInitialSteeringPoll bool) AgentLoopConfig {
 	a.mu.Lock()
 	model := a.state.Model
 	reasoning := a.state.ThinkingLevel
 	a.mu.Unlock()
 
 	skip := skipInitialSteeringPoll
-
-	// The Agent-level hook is ctx-first like every other Agent hook, and the
-	// loop-level one is context-only (types.go, pi types.ts:208). Bridge them by
-	// binding the run's ctx, exactly as pi's createLoopConfig binds this.signal:
-	// the documented use case is async work between turns (compaction, a token
-	// probe), which must be able to observe Abort().
-	var shouldStopAfterTurn func(ShouldStopAfterTurnContext) bool
-	if hook := a.ShouldStopAfterTurn; hook != nil {
-		shouldStopAfterTurn = func(c ShouldStopAfterTurnContext) bool { return hook(ctx, c) }
-	}
 
 	cfg := AgentLoopConfig{
 		Model:                     model,
@@ -522,7 +532,8 @@ func (a *Agent) loopConfig(ctx context.Context, skipInitialSteeringPoll bool) Ag
 		GetApiKey:                 a.GetApiKey,
 		BeforeToolCall:            a.BeforeToolCall,
 		AfterToolCall:             a.AfterToolCall,
-		ShouldStopAfterTurn:       shouldStopAfterTurn,
+		FinishTurn:                a.FinishTurn,
+		PrepareRequest:            a.PrepareRequest,
 		PrepareNextTurn:           a.PrepareNextTurn,
 		GetSteeringMessages: func() []AgentMessage {
 			a.mu.Lock()

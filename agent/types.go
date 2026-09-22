@@ -162,16 +162,81 @@ type AfterToolCallResult struct {
 	Terminate  *bool
 }
 
-// ShouldStopAfterTurnContext describes a turn that has just completed. It is
-// passed to ShouldStopAfterTurn and, one iteration later, to PrepareNextTurn —
-// upstream gives the second role its own name (PrepareNextTurnContext, which
-// extends this one with no added members, types.ts:147); Go keeps the single
-// type rather than an empty alias.
-type ShouldStopAfterTurnContext struct {
-	Message     *ai.AssistantMessage
+// AgentTurnContext describes a turn that has just completed. It is passed to
+// FinishTurn and, one iteration later, to PrepareNextTurn — upstream gives the
+// second role its own name (PrepareNextTurnContext, which extends this one with
+// no added members, types.ts:181); Go keeps the single type rather than an
+// empty alias.
+type AgentTurnContext struct {
+	Message *ai.AssistantMessage
+	// ToolResults are the tool result messages emitted for the completed turn.
 	ToolResults []ai.ToolResultMessage
+	// Context is the current agent context after the turn's assistant message
+	// and tool results have been appended.
 	Context     *AgentContext
 	NewMessages []AgentMessage
+}
+
+// AgentTurnDecision is returned by FinishTurn. The zero value preserves normal
+// scheduling (pi's undefined).
+type AgentTurnDecision string
+
+const (
+	// TurnContinue ensures one next provider request on a normal turn.
+	// Tool-result, steering, or follow-up scheduling can satisfy that request
+	// and adds no extra one; otherwise the loop continues once with the current
+	// context.
+	TurnContinue AgentTurnDecision = "continue"
+	// TurnEnd ends the run after turn_end without polling the queues or
+	// preparing another request.
+	TurnEnd AgentTurnDecision = "end"
+)
+
+// FinishTurnFunc is called after a completed assistant turn and all of its
+// tool-result messages, but before turn_end; its decision is applied after
+// turn_end. It also runs for error and aborted responses, whose decision is
+// ignored because those responses remain hard exits.
+type FinishTurnFunc func(ctx context.Context, turn AgentTurnContext) AgentTurnDecision
+
+// PrepareRequestContext is the runtime state available immediately before a
+// conversational provider request.
+type PrepareRequestContext struct {
+	Context       *AgentContext
+	Model         *ai.Model
+	ThinkingLevel ThinkingLevel
+}
+
+// AgentRequestUpdate replaces runtime state for the provider request being
+// prepared and for later requests in the run. A nil field leaves the loop's
+// current value in place (pi's `?? current`).
+type AgentRequestUpdate struct {
+	Context       *AgentContext
+	Model         *ai.Model
+	ThinkingLevel *ThinkingLevel
+}
+
+// PrepareRequestFunc is called immediately before every conversational
+// provider request, including the first. Pending messages have already been
+// appended and emitted when it runs.
+type PrepareRequestFunc func(ctx context.Context, request PrepareRequestContext) *AgentRequestUpdate
+
+// applyTo folds a request update into the loop's live state. ThinkingLevel is
+// the one field whose absent and "off" cases differ: absent keeps the current
+// reasoning level, "off" clears it.
+func (u *AgentRequestUpdate) applyTo(current *AgentContext, config *AgentLoopConfig) {
+	if u.Context != nil {
+		*current = *u.Context
+	}
+	if u.Model != nil {
+		config.Model = u.Model
+	}
+	if u.ThinkingLevel != nil {
+		if *u.ThinkingLevel == ThinkOff {
+			config.Reasoning = ""
+		} else {
+			config.Reasoning = *u.ThinkingLevel
+		}
+	}
 }
 
 // AgentLoopTurnUpdate replaces runtime state before the next provider request.
@@ -191,22 +256,9 @@ type AgentLoopTurnUpdate struct {
 
 // applyTo folds a PrepareNextTurn snapshot into the loop's live state
 // (agent-loop.ts:184-197) and returns the messages it prepared for the next
-// request. ThinkingLevel is the one field whose absent and "off" cases differ:
-// absent keeps the current reasoning level, "off" clears it.
+// request.
 func (u *AgentLoopTurnUpdate) applyTo(current *AgentContext, config *AgentLoopConfig) []AgentMessage {
-	if u.Context != nil {
-		*current = *u.Context
-	}
-	if u.Model != nil {
-		config.Model = u.Model
-	}
-	if u.ThinkingLevel != nil {
-		if *u.ThinkingLevel == "off" {
-			config.Reasoning = ""
-		} else {
-			config.Reasoning = ThinkingLevel(*u.ThinkingLevel)
-		}
-	}
+	(&AgentRequestUpdate{Context: u.Context, Model: u.Model, ThinkingLevel: u.ThinkingLevel}).applyTo(current, config)
 	return u.Messages
 }
 
@@ -247,21 +299,32 @@ type AgentLoopConfig struct {
 
 	BeforeToolCall func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
 	AfterToolCall  func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
-	// ShouldStopAfterTurn is consulted after every turn_end, on the context of
-	// the turn that just completed, and BEFORE PrepareNextTurn. Returning true
-	// emits agent_end and exits before the steering and follow-up queues are
-	// polled, without starting another provider call; the current assistant
-	// response and any tool executions finish normally. Because it can stop the
-	// run, end-of-run work belongs in agent_end handling rather than here.
-	ShouldStopAfterTurn func(c ShouldStopAfterTurnContext) bool
+	// FinishTurn is called after the assistant message and all tool-result
+	// messages have been emitted, immediately before turn_end. TurnEnd ends the
+	// run without polling the queues or preparing another request. On a normal
+	// turn, TurnContinue ensures one next provider request: tool-result,
+	// steering, or follow-up scheduling can satisfy that request and adds no
+	// extra one; otherwise the loop continues once with the current context.
+	// The zero decision preserves normal scheduling. Error and aborted
+	// responses remain hard exits.
+	FinishTurn FinishTurnFunc
+	// PrepareRequest is called immediately before every conversational provider
+	// request, including the first. Pending messages have already been
+	// appended. The returned context, model, and thinking level replace the
+	// runtime values for this and later requests in the run. It does not poll
+	// the queues.
+	PrepareRequest PrepareRequestFunc
 	// PrepareNextTurn is called after turn_end ONLY WHEN THE LOOP WILL CONTINUE,
 	// immediately before the next turn starts — so it does not run after a final
-	// or terminating turn, and it runs after ShouldStopAfterTurn has declined to
-	// stop (upstream 56700d42e). Return replacement context/model/thinking state
-	// or messages to append to affect that turn, or nil to keep the current
-	// ones. Preparation may be long-running (compaction); steering queued while
-	// it runs is picked up before the turn starts.
-	PrepareNextTurn     func(c ShouldStopAfterTurnContext) *AgentLoopTurnUpdate
+	// or terminating turn, nor after FinishTurn ends the run (upstream
+	// 56700d42e). Return replacement context/model/thinking state or messages to
+	// append to affect that turn, or nil to keep the current ones. Preparation
+	// may be long-running (compaction); steering queued while it runs is picked
+	// up before the turn starts.
+	PrepareNextTurn func(c AgentTurnContext) *AgentLoopTurnUpdate
+	// GetSteeringMessages returns steering messages to inject mid-run. It is
+	// polled after the current assistant turn finishes executing its tool
+	// calls, unless FinishTurn ends the run.
 	GetSteeringMessages func() []AgentMessage
 	GetFollowUpMessages func() []AgentMessage
 }

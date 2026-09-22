@@ -1636,13 +1636,11 @@ func TestAgentForwardsHTTPClientToStreamOptions(t *testing.T) {
 	}
 }
 
-// TestAgentShouldStopAfterTurnObservesAbort locks the run's cancellation reaching
-// the Agent-level ShouldStopAfterTurn hook. pi's createLoopConfig bridges the
-// agent hook as `async (context) => await shouldStopAfterTurn(context, this.signal)`
-// (agent.ts), so the documented use case — async work between turns, e.g.
+// TestAgentFinishTurnObservesAbort locks the run's cancellation reaching the
+// Agent-level FinishTurn hook. pi hands the loop's signal straight to finishTurn
+// (agent-loop.ts, types.ts FinishTurn), so async work between turns — e.g.
 // compaction or a token probe — can observe Abort() instead of blocking teardown.
-// The loop-level config stays context-only, matching pi's types.ts.
-func TestAgentShouldStopAfterTurnObservesAbort(t *testing.T) {
+func TestAgentFinishTurnObservesAbort(t *testing.T) {
 	tool := AgentTool{
 		Name:        "noop",
 		Description: "Noop tool",
@@ -1659,21 +1657,26 @@ func TestAgentShouldStopAfterTurnObservesAbort(t *testing.T) {
 
 	var a *Agent
 	hookCtxErr := make(chan error, 1)
+	var hookOnce sync.Once
 	a = NewAgent(AgentOptions{
 		InitialState: &AgentState{Model: testModel, Tools: []AgentTool{tool}},
 		StreamFn:     scripted,
-		ShouldStopAfterTurn: func(ctx context.Context, c ShouldStopAfterTurnContext) bool {
+		FinishTurn: func(ctx context.Context, c AgentTurnContext) AgentTurnDecision {
 			// Abort mid-hook, exactly like async between-turn work that is
 			// cancelled while it runs. Without the run ctx the hook has no way
 			// to see it and would block teardown.
-			a.Abort()
-			select {
-			case <-ctx.Done():
-				hookCtxErr <- ctx.Err()
-			case <-time.After(2 * time.Second):
-				hookCtxErr <- nil
-			}
-			return true
+			// FinishTurn also runs for the aborted response that can follow,
+			// so only the first call reports.
+			hookOnce.Do(func() {
+				a.Abort()
+				select {
+				case <-ctx.Done():
+					hookCtxErr <- ctx.Err()
+				case <-time.After(2 * time.Second):
+					hookCtxErr <- nil
+				}
+			})
+			return TurnEnd
 		},
 	})
 
@@ -1682,20 +1685,20 @@ func TestAgentShouldStopAfterTurnObservesAbort(t *testing.T) {
 	select {
 	case err := <-hookCtxErr:
 		if err == nil {
-			t.Fatal("ShouldStopAfterTurn never observed the run's cancellation")
+			t.Fatal("FinishTurn never observed the run's cancellation")
 		}
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("hook ctx error = %v, want context.Canceled", err)
 		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("ShouldStopAfterTurn was never called")
+		t.Fatal("FinishTurn was never called")
 	}
 }
 
-// TestAgentForwardsShouldStopAfterTurn locks the Agent-level ShouldStopAfterTurn
-// option reaching the loop config: the run stops after the first turn completes
-// (tool included), before a second provider request is made.
-func TestAgentForwardsShouldStopAfterTurn(t *testing.T) {
+// TestAgentForwardsFinishTurn locks the Agent-level FinishTurn option reaching
+// the loop config: TurnEnd stops the run after the first turn completes (tool
+// included), before a second provider request is made.
+func TestAgentForwardsFinishTurn(t *testing.T) {
 	tool := AgentTool{
 		Name:        "noop",
 		Description: "Noop tool",
@@ -1718,11 +1721,11 @@ func TestAgentForwardsShouldStopAfterTurn(t *testing.T) {
 			atomic.AddInt32(&requests, 1)
 			return scripted(ctx, model, req, opts)
 		},
-		ShouldStopAfterTurn: func(_ context.Context, c ShouldStopAfterTurnContext) bool {
+		FinishTurn: func(_ context.Context, c AgentTurnContext) AgentTurnDecision {
 			for _, m := range c.Context.Messages {
 				roles = append(roles, m.MessageRole())
 			}
-			return true
+			return TurnEnd
 		},
 	})
 
@@ -1890,4 +1893,149 @@ func textOfContent(content ai.ContentList) string {
 		}
 	}
 	return ""
+}
+
+// queuedTexts renders PeekQueuedMessages as the first text of each message.
+func queuedTexts(a *Agent) []string {
+	var out []string
+	for _, m := range a.PeekQueuedMessages() {
+		if u, ok := m.(ai.UserMessage); ok {
+			out = append(out, textOfContent(u.Content))
+		}
+	}
+	return out
+}
+
+// assertQueuesKept checks that the steering message queued during the run and
+// the follow-up queued before it both survived, steering first.
+func assertQueuesKept(t *testing.T, a *Agent) {
+	t.Helper()
+	if got := queuedTexts(a); !slices.Equal(got, []string{"steering"}) {
+		t.Fatalf("peek = %v, want the kept steering message", got)
+	}
+	a.ClearSteeringQueue()
+	if got := queuedTexts(a); !slices.Equal(got, []string{"follow-up"}) {
+		t.Fatalf("peek after clearing steering = %v, want the kept follow-up", got)
+	}
+}
+
+// steerOnAssistantEnd queues a steering message once the first assistant
+// message of the run has completed, as a user typing during the response would.
+func steerOnAssistantEnd(a *Agent) {
+	var once sync.Once
+	a.Subscribe(func(_ context.Context, e AgentEvent) error {
+		if _, ok := asAssistant(e.Message); ok && e.Type == EvMessageEnd {
+			once.Do(func() { a.Steer(ai.NewUserText("steering", 0)) })
+		}
+		return nil
+	})
+}
+
+// agent.test.ts "previews the next selected queued messages without consuming
+// them".
+func TestAgentPeekQueuedMessagesDoesNotConsume(t *testing.T) {
+	a := NewAgent(AgentOptions{SteeringMode: QueueOneAtATime, FollowUpMode: QueueAll, StreamFn: unusedStreamFn(t)})
+	a.Steer(ai.NewUserText("first steering", 0))
+	a.Steer(ai.NewUserText("second steering", 0))
+	a.FollowUp(ai.NewUserText("follow-up", 0))
+	a.FollowUp(ai.NewUserText("second follow-up", 0))
+
+	for range 2 {
+		if got := queuedTexts(a); !slices.Equal(got, []string{"first steering"}) {
+			t.Fatalf("peek = %v, want [first steering]", got)
+		}
+	}
+	a.ClearSteeringQueue()
+	if got := queuedTexts(a); !slices.Equal(got, []string{"follow-up", "second follow-up"}) {
+		t.Fatalf("peek = %v, want the whole all-mode follow-up queue", got)
+	}
+	if got := queuedTexts(a); len(got) != 2 {
+		t.Fatalf("second all-mode peek = %v, want both follow-ups still queued", got)
+	}
+}
+
+// agent.test.ts "rejects a queued continuation from $name context without
+// draining queues".
+func TestAgentContinueFromNothingKeepsQueues(t *testing.T) {
+	for name, messages := range map[string][]AgentMessage{
+		"empty":       nil,
+		"system-only": {ai.NewSystemText("system only", 1)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			a := NewAgent(AgentOptions{InitialState: &AgentState{Messages: messages}, StreamFn: unusedStreamFn(t)})
+			a.Steer(ai.NewUserText("steering", 0))
+			a.FollowUp(ai.NewUserText("follow-up", 0))
+
+			if err := a.Continue(context.Background()); err == nil || err.Error() != "No messages to continue from" {
+				t.Fatalf("Continue error = %v, want No messages to continue from", err)
+			}
+			assertQueuesKept(t, a)
+		})
+	}
+}
+
+// agent.test.ts "keeps queues when finishTurn ends the run".
+func TestAgentFinishTurnEndKeepsQueues(t *testing.T) {
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel},
+		FinishTurn:   func(context.Context, AgentTurnContext) AgentTurnDecision { return TurnEnd },
+		StreamFn:     scriptedStream(textMessage("done")),
+	})
+	a.FollowUp(ai.NewUserText("follow-up", 0))
+	steerOnAssistantEnd(a)
+
+	if err := a.Prompt(context.Background(), "start"); err != nil {
+		t.Fatal(err)
+	}
+	assertQueuesKept(t, a)
+}
+
+// agent.test.ts "keeps queues on a %s response even when finishTurn requests
+// continuation".
+func TestAgentFailedResponseKeepsQueuesDespiteContinue(t *testing.T) {
+	for _, reason := range []ai.StopReason{ai.StopError, ai.StopAborted} {
+		t.Run(string(reason), func(t *testing.T) {
+			a := NewAgent(AgentOptions{
+				InitialState: &AgentState{Model: testModel},
+				FinishTurn:   func(context.Context, AgentTurnContext) AgentTurnDecision { return TurnContinue },
+				StreamFn:     scriptedStream(&ai.AssistantMessage{StopReason: reason, ErrorMessage: string(reason)}),
+			})
+			a.FollowUp(ai.NewUserText("follow-up", 0))
+			steerOnAssistantEnd(a)
+
+			_ = a.Prompt(context.Background(), "start")
+			assertQueuesKept(t, a)
+		})
+	}
+}
+
+// TestAgentForwardsPrepareRequest locks the Agent-level PrepareRequest option
+// reaching the loop config with the run's model and thinking level (an Agent at
+// ThinkOff hands the hook "off"), and its replacement reaching the request.
+func TestAgentForwardsPrepareRequest(t *testing.T) {
+	replacementModel := &ai.Model{ID: "replacement", Name: "replacement", Api: "faux", Provider: "faux"}
+	var handed string
+	var sentModel string
+	scripted := scriptedStream(textMessage("done"))
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel, ThinkingLevel: ThinkOff},
+		PrepareRequest: func(_ context.Context, r PrepareRequestContext) *AgentRequestUpdate {
+			handed = r.Model.ID + "/" + string(r.ThinkingLevel)
+			return &AgentRequestUpdate{Model: replacementModel}
+		},
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			sentModel = model.ID
+			return scripted(ctx, model, req, opts)
+		},
+	})
+
+	if err := a.Prompt(context.Background(), "start"); err != nil {
+		t.Fatal(err)
+	}
+	if handed != "faux/off" {
+		t.Fatalf("PrepareRequest was handed %q, want faux/off", handed)
+	}
+	if sentModel != replacementModel.ID {
+		t.Fatalf("request model = %q, want the replacement %q", sentModel, replacementModel.ID)
+	}
 }
