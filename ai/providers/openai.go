@@ -1385,12 +1385,16 @@ func mappedEffortOrRaw(model *ai.Model, level string) (string, bool) {
 
 // openAIUserContent maps user content to OpenAI parts. pi always emits
 // array-of-parts for array content — never joins multi-text with "\n"
-// (openai-completions.ts:796-810).
+// (openai-completions.ts:796-810) — and drops empty text parts before mapping,
+// since some compatible providers reject them beside an image (pi #9797).
 func openAIUserContent(content ai.ContentList) []any {
 	var parts []any
 	for _, c := range content {
 		switch v := c.(type) {
 		case ai.TextContent:
+			if v.Text == "" {
+				continue
+			}
 			parts = append(parts, map[string]any{"type": "text", "text": sanitizeSurrogates(v.Text)})
 		case ai.ImageContent:
 			parts = append(parts, map[string]any{

@@ -970,6 +970,33 @@ func TestOpenAIUserContentArrayParts(t *testing.T) {
 			t.Fatalf("empty user message must be skipped entirely, got %d messages", len(msgs))
 		}
 	})
+	// pi issue #9797 (upstream 1b6ddca87): some OpenAI-compatible providers
+	// reject an image-only message carrying an empty text part.
+	t.Run("empty text parts are omitted", func(t *testing.T) {
+		req := ai.Context{Messages: []ai.Message{
+			ai.UserMessage{Content: ai.ContentList{
+				ai.TextContent{Text: ""},
+				ai.ImageContent{Data: "ZmFrZQ==", MimeType: "image/png"},
+			}, Timestamp: 1},
+		}}
+		body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
+		msgs, _ := body["messages"].([]map[string]any)
+		got, _ := json.Marshal(msgs[0]["content"])
+		if want := `[{"image_url":{"url":"data:image/png;base64,ZmFrZQ=="},"type":"image_url"}]`; string(got) != want {
+			t.Fatalf("content = %s, want %s", got, want)
+		}
+	})
+	t.Run("only empty text skips the message", func(t *testing.T) {
+		req := ai.Context{Messages: []ai.Message{
+			ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: ""}}, Timestamp: 1},
+			ai.NewUserText("hi", 2),
+		}}
+		body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
+		msgs, _ := body["messages"].([]map[string]any)
+		if len(msgs) != 1 {
+			t.Fatalf("a user message of only empty text must be skipped, got %d messages", len(msgs))
+		}
+	})
 }
 
 // ---- C10: onPayload error propagation + replacement ----
