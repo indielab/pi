@@ -552,7 +552,10 @@ func TestResolveResizeProfileDedupesQualitySteps(t *testing.T) {
 // resize profile on every image-capable model. That profile must resolve to the
 // pipeline defaults exactly — the regen was licensed as changing no resize
 // decision — and a model without image input must carry none. Derived from the
-// catalog, with a precondition so a future regen cannot leave it vacuous.
+// catalog, with a precondition so a future regen cannot leave it vacuous. It is
+// a REGEN TRIPWIRE, not a parity oracle: if a faithful regen goes red here, pi
+// has started narrowing a profile — follow the catalog and re-check the resize
+// decisions; never edit the catalog or relax this to make it pass silently.
 func TestCatalogResizeProfilesMatchPipelineDefaults(t *testing.T) {
 	want := resolveResizeProfile(nil)
 	vision := 0
