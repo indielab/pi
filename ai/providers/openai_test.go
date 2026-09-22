@@ -1461,15 +1461,18 @@ func TestOpenAIJSONSchemaStrictSampling(t *testing.T) {
 		}
 	}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{tool(ai.ConstrainedSamplingPrefer)}}
-	body := mustBuildOpenAIParams(t, openAIModel(nil), req, &OpenAIOptions{})
+	// Strict support is opt-in since 890f92088: the catalog stamps it on capable
+	// models, so a hand-built model must carry the key the catalog would.
+	strictModel := openAIModel(func(m *ai.Model) { m.Compat = json.RawMessage(`{"supportsStrictMode":true}`) })
+	body := mustBuildOpenAIParams(t, strictModel, req, &OpenAIOptions{})
 	tools, _ := body["tools"].([]map[string]any)
 	fn, _ := tools[0]["function"].(map[string]any)
 	if fn["strict"] != true {
 		t.Fatalf("json_schema constrained tool must send strict:true, got %#v", fn)
 	}
 
-	// moonshot disables strict mode in detectCompat.
-	noStrict := openAIModel(func(m *ai.Model) { m.Provider = "moonshotai" })
+	// A model that does not opt in has no strict support.
+	noStrict := openAIModel(nil)
 	reqRequire := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}, Tools: []ai.Tool{tool(ai.ConstrainedSamplingRequire)}}
 	_, err := buildOpenAIParams(noStrict, ai.NormalizeContext(reqRequire), &OpenAIOptions{})
 	assertErrString(t, err, `Tool "js" requires JSON-schema constrained sampling, but strict tools are unsupported.`)

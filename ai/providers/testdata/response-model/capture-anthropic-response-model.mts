@@ -3,7 +3,7 @@
 // TestAnthropicResponseModel* in this package (upstream 1283afd0d).
 //
 //   node --experimental-strip-types capture-anthropic-response-model.mts <extraction> <out.json> <sha>
-//   e.g. ... capture-anthropic-response-model.mts <dir> anthropic-response-model-f5c946480.json f5c946480
+//   e.g. ... capture-anthropic-response-model.mts <dir> anthropic-response-model-95fbc0499.json 95fbc0499
 //
 // <extraction> holds packages/ai at <sha> (`git archive <sha> packages/ai` from
 // the upstream clone), a node_modules resolving pi-ai's dependencies (the npm
@@ -18,6 +18,12 @@
 // identical to the v0.86.1 tag's — reproduced every behavioural entry byte for
 // byte. Only `model` moved, and only because the catalog did: claude-opus-5
 // gained promptCache and two mid-convo compat keys.
+//
+// Re-captured at 95fbc0499 against the 0.87.0 build on 2026-09-22. The three
+// source files are unchanged since f5c946480; again only `model` moved
+// (claude-opus-5 gained inputLimits from f5c946480's generator half). The
+// extraction also needs providers/data/.manifest.json — copy the directory
+// with `cp -R <dist>/providers/data/. <dest>`, not a *.json glob.
 //
 // `relabeled` and `fallbackCost` are the two cases 1283afd0d added to
 // packages/ai/test/anthropic-sse-parsing.test.ts, with the suite's model,

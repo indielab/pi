@@ -1,5 +1,5 @@
 {
-	"sha": "9e05370b2",
+	"sha": "95fbc0499",
 	"context": {
 		"messages": [
 			{
@@ -165,8 +165,7 @@
 					"parameters": {
 						"type": "object",
 						"properties": {}
-					},
-					"strict": false
+					}
 				}
 			}
 		]

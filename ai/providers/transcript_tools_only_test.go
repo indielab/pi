@@ -16,11 +16,11 @@ import (
 // {role:"system", content:"", toolsAdded} message. Every adapter sends the tools
 // and nothing for the empty prompt text: no empty system/developer message, no
 // empty system block, no empty systemInstruction. The expected bodies are pi's,
-// captured under node at upstream 9e05370b2 by
+// captured under node at upstream 95fbc0499 by
 // testdata/transcript/capture-tools-only.mts (fixture and models from
 // packages/ai/test/transcript-tool-changes.test.ts).
 
-const toolsOnlyCaptureFile = "testdata/transcript/tools-only-9e05370b2.json"
+const toolsOnlyCaptureFile = "testdata/transcript/tools-only-95fbc0499.json"
 
 // toolsOnlyContext is the capture's context: tools, no systemPrompt.
 func toolsOnlyContext() ai.Context {

@@ -11,6 +11,7 @@ import (
 	"image/png"
 	"os"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"github.com/sky-valley/pi/agent"
@@ -544,6 +545,43 @@ func TestResolveResizeProfileDedupesQualitySteps(t *testing.T) {
 	q = 55
 	if got := resolveResizeProfile(&ai.ModelImageResizeOptions{JPEGQuality: &q}).jpegQualities; !equalInts(got, []int{55, 85, 70, 40}) {
 		t.Fatalf("quality 55 steps = %v, want [55 85 70 40]", got)
+	}
+}
+
+// The 0.87.0 catalog is the first to carry f5c946480's inputLimits, stamping a
+// resize profile on every image-capable model. That profile must resolve to the
+// pipeline defaults exactly — the regen was licensed as changing no resize
+// decision — and a model without image input must carry none. Derived from the
+// catalog, with a precondition so a future regen cannot leave it vacuous.
+func TestCatalogResizeProfilesMatchPipelineDefaults(t *testing.T) {
+	want := resolveResizeProfile(nil)
+	vision := 0
+	for _, provider := range ai.GetProviders() {
+		for _, m := range ai.GetModels(provider) {
+			var resize *ai.ModelImageResizeOptions
+			if m.InputLimits != nil && m.InputLimits.Images != nil {
+				resize = m.InputLimits.Images.Resize
+			}
+			if !slices.Contains(m.Input, "image") {
+				if m.InputLimits != nil {
+					t.Errorf("%s/%s has no image input but carries inputLimits", provider, m.ID)
+				}
+				continue
+			}
+			vision++
+			if resize == nil {
+				t.Errorf("%s/%s takes images but carries no resize profile", provider, m.ID)
+				continue
+			}
+			got := resolveResizeProfile(resize)
+			if got.maxWidth != want.maxWidth || got.maxHeight != want.maxHeight || got.maxBytes != want.maxBytes ||
+				!equalInts(got.jpegQualities, want.jpegQualities) {
+				t.Errorf("%s/%s resize profile %+v, want the pipeline defaults %+v", provider, m.ID, got, want)
+			}
+		}
+	}
+	if vision == 0 {
+		t.Fatal("catalog has no image-capable models; the check above is vacuous")
 	}
 }
 

@@ -1,5 +1,5 @@
 {
-	"sha": "9e05370b2",
+	"sha": "95fbc0499",
 	"kimi-k3-anchors-additions": {
 		"model": {
 			"baseUrl": "http://127.0.0.1:9",
@@ -331,8 +331,7 @@
 						"parameters": {
 							"type": "object",
 							"properties": {}
-						},
-						"strict": false
+						}
 					}
 				}
 			]
@@ -576,8 +575,7 @@
 						"parameters": {
 							"type": "object",
 							"properties": {}
-						},
-						"strict": false
+						}
 					}
 				}
 			]
@@ -738,8 +736,7 @@
 						"parameters": {
 							"type": "object",
 							"properties": {}
-						},
-						"strict": false
+						}
 					}
 				}
 			]
@@ -896,8 +893,7 @@
 						"parameters": {
 							"type": "object",
 							"properties": {}
-						},
-						"strict": false
+						}
 					}
 				}
 			]
@@ -1428,8 +1424,7 @@
 						"parameters": {
 							"type": "object",
 							"properties": {}
-						},
-						"strict": false
+						}
 					}
 				}
 			]
@@ -1520,8 +1515,7 @@
 								"parameters": {
 									"type": "object",
 									"properties": {}
-								},
-								"strict": false
+								}
 							}
 						}
 					]
@@ -1546,8 +1540,7 @@
 						"parameters": {
 							"type": "object",
 							"properties": {}
-						},
-						"strict": false
+						}
 					}
 				}
 			]
@@ -1763,8 +1756,7 @@
 								"parameters": {
 									"type": "object",
 									"properties": {}
-								},
-								"strict": false
+								}
 							}
 						},
 						{
@@ -1775,8 +1767,7 @@
 								"parameters": {
 									"type": "object",
 									"properties": {}
-								},
-								"strict": false
+								}
 							}
 						}
 					]
@@ -1805,8 +1796,7 @@
 						"parameters": {
 							"type": "object",
 							"properties": {}
-						},
-						"strict": false
+						}
 					}
 				}
 			]
@@ -1884,8 +1874,7 @@
 								"parameters": {
 									"type": "object",
 									"properties": {}
-								},
-								"strict": false
+								}
 							}
 						}
 					]
@@ -2276,8 +2265,7 @@
 						"parameters": {
 							"type": "object",
 							"properties": {}
-						},
-						"strict": false
+						}
 					}
 				}
 			]

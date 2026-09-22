@@ -174,8 +174,8 @@ func TestOpenAICompletionsCompatPerKeyResolution(t *testing.T) {
 		// stream_options:{include_usage:true} (supportsUsageInStreaming,
 		// detected true for every provider — pi openai-completions.ts:813).
 		wantUsageInStreaming bool
-		// `strict` on each function tool (supportsStrictMode, detected true for
-		// "openai" — pi openai-completions.ts:1492).
+		// `strict` on each function tool (supportsStrictMode, detected false for
+		// every provider since 890f92088 — the catalog opts capable models in).
 		wantStrict bool
 		// Anthropic-style cache_control markers on the system prompt, the last
 		// tool and the last message (cacheControlFormat, detected "" for
@@ -188,34 +188,34 @@ func TestOpenAICompletionsCompatPerKeyResolution(t *testing.T) {
 			"system", "max_tokens", false, false, false, true},
 		{"mistyped key leaves valid siblings intact",
 			`{"supportsStore":"yes","maxTokensField":"max_tokens","supportsDeveloperRole":false}`,
-			"system", "max_tokens", true, true, true, false},
+			"system", "max_tokens", true, true, false, false},
 		{"mistyped bool falls back to its default, not false",
 			`{"supportsDeveloperRole":"yes","supportsStore":"yes","supportsUsageInStreaming":"yes","supportsStrictMode":"yes"}`,
-			"developer", "max_completion_tokens", true, true, true, false},
+			"developer", "max_completion_tokens", true, true, false, false},
 		{"mistyped string falls back to the detected default, not empty",
 			`{"maxTokensField":false,"cacheControlFormat":7}`,
-			"developer", "max_completion_tokens", true, true, true, false},
+			"developer", "max_completion_tokens", true, true, false, false},
 		{"cache-control format override alone reshapes the body",
 			`{"cacheControlFormat":"anthropic"}`,
-			"developer", "max_completion_tokens", true, true, true, true},
+			"developer", "max_completion_tokens", true, true, false, true},
 		// One-key rows for the two keys the clean blob would otherwise be the
 		// sole guard for: a failure here names the key instead of handing you a
 		// six-key body dump to bisect.
 		{"usage-in-streaming override alone drops stream_options",
 			`{"supportsUsageInStreaming":false}`,
-			"developer", "max_completion_tokens", true, false, true, false},
-		{"strict-mode override alone drops the tool strict field",
-			`{"supportsStrictMode":false}`,
-			"developer", "max_completion_tokens", true, true, false, false},
+			"developer", "max_completion_tokens", true, false, false, false},
+		{"strict-mode override alone adds the tool strict field",
+			`{"supportsStrictMode":true}`,
+			"developer", "max_completion_tokens", true, true, true, false},
 		{"explicit null is absent",
 			`{"supportsDeveloperRole":null,"maxTokensField":null,"supportsStore":null,` +
 				`"supportsUsageInStreaming":null,"supportsStrictMode":null,"cacheControlFormat":null}`,
-			"developer", "max_completion_tokens", true, true, true, false},
+			"developer", "max_completion_tokens", true, true, false, false},
 		{"invalid JSON applies nothing",
 			`{"supportsDeveloperRole":false,"maxTokensField":"max_tokens","supportsUsageInStreaming":false`,
-			"developer", "max_completion_tokens", true, true, true, false},
+			"developer", "max_completion_tokens", true, true, false, false},
 		{"non-object blob applies nothing", `"nope"`,
-			"developer", "max_completion_tokens", true, true, true, false},
+			"developer", "max_completion_tokens", true, true, false, false},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

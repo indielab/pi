@@ -1,5 +1,5 @@
 {
-	"sha": "f5c946480",
+	"sha": "95fbc0499",
 	"model": {
 		"id": "claude-opus-5",
 		"name": "Claude Opus 5",
@@ -35,6 +35,18 @@
 		"promptCache": {
 			"short": 300,
 			"long": 3600
+		},
+		"inputLimits": {
+			"maxRequestBytes": 33554432,
+			"images": {
+				"maxPerRequest": 600,
+				"resize": {
+					"maxWidth": 2000,
+					"maxHeight": 2000,
+					"maxBytes": 4718592,
+					"jpegQuality": 80
+				}
+			}
 		}
 	},
 	"relabeled": {

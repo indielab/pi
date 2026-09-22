@@ -389,7 +389,8 @@ func TestDiffDetectAntLing(t *testing.T) {
 	})
 	c := getOpenAICompat(model)
 	// pi: ant-ling -> thinkingFormat=ant-ling, maxTokensField=max_tokens (useMaxTokens),
-	// supportsReasoningEffort=false, supportsStrictMode=true (not excluded),
+	// supportsReasoningEffort=false, supportsStrictMode=false (every provider's
+	// detected default since 890f92088),
 	// supportsLongCacheRetention=false.
 	if c.ThinkingFormat != "ant-ling" {
 		t.Fatalf("ant-ling thinkingFormat = %q", c.ThinkingFormat)
@@ -400,8 +401,8 @@ func TestDiffDetectAntLing(t *testing.T) {
 	if c.SupportsReasoningEffort {
 		t.Fatalf("ant-ling supportsReasoningEffort should be false")
 	}
-	if !c.SupportsStrictMode {
-		t.Fatalf("ant-ling supportsStrictMode should be true")
+	if c.SupportsStrictMode {
+		t.Fatalf("ant-ling supportsStrictMode should be false")
 	}
 	if c.SupportsLongCacheRetention {
 		t.Fatalf("ant-ling supportsLongCacheRetention should be false")
@@ -417,11 +418,11 @@ func TestDiffDetectAntLing(t *testing.T) {
 	if v, _ := body["max_tokens"].(int); v != 500 {
 		t.Fatalf("ant-ling max_tokens = %v, want 500", body["max_tokens"])
 	}
-	// supportsStrictMode=true => strict:false present on the tool.
+	// supportsStrictMode=false => the tool carries no strict key.
 	tools, _ := body["tools"].([]map[string]any)
 	fn, _ := tools[0]["function"].(map[string]any)
-	if v, ok := fn["strict"].(bool); !ok || v != false {
-		t.Fatalf("ant-ling tool should carry strict:false, got %v", fn["strict"])
+	if v, has := fn["strict"]; has {
+		t.Fatalf("ant-ling tool should carry no strict key, got %v", v)
 	}
 }
 
@@ -458,7 +459,7 @@ func TestDiffDetectCloudflareWorkersAI(t *testing.T) {
 	})
 	c := getOpenAICompat(model)
 	// pi: workers-ai is NOT in useMaxTokens -> max_completion_tokens;
-	// supportsLongCacheRetention=false; supportsStore=false; supportsStrictMode=true.
+	// supportsLongCacheRetention=false; supportsStore=false; supportsStrictMode=false.
 	if c.MaxTokensField != "max_completion_tokens" {
 		t.Fatalf("cloudflare-workers-ai maxTokensField = %q, want max_completion_tokens", c.MaxTokensField)
 	}
@@ -468,8 +469,8 @@ func TestDiffDetectCloudflareWorkersAI(t *testing.T) {
 	if c.SupportsStore {
 		t.Fatalf("cloudflare-workers-ai supportsStore should be false")
 	}
-	if !c.SupportsStrictMode {
-		t.Fatalf("cloudflare-workers-ai supportsStrictMode should be true")
+	if c.SupportsStrictMode {
+		t.Fatalf("cloudflare-workers-ai supportsStrictMode should be false")
 	}
 }
 

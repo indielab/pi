@@ -175,6 +175,9 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		maxTokensField = "max_tokens"
 	}
 
+	// SupportsStrictMode is false for every provider (upstream 890f92088):
+	// OpenAI compatibility alone does not imply strict JSON-schema tool support,
+	// and the generated catalog enables it explicitly on capable models.
 	return openAICompletionsCompat{
 		SupportsStore:                               !isNonStandard,
 		SupportsDeveloperRole:                       isOpenRouterDeveloperRoleModel || (!isNonStandard && !isOpenRouter),
@@ -183,7 +186,7 @@ func detectOpenAICompat(model *ai.Model) openAICompletionsCompat {
 		SupportsFinishReason:                        true,
 		MaxTokensField:                              maxTokensField,
 		ThinkingFormat:                              thinkingFormat,
-		SupportsStrictMode:                          !isMoonshot && !isTogether && !isCloudflareAiGateway && !isNvidia && !isCerebras,
+		SupportsStrictMode:                          false,
 		SupportsOpenAIGrammarTools:                  false,
 		SupportsMidConvoSystemMessages:              false,
 		SupportsMidConvoToolAdditions:               false,
