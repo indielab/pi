@@ -161,9 +161,15 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			e.Content = parseCustomContent(head.Content)
 		}
 		if head.Type == "context_edit" {
+			// A replacement that is neither null nor {content: string|blocks}
+			// still keeps the entry: dropping it would orphan every later entry
+			// whose parent chain runs through it, losing the history before it.
+			// pi spreads the malformed value over the target, which leaves the
+			// target with no usable content, so it is emptied here. (A missing
+			// replacement key makes pi throw; the port reads it the same way.)
 			replacement, ok := parseContextEditReplacement(head.Replacement)
 			if !ok {
-				continue
+				replacement = &ContextEditReplacement{Content: ai.ContentList{}}
 			}
 			e.Replacement = replacement
 		}
@@ -445,7 +451,7 @@ func projectContextEntry(e *SessionEntry, edit *SessionEntry) []agent.AgentMessa
 // parseContextEditReplacement decodes a context_edit's replacement: JSON null
 // is an omission (nil), an object with string or block content a replacement.
 // Anything else is not an edit pi could have written (appendContextEdit rejects
-// it), so ok is false and the entry is dropped like an undecodable message.
+// it), so ok is false; LoadSessionTree keeps the entry and empties the target.
 func parseContextEditReplacement(raw json.RawMessage) (replacement *ContextEditReplacement, ok bool) {
 	if string(raw) == "null" {
 		return nil, true
