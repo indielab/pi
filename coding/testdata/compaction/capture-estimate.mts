@@ -25,7 +25,7 @@ const { estimateTokens } = await import(pathToFileURL(path.resolve(entry)).href)
 const usage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } };
 const tool = {
 	name: "edit",
-	description: "Replace <old> with <new> & keep the rest   intact 🙂",
+	description: "Replace <old> with <new> & keep the rest \u2028 intact 🙂",
 	parameters: {
 		type: "object",
 		properties: {
@@ -60,7 +60,7 @@ const messages = [
 		content: [
 			{ type: "text", text: "Sure 🚀" },
 			{ type: "thinking", thinking: "consider <a> & ü" },
-			{ type: "toolCall", id: "c1", name: "edit", arguments: { path: "a<b>&c.ts", note: "😀 " } },
+			{ type: "toolCall", id: "c1", name: "edit", arguments: { path: "a<b>&c.ts", note: "😀\u2028" } },
 		],
 		api: "openai-completions",
 		provider: "p",

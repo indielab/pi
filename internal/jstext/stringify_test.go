@@ -2,6 +2,7 @@ package jstext
 
 import (
 	"encoding/json"
+	"math"
 	"os"
 	"testing"
 )
@@ -50,5 +51,19 @@ func TestStringifyUndoesEscapesFromMarshalJSON(t *testing.T) {
 	}
 	if want := "{\"v\":\"a<b>&c\u2028\"}"; got != want {
 		t.Fatalf("Stringify = %q, want %q", got, want)
+	}
+}
+
+// JSON.stringify writes negative zero as 0 (it cannot reach the node-captured
+// cases above: node's own oracle file already reads 0). Only a number is
+// rewritten; "-0" inside a string, -0.5 and -1 are not.
+func TestStringifyNegativeZero(t *testing.T) {
+	negZero := math.Copysign(0, -1)
+	got, err := Stringify(map[string]any{"a": []any{negZero, 0.0, -0.5, -1.0, negZero}, "s": "-0 x", "z": negZero})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"a":[0,0,-0.5,-1,0],"s":"-0 x","z":0}`; got != want {
+		t.Fatalf("Stringify = %s, want %s", got, want)
 	}
 }
