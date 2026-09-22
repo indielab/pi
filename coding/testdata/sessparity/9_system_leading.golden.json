@@ -8,6 +8,7 @@
     {
       "role": "system",
       "text": "",
+      "stringContent": true,
       "message": {
         "role": "system",
         "content": "",
@@ -48,6 +49,20 @@
     {
       "role": "assistant",
       "text": "hello"
+    }
+  ],
+  "entries": [
+    {
+      "id": "s1",
+      "messages": 1
+    },
+    {
+      "id": "s2",
+      "messages": 1
+    },
+    {
+      "id": "s3",
+      "messages": 1
     }
   ]
 }

@@ -14,12 +14,12 @@ import (
 //
 // The .json scenarios in testdata/sessparity and their .golden.json expected
 // outputs were captured by running pi's own buildSessionContext+convertToLlm
-// over the same scenarios (testdata/sessparity/capture.mts: scenarios 1-8 from
-// the npm build of @earendil-works/pi-coding-agent, 9-13 from upstream TS at
-// 9e05370b2). This test reconstructs each scenario through the Go port and
-// asserts the {role,text} projection — plus the whole message for a system
-// message — matches pi byte-for-byte, so any drift from pi's behaviour fails
-// the build.
+// over the same scenarios (testdata/sessparity/capture.mts, npm build 0.87.0 of
+// @earendil-works/pi-coding-agent). This test reconstructs each scenario through
+// the Go port and asserts the {role,text,stringContent} projection — plus the
+// whole message for a system message — matches pi byte-for-byte, as does
+// BuildProjection's per-entry provenance, so any drift from pi's behaviour
+// fails the build.
 
 type parityScenario struct {
 	LeafID  json.RawMessage   `json:"leafId"`
@@ -34,15 +34,25 @@ type parityModel struct {
 type parityMsg struct {
 	Role string `json:"role"`
 	Text string `json:"text"`
+	// StringContent marks content held as a plain string rather than blocks.
+	StringContent bool `json:"stringContent,omitempty"`
 	// Message is the whole system message, whose key order, sections and tool
 	// fields are part of what a resumed session replays.
 	Message json.RawMessage `json:"message,omitempty"`
 }
 
+// parityEntry is one selected entry of pi's buildSessionProjection: its id and
+// the number of model messages it contributes.
+type parityEntry struct {
+	ID       string `json:"id"`
+	Messages int    `json:"messages"`
+}
+
 type parityOut struct {
-	ThinkingLevel string       `json:"thinkingLevel"`
-	Model         *parityModel `json:"model"`
-	Messages      []parityMsg  `json:"messages"`
+	ThinkingLevel string        `json:"thinkingLevel"`
+	Model         *parityModel  `json:"model"`
+	Messages      []parityMsg   `json:"messages"`
+	Entries       []parityEntry `json:"entries"`
 }
 
 func parityText(content ai.ContentList) string {
@@ -63,7 +73,8 @@ func parityText(content ai.ContentList) string {
 func projectParityMsg(m ai.Message) parityMsg {
 	switch v := m.(type) {
 	case ai.UserMessage:
-		return parityMsg{Role: "user", Text: parityText(v.Content)}
+		_, isString := v.StringContent()
+		return parityMsg{Role: "user", Text: parityText(v.Content), StringContent: isString}
 	case *ai.AssistantMessage:
 		return parityMsg{Role: "assistant", Text: parityText(v.Content)}
 	case ai.AssistantMessage:
@@ -75,7 +86,8 @@ func projectParityMsg(m ai.Message) parityMsg {
 		if err != nil {
 			return parityMsg{Role: "system", Text: "<unmarshalable>"}
 		}
-		return parityMsg{Role: "system", Text: parityText(v.Content), Message: raw}
+		_, isString := v.StringContent()
+		return parityMsg{Role: "system", Text: parityText(v.Content), StringContent: isString, Message: raw}
 	}
 	return parityMsg{Role: string(m.MessageRole())}
 }
@@ -115,16 +127,21 @@ func reconstructScenario(t *testing.T, scenarioPath string) parityOut {
 	tree.LeafID = leafID
 
 	ctx := tree.BuildContext()
+	projection := tree.BuildProjection()
 	if explicitNull {
 		ctx = tree.BuildContextNull()
+		projection = BranchProjection{}
 	}
 
-	out := parityOut{ThinkingLevel: ctx.ThinkingLevel, Messages: []parityMsg{}}
+	out := parityOut{ThinkingLevel: ctx.ThinkingLevel, Messages: []parityMsg{}, Entries: []parityEntry{}}
 	if ctx.Provider != "" || ctx.ModelID != "" {
 		out.Model = &parityModel{Provider: ctx.Provider, ModelID: ctx.ModelID}
 	}
 	for _, m := range ctx.Messages {
 		out.Messages = append(out.Messages, projectParityMsg(m))
+	}
+	for _, e := range projection.Entries {
+		out.Entries = append(out.Entries, parityEntry{ID: e.SourceEntry.ID, Messages: len(e.Messages)})
 	}
 	return out
 }

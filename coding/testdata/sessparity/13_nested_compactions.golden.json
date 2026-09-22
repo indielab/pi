@@ -8,6 +8,7 @@
     {
       "role": "system",
       "text": "",
+      "stringContent": true,
       "message": {
         "role": "system",
         "content": "",
@@ -44,39 +45,6 @@
       "text": "first"
     },
     {
-      "role": "system",
-      "text": "",
-      "message": {
-        "role": "system",
-        "content": "",
-        "sections": {
-          "preamble": "v1"
-        },
-        "timestamp": 1789603204000,
-        "toolsAdded": [
-          {
-            "name": "read",
-            "description": "Read a file",
-            "parameters": {
-              "type": "object",
-              "properties": {
-                "path": {
-                  "type": "string"
-                }
-              },
-              "required": [
-                "path"
-              ]
-            }
-          }
-        ]
-      }
-    },
-    {
-      "role": "user",
-      "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nS-early\n</summary>"
-    },
-    {
       "role": "user",
       "text": "two"
     },
@@ -87,6 +55,32 @@
     {
       "role": "user",
       "text": "three"
+    }
+  ],
+  "entries": [
+    {
+      "id": "e8",
+      "messages": 2
+    },
+    {
+      "id": "e3",
+      "messages": 1
+    },
+    {
+      "id": "e4",
+      "messages": 0
+    },
+    {
+      "id": "e6",
+      "messages": 1
+    },
+    {
+      "id": "e7",
+      "messages": 1
+    },
+    {
+      "id": "e9",
+      "messages": 1
     }
   ]
 }

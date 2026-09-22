@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
@@ -143,6 +144,10 @@ Be concise. Focus on what's needed to understand the kept suffix.`
 func EstimateMessageTokens(m agent.AgentMessage) int {
 	chars := 0
 	switch v := m.(type) {
+	case ai.SystemMessage:
+		chars = systemChars(&v)
+	case *ai.SystemMessage:
+		chars = systemChars(v)
 	case ai.UserMessage:
 		chars = contentChars(v.Content)
 	case *ai.AssistantMessage:
@@ -155,17 +160,32 @@ func EstimateMessageTokens(m agent.AgentMessage) int {
 	return int(math.Ceil(float64(chars) / 4))
 }
 
+// systemChars counts a system message's content, each non-empty section and
+// JSON.stringify(toolsAdded); tool removals carry no weight (pi estimateTokens,
+// upstream 466db0fec).
+func systemChars(m *ai.SystemMessage) int {
+	chars := contentChars(m.Content)
+	for _, section := range m.Sections.Entries() {
+		if section.Value != nil {
+			chars += utf16Len(*section.Value)
+		}
+	}
+	if m.ToolsAdded != nil {
+		chars += jsonStringifyLength(m.ToolsAdded)
+	}
+	return chars
+}
+
 func assistantChars(a *ai.AssistantMessage) int {
 	chars := 0
 	for _, c := range a.Content {
 		switch b := c.(type) {
 		case ai.TextContent:
-			chars += len(b.Text)
+			chars += utf16Len(b.Text)
 		case ai.ThinkingContent:
-			chars += len(b.Thinking)
+			chars += utf16Len(b.Thinking)
 		case ai.ToolCall:
-			args, _ := json.Marshal(b.Arguments)
-			chars += len(b.Name) + len(args)
+			chars += utf16Len(b.Name) + jsonStringifyLength(b.Arguments)
 		}
 	}
 	return chars
@@ -176,12 +196,51 @@ func contentChars(content ai.ContentList) int {
 	for _, c := range content {
 		switch b := c.(type) {
 		case ai.TextContent:
-			chars += len(b.Text)
+			chars += utf16Len(b.Text)
 		case ai.ImageContent:
 			chars += estimatedImageChars // fixed estimate for an inline image
 		}
 	}
 	return chars
+}
+
+// jsonStringifyLength is JSON.stringify(v).length: the UTF-16 length of v's
+// JSON. json.Marshal escapes <, >, &, U+2028 and U+2029 as \uXXXX where
+// JSON.stringify writes the character itself, so each such escape counts as
+// the one code unit JS emits.
+func jsonStringifyLength(v any) int {
+	data, err := json.Marshal(v)
+	if err != nil {
+		return 0
+	}
+	s := string(data)
+	n := 0
+	for i := 0; i < len(s); {
+		if s[i] == '\\' && i+5 < len(s) && s[i+1] == 'u' {
+			switch s[i+2 : i+6] {
+			case "003c", "003e", "0026", "2028", "2029":
+				n++
+			default:
+				n += 6
+			}
+			i += 6
+			continue
+		}
+		if s[i] == '\\' {
+			// A two-character escape (\n, \", \\ ...), the same in both.
+			n += 2
+			i += 2
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(s[i:])
+		if r > 0xFFFF {
+			n += 2
+		} else {
+			n++
+		}
+		i += size
+	}
+	return n
 }
 
 // EstimateContextTokens sums estimated tokens across messages (pure heuristic).

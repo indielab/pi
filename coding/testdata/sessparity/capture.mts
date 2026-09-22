@@ -1,41 +1,39 @@
 // Captures real pi's session context reconstruction — the oracle behind
 // coding/session_tree_parity_test.go. For every scenario given, it runs
 // buildSessionContext followed by convertToLlm over the scenario's entries and
-// writes <scenario>.golden.json beside it.
+// writes <scenario>.golden.json beside it. The golden also records
+// buildSessionProjection's provenance: each selected entry's id and how many
+// model messages it contributes after convertToLlm.
 //
-//   node --experimental-strip-types capture.mts <extraction> <scenario.json>...
-//   e.g. ... capture.mts <dir> *_*.json (skip the .golden.json files)
+//   node capture.mts <entry> <scenario.json>...
+//   e.g. node capture.mts ~/.cache/pi-npm/0.87.0/node_modules/@earendil-works/pi-coding-agent/dist/index.js *_*.json
+//   (skip the .golden.json files)
 //
-// <extraction> holds packages/ai, packages/agent and packages/coding-agent at
-// the capture sha (`git archive <sha> packages/ai packages/agent
-// packages/coding-agent` from the upstream clone), a node_modules resolving
-// their dependencies (the npm build's), and
-// packages/coding-agent/node_modules/@earendil-works/{pi-ai,pi-agent-core}
-// resolving to packages/{ai,agent}/src.
+// <entry> is a module exporting buildSessionContext, buildSessionProjection and
+// convertToLlm: the npm
+// build's dist/index.js, or packages/coding-agent/src/index.ts in a src
+// extraction (see ../sessionprompt/capture.mts for its layout; run it with
+// --experimental-strip-types). The BUILD wins over a src capture.
 //
-// Scenarios 1-8 were captured from the npm build of pi-coding-agent; running
-// this script over them at 9e05370b2 reproduces their goldens byte for byte.
-// Scenarios 9-13 (system messages, compaction systemMessage) are src captures
-// at 9e05370b2, which the npm build 0.85.1 predates: re-verify them against the
-// first build that ships it (the BUILD wins).
+// Every golden was captured from the npm build of pi-coding-agent 0.87.0, the
+// first build carrying context_edit entries and the newest-compaction-only
+// checkpoint (upstream 466db0fec).
 //
 // Projection: role and the text of the content (a string as is; blocks joined
-// with no separator, an image as <image>, any other block as <other>). A system
+// with no separator, an image as <image>, any other block as <other>), plus
+// stringContent when the content is a plain string rather than blocks. A system
 // message also carries the whole message as pi returns it, so its key order,
 // sections and tool fields are pinned too.
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-const [extraction, ...scenarios] = process.argv.slice(2);
-if (!extraction || scenarios.length === 0) {
-	console.error("usage: node --experimental-strip-types capture.mts <extraction> <scenario.json>...");
+const [entry, ...scenarios] = process.argv.slice(2);
+if (!entry || scenarios.length === 0) {
+	console.error("usage: node capture.mts <entry> <scenario.json>...");
 	process.exit(2);
 }
-const core = (file: string) =>
-	import(pathToFileURL(path.join(extraction, "packages/coding-agent/src/core", file)).href);
-const { buildSessionContext } = await core("session-manager.ts");
-const { convertToLlm } = await core("messages.ts");
+const { buildSessionContext, buildSessionProjection, convertToLlm } = await import(pathToFileURL(path.resolve(entry)).href);
 
 function text(content: unknown): string {
 	if (typeof content === "string") return content;
@@ -48,14 +46,20 @@ function text(content: unknown): string {
 for (const file of scenarios) {
 	const scenario = JSON.parse(fs.readFileSync(file, "utf8"));
 	const context = buildSessionContext(scenario.entries, scenario.leafId);
+	const projection = buildSessionProjection(scenario.entries, scenario.leafId);
 	const out = {
 		thinkingLevel: context.thinkingLevel,
 		model: context.model,
-		messages: convertToLlm(context.messages).map((message: any) =>
-			message.role === "system"
-				? { role: message.role, text: text(message.content), message }
-				: { role: message.role, text: text(message.content) },
-		),
+		messages: convertToLlm(context.messages).map((message: any) => ({
+			role: message.role,
+			text: text(message.content),
+			...(typeof message.content === "string" ? { stringContent: true } : {}),
+			...(message.role === "system" ? { message } : {}),
+		})),
+		entries: projection.entries.map((entry: any) => ({
+			id: entry.sourceEntry.id,
+			messages: convertToLlm(entry.messages).length,
+		})),
 	};
 	fs.writeFileSync(file.replace(/\.json$/, ".golden.json"), JSON.stringify(out, null, 2));
 }

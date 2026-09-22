@@ -21,5 +21,27 @@
       "role": "assistant",
       "text": "done"
     }
+  ],
+  "entries": [
+    {
+      "id": "b1",
+      "messages": 1
+    },
+    {
+      "id": "b2",
+      "messages": 1
+    },
+    {
+      "id": "b3",
+      "messages": 0
+    },
+    {
+      "id": "b4",
+      "messages": 1
+    },
+    {
+      "id": "b5",
+      "messages": 1
+    }
   ]
 }

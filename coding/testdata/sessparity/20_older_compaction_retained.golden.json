@@ -7,44 +7,48 @@
   "messages": [
     {
       "role": "user",
-      "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nearlier stuff\n</summary>"
+      "text": "The conversation history before this point was compacted into the following summary:\n\n<summary>\nS-late\n</summary>"
     },
     {
       "role": "assistant",
-      "text": "hi"
+      "text": "answer one"
     },
     {
       "role": "user",
-      "text": "follow up"
-    },
-    {
-      "role": "user",
-      "text": "a custom note"
+      "text": "two"
     },
     {
       "role": "assistant",
-      "text": "answer"
+      "text": "answer two"
+    },
+    {
+      "role": "user",
+      "text": "three"
     }
   ],
   "entries": [
     {
-      "id": "e3",
+      "id": "j6",
       "messages": 1
     },
     {
-      "id": "e2",
+      "id": "j2",
       "messages": 1
     },
     {
-      "id": "e4",
+      "id": "j3",
+      "messages": 0
+    },
+    {
+      "id": "j4",
       "messages": 1
     },
     {
-      "id": "e5",
+      "id": "j5",
       "messages": 1
     },
     {
-      "id": "e6",
+      "id": "j7",
       "messages": 1
     }
   ]

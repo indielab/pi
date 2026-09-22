@@ -8,6 +8,7 @@
     {
       "role": "system",
       "text": "",
+      "stringContent": true,
       "message": {
         "role": "system",
         "content": "",
@@ -24,6 +25,7 @@
     {
       "role": "system",
       "text": "",
+      "stringContent": true,
       "message": {
         "role": "system",
         "sections": {
@@ -37,6 +39,24 @@
     {
       "role": "assistant",
       "text": "ok"
+    }
+  ],
+  "entries": [
+    {
+      "id": "z1",
+      "messages": 1
+    },
+    {
+      "id": "z2",
+      "messages": 1
+    },
+    {
+      "id": "z3",
+      "messages": 1
+    },
+    {
+      "id": "z4",
+      "messages": 1
     }
   ]
 }

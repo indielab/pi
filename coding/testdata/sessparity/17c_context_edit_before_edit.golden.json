@@ -7,28 +7,20 @@
   "messages": [
     {
       "role": "user",
-      "text": "look"
-    },
-    {
-      "role": "user",
-      "text": "part one part two"
+      "text": "q"
     },
     {
       "role": "assistant",
-      "text": "seen"
+      "text": "original answer"
     }
   ],
   "entries": [
     {
-      "id": "c1",
+      "id": "g1",
       "messages": 1
     },
     {
-      "id": "c2",
-      "messages": 1
-    },
-    {
-      "id": "c3",
+      "id": "g2",
       "messages": 1
     }
   ]

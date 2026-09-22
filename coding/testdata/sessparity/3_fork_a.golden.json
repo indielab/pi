@@ -21,5 +21,23 @@
       "role": "assistant",
       "text": "answer A"
     }
+  ],
+  "entries": [
+    {
+      "id": "f1",
+      "messages": 1
+    },
+    {
+      "id": "f2",
+      "messages": 1
+    },
+    {
+      "id": "fa3",
+      "messages": 1
+    },
+    {
+      "id": "fa4",
+      "messages": 1
+    }
   ]
 }

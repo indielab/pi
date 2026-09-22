@@ -7,19 +7,15 @@
   "messages": [
     {
       "role": "user",
-      "text": "question"
-    },
-    {
-      "role": "assistant",
-      "text": "trunk"
+      "text": "q"
     },
     {
       "role": "user",
-      "text": "follow B"
+      "text": "second rewrite wins"
     },
     {
       "role": "assistant",
-      "text": "answer B"
+      "text": "done"
     }
   ],
   "entries": [
@@ -29,14 +25,30 @@
     },
     {
       "id": "f2",
+      "messages": 0
+    },
+    {
+      "id": "f3",
       "messages": 1
     },
     {
-      "id": "fb3",
-      "messages": 1
+      "id": "f4",
+      "messages": 0
     },
     {
-      "id": "fb4",
+      "id": "f5",
+      "messages": 0
+    },
+    {
+      "id": "f6",
+      "messages": 0
+    },
+    {
+      "id": "f7",
+      "messages": 0
+    },
+    {
+      "id": "f8",
       "messages": 1
     }
   ]

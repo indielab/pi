@@ -7,36 +7,32 @@
   "messages": [
     {
       "role": "user",
-      "text": "question"
+      "text": "q"
     },
     {
       "role": "assistant",
-      "text": "trunk"
+      "text": "edited on branch A"
     },
     {
       "role": "user",
-      "text": "follow B"
-    },
-    {
-      "role": "assistant",
-      "text": "answer B"
+      "text": "branch A"
     }
   ],
   "entries": [
     {
-      "id": "f1",
+      "id": "g1",
       "messages": 1
     },
     {
-      "id": "f2",
+      "id": "g2",
       "messages": 1
     },
     {
-      "id": "fb3",
-      "messages": 1
+      "id": "g3",
+      "messages": 0
     },
     {
-      "id": "fb4",
+      "id": "g4",
       "messages": 1
     }
   ]

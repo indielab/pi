@@ -449,9 +449,11 @@ func TestCompactionCheckpointFoldsSummarizedAndRetainedSystemPatches(t *testing.
 		ai.UserMessage{Content: ai.ContentList{ai.TextContent{Text: "kept after patch"}}, Timestamp: nowMillisCoding()},
 	)
 	reg.SetResponses([]providers.FauxResponseStep{fauxText("compacted")})
-	// Keep the last two user messages (9 estimated tokens), so the cut lands on
-	// "kept before patch" as upstream's firstKeptEntryId does.
-	state := &compactionState{settings: CompactionSettings{Enabled: true, ReserveTokens: 999, KeepRecentTokens: 9}}
+	// Keep the last two user messages and the retained patch between them (5 +
+	// 10 + 4 estimated tokens; a system message counts its content and sections
+	// since upstream 466db0fec), so the cut lands on "kept before patch" as
+	// upstream's firstKeptEntryId does.
+	state := &compactionState{settings: CompactionSettings{Enabled: true, ReserveTokens: 999, KeepRecentTokens: 19}}
 	out := sess.compact(context.Background(), state, messages)
 
 	if got, want := roles(out), []string{"system", "user", "user", "user"}; !reflect.DeepEqual(got, want) {

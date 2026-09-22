@@ -20,7 +20,7 @@ func timeParseISO(iso string) (time.Time, error) {
 type SessionEntry struct {
 	ID            string
 	ParentID      string
-	Type          string // "message" | "model_change" | "thinking_level_change" | "branch_summary" | "compaction" | "custom_message" | ...
+	Type          string // "message" | "model_change" | "thinking_level_change" | "branch_summary" | "compaction" | "custom_message" | "context_edit" | ...
 	Timestamp     string
 	Message       ai.Message // for Type=="message"
 	Provider      string     // for "model_change"
@@ -43,6 +43,25 @@ type SessionEntry struct {
 	// custom_message
 	CustomType string
 	Content    ai.ContentList
+	// context_edit (pi ContextEditEntry): an append-only edit of TargetID's
+	// contribution to model context. A nil Replacement omits the target.
+	TargetID    string
+	Replacement *ContextEditReplacement
+
+	// messageRole is the role the message field carried in the file, before
+	// unmarshalSessionMessage converted pi's extended roles to user messages;
+	// context edits replace content only for some of those roles.
+	messageRole string
+}
+
+// ContextEditReplacement is a context_edit's non-null replacement (pi
+// ContextEditEntry.replacement): the content that stands in for the target
+// message's content, which pi holds as a string or as blocks.
+type ContextEditReplacement struct {
+	Content ai.ContentList
+	// StringContent marks content that was a plain string in the file; Content
+	// then holds it as one text block.
+	StringContent bool
 }
 
 // SessionTree is the parsed entry tree of a session file.
@@ -100,6 +119,8 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			RetainedTail     []json.RawMessage `json:"retainedTail"`
 			CustomType       string            `json:"customType"`
 			Content          json.RawMessage   `json:"content"`
+			TargetID         string            `json:"targetId"`
+			Replacement      json.RawMessage   `json:"replacement"`
 		}
 		if json.Unmarshal(line, &head) != nil {
 			continue
@@ -113,6 +134,7 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			Provider: head.Provider, ModelID: head.ModelID,
 			ThinkingLevel: head.ThinkingLevel, Summary: head.Summary, FromID: head.FromID,
 			FirstKeptEntryID: head.FirstKeptEntryID, CustomType: head.CustomType,
+			TargetID: head.TargetID,
 		}
 		if head.ParentID != nil {
 			e.ParentID = *head.ParentID
@@ -138,7 +160,19 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 		if head.Type == "custom_message" && len(head.Content) > 0 {
 			e.Content = parseCustomContent(head.Content)
 		}
+		if head.Type == "context_edit" {
+			replacement, ok := parseContextEditReplacement(head.Replacement)
+			if !ok {
+				continue
+			}
+			e.Replacement = replacement
+		}
 		if head.Type == "message" && len(head.Message) > 0 {
+			var role struct {
+				Role string `json:"role"`
+			}
+			_ = json.Unmarshal(head.Message, &role)
+			e.messageRole = role.Role
 			if m, ok := unmarshalSessionMessage(head.Message); ok {
 				e.Message = m
 				if e.Type == "message" {
@@ -221,99 +255,219 @@ func (t *SessionTree) BuildContextNull() BranchContext {
 }
 
 // BuildContext reconstructs the LLM message list, thinking level, and model for
-// the active branch. It mirrors pi's buildSessionContext followed by convertToLlm:
-// it handles the compaction checkpoint (emit the compaction's system message and
-// summary, then kept entries from firstKeptEntryId without their system
-// messages, then post-compaction entries) and converts custom_message /
-// branch_summary entries to their user-message form with pi's exact wrapper text.
-// A system message whose content is null or missing reads as "" (the codec's
-// own rule, which is pi's sessionEntryToContextMessages rule).
+// the active branch. It mirrors pi's buildSessionContext followed by
+// convertToLlm; see BuildProjection for how the messages are selected.
 func (t *SessionTree) BuildContext(leafID ...string) BranchContext {
+	return t.BuildProjection(leafID...).BranchContext
+}
+
+// ProjectedSessionEntry is one selected entry's contribution to model context
+// (pi ProjectedSessionEntry).
+type ProjectedSessionEntry struct {
+	// SourceEntry is the raw entry that owns the contribution.
+	SourceEntry *SessionEntry
+	// Messages are the entry's model-visible messages after context edits:
+	// empty for state-only entries and omitted targets.
+	Messages []agent.AgentMessage
+}
+
+// BranchProjection is a branch's model context together with the entry each
+// message came from (pi SessionProjection). Messages is the concatenation of
+// the entries' messages.
+type BranchProjection struct {
+	BranchContext
+	Entries []ProjectedSessionEntry
+}
+
+// BuildProjection reconstructs the active branch's model context with
+// per-entry provenance (pi buildSessionProjection followed by convertToLlm).
+//
+// The selected entries are pi's buildContextEntries: without a compaction the
+// whole path; with one, the newest compaction, then the entries before it from
+// its firstKeptEntryId on (minus system messages, which the compaction's stored
+// system message replays), then everything after it. A retain-none compaction
+// names itself as firstKeptEntryId, so nothing before it is kept.
+//
+// Among the selected entries the latest context_edit per target wins: a nil
+// replacement omits the target's messages, a non-nil one replaces only the
+// content of a user, assistant, toolResult or custom message. The raw entries
+// are not modified. Only the newest compaction contributes its system message
+// and summary; an older one inside the kept range contributes nothing.
+func (t *SessionTree) BuildProjection(leafID ...string) BranchProjection {
 	leaf := t.LeafID
 	if len(leafID) > 0 {
 		leaf = leafID[0]
 	}
 	path := t.Branch(leaf)
 
-	ctx := BranchContext{ThinkingLevel: "off"}
-	var compaction *SessionEntry
-	compactionIdx := -1
-	for i, e := range path {
+	var p BranchProjection
+	p.ThinkingLevel = "off"
+	for _, e := range path {
 		switch e.Type {
 		case "thinking_level_change":
-			ctx.ThinkingLevel = e.ThinkingLevel
+			p.ThinkingLevel = e.ThinkingLevel
 		case "model_change":
-			ctx.Provider, ctx.ModelID = e.Provider, e.ModelID
+			p.Provider, p.ModelID = e.Provider, e.ModelID
 		case "message":
 			if am, ok := messageAsAssistant(e.Message); ok {
-				ctx.Provider, ctx.ModelID = am.Provider, am.Model
+				p.Provider, p.ModelID = am.Provider, am.Model
 			}
-		case "compaction":
-			compaction = e
+		}
+	}
+
+	selected := contextEntries(path)
+	edits := map[string]*SessionEntry{}
+	for _, e := range selected {
+		if e.Type == "context_edit" {
+			edits[e.TargetID] = e
+		}
+	}
+	p.Entries = make([]ProjectedSessionEntry, len(selected))
+	for i, e := range selected {
+		p.Entries[i].SourceEntry = e
+		// contextEntries may keep an older compaction whose id lies inside the
+		// newest one's kept range; only the newest, at index 0, contributes a
+		// checkpoint and summary.
+		if e.Type == "compaction" && i > 0 {
+			continue
+		}
+		p.Entries[i].Messages = projectContextEntry(e, edits[e.ID])
+		p.Messages = append(p.Messages, p.Entries[i].Messages...)
+	}
+	return p
+}
+
+// contextEntries selects the path entries that feed model context (pi
+// buildContextEntries).
+func contextEntries(path []*SessionEntry) []*SessionEntry {
+	compactionIdx := -1
+	for i, e := range path {
+		if e.Type == "compaction" {
 			compactionIdx = i
 		}
 	}
+	if compactionIdx < 0 {
+		return path
+	}
+	compaction := path[compactionIdx]
+	selected := []*SessionEntry{compaction}
+	// A retainedTail inlined on the entry (upstream 9e7582aa) replaces the
+	// firstKeptEntryId walk: the compaction's own messages carry the kept tail.
+	if len(compaction.RetainedTail) == 0 {
+		foundFirstKept := false
+		for _, e := range path[:compactionIdx] {
+			if e.ID == compaction.FirstKeptEntryID {
+				foundFirstKept = true
+			}
+			if foundFirstKept && !(e.Type == "message" && e.Message != nil && e.Message.MessageRole() == ai.RoleSystem) {
+				selected = append(selected, e)
+			}
+		}
+	}
+	return append(selected, path[compactionIdx+1:]...)
+}
 
-	// appendCompaction projects a compaction entry: the prompt and tool state it
-	// stored, when it stored one, then its summary.
-	appendCompaction := func(e *SessionEntry) {
+// sessionEntryMessages is an entry's own contribution to model context, already
+// in convertToLlm form (pi sessionEntryToContextMessages + convertToLlm):
+// custom_message and branch_summary entries become user messages with pi's
+// exact wrapper text. A system message whose content is null or missing reads
+// as "" (the codec's own rule, which is pi's sessionEntryToContextMessages rule).
+func sessionEntryMessages(e *SessionEntry) []agent.AgentMessage {
+	switch e.Type {
+	case "message":
+		if e.Message != nil {
+			return []agent.AgentMessage{e.Message}
+		}
+	case "custom_message":
+		return []agent.AgentMessage{ai.UserMessage{Content: e.Content, Timestamp: entryMillis(e.Timestamp)}}
+	case "branch_summary":
+		if e.Summary != "" {
+			return []agent.AgentMessage{branchSummaryMessage(e.Summary, entryMillis(e.Timestamp))}
+		}
+	case "compaction":
+		// The prompt and tool state it stored, when it stored one, then its
+		// summary, then any inlined kept tail.
+		var msgs []agent.AgentMessage
 		if e.SystemMessage != nil {
-			ctx.Messages = append(ctx.Messages, *e.SystemMessage)
+			msgs = append(msgs, *e.SystemMessage)
 		}
-		ctx.Messages = append(ctx.Messages, compactionSummaryMessage(e.Summary, entryMillis(e.Timestamp)))
+		msgs = append(msgs, compactionSummaryMessage(e.Summary, entryMillis(e.Timestamp)))
+		return append(msgs, e.RetainedTail...)
 	}
-	appendMessage := func(e *SessionEntry) {
-		switch e.Type {
-		case "message":
-			if e.Message != nil {
-				ctx.Messages = append(ctx.Messages, e.Message)
-			}
-		case "custom_message":
-			ctx.Messages = append(ctx.Messages, ai.UserMessage{Content: e.Content, Timestamp: entryMillis(e.Timestamp)})
-		case "branch_summary":
-			if e.Summary != "" {
-				ctx.Messages = append(ctx.Messages, branchSummaryMessage(e.Summary, entryMillis(e.Timestamp)))
-			}
-		case "compaction":
-			// An EARLIER compaction sitting inside the latest one's kept range
-			// still contributes its system message and summary: pi's
-			// sessionEntryToContextMessages projects any "compaction" entry, not
-			// only the one buildContextEntries selected.
-			appendCompaction(e)
-		}
-	}
+	return nil
+}
 
-	if compaction != nil {
-		// 1. Emit the compaction's system message and summary first.
-		appendCompaction(compaction)
-		// 2. Emit the kept tail. A retainedTail inlined on the entry (upstream
-		// 9e7582aa) replaces the firstKeptEntryId walk; otherwise walk kept
-		// pre-compaction entries starting at firstKeptEntryId.
-		if len(compaction.RetainedTail) > 0 {
-			ctx.Messages = append(ctx.Messages, compaction.RetainedTail...)
-		} else {
-			// A kept system message is skipped: the compaction's system message
-			// replays it (pi buildContextEntries).
-			foundFirstKept := false
-			for i := 0; i < compactionIdx; i++ {
-				if path[i].ID == compaction.FirstKeptEntryID {
-					foundFirstKept = true
+// projectContextEntry applies an entry's latest context edit, if any, to its
+// messages (pi projectContextEntry). A replacement swaps the content of the
+// roles pi edits and keeps every other field; assistant and toolResult content
+// is always blocks, so a string replacement becomes one text block. A custom
+// message reaches the model as a user message whose content is always blocks
+// (convertToLlm).
+func projectContextEntry(e *SessionEntry, edit *SessionEntry) []agent.AgentMessage {
+	msgs := sessionEntryMessages(e)
+	if edit == nil {
+		return msgs
+	}
+	r := edit.Replacement
+	if r == nil {
+		return nil
+	}
+	role := e.messageRole
+	if e.Type == "custom_message" {
+		role = "custom"
+	}
+	out := make([]agent.AgentMessage, len(msgs))
+	for i, m := range msgs {
+		out[i] = m
+		switch v := m.(type) {
+		case ai.UserMessage:
+			switch role {
+			case "user":
+				if r.StringContent {
+					out[i] = ai.NewUserText(r.Content[0].(ai.TextContent).Text, v.Timestamp)
+				} else {
+					out[i] = ai.UserMessage{Content: r.Content, Timestamp: v.Timestamp}
 				}
-				if foundFirstKept && !(path[i].Type == "message" && path[i].Message != nil && path[i].Message.MessageRole() == ai.RoleSystem) {
-					appendMessage(path[i])
-				}
+			case "custom":
+				out[i] = ai.UserMessage{Content: r.Content, Timestamp: v.Timestamp}
 			}
-		}
-		// 3. Emit everything after the compaction.
-		for i := compactionIdx + 1; i < len(path); i++ {
-			appendMessage(path[i])
-		}
-	} else {
-		for _, e := range path {
-			appendMessage(e)
+		case ai.AssistantMessage:
+			v.Content = r.Content
+			out[i] = v
+		case ai.ToolResultMessage:
+			v.Content = r.Content
+			out[i] = v
 		}
 	}
-	return ctx
+	return out
+}
+
+// parseContextEditReplacement decodes a context_edit's replacement: JSON null
+// is an omission (nil), an object with string or block content a replacement.
+// Anything else is not an edit pi could have written (appendContextEdit rejects
+// it), so ok is false and the entry is dropped like an undecodable message.
+func parseContextEditReplacement(raw json.RawMessage) (replacement *ContextEditReplacement, ok bool) {
+	if string(raw) == "null" {
+		return nil, true
+	}
+	var body struct {
+		Content json.RawMessage `json:"content"`
+	}
+	if json.Unmarshal(raw, &body) != nil || len(body.Content) == 0 {
+		return nil, false
+	}
+	if body.Content[0] == '"' {
+		var text string
+		if json.Unmarshal(body.Content, &text) != nil {
+			return nil, false
+		}
+		return &ContextEditReplacement{Content: ai.ContentList{ai.TextContent{Text: text}}, StringContent: true}, true
+	}
+	var content ai.ContentList
+	if json.Unmarshal(body.Content, &content) != nil {
+		return nil, false
+	}
+	return &ContextEditReplacement{Content: content}, true
 }
 
 // unmarshalSessionMessage decodes a message entry's message field. Standard LLM
