@@ -288,3 +288,21 @@ func TestEstimateCountsTrailingSystemMessagesAfterTheAnchor(t *testing.T) {
 		t.Fatalf("estimate = %+v, want {Tokens:9527 UsageTokens:9500 TrailingTokens:27 LastUsageIndex:1}", est)
 	}
 }
+
+// JSON.stringify writes <, >, & and U+2028/U+2029 as themselves, one code unit
+// each; encoding/json writes six-character escapes. A tool whose schema text
+// uses them must weigh what pi weighs, which is exactly what the same tool
+// with plain letters in their place weighs.
+func TestEstimateToolsTokensCountsJSONStringifyText(t *testing.T) {
+	tool := func(desc string) []Tool { return []Tool{{Name: "t", Description: desc}} }
+	plain := estimateToolsTokens(tool("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
+	for _, desc := range []string{
+		"<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<",
+		"&&&&&&&&>>>>>>>>&&&&&&&&>>>>>>>>",
+		strings.Repeat("\u2028", 16) + strings.Repeat("\u2029", 16),
+	} {
+		if got := estimateToolsTokens(tool(desc)); got != plain {
+			t.Errorf("estimateToolsTokens(%q) = %d, want %d (same JSON.stringify length)", desc, got, plain)
+		}
+	}
+}

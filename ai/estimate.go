@@ -1,9 +1,10 @@
 package ai
 
 import (
-	"encoding/json"
 	"math"
 	"unicode/utf16"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // Context-token estimation, ported from pi packages/ai/src/utils/estimate.ts
@@ -47,13 +48,15 @@ func calculateContextTokens(usage Usage) int {
 }
 
 // safeJSONStringify mirrors pi's safeJsonStringify: JSON.stringify with a
-// fallback string when the value cannot be serialized.
+// fallback string when the value cannot be serialized. It is measured, so it
+// must be JSON.stringify's text, not encoding/json's: the latter escapes <, >,
+// &, U+2028 and U+2029 into six characters each.
 func safeJSONStringify(value any) string {
-	b, err := json.Marshal(value)
+	s, err := jstext.Stringify(value)
 	if err != nil {
 		return "[unserializable]"
 	}
-	return string(b)
+	return s
 }
 
 // estimateTextAndImageContentChars sums the UTF-16 length of text blocks and a

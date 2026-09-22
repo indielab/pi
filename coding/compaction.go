@@ -8,10 +8,10 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // CompactionSettings configures automatic context-window compaction (port of
@@ -204,43 +204,14 @@ func contentChars(content ai.ContentList) int {
 	return chars
 }
 
-// jsonStringifyLength is JSON.stringify(v).length: the UTF-16 length of v's
-// JSON. json.Marshal escapes <, >, &, U+2028 and U+2029 as \uXXXX where
-// JSON.stringify writes the character itself, so each such escape counts as
-// the one code unit JS emits.
+// jsonStringifyLength is JSON.stringify(v).length: the UTF-16 length of the
+// text JSON.stringify writes, which is not encoding/json's (see jstext.Stringify).
 func jsonStringifyLength(v any) int {
-	data, err := json.Marshal(v)
+	s, err := jstext.Stringify(v)
 	if err != nil {
 		return 0
 	}
-	s := string(data)
-	n := 0
-	for i := 0; i < len(s); {
-		if s[i] == '\\' && i+5 < len(s) && s[i+1] == 'u' {
-			switch s[i+2 : i+6] {
-			case "003c", "003e", "0026", "2028", "2029":
-				n++
-			default:
-				n += 6
-			}
-			i += 6
-			continue
-		}
-		if s[i] == '\\' {
-			// A two-character escape (\n, \", \\ ...), the same in both.
-			n += 2
-			i += 2
-			continue
-		}
-		r, size := utf8.DecodeRuneInString(s[i:])
-		if r > 0xFFFF {
-			n += 2
-		} else {
-			n++
-		}
-		i += size
-	}
-	return n
+	return utf16Len(s)
 }
 
 // EstimateContextTokens sums estimated tokens across messages (pure heuristic).
