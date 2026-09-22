@@ -1,5 +1,5 @@
 {
-	"sha": "16292398a",
+	"sha": "95fbc0499",
 	"now": 1700000000000,
 	"defaultState": {
 		"messages": "[]",
@@ -157,8 +157,9 @@
 		],
 		"systemPrompt": "P\n\nlate"
 	},
-	"agentShouldStopAfterTurn": {
+	"agentFinishTurnEnd": {
 		"requestCount": 1,
+		"sawAbortSignal": true,
 		"callbackContextRoles": [
 			"system",
 			"user",
@@ -419,7 +420,7 @@
 			"assistant"
 		]
 	},
-	"loopShouldStopAfterTurn": {
+	"loopFinishTurnEnd": {
 		"llmCalls": 1,
 		"executed": [
 			"hello"

@@ -15,8 +15,8 @@ import (
 
 // The transcript-owned system prompt and tool loadout (upstream 9e05370b2).
 //
-// Expected values come from testdata/transcript/agent-16292398a.json, captured
-// by running pi's Agent and agent loop at 16292398a under node
+// Expected values come from testdata/transcript/agent-95fbc0499.json, captured
+// by running pi's Agent and agent loop at 95fbc0499 (and the npm build 0.87.0) under node
 // (testdata/transcript/capture.mts, which names the upstream test each scenario
 // transliterates). pi stamps Date.now() pinned to the golden's "now"; the Go
 // side maps its own wall-clock stamps onto that value before comparing bytes.
@@ -64,7 +64,7 @@ var (
 func golden(t *testing.T, name string) transcriptScenario {
 	t.Helper()
 	transcriptGoldenOnce.Do(func() {
-		raw, err := os.ReadFile("testdata/transcript/agent-16292398a.json")
+		raw, err := os.ReadFile("testdata/transcript/agent-95fbc0499.json")
 		if err != nil {
 			transcriptGoldenErr = err
 			return
@@ -992,12 +992,9 @@ func TestLoopDeclarationIsInsertedBeforeAPendingCustomMessage(t *testing.T) {
 
 // agent-loop.test.ts "action:end receives finalized turn context and stops
 // before queue polling": the context declares no tools, so the loop announces
-// the loadout with a system message ahead of the prompt. The golden predates
-// the hook's rename (it was captured through shouldStopAfterTurn, which upstream
-// 466db0fec replaced with finishTurn's end action); the observable sequence is
-// the same, since the hook emits no event and stops before the queue polls.
+// the loadout with a system message ahead of the prompt.
 func TestLoopFinishTurnEndAnnouncesTheLoadoutFirst(t *testing.T) {
-	want := golden(t, "loopShouldStopAfterTurn")
+	want := golden(t, "loopFinishTurnEnd")
 	var executed []string
 	tool := echoValueTool(func(value string) AgentToolResult {
 		executed = append(executed, value)

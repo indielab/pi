@@ -2,18 +2,26 @@
 // prompts and tool loadouts — the oracle behind agent/transcript_test.go.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> agent-16292398a.json 16292398a
+//   e.g. ... capture.mts <dir> agent-95fbc0499.json 95fbc0499
 //
-// <extraction> holds packages/agent and packages/ai at <sha>
-// (`git archive <sha> packages/agent packages/ai` from the upstream clone), a
-// node_modules resolving their dependencies (the npm build's), and
-// packages/agent/node_modules/@earendil-works/pi-ai resolving to
-// packages/ai/src. The npm build 0.85.1 predates upstream 9e05370b2, so these
-// are src captures: re-verify them against the first build that ships it (the
-// BUILD wins). packages/agent/src is unchanged between 9e05370b2 and
-// 16292398a, so every scenario captures the same bytes at either sha; the
-// pending-replacement scenario e4c75a732 added went away with `replace` itself
-// (upstream 16292398a).
+// <extraction> is either
+//   - a src extraction: packages/agent and packages/ai at <sha>
+//     (`git archive <sha> packages/agent packages/ai` from the upstream clone), a
+//     node_modules resolving their dependencies (the npm build's), and
+//     packages/agent/node_modules/@earendil-works/pi-ai resolving to
+//     packages/ai/src; or
+//   - an npm build (~/.cache/pi-npm/<version>), whose pi-agent-core is the one
+//     pi-coding-agent depends on.
+//
+// agent-95fbc0499.json was captured 2026-09-22 from a src extraction at
+// 95fbc0499, then re-captured from the npm build 0.87.0 (v0.87.0 = 16787ad5b,
+// the first build that ships 9e05370b2 and 466db0fec): byte-identical but for
+// "sha". packages/agent/src is unchanged between 466db0fec and 95fbc0499, and
+// the only packages/ai/src change in v0.87.0..95fbc0499 (1b6ddca87,
+// openai-completions) is not on these paths. 466db0fec replaced
+// shouldStopAfterTurn with finishTurn, so the two scenarios that stopped a run
+// through that hook now return { action: "end" } from finishTurn, as the
+// renamed upstream tests do.
 //
 // Each scenario is the fixture of a packages/agent/test case at the sha
 // (agent.test.ts, agent-loop.test.ts) or a direct probe of agent-loop.ts's
@@ -33,9 +41,18 @@ const NOW = 1700000000000;
 Date.now = () => NOW;
 
 const url = (file: string) => pathToFileURL(path.join(extraction, file)).href;
-const { Agent } = await import(url("packages/agent/src/agent.ts"));
-const { agentLoop, agentLoopContinue } = await import(url("packages/agent/src/agent-loop.ts"));
-const { EventStream, getCurrentSystemMessage, toToolDeclaration } = await import(url("packages/ai/src/index.ts"));
+const fromSrc = fs.existsSync(path.join(extraction, "packages/agent/src/agent.ts"));
+const buildCore = "node_modules/@earendil-works/pi-coding-agent/node_modules/@earendil-works";
+const buildAI = fs.existsSync(path.join(extraction, buildCore, "pi-ai"))
+	? `${buildCore}/pi-ai`
+	: "node_modules/@earendil-works/pi-ai";
+const { Agent } = await import(url(fromSrc ? "packages/agent/src/agent.ts" : `${buildCore}/pi-agent-core/dist/agent.js`));
+const { agentLoop, agentLoopContinue } = await import(
+	url(fromSrc ? "packages/agent/src/agent-loop.ts" : `${buildCore}/pi-agent-core/dist/agent-loop.js`)
+);
+const { EventStream, getCurrentSystemMessage, toToolDeclaration } = await import(
+	url(fromSrc ? "packages/ai/src/index.ts" : `${buildAI}/dist/index.js`)
+);
 const { Type } = await import(url("node_modules/typebox/build/index.mjs"));
 
 class MockAssistantStream extends EventStream<any, any> {
@@ -406,7 +423,7 @@ const out: Record<string, unknown> = { sha, now: NOW };
 	};
 }
 
-// agent.test.ts "forwards shouldStopAfterTurn through AgentOptions"
+// agent.test.ts "forwards finishTurn through AgentOptions with the active abort signal"
 {
 	const tool = {
 		name: "noop",
@@ -416,12 +433,14 @@ const out: Record<string, unknown> = { sha, now: NOW };
 		execute: async () => ({ content: [{ type: "text", text: "tool complete" }], details: {} }),
 	};
 	let requestCount = 0;
+	let sawAbortSignal = false;
 	let callbackContextRoles: string[] = [];
 	const agent = new Agent({
 		initialState: { tools: [tool] },
-		shouldStopAfterTurn: (context: any) => {
+		finishTurn: (context: any, signal: any) => {
+			sawAbortSignal = signal instanceof AbortSignal;
 			callbackContextRoles = context.context.messages.map((message: any) => message.role);
-			return true;
+			return { action: "end" };
 		},
 		streamFn: () => {
 			requestCount++;
@@ -429,7 +448,7 @@ const out: Record<string, unknown> = { sha, now: NOW };
 		},
 	});
 	await agent.prompt("start");
-	out.agentShouldStopAfterTurn = { requestCount, callbackContextRoles };
+	out.agentFinishTurnEnd = { requestCount, sawAbortSignal, callbackContextRoles };
 }
 
 // The prompt a patch message changes is what state.systemPrompt reports.
@@ -657,7 +676,7 @@ const out: Record<string, unknown> = { sha, now: NOW };
 	out.loopDeclarationBeforeCustomMessage = { requests, events, roles: roles(messages) };
 }
 
-// agent-loop.test.ts "should stop after the current turn when shouldStopAfterTurn returns true"
+// agent-loop.test.ts "action:end receives finalized turn context and stops before queue polling"
 {
 	const executed: string[] = [];
 	const tool = {
@@ -686,10 +705,10 @@ const out: Record<string, unknown> = { sha, now: NOW };
 				followUpPolls++;
 				return [user("follow up should stay queued")];
 			},
-			shouldStopAfterTurn: async ({ toolResults, context }: any) => {
+			finishTurn: async ({ toolResults, context }: any) => {
 				callbackToolResultIds = toolResults.map((toolResult: any) => toolResult.toolCallId);
 				callbackContextRoles = context.messages.map((contextMessage: any) => contextMessage.role);
-				return true;
+				return { action: "end" };
 			},
 		},
 		undefined,
@@ -699,7 +718,7 @@ const out: Record<string, unknown> = { sha, now: NOW };
 		},
 	);
 	const { events, messages } = await drain(stream);
-	out.loopShouldStopAfterTurn = {
+	out.loopFinishTurnEnd = {
 		llmCalls,
 		executed,
 		steeringPolls,
