@@ -265,7 +265,7 @@ func detectSupportedImageMimeType(buf []byte) string {
 		}
 		return ""
 	}
-	if startsWithAscii(buf, 0, "GIF") {
+	if startsWithAscii(buf, 0, "GIF87a") || startsWithAscii(buf, 0, "GIF89a") {
 		return "image/gif"
 	}
 	if startsWithAscii(buf, 0, "RIFF") && startsWithAscii(buf, 8, "WEBP") {

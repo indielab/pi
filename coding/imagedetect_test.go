@@ -170,8 +170,10 @@ func TestDetectMimeCMYKJPEGRejected(t *testing.T) {
 }
 
 func TestDetectMimeGIFWebp(t *testing.T) {
-	if got := detectSupportedImageMimeType([]byte("GIF89a")); got != "image/gif" {
-		t.Fatalf("expected image/gif, got %q", got)
+	for _, sig := range []string{"GIF87a", "GIF89a"} {
+		if got := detectSupportedImageMimeType([]byte(sig)); got != "image/gif" {
+			t.Fatalf("%s: expected image/gif, got %q", sig, got)
+		}
 	}
 	webp := append([]byte("RIFF\x00\x00\x00\x00"), []byte("WEBP")...)
 	if got := detectSupportedImageMimeType(webp); got != "image/webp" {
@@ -228,5 +230,28 @@ func TestReadCMYKMislabeledFallsBackToText(t *testing.T) {
 	}
 	if strings.Contains(resultText(r), "Read image file") {
 		t.Fatalf("CMYK JPEG should not be sent as image: %q", resultText(r))
+	}
+}
+
+// A text file that merely begins with "GIF" is text, not an image: pi requires
+// the complete GIF87a/GIF89a signature (upstream 47a18e37b, issue #9755).
+func TestDetectMimeGIFPrefixTextIsNotImage(t *testing.T) {
+	for _, s := range []string{"GIF", "GIFs are fun\n", "GIF88a", "GIF89"} {
+		if got := detectSupportedImageMimeType([]byte(s)); got != "" {
+			t.Fatalf("%q: expected no image type, got %q", s, got)
+		}
+	}
+}
+
+// End to end: the read tool returns such a file as text.
+func TestReadGIFPrefixedTextFile(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "notes.txt"), []byte("GIF notes\nline two\n"), 0o644)
+	r, err := run(t, readTool(dir), map[string]any{"path": "notes.txt"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := resultText(r); !strings.Contains(got, "GIF notes") || strings.Contains(got, "Read image file") {
+		t.Fatalf("GIF-prefixed text should read as text: %q", got)
 	}
 }
