@@ -189,8 +189,10 @@ func TestOpenAICompletionsCompatPerKeyResolution(t *testing.T) {
 		{"mistyped key leaves valid siblings intact",
 			`{"supportsStore":"yes","maxTokensField":"max_tokens","supportsDeveloperRole":false}`,
 			"system", "max_tokens", true, true, false, false},
+		// supportsStrictMode is left out: its default is false since 890f92088 and
+		// pi's `!== false` keeps a mistyped "yes" strict — docs/UPSTREAM.md D3.
 		{"mistyped bool falls back to its default, not false",
-			`{"supportsDeveloperRole":"yes","supportsStore":"yes","supportsUsageInStreaming":"yes","supportsStrictMode":"yes"}`,
+			`{"supportsDeveloperRole":"yes","supportsStore":"yes","supportsUsageInStreaming":"yes"}`,
 			"developer", "max_completion_tokens", true, true, false, false},
 		{"mistyped string falls back to the detected default, not empty",
 			`{"maxTokensField":false,"cacheControlFormat":7}`,
