@@ -14,6 +14,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // openaiResponsesMinOutputTokens is the floor OpenAI Responses enforces on
@@ -1250,10 +1251,10 @@ func responsesInput(model *ai.Model, req ai.TranscriptContext) ([]any, error) {
 							"input": sanitizeSurrogates(input),
 						}
 					} else {
-						args, _ := json.Marshal(orEmptyArguments(v))
+						args, _ := jstext.Stringify(orEmptyArguments(v))
 						item = map[string]any{
 							"type": "function_call", "call_id": callID, "name": v.Name,
-							"arguments": string(args),
+							"arguments": args,
 						}
 					}
 					if v.Namespace != "" && isSameModel {

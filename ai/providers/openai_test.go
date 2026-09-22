@@ -1966,3 +1966,30 @@ func TestOpenAIStreamSimpleMissingKeySurfacesOnTheStream(t *testing.T) {
 		}
 	}
 }
+
+// A replayed tool call's arguments string is JSON.stringify's text
+// (openai-completions.ts convertMessages): &, < and > stay as themselves, where
+// json.Marshal would put \u0026-style escapes into the model's history.
+func TestOpenAIReplayedArgumentsAreJSONStringify(t *testing.T) {
+	model := openAIModel(nil)
+	req := ai.Context{Messages: []ai.Message{
+		ai.NewUserText("hi", 1),
+		ai.AssistantMessage{
+			Content: ai.ContentList{ai.ToolCall{ID: "call_1", Name: "bash", Arguments: map[string]any{"command": "make && ./run <in >out"}}},
+			Model:   model.ID, Provider: model.Provider, Api: model.Api, StopReason: ai.StopToolUse, Timestamp: 2,
+		},
+	}}
+	body := mustBuildOpenAIParams(t, model, req, &OpenAIOptions{})
+	msgs, _ := body["messages"].([]map[string]any)
+	for _, m := range msgs {
+		calls, _ := m["tool_calls"].([]map[string]any)
+		for _, c := range calls {
+			fn, _ := c["function"].(map[string]any)
+			if got, want := fn["arguments"], `{"command":"make && ./run <in >out"}`; got != want {
+				t.Fatalf("arguments = %v, want %s", got, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("no replayed tool call in %v", body["messages"])
+}

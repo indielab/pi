@@ -745,10 +745,10 @@ func buildOpenAIParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIOp
 						})
 						break
 					}
-					args, _ := json.Marshal(v.OrderedArguments())
+					args, _ := jstext.Stringify(v.OrderedArguments())
 					toolCalls = append(toolCalls, map[string]any{
 						"id": v.ID, "type": "function",
-						"function": map[string]any{"name": v.Name, "arguments": string(args)},
+						"function": map[string]any{"name": v.Name, "arguments": args},
 					})
 				}
 			}

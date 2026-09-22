@@ -4,7 +4,6 @@ package providers
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -14,6 +13,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 const (
@@ -509,8 +509,8 @@ func (r *FauxProviderRegistration) streamWithDeltas(ctx context.Context, stream 
 		case ai.ToolCall:
 			partial.Content = append(partial.Content, ai.ToolCall{ID: b.ID, Name: b.Name, Arguments: map[string]any{}})
 			stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: index, Partial: partial.Clone()})
-			argsJSON, _ := json.Marshal(b.OrderedArguments())
-			for _, chunk := range splitByTokenSize(string(argsJSON), r.minTokenSize, r.maxTokenSize) {
+			argsJSON, _ := jstext.Stringify(b.OrderedArguments())
+			for _, chunk := range splitByTokenSize(argsJSON, r.minTokenSize, r.maxTokenSize) {
 				r.scheduleChunk(chunk)
 				if abortNow() {
 					return
@@ -690,8 +690,8 @@ func assistantContentToText(content ai.ContentList) string {
 		case ai.ThinkingContent:
 			parts = append(parts, v.Thinking)
 		case ai.ToolCall:
-			args, _ := json.Marshal(v.OrderedArguments())
-			parts = append(parts, fmt.Sprintf("%s:%s", v.Name, string(args)))
+			args, _ := jstext.Stringify(v.OrderedArguments())
+			parts = append(parts, fmt.Sprintf("%s:%s", v.Name, args))
 		}
 	}
 	return strings.Join(parts, "\n")
@@ -703,12 +703,12 @@ func messageToText(m ai.Message) string {
 		// line per addition, empty parts dropped (faux.ts, upstream 9e05370b2).
 		parts := []string{ai.GetSystemMessageText(sm)}
 		for _, tool := range sm.ToolsRemoved {
-			tj, _ := json.Marshal(tool)
-			parts = append(parts, "tool-:"+string(tj))
+			tj, _ := jstext.Stringify(tool)
+			parts = append(parts, "tool-:"+tj)
 		}
 		for _, tool := range sm.ToolsAdded {
-			tj, _ := json.Marshal(tool)
-			parts = append(parts, "tool+:"+string(tj))
+			tj, _ := jstext.Stringify(tool)
+			parts = append(parts, "tool+:"+tj)
 		}
 		nonEmpty := parts[:0]
 		for _, part := range parts {

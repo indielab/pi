@@ -2,7 +2,6 @@ package coding
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -852,8 +851,8 @@ func serializeAssistant(a *ai.AssistantMessage) []string {
 			// wrote them; Go map iteration is unordered, so follow the recorded
 			// order and fall back to sorted keys when there is none.
 			for _, f := range orderedArguments(b) {
-				v, _ := json.Marshal(f.Value)
-				entries = append(entries, f.Key+"="+string(v))
+				v, _ := jstext.Stringify(f.Value)
+				entries = append(entries, f.Key+"="+v)
 			}
 			toolCalls = append(toolCalls, b.Name+"("+strings.Join(entries, ", ")+")")
 		}

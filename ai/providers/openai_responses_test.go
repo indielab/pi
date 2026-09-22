@@ -2840,3 +2840,28 @@ func TestCopilotGPTModelsUseResponsesApi(t *testing.T) {
 		t.Fatal("no github-copilot gpt- model in the catalog; the precondition is gone")
 	}
 }
+
+// Responses replays function_call arguments as JSON.stringify's text
+// (openai-responses-shared.ts): &, < and > stay as themselves.
+func TestResponsesReplayedArgumentsAreJSONStringify(t *testing.T) {
+	model := reasoningModel()
+	req := ai.Context{Messages: []ai.Message{
+		ai.NewUserText("hi", 1),
+		ai.AssistantMessage{
+			Content: ai.ContentList{ai.ToolCall{ID: "call_1|fc_1", Name: "bash", Arguments: map[string]any{"command": "make && ./run <in >out"}}},
+			Model:   model.ID, Provider: model.Provider, Api: model.Api, StopReason: ai.StopToolUse, Timestamp: 2,
+		},
+	}}
+	body := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{})
+	input, _ := body["input"].([]any)
+	for _, item := range input {
+		m, _ := item.(map[string]any)
+		if m["type"] == "function_call" {
+			if got, want := m["arguments"], `{"command":"make && ./run <in >out"}`; got != want {
+				t.Fatalf("arguments = %v, want %s", got, want)
+			}
+			return
+		}
+	}
+	t.Fatalf("no function_call item in %v", body["input"])
+}

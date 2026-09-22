@@ -574,8 +574,8 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 						}
 						materialize()
 						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: idx, Partial: output.Clone()})
-						argsJSON, _ := json.Marshal(args)
-						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: string(argsJSON), Partial: output.Clone()})
+						argsJSON, _ := jstext.Stringify(args)
+						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: argsJSON, Partial: output.Clone()})
 						tc := b.toContent().(ai.ToolCall)
 						if part.ThoughtSignature != "" {
 							tc.ThoughtSignature = part.ThoughtSignature

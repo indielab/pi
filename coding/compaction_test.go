@@ -686,3 +686,19 @@ func TestSerializeAssistantKeepsArgumentOrder(t *testing.T) {
 		t.Fatalf("serialized tool call lost argument order:\n got %s\nwant %s", got, want)
 	}
 }
+
+// pi serializes tool-call arguments with JSON.stringify, which writes &, < and
+// > as themselves; the summary prompt must not carry json.Marshal's \u0026.
+func TestSerializeAssistantWritesArgumentsAsJSONStringify(t *testing.T) {
+	raw := `{"role":"assistant","content":[{"type":"toolCall","id":"call_1","name":"bash",` +
+		`"arguments":{"command":"make && ./run <in >out"}}],` +
+		`"api":"openai-completions","provider":"openai","model":"m","stopReason":"toolUse","timestamp":1}`
+	msg, err := ai.UnmarshalMessage([]byte(raw))
+	if err != nil {
+		t.Fatalf("UnmarshalMessage: %v", err)
+	}
+	got := serializeConversation([]ai.Message{msg})
+	if want := `bash(command="make && ./run <in >out")`; !strings.Contains(got, want) {
+		t.Fatalf("serialized tool call:\n got %s\nwant %s", got, want)
+	}
+}
