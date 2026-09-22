@@ -5,10 +5,11 @@
 // arrows point that way.
 //
 // A change is an Op: a JSON tuple for replacing, setting, deleting, updating a
-// string, or splicing an array. Producers use a tracker; replicas apply the
-// batches it flushes. The first flush is one Replace carrying the complete
-// value; each later flush is the ops that transform the previously published
-// value into the current one, or nothing when it has not changed.
+// string, splicing an array, or permuting an array. Producers use a tracker;
+// replicas apply the batches it flushes. The first flush is one Replace
+// carrying the complete value; each later flush is the ops that transform the
+// previously published value into the current one, or nothing when it has not
+// changed.
 //
 // # Operation vocabulary
 //
@@ -24,9 +25,10 @@
 //	["a", path, text]                   Append to a string.
 //	["t", path, count]                  Remove UTF-16 code units from a string's front.
 //	["p", path, index, remove, items]   Splice an array.
+//	["m", path, permutation]            Reorder an array so new[i] = old[permutation[i]].
 //
 // Except for "r", every decoded op carries its complete path. "s", "d", "a"
-// and "t" cannot address the root; "p" may address a root array.
+// and "t" cannot address the root; "p" and "m" may address a root array.
 //
 // Wire ops (WireOp) add path interning and omission, and nothing else:
 //
@@ -37,6 +39,7 @@
 //	["a", pathRef, text]   ["a", text]
 //	["t", pathRef, count]  ["t", count]
 //	["p", pathRef, index, remove, items]   ["p", index, remove, items]
+//	["m", pathRef, permutation]            ["m", permutation]
 //
 // The vocabulary is deliberately not RFC 6902. String append and front-truncate
 // let a rolling output window ship as two small ops instead of a whole-value

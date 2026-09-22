@@ -103,10 +103,12 @@ func opPath(op Op) Path {
 		return op.Path
 	case Splice:
 		return op.Path
+	case Permute:
+		return op.Path
 	}
 	// Op is sealed; only a nil element reaches here, and a batch with a hole
 	// is a bug in the producer, not bad input.
-	panic(fmt.Errorf("delta: cannot encode %T (a batch is a []Op of Replace, Set, Delete, Append, Truncate or Splice with no nil element)", op))
+	panic(fmt.Errorf("delta: cannot encode %T (a batch is a []Op of Replace, Set, Delete, Append, Truncate, Splice or Permute with no nil element)", op))
 }
 
 // toWire is op with its path replaced by ref: an inline path, an id, or nil
@@ -123,6 +125,8 @@ func toWire(op Op, ref PathRef) WireOp {
 		return WireTruncate{Ref: ref, Count: op.Count}
 	case Splice:
 		return WireSplice{Ref: ref, Index: op.Index, Remove: op.Remove, Items: op.Items}
+	case Permute:
+		return WirePermute{Ref: ref, Permutation: op.Permutation}
 	}
 	panic(fmt.Errorf("delta: cannot encode %T", op)) // unreachable: opPath ran first
 }
@@ -191,8 +195,8 @@ func (d *Decoder) Decode(wire []WireOp) ([]Op, error) {
 		}
 
 		decoded := fromWire(op, path)
-		if _, ok := decoded.(Splice); !ok && len(path) == 0 {
-			return nil, fmt.Errorf("delta: wire[%d]: %w (only \"r\" replaces the root, and only \"p\" may splice a root array)", i, &PathError{Ref: path})
+		if !rootable(decoded) && len(path) == 0 {
+			return nil, fmt.Errorf("delta: wire[%d]: %w (only \"r\" replaces the root, and only \"p\" and \"m\" may splice or permute a root array)", i, &PathError{Ref: path})
 		}
 		out = append(out, decoded)
 	}
@@ -213,6 +217,8 @@ func wireRef(op WireOp) PathRef {
 		return op.Ref
 	case WireSplice:
 		return op.Ref
+	case WirePermute:
+		return op.Ref
 	}
 	panic(fmt.Errorf("delta: cannot decode %T", op)) // unreachable: WireOp is sealed
 }
@@ -230,6 +236,18 @@ func fromWire(op WireOp, path Path) Op {
 		return Truncate{Path: path, Count: op.Count}
 	case WireSplice:
 		return Splice{Path: path, Index: op.Index, Remove: op.Remove, Items: op.Items}
+	case WirePermute:
+		return Permute{Path: path, Permutation: op.Permutation}
 	}
 	panic(fmt.Errorf("delta: cannot decode %T", op)) // unreachable: wireRef ran first
+}
+
+// rootable reports whether op may address the root with a path: only a
+// Splice or a Permute can, because a tracked value can itself be an array.
+func rootable(op Op) bool {
+	switch op.(type) {
+	case Splice, Permute:
+		return true
+	}
+	return false
 }

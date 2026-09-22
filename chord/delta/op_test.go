@@ -5,6 +5,7 @@ import (
 	"errors"
 	"math"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 )
@@ -36,6 +37,8 @@ func TestParseOpAcceptsDecodedOpsAndRejectsWireForms(t *testing.T) {
 		{`["a", ["a"], "x"]`, Append{Path: Path{Key("a")}, Text: "x"}},
 		{`["t", ["a"], 2]`, Truncate{Path: Path{Key("a")}, Count: 2}},
 		{`["p", ["a"], 0, 0, []]`, Splice{Path: Path{Key("a")}, Index: 0, Remove: 0, Items: []any{}}},
+		{`["m", ["a"], [1, 0]]`, Permute{Path: Path{Key("a")}, Permutation: []int{1, 0}}},
+		{`["m", [], []]`, Permute{Path: Path{}, Permutation: []int{}}},
 	}
 	for _, tc := range decoded {
 		got, err := ParseOp(tree(t, tc.literal))
@@ -57,6 +60,8 @@ func TestParseOpAcceptsDecodedOpsAndRejectsWireForms(t *testing.T) {
 		{`["a", "x"]`, WireAppend{Text: "x"}},
 		{`["t", 2]`, WireTruncate{Count: 2}},
 		{`["p", 0, 0, []]`, WireSplice{Items: []any{}}},
+		{`["m", [1, 0]]`, WirePermute{Permutation: []int{1, 0}}},
+		{`["m", 0, [1, 0]]`, WirePermute{Ref: PathID(0), Permutation: []int{1, 0}}},
 		{`["#", 0, ["a"]]`, Define{ID: 0, Path: Path{Key("a")}}},
 		{`["s", 0, 1]`, WireSet{Ref: PathID(0), Value: float64(1)}},
 	}
@@ -280,12 +285,13 @@ func TestValidatorsRejectReservedInlinePathsOnEveryVerb(t *testing.T) {
 	for _, literal := range []string{
 		`["s", ["__proto__", "isAdmin"], true]`, `["d", ["constructor"]]`, `["a", ["prototype"], "x"]`,
 		`["t", ["__proto__"], 1]`, `["p", ["constructor"], 0, 0, []]`, `["p", ["a", "__proto__"], 0, 0, []]`,
+		`["m", ["prototype"], [0]]`,
 	} {
 		if _, err := ParseWireOp(tree(t, literal)); !errors.As(err, &unsafe) {
 			t.Errorf("ParseWireOp(%s): got %v, want *UnsafePathError", literal, err)
 		}
 	}
-	for _, literal := range []string{`["p", ["__proto__"], 0, 0, []]`, `["p", ["xs", "constructor"], 0, 0, []]`} {
+	for _, literal := range []string{`["p", ["__proto__"], 0, 0, []]`, `["p", ["xs", "constructor"], 0, 0, []]`, `["m", ["xs", "__proto__"], [0]]`} {
 		if _, err := ParseOp(tree(t, literal)); !errors.As(err, &unsafe) {
 			t.Errorf("ParseOp(%s): got %v, want *UnsafePathError", literal, err)
 		}
@@ -444,6 +450,10 @@ func TestOpJSONGoldens(t *testing.T) {
 		{WireTruncate{Count: 5}, `["t",5]`},
 		{WireSplice{Index: 1, Remove: 2, Items: []any{nil}}, `["p",1,2,[null]]`},
 		{WireSplice{Ref: PathID(1), Index: 0, Remove: 0, Items: nil}, `["p",1,0,0,[]]`},
+		{Permute{Path: Path{Key("values")}, Permutation: []int{2, 0, 1}}, `["m",["values"],[2,0,1]]`},
+		{Permute{}, `["m",[],[]]`},
+		{WirePermute{Permutation: []int{1, 2, 0}}, `["m",[1,2,0]]`},
+		{WirePermute{Ref: PathID(0), Permutation: []int{0, 2, 1}}, `["m",0,[0,2,1]]`},
 	}
 	for _, tc := range cases {
 		got, err := tc.op.MarshalJSON()
@@ -566,5 +576,71 @@ func TestParseOpAcceptsOwnTypes(t *testing.T) {
 	var unsafe *UnsafePathError
 	if _, err := ParseOp([]any{"s", Path{Key("__proto__")}, 1}); !errors.As(err, &unsafe) {
 		t.Errorf("typed reserved path through ParseOp: got %v, want *UnsafePathError", err)
+	}
+}
+
+// state-diff.test.ts (upstream 10d1ad621) "validates and encodes permutations",
+// the validator half, widened to every shape assertPermutation and the "m"
+// arity checks refuse. Each rejection is the message pi's assertValidOp or
+// assertValidWireOp threw for the same tuple under node at 10d1ad621.
+func TestParsePermute(t *testing.T) {
+	cases := []struct {
+		literal, pi string
+		wire        bool
+	}{
+		{`["m", ["values"], [0, 0]]`, "not a bijection", false},
+		{`["m", ["values"], [0, 2]]`, "not a bijection", false},
+		{`["m", ["values"], [-1, 0]]`, "not a bijection", false},
+		{`["m", ["values"], [0.5, 0]]`, "not a bijection", false},
+		{`["m", ["values"], ["0"]]`, "not a bijection", false},
+		{`["m", ["values"], 3]`, "not an array", false},
+		{`["m", ["values"]]`, "expects", false},
+		{`["m", ["values"], [0], 1]`, "expects", false},
+		{`["m", "values", [0]]`, "path", false},
+		{`["m", [1, 1]]`, "not a bijection", true},
+		{`["m", 0, "x"]`, "not an array", true},
+		{`["m"]`, "expects", true},
+		{`["m", 0, [0], 1]`, "expects", true},
+		{`["m", -1, [0]]`, "path id", true},
+	}
+	for _, tc := range cases {
+		parse := func(v any) error { _, err := ParseOp(v); return err }
+		if tc.wire {
+			parse = func(v any) error { _, err := ParseWireOp(v); return err }
+		}
+		err := parse(tree(t, tc.literal))
+		if !errors.Is(err, ErrInvalidOp) || !strings.Contains(err.Error(), tc.pi) {
+			t.Errorf("%s: got %v, want ErrInvalidOp mentioning %q", tc.literal, err, tc.pi)
+		}
+	}
+	// pi accepts these: the root, the empty permutation, both wire forms.
+	for _, literal := range []string{`["m", [], [1, 0]]`, `["m", ["values"], []]`} {
+		if _, err := ParseOp(tree(t, literal)); err != nil {
+			t.Errorf("ParseOp(%s): %v", literal, err)
+		}
+	}
+	for _, literal := range []string{`["m", [1, 0]]`, `["m", 0, [1, 0]]`, `["m", [], [1, 0]]`} {
+		if _, err := ParseWireOp(tree(t, literal)); err != nil {
+			t.Errorf("ParseWireOp(%s): %v", literal, err)
+		}
+	}
+
+	// The typed values check the same constraint without a parse.
+	for _, op := range []tuple{
+		Permute{Path: Path{Key("values")}, Permutation: []int{0, 0}},
+		Permute{Permutation: []int{1}},
+		WirePermute{Permutation: []int{-1, 0}},
+		WirePermute{Ref: PathID(0), Permutation: []int{2, 0}},
+	} {
+		if err := op.Validate(); !errors.Is(err, ErrInvalidOp) || !strings.Contains(err.Error(), "not a bijection") {
+			t.Errorf("%#v.Validate() = %v, want a bijection error", op, err)
+		}
+	}
+	var unsafe *UnsafePathError
+	if err := (Permute{Path: Path{Key("__proto__")}, Permutation: []int{0}}).Validate(); !errors.As(err, &unsafe) {
+		t.Errorf("reserved Permute path: got %v, want *UnsafePathError", err)
+	}
+	if err := (WirePermute{Ref: Path{Key("constructor")}}).Validate(); !errors.As(err, &unsafe) {
+		t.Errorf("reserved WirePermute path: got %v, want *UnsafePathError", err)
 	}
 }

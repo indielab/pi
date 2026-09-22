@@ -29,18 +29,19 @@ type tuple interface {
 //	Append    ["a", path, text]                     append to a string
 //	Truncate  ["t", path, count]                    drop UTF-16 code units from a string's front
 //	Splice    ["p", path, index, remove, items]     splice an array
+//	Permute   ["m", path, permutation]              reorder an array: new[i] = old[permutation[i]]
 //
 // Replace is the ONLY op that replaces a whole value. Set, Delete, Append and
-// Truncate cannot target the root: Validate forbids the empty path. Splice may,
-// and only because a tracked value can itself be an array — a Splice that
-// replaces its entire target is normalised to Replace or Set at flush time, so
-// a root Splice is always a partial modification.
+// Truncate cannot target the root: Validate forbids the empty path. Splice and
+// Permute may, and only because a tracked value can itself be an array — a
+// Splice that replaces its entire target is normalised to Replace or Set at
+// flush time, so a root Splice is always a partial modification.
 //
 // Op knows nothing about the path dictionary. Interning, id references and
 // omitted paths live in WireOp and exist only between encode and decode.
 type Op interface {
 	tuple
-	// op seals the set to the six decoded verbs.
+	// op seals the set to the seven decoded verbs.
 	op()
 }
 
@@ -56,7 +57,7 @@ type Op interface {
 // two-element ["s", value] would be read with the value as its path.
 type WireOp interface {
 	tuple
-	// wireOp seals the set to Replace, Define and the five Wire* verbs.
+	// wireOp seals the set to Replace, Define and the six Wire* verbs.
 	wireOp()
 }
 
@@ -104,12 +105,22 @@ type Splice struct {
 	Items         []any
 }
 
+// Permute is ["m", path, permutation]: reorder an array in place, so that
+// new[i] = old[Permutation[i]]. Permutation must be a bijection on the
+// array's indices, and the array must have exactly its length. Path may be
+// empty: the root itself can be an array.
+type Permute struct {
+	Path        Path
+	Permutation []int
+}
+
 func (Replace) op()  {}
 func (Set) op()      {}
 func (Delete) op()   {}
 func (Append) op()   {}
 func (Truncate) op() {}
 func (Splice) op()   {}
+func (Permute) op()  {}
 
 // Validate always succeeds: a replacement has no path and its payload is not
 // inspected.
@@ -141,6 +152,15 @@ func (op Splice) Validate() error {
 	return spliceBounds(op.Index, op.Remove)
 }
 
+// Validate rejects an unsafe segment and a permutation that is not a
+// bijection. The root path is legal here.
+func (op Permute) Validate() error {
+	if err := op.Path.Validate(); err != nil {
+		return err
+	}
+	return bijection(op.Permutation)
+}
+
 func (op Replace) MarshalJSON() ([]byte, error) { return marshalJSON([]any{"r", op.Value}) }
 func (op Set) MarshalJSON() ([]byte, error)     { return marshalJSON([]any{"s", op.Path, op.Value}) }
 func (op Delete) MarshalJSON() ([]byte, error)  { return marshalJSON([]any{"d", op.Path}) }
@@ -150,6 +170,9 @@ func (op Truncate) MarshalJSON() ([]byte, error) {
 }
 func (op Splice) MarshalJSON() ([]byte, error) {
 	return marshalJSON([]any{"p", op.Path, op.Index, op.Remove, nonNilItems(op.Items)})
+}
+func (op Permute) MarshalJSON() ([]byte, error) {
+	return marshalJSON([]any{"m", op.Path, nonNilPermutation(op.Permutation)})
 }
 
 // ─── Wire vocabulary ─────────────────────────────────────────────────────────
@@ -190,6 +213,13 @@ type WireSplice struct {
 	Items         []any
 }
 
+// WirePermute is ["m", pathRef, permutation], or ["m", permutation] when Ref
+// is nil.
+type WirePermute struct {
+	Ref         PathRef
+	Permutation []int
+}
+
 func (Replace) wireOp()      {}
 func (Define) wireOp()       {}
 func (WireSet) wireOp()      {}
@@ -197,6 +227,7 @@ func (WireDelete) wireOp()   {}
 func (WireAppend) wireOp()   {}
 func (WireTruncate) wireOp() {}
 func (WireSplice) wireOp()   {}
+func (WirePermute) wireOp()  {}
 
 // Validate rejects a bad id and an unsafe path.
 func (op Define) Validate() error {
@@ -232,6 +263,15 @@ func (op WireSplice) Validate() error {
 	return spliceBounds(op.Index, op.Remove)
 }
 
+// Validate rejects an unsafe path, a bad id, and a permutation that is not a
+// bijection.
+func (op WirePermute) Validate() error {
+	if err := validateRef(op.Ref); err != nil {
+		return err
+	}
+	return bijection(op.Permutation)
+}
+
 func (op Define) MarshalJSON() ([]byte, error) { return marshalJSON([]any{"#", op.ID, op.Path}) }
 func (op WireSet) MarshalJSON() ([]byte, error) {
 	return marshalJSON(withRef("s", op.Ref, op.Value))
@@ -245,6 +285,9 @@ func (op WireTruncate) MarshalJSON() ([]byte, error) {
 }
 func (op WireSplice) MarshalJSON() ([]byte, error) {
 	return marshalJSON(withRef("p", op.Ref, op.Index, op.Remove, nonNilItems(op.Items)))
+}
+func (op WirePermute) MarshalJSON() ([]byte, error) {
+	return marshalJSON(withRef("m", op.Ref, nonNilPermutation(op.Permutation)))
 }
 
 // withRef builds the tuple, omitting the ref slot for the short form.
@@ -261,6 +304,14 @@ func withRef(verb string, ref PathRef, rest ...any) []any {
 func nonNilItems(v []any) []any {
 	if v == nil {
 		return []any{}
+	}
+	return v
+}
+
+// nonNilPermutation never writes null: a nil slice is the empty permutation.
+func nonNilPermutation(v []int) []int {
+	if v == nil {
+		return []int{}
 	}
 	return v
 }
@@ -364,9 +415,22 @@ func ParseOp(v any) (Op, error) {
 			return nil, err
 		}
 		op = Splice{Path: path, Index: index, Remove: remove, Items: payload}
+	case "m":
+		if err := arity(t, 3, `["m", path, permutation]`); err != nil {
+			return nil, err
+		}
+		path, err := parsePath(t[1])
+		if err != nil {
+			return nil, err
+		}
+		permutation, err := parsePermutation(t[2])
+		if err != nil {
+			return nil, err
+		}
+		op = Permute{Path: path, Permutation: permutation}
 	default:
 		// Silently skipping an unknown verb is how a newer producer's op vanishes.
-		return nil, fmt.Errorf("%w: unknown op verb %s (decoded ops are r, s, d, a, t, p; run decode first if this came from the wire)", ErrInvalidOp, describe(t[0]))
+		return nil, fmt.Errorf("%w: unknown op verb %s (decoded ops are r, s, d, a, t, p, m; run decode first if this came from the wire)", ErrInvalidOp, describe(t[0]))
 	}
 	if err := op.Validate(); err != nil {
 		return nil, err
@@ -431,6 +495,16 @@ func ParseWireOp(v any) (WireOp, error) {
 			return nil, err
 		}
 		op = WireSplice{Ref: ref, Index: index, Remove: remove, Items: payload}
+	case "m":
+		ref, rest, err := refArgs(t, 1, `["m", pathRef, permutation] or ["m", permutation]`)
+		if err != nil {
+			return nil, err
+		}
+		permutation, err := parsePermutation(rest[0])
+		if err != nil {
+			return nil, err
+		}
+		op = WirePermute{Ref: ref, Permutation: permutation}
 	case "#":
 		if err := arity(t, 3, `["#", id, path]`); err != nil {
 			return nil, err
@@ -446,7 +520,7 @@ func ParseWireOp(v any) (WireOp, error) {
 		op = Define{ID: PathID(id), Path: path}
 	default:
 		// Silently skipping an unknown verb is how a newer producer's op vanishes.
-		return nil, fmt.Errorf("%w: unknown wire op verb %s (wire ops are r, s, d, a, t, p, #)", ErrInvalidOp, describe(t[0]))
+		return nil, fmt.Errorf("%w: unknown wire op verb %s (wire ops are r, s, d, a, t, p, m, #)", ErrInvalidOp, describe(t[0]))
 	}
 	if err := op.Validate(); err != nil {
 		return nil, err
@@ -580,6 +654,40 @@ func spliceArgs(i, r, itemsArg any) (index, remove int, items []any, err error) 
 	return index, remove, items, nil
 }
 
+// parsePermutation reads an "m" permutation: an array of integers. Shape only —
+// whether it is a bijection is the op's Validate to check. An element that is
+// not an integer can be no index at all, so it is reported as upstream reports
+// it: the permutation is not a bijection.
+func parsePermutation(v any) ([]int, error) {
+	xs, ok := v.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%w: \"m\" permutation is not an array: want [index, ...] naming each index of the target array exactly once, got %s", ErrInvalidOp, describe(v))
+	}
+	out := make([]int, len(xs))
+	for i, x := range xs {
+		n, ok := integer(x)
+		if !ok {
+			return nil, fmt.Errorf("%w: \"m\" permutation is not a bijection: element %d is %s, want an integer index in [0, %d)", ErrInvalidOp, i, describe(x), len(xs))
+		}
+		out[i] = n
+	}
+	return out, nil
+}
+
+// bijection is upstream's assertPermutation: each of 0..len-1 exactly once.
+// Unchecked, a duplicate would copy one element into two slots and drop
+// another, and an index out of range would read past the array.
+func bijection(permutation []int) error {
+	seen := make([]bool, len(permutation))
+	for i, n := range permutation {
+		if n < 0 || n >= len(permutation) || seen[n] {
+			return fmt.Errorf("%w: \"m\" permutation is not a bijection: element %d is %d, want each index in [0, %d) exactly once", ErrInvalidOp, i, n, len(permutation))
+		}
+		seen[n] = true
+	}
+	return nil
+}
+
 func spliceBounds(index, remove int) error {
 	if err := nonNegative("p", "index", index); err != nil {
 		return err
@@ -597,7 +705,7 @@ func nonNegative(verb, name string, n int) error {
 // nonEmpty enforces NonEmptyPath: s, d, a and t cannot address the root.
 func nonEmpty(verb string, p Path) error {
 	if len(p) == 0 {
-		return fmt.Errorf("%w: %q path is empty; only \"r\" replaces the root (and \"p\" may splice a root array)", ErrInvalidOp, verb)
+		return fmt.Errorf("%w: %q path is empty; only \"r\" replaces the root (and \"p\" and \"m\" may splice or permute a root array)", ErrInvalidOp, verb)
 	}
 	return p.Validate()
 }

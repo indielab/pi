@@ -538,9 +538,9 @@ func TestCodecDecoderValidatesTypedValues(t *testing.T) {
 
 // Only "p" may address the root, inline, through an id, or by the short
 // form; s/d/a/t on an empty path are refused by the decoder before an
-// applier could see them. pi: PathError [] for the refusals, the "p" ops
-// decode.
-func TestCodecRootPathIsLegalOnlyForSplice(t *testing.T) {
+// applier could see them. pi: PathError [] for the refusals, the "p" and "m"
+// ops decode.
+func TestCodecRootPathIsLegalOnlyForSpliceAndPermute(t *testing.T) {
 	for _, literal := range []string{
 		`[["s", [], 1]]`,
 		`[["#", 0, []], ["s", 0, 1]]`,
@@ -557,6 +557,8 @@ func TestCodecRootPathIsLegalOnlyForSplice(t *testing.T) {
 	var dec Decoder
 	wantOps(t, decode(t, &dec, wireOps(t, `[["#", 0, []], ["p", 0, 0, 0, [1]]]`)), `[["p", [], 0, 0, [1]]]`)
 	wantOps(t, decode(t, &dec, wireOps(t, `[["p", [], 0, 0, [1]], ["p", 1, 0, [2]]]`)), `[["p", [], 0, 0, [1]], ["p", [], 1, 0, [2]]]`)
+	// pi at 10d1ad621: [["m",[],[1,0]],["m",[],[0,1]]].
+	wantOps(t, decode(t, &dec, wireOps(t, `[["m", [], [1, 0]], ["m", [0, 1]]]`)), `[["m", [], [1, 0]], ["m", [], [0, 1]]]`)
 }
 
 // An id reference sets the previous path, a definition leaves it alone, and
@@ -620,5 +622,24 @@ func TestCodecDecodeAdoptsPayloads(t *testing.T) {
 	}
 	if reflect.ValueOf(got[1].(Set).Value).Pointer() != reflect.ValueOf(value).Pointer() {
 		t.Error("set value was copied")
+	}
+}
+
+// state-diff.test.ts (upstream 10d1ad621) "validates and encodes
+// permutations", the codec half, extended past one batch: the short form on a
+// repeated path, the second-use definition and reference, and a root "m".
+// pi at 10d1ad621 encoded this batch to exactly the wire below.
+func TestCodecPermute(t *testing.T) {
+	batch := ops(t, `[["m", ["values"], [2, 0, 1]], ["m", ["values"], [1, 2, 0]], ["s", ["x"], 1], ["m", ["values"], [0, 2, 1]], ["m", [], [1, 0]]]`)
+	var enc Encoder
+	wantWire(t, enc.Encode(batch), `[["m",["values"],[2,0,1]],["m",[1,2,0]],["s",["x"],1],["#",0,["values"]],["m",0,[0,2,1]],["m",[],[1,0]]]`)
+	roundTrip(t, [][]Op{batch})
+
+	// With nothing before it, the short form resolves nothing. pi: PathError [].
+	var dec Decoder
+	_, err := dec.Decode(wireOps(t, `[["m", [1, 0]]]`))
+	var pe *PathError
+	if !errors.As(err, &pe) || refString(pe.Ref) != "[]" {
+		t.Errorf("short m with no previous path: got %v, want *PathError []", err)
 	}
 }

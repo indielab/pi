@@ -466,3 +466,70 @@ func TestApplyIsNotTransactional(t *testing.T) {
 		t.Errorf("first op rolled back: a = %v, want 2", target["a"])
 	}
 }
+
+// The "m" op (upstream 10d1ad621): new[i] = old[permutation[i]], at the root
+// or under a path, and a PathError naming the op's path when the target is
+// not an array of exactly the permutation's length. Every outcome is what pi's
+// apply returned for the same batch under node at 10d1ad621.
+func TestApplyPermute(t *testing.T) {
+	wantTree(t, applied(t, `[10, 20, 30]`, ops(t, `[["m", [], [2, 0, 1]]]`)), `[30, 10, 20]`)
+	wantTree(t, applied(t, `{"a": {"values": ["x", "y", "z"]}}`, ops(t, `[["m", ["a", "values"], [1, 2, 0]]]`)), `{"a": {"values": ["y", "z", "x"]}}`)
+	// Two permutations compose: [2,0,1] then [1,2,0] is the identity. A
+	// reorder that read from the half-written array would not be.
+	wantTree(t, applied(t, `{"values": ["a", "b", "c"]}`, ops(t, `[["m", ["values"], [2, 0, 1]], ["m", ["values"], [1, 2, 0]]]`)), `{"values": ["a", "b", "c"]}`)
+	wantTree(t, applied(t, `{"values": []}`, ops(t, `[["m", ["values"], []]]`)), `{"values": []}`)
+
+	for _, tc := range []struct{ target, batch string }{
+		{`{"values": [1, 2, 3]}`, `[["m", ["values"], [1, 0]]]`},
+		{`{"values": [1]}`, `[["m", ["values"], [1, 0]]]`},
+		{`{"values": "abc"}`, `[["m", ["values"], [0, 1, 2]]]`},
+		{`{}`, `[["m", ["values"], [0]]]`},
+	} {
+		_, err := Apply(tree(t, tc.target), ops(t, tc.batch))
+		var pe *PathError
+		if !errors.As(err, &pe) || refString(pe.Ref) != `["values"]` {
+			t.Errorf("Apply(%s, %s): got %v, want *PathError [\"values\"]", tc.target, tc.batch, err)
+		}
+	}
+	// A typed op is validated before it is applied, as a parsed one is.
+	if _, err := Apply(any([]any{1.0, 2.0}), []Op{Permute{Permutation: []int{1, 1}}}); !errors.Is(err, ErrInvalidOp) {
+		t.Errorf("duplicate index applied: got %v, want ErrInvalidOp", err)
+	}
+}
+
+// applyImmutable copies the containers along an "m" op's FULL path — the
+// permuted array included, as for "p" — so the previous value is untouched
+// while unchanged subtrees and the moved elements themselves stay shared.
+// pi at 10d1ad621: beforeUnchanged, keepShared, itemShared and arrayCopied
+// all true.
+func TestApplyImmutablePermute(t *testing.T) {
+	a, b, c := map[string]any{"id": "a"}, map[string]any{"id": "b"}, map[string]any{"id": "c"}
+	values := []any{a, b, c}
+	keep := map[string]any{"k": 1.0}
+	before := map[string]any{"keep": keep, "a": map[string]any{"values": values}}
+	after, err := ApplyImmutable(before, ops(t, `[["m", ["a", "values"], [2, 0, 1]]]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTree(t, after, `{"keep": {"k": 1}, "a": {"values": [{"id": "c"}, {"id": "a"}, {"id": "b"}]}}`)
+	wantTree(t, before, `{"keep": {"k": 1}, "a": {"values": [{"id": "a"}, {"id": "b"}, {"id": "c"}]}}`)
+	if values[0].(map[string]any)["id"] != "a" {
+		t.Errorf("previous array permuted in place: %v", values)
+	}
+	got := after
+	if !same(got["keep"], keep) {
+		t.Error("unchanged subtree copied")
+	}
+	moved := got["a"].(map[string]any)["values"].([]any)
+	if !same(moved[1], a) {
+		t.Error("moved element copied rather than shared")
+	}
+
+	root := []any{1.0, 2.0, 3.0}
+	rootAfter, err := ApplyImmutable(root, ops(t, `[["m", [], [2, 1, 0]]]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantTree(t, rootAfter, `[3, 2, 1]`)
+	wantTree(t, root, `[1, 2, 3]`)
+}

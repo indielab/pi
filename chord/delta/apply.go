@@ -67,7 +67,7 @@ func typed[T any](root any, err error) (T, error) {
 func applyOps(root any, ops []Op, clone bool) (any, error) {
 	for _, op := range ops {
 		if op == nil {
-			return nil, fmt.Errorf("%w: op is nil (a batch is a []Op of Replace, Set, Delete, Append, Truncate or Splice; run ParseOp on wire input first)", ErrInvalidOp)
+			return nil, fmt.Errorf("%w: op is nil (a batch is a []Op of Replace, Set, Delete, Append, Truncate, Splice or Permute; run ParseOp on wire input first)", ErrInvalidOp)
 		}
 		// Upstream's assertValidOp: the shape is the type's, the constraints
 		// are Validate's — a root path where only "r" may have one, a negative
@@ -96,6 +96,21 @@ func applyOne(root any, op Op, clone bool) (any, error) {
 				return nil, &PathError{Ref: op.Path}
 			}
 			return splice(xs, op.Index, op.Remove, op.Items), nil
+		})
+	case Permute:
+		// With clone set, walk has already copied the array itself — upstream's
+		// copyContainers along the full path, as for a splice — so the
+		// reorder below never touches the caller's value.
+		return walk(root, op.Path, clone, func(node any) (any, error) {
+			xs, ok := node.([]any)
+			if !ok || len(xs) != len(op.Permutation) {
+				return nil, &PathError{Ref: op.Path}
+			}
+			previous := slices.Clone(xs)
+			for i, from := range op.Permutation {
+				xs[i] = previous[from]
+			}
+			return xs, nil
 		})
 	case Set:
 		return atParent(root, op.Path, clone, func(parent any, key Seg) (any, error) {
@@ -126,7 +141,7 @@ func applyOne(root any, op Op, clone bool) (any, error) {
 			})
 		})
 	}
-	// Op is sealed; a seventh verb is a bug in this package, not bad input.
+	// Op is sealed; an eighth verb is a bug in this package, not bad input.
 	return nil, fmt.Errorf("%w: unknown op %T", ErrInvalidOp, op)
 }
 
