@@ -2009,6 +2009,154 @@ func TestAgentFailedResponseKeepsQueuesDespiteContinue(t *testing.T) {
 	}
 }
 
+// recordUserTexts is a StreamFn that answers "done" and records the user texts
+// of each request — the upstream continue() tests' `requests` array.
+func recordUserTexts(requests *[][]string) StreamFn {
+	var mu sync.Mutex
+	return func(_ context.Context, _ *ai.Model, req ai.TranscriptContext, _ *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		mu.Lock()
+		*requests = append(*requests, requestUserTexts(req))
+		mu.Unlock()
+		return replyWith(textMessage("done"))
+	}
+}
+
+// assertQueuedInOrder checks a continuation that queued first and second: the
+// first request carries first and, when both are drained together, second;
+// otherwise second waits for a request of its own.
+func assertQueuedInOrder(t *testing.T, requests [][]string, first, second string, together bool) {
+	t.Helper()
+	wantRequests := 2
+	if together {
+		wantRequests = 1
+	}
+	if len(requests) != wantRequests {
+		t.Fatalf("requests = %v, want %d", requests, wantRequests)
+	}
+	if !slices.Contains(requests[0], first) {
+		t.Fatalf("first request %v lacks %q", requests[0], first)
+	}
+	if together {
+		if !slices.Contains(requests[0], second) {
+			t.Fatalf("first request %v lacks %q", requests[0], second)
+		}
+		return
+	}
+	if slices.Contains(requests[0], second) {
+		t.Fatalf("first request %v already carries %q", requests[0], second)
+	}
+	if !slices.Contains(requests[1], second) {
+		t.Fatalf("second request %v lacks %q", requests[1], second)
+	}
+}
+
+// agent.test.ts "continue() keeps $mode steering semantics for assistant-tail
+// fallback". Characterization (the port already matched pi); seen red under
+// two mutations of Continue's assistant-tail path: dropping
+// `skipInitialSteeringPoll = true` fails one-at-a-time (the startup poll hands
+// over "Steering 2" too), and draining a single steering message whatever the
+// mode fails all (two requests).
+func TestAgentContinueFromAssistantTailKeepsSteeringMode(t *testing.T) {
+	for _, tc := range []struct {
+		mode     QueueMode
+		together bool
+	}{{QueueOneAtATime, false}, {QueueAll, true}} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			var requests [][]string
+			a := NewAgent(AgentOptions{
+				InitialState: &AgentState{Model: testModel},
+				SteeringMode: tc.mode,
+				StreamFn:     recordUserTexts(&requests),
+			})
+			a.SetMessages([]AgentMessage{ai.NewUserText("Initial", 1), textMessage("Initial response")})
+			a.Steer(ai.NewUserText("Steering 1", 2))
+			a.Steer(ai.NewUserText("Steering 2", 3))
+
+			if err := a.Continue(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			assertQueuedInOrder(t, requests, "Steering 1", "Steering 2", tc.together)
+		})
+	}
+}
+
+// agent.test.ts "polls $mode steering at continuation startup". From a
+// non-assistant tail the steering reaches the first request only through the
+// loop's startup poll. Characterization; seen red in both modes with runLoop's
+// startup GetSteeringMessages poll removed (the first request lacks "first").
+func TestAgentContinuePollsSteeringAtStartup(t *testing.T) {
+	for _, tc := range []struct {
+		mode     QueueMode
+		together bool
+	}{{QueueOneAtATime, false}, {QueueAll, true}} {
+		t.Run(string(tc.mode), func(t *testing.T) {
+			var requests [][]string
+			a := NewAgent(AgentOptions{
+				InitialState: &AgentState{Model: testModel, Messages: []AgentMessage{ai.NewUserText("existing", 1)}},
+				SteeringMode: tc.mode,
+				StreamFn:     recordUserTexts(&requests),
+			})
+			a.Steer(ai.NewUserText("first", 2))
+			a.Steer(ai.NewUserText("second", 3))
+
+			if err := a.Continue(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			assertQueuedInOrder(t, requests, "first", "second", tc.together)
+		})
+	}
+}
+
+// agent.test.ts "keeps steering ahead of follow-up from a non-assistant
+// continuation tail". Characterization; seen red with runLoop's startup poll
+// preferring the follow-up queue over steering ("follow-up" reaches the first
+// request, "steering" does not).
+func TestAgentContinueKeepsSteeringAheadOfFollowUp(t *testing.T) {
+	var requests [][]string
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel, Messages: []AgentMessage{ai.NewUserText("existing", 1)}},
+		StreamFn:     recordUserTexts(&requests),
+	})
+	a.Steer(ai.NewUserText("steering", 2))
+	a.FollowUp(ai.NewUserText("follow-up", 3))
+
+	if err := a.Continue(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertQueuedInOrder(t, requests, "steering", "follow-up", false)
+}
+
+// agent.test.ts "defers follow-up input on the first continuation request from
+// a $name tail". Characterization; seen red for both tails with Continue's
+// assistant-tail queue drain applied to every tail ("follow-up" reaches the
+// first request).
+func TestAgentContinueDefersFollowUpFromANonAssistantTail(t *testing.T) {
+	for name, messages := range map[string][]AgentMessage{
+		"user": {ai.NewUserText("existing user", 1)},
+		"toolResult": {
+			ai.NewUserText("existing user", 1),
+			assistantWithToolCall("call-1", "noop", map[string]any{}),
+			ai.ToolResultMessage{ToolCallID: "call-1", ToolName: "noop", Content: ai.ContentList{ai.TextContent{Text: "done"}}, Timestamp: 1},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var requests [][]string
+			a := NewAgent(AgentOptions{
+				InitialState: &AgentState{Model: testModel, Messages: messages},
+				StreamFn:     recordUserTexts(&requests),
+			})
+			a.FollowUp(ai.NewUserText("follow-up", 2))
+
+			if err := a.Continue(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			if len(requests) != 2 || slices.Contains(requests[0], "follow-up") || !slices.Contains(requests[1], "follow-up") {
+				t.Fatalf("requests = %v, want follow-up deferred to the second request", requests)
+			}
+		})
+	}
+}
+
 // TestAgentForwardsPrepareRequest locks the Agent-level PrepareRequest option
 // reaching the loop config with the run's model and thinking level (an Agent at
 // ThinkOff hands the hook "off"), and its replacement reaching the request.
