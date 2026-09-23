@@ -375,10 +375,82 @@ func generatedDiff(t *testing.T, name string) (before, after any) {
 		case "d":
 			return obj("k1", r("A", 40_000), "k2", r("B", 40_000), "d0", 0.0, "d1", 0.0, "d2", 0.0, "d3", 0.0, "d4", 0.0, "k3", pad),
 				obj("k1", r("C", 40_000), "k2", r("D", 40_000), "k3", pad)
+		case "index":
+			v, appended := make([]any, 8_000), make([]any, 8_000)
+			for i := range v {
+				v[i], appended[i] = 0.0, 0.0
+				if i%2 == 1 {
+					v[i], appended[i] = "x", "xy"
+				}
+			}
+			return obj("k3", pad, "v", v), obj("k3", pad, "v", appended)
+		case "num", "null", "true", "false", "spell", "keys":
+			m0, m1 := map[string]any{}, map[string]any{}
+			for i := range 4_000 {
+				key := fmt.Sprintf("k%04d", i)
+				m0[key], m1[key] = 0.0, 1.0
+			}
+			padding := padOf(parts[1], l)
+			return obj("m", m0, "pad", padding), obj("m", m1, "pad", padding)
 		}
+	case strings.HasPrefix(name, "threshold-"):
+		n, _ := strconv.Atoi(strings.TrimPrefix(name, "threshold-"))
+		return obj("t", "x"), obj("t", "x"+strings.Repeat("C", n))
+	case strings.HasPrefix(name, "anchor-budget-"):
+		n, _ := strconv.Atoi(strings.TrimPrefix(name, "anchor-budget-"))
+		a := obj("id", "a")
+		before, after := []any{"b0"}, []any{"c0"}
+		for range n {
+			before = append(before, a)
+		}
+		for range 500 {
+			after = append(after, a)
+		}
+		return append(before, "b1"), append(after, "c1")
+	case strings.HasPrefix(name, "semantic-cells-"):
+		n, _ := strconv.Atoi(strings.TrimPrefix(name, "semantic-cells-"))
+		k := map[string]any{}
+		before, after := make([]any, n), make([]any, 256)
+		for v := range before {
+			before[v] = obj("k", k, "v", float64(v))
+		}
+		for v := range after {
+			after[v] = obj("k", k, "v", float64(v+1_000))
+		}
+		return before, after
 	}
 	t.Fatalf("unknown generated case %q: add it to generatedDiff as capture.mts builds it", name)
 	return nil, nil
+}
+
+// padOf is capture.mts's padOf: l values of one kind, whose cost per element
+// decides where a "cost-<kind>" case flips.
+func padOf(kind string, l int) any {
+	switch kind {
+	case "keys":
+		m := make(map[string]any, l)
+		for i := range l {
+			m[fmt.Sprintf("é%d", i)] = 0.0
+		}
+		return m
+	}
+	spellings := []any{1e21, 1.5e-7, 1e-6, math.Copysign(0, -1), 123.456, -1e-7, float64(1 << 53), 0.1, 1e-7, 5e-324}
+	xs := make([]any, l)
+	for i := range xs {
+		switch kind {
+		case "num":
+			xs[i] = 1e6
+		case "null":
+			xs[i] = nil
+		case "true":
+			xs[i] = true
+		case "false":
+			xs[i] = false
+		case "spell":
+			xs[i] = spellings[i%len(spellings)]
+		}
+	}
+	return xs
 }
 
 // ─── Scripts ─────────────────────────────────────────────────────────────────
@@ -522,6 +594,16 @@ func (r *runner) exec(step map[string]any) (o outcome) {
 		d := r.nav(step)
 		r.b.held[step["as"].(string)] = d
 		return outcome{}
+	case "shared":
+		p := r.prepared[name(step, "p")]
+		value, base := p.Value(), p.Base()
+		at, _ := step["at"].([]any)
+		for _, seg := range at {
+			value, base = member(value, seg), member(base, seg)
+		}
+		return outcome{value: same(value, base), hasVal: true}
+	case "keys":
+		return outcome{value: r.nav(step).Keys(), hasVal: true}
 	case "get":
 		return result(r.nav(step).Get(key))
 	case "set":
@@ -576,6 +658,17 @@ func (r *runner) exec(step map[string]any) (o outcome) {
 	}
 	r.t.Fatalf("unknown step %v: add it to runner.exec as capture.mts runs it", step["do"])
 	return outcome{}
+}
+
+// member is v[seg] for a revision: an object's member or an array's element.
+func member(v, seg any) any {
+	switch x := v.(type) {
+	case map[string]any:
+		return x[seg.(string)]
+	case []any:
+		return x[int(seg.(float64))]
+	}
+	return nil
 }
 
 // jsConcat is `current + text` for the string members the scripts append to.

@@ -585,6 +585,29 @@ func TestDraftNilAndKindErrors(t *testing.T) {
 	wantJSON(t, tr.Value(), tree(t, `{"n": 1, "o": {}, "v": []}`))
 }
 
+// Characterization of two documented reads with no pi value to capture: Len
+// of an object is its member count (Object.keys(o).length), and Splice
+// returns nil for a removed hole — pi's removed array holds a hole there,
+// which JSON.stringify writes as null — never the draft's own marker for one.
+func TestDraftGoReads(t *testing.T) {
+	tr := mustTrack(t, `{"o": {"a": 1, "b": 2, "c": 3}, "v": [1]}`)
+	c := mustBegin(t, tr)
+	if n := c.State().At("o").Len(); n != 3 {
+		t.Errorf("Len of a 3-member object = %d", n)
+	}
+	v := c.State().At("v")
+	must(t, v.SetLen(3))
+	removed, err := v.Splice(0, 3)
+	must(t, err)
+	if len(removed) != 3 || removed[0] != 1.0 || removed[1] != nil || removed[2] != nil {
+		t.Errorf("Splice over holes returned %#v, want [1, nil, nil]", removed)
+	}
+	if got := jsonText(t, removed); got != `[1,null,null]` {
+		t.Errorf("Splice over holes marshals as %s, want [1,null,null] as JSON.stringify writes pi's", got)
+	}
+	c.Abort()
+}
+
 // ─── Retention ───────────────────────────────────────────────────────────────
 //
 // delta-retention.test.ts: what a settled change, an unadopted prepared

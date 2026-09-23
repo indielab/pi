@@ -48,6 +48,8 @@
 // change and prepared change and default to "main"):
 //   begin | prepare | adopt | abort | value            lifecycle; value records tracker.value
 //   replace {value}                                   tracker.prepareReplace(value)
+//   shared {at}               whether prepared.value holds prepared.base's container at "at"
+//   keys {at}                 Object.keys of the draft at "at"
 //   set {at, key, value}      append {at, key, text}  delete {at, key}      get {at, key}
 //   push {at, items}          unshift {at, items}     pop {at, as?}         shift {at, as?}
 //   splice {at, start, deleteCount, items}            reverse {at}          setLength {at, length}
@@ -416,6 +418,19 @@ diffCase("parsed empty arrays do not align, nested", {}, J(`{"a":[[[],1]]}`), J(
 diffCase("parsed empty arrays do not permute", {}, J(`{"v":[[],1,[]]}`), J(`{"v":[[],1,[],[]]}`));
 diffCase("a shared empty array anchors", { e: [] }, { v: [R("e"), 1] }, { v: [1, R("e")] });
 diffCase("a shared empty array aligns", { e: [] }, { v: [[R("e"), 1]] }, { v: [[R("e"), 2], 3] });
+// Two sibling leaves four levels down: each op keeps a path of its own.
+diffCase("sibling leaves four levels down", {}, J(`{"a":{"b":{"c":{"x":1,"y":1}}}}`), J(`{"a":{"b":{"c":{"x":2,"y":2}}}}`));
+// A reserved key on either side sets the object whole (diff.ts:428 checks
+// both key lists).
+diffCase("reserved key only before", {}, J(`{"o":{"__proto__":1,"a":1}}`), J(`{"o":{"a":2}}`));
+// Keys that look like array indices and are not ("01", 2^32 - 1, "-1",
+// "1.5") enumerate with the strings.
+diffCase(
+	"index-like keys that are not indices",
+	{},
+	J(`{"1":0,"4294967294":0,"01":0,"1.5":0,"-1":0,"4294967295":0,"a":0}`),
+	J(`{"1":1,"4294967294":1,"01":1,"1.5":1,"-1":1,"4294967295":1,"a":1}`),
+);
 
 // Large generated inputs; golden_test.go builds the same ones by name.
 {
@@ -476,6 +491,59 @@ diffCase("a shared empty array aligns", { e: [] }, { v: [[R("e"), 1]] }, { v: [[
 			genCase(`cost-${kind}-${L}`, before, after);
 		}
 	}
+	// The snapshot threshold itself: one append whose batch costs n + 17,
+	// against a snapshot of n + 15. Below 65,536 a batch is published without
+	// the comparison; at exactly 65,536 it is compared, and loses.
+	const threshold = (n: number): [Json, Json] => [{ t: "x" }, { t: `x${"C".repeat(n)}` }];
+	let lo = 0;
+	let hi = 1 << 20;
+	while (hi - lo > 1) {
+		const mid = (lo + hi) >> 1;
+		if ((diffRevisions(...threshold(mid)) as Op[])[0]![0] === "r") hi = mid;
+		else lo = mid;
+	}
+	if (hi + 17 !== 65_536) throw new Error(`the threshold flips at n = ${hi}, not where the batch costs 65,536`);
+	for (const n of [hi - 1, hi]) genCase(`threshold-${n}`, ...threshold(n));
+	// The identity-anchor budget: [b0, a x N, b1] -> [c0, a x 500, c1], one
+	// shared object a, is N x 500 candidates. 200,000 is still the patience
+	// search; one more row of them is the greedy choice.
+	for (const n of [400, 401]) {
+		const a = { id: "a" };
+		genCase(`anchor-budget-${n}`, ["b0", ...Array(n).fill(a), "b1"], ["c0", ...Array(500).fill(a), "c1"]);
+	}
+	// The semantic table's budget: rows that share a child k align by value
+	// only through the LCS table, which 256 x 256 = 65,536 cells still gets;
+	// one more row does not, and the region is spliced whole.
+	for (const n of [256, 257]) {
+		const k = {};
+		genCase(
+			`semantic-cells-${n}`,
+			Array.from({ length: n }, (_, v) => ({ k, v })),
+			Array.from({ length: 256 }, (_, v) => ({ k, v: v + 1_000 })),
+		);
+	}
+}
+
+// padOf is the unchanged member a cost case pads its snapshot with: L of one
+// kind of value, so that the pad's cost per element decides where pi's batch
+// flips from a replacement to a delta.
+function padOf(kind: string, L: number): Json {
+	const spellings = [1e21, 1.5e-7, 1e-6, -0, 123.456, -1e-7, 2 ** 53, 0.1, 1e-7, 5e-324];
+	switch (kind) {
+		case "num":
+			return Array(L).fill(1e6);
+		case "null":
+			return Array(L).fill(null);
+		case "true":
+			return Array(L).fill(true);
+		case "false":
+			return Array(L).fill(false);
+		case "spell":
+			return Array.from({ length: L }, (_, i) => spellings[i % spellings.length]!);
+		case "keys":
+			return Object.fromEntries(Array.from({ length: L }, (_, i) => [`é${i}`, 0]));
+	}
+	throw new Error(`unknown pad ${kind}`);
 }
 
 // costCase builds golden_test.go's generatedDiff "cost-<kind>-<L>" inputs.
@@ -508,6 +576,32 @@ function costCase(kind: string, L: number): [Json, Json] {
 				{ k1: r("A", 40_000), k2: r("B", 40_000), d0: 0, d1: 0, d2: 0, d3: 0, d4: 0, k3: pad },
 				{ k1: r("C", 40_000), k2: r("D", 40_000), k3: pad },
 			];
+		case "index": {
+			// 4,000 appends at ["v", i]: index segments in every path.
+			const v = Array.from({ length: 8_000 }, (_, i): Json => (i % 2 === 0 ? 0 : "x"));
+			return [{ k3: pad, v }, { k3: pad, v: v.map((x) => (x === "x" ? "xy" : x)) }];
+		}
+		case "num":
+		case "null":
+		case "true":
+		case "false":
+		case "spell":
+		case "keys": {
+			// 4,000 small sets cost far more than the members they change, so the
+			// pad is large where pi flips and its cost per element is multiplied.
+			const m0: Record<string, Json> = {};
+			const m1: Record<string, Json> = {};
+			for (let i = 0; i < 4_000; i++) {
+				const key = `k${String(i).padStart(4, "0")}`;
+				m0[key] = 0;
+				m1[key] = 1;
+			}
+			const padding = padOf(kind, L);
+			return [
+				{ m: m0, pad: padding },
+				{ m: m1, pad: padding },
+			];
+		}
 	}
 	throw new Error(`unknown cost kind ${kind}`);
 }
@@ -517,7 +611,7 @@ function costCase(kind: string, L: number): [Json, Json] {
 // is monotonic in L and a binary search finds the flip.
 function pinCosts(): Map<string, number> {
 	const out = new Map<string, number>();
-	for (const kind of ["s", "astral", "a", "t", "p", "m", "d"]) {
+	for (const kind of ["s", "astral", "a", "t", "p", "m", "d", "index", "num", "null", "true", "false", "spell", "keys"]) {
 		const verb = (L: number) => {
 			const [before, after] = costCase(kind, L);
 			return (diffRevisions(before, after) as Op[])[0]![0];
@@ -641,6 +735,20 @@ class Runner {
 			case "hold":
 				this.env.held.set(step.as as string, this.nav(step));
 				return {};
+			case "shared": {
+				// Whether the prepared revision holds the base's own container at
+				// "at": identity, which ops cannot show.
+				const prepared = this.prepared.get(p);
+				let value = prepared.value;
+				let base = prepared.base;
+				for (const seg of step.at as (string | number)[]) {
+					value = value[seg];
+					base = base[seg];
+				}
+				return { value: value === base };
+			}
+			case "keys":
+				return { value: RAW(canon(Object.keys(this.nav(step)))) };
 			case "get":
 				return this.result(this.nav(step)[step.key as string]);
 			case "set":
@@ -1043,6 +1151,41 @@ sortBy(`{"xs":[999999999999999900000,1e21,"1e+20"]}`);
 sortBy(`{"xs":[-1e-7,-1,"-1e-6",0.1,1.5e-7]}`);
 sortBy(`{"xs":[1,0]}`, `{"do":"set","at":["xs"],"key":1,"value":-0}`);
 sortBy(`{"xs":[["a"],[["b"]]]}`);
+sortBy(`{"xs":[["l"],[{}]]}`);
+// A branch that was only read keeps its identity in the prepared revision,
+// even when the change has other effects.
+scenario("a read-only branch keeps its identity", { main: J(`{"n":0,"o":{"p":{"q":1},"r":[1]}}`) }, S(`[
+	{"do":"begin"},
+	{"do":"get","at":["o","p"],"key":"q"},
+	{"do":"get","at":["o","r"],"key":0},
+	{"do":"set","at":[],"key":"n","value":1},
+	{"do":"prepare"},
+	{"do":"shared","at":["o"]},
+	{"do":"shared","at":["o","p"]},
+	{"do":"shared","at":[]}
+]`));
+// Only a canonical index below 2^32 - 1 is an array index: "01" and
+// "4294967295" are named properties, which a revision cannot hold.
+scenario("index-like keys on an array", { main: J(`{"xs":[1,2,3,4]}`) }, S(`[
+	{"do":"begin"},{"do":"set","at":["xs"],"key":"01","value":9},{"do":"get","at":["xs"],"key":1},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":["xs"],"key":"4294967295","value":9},{"do":"get","at":["xs"],"key":"length"},{"do":"prepare"}
+]`));
+scenario("copyWithin negative target", { main: J(`{"xs":[1,2,3,4]}`) }, arrays(`{"do":"copyWithin","at":["xs"],"target":-1,"start":0,"end":4}`));
+scenario("pop holes", { main: J(`{"v":[1]}`) }, arrays(`{"do":"setLength","at":["v"],"length":3},{"do":"pop","at":["v"]},{"do":"pop","at":["v"]},{"do":"pop","at":["v"]},{"do":"pop","at":["v"]}`));
+// Object.keys: an array's indices that hold a value, then its named
+// properties; an object's keys (inserted in Go's order here - D69).
+scenario("keys", { main: J(`{"o":{"a":1,"b":{},"2":0,"10":0},"xs":[1,2]}`) }, S(`[
+	{"do":"begin"},
+	{"do":"keys","at":[]},
+	{"do":"keys","at":["o"]},
+	{"do":"keys","at":["o","b"]},
+	{"do":"keys","at":["xs"]},
+	{"do":"set","at":["xs"],"key":"name","value":"n"},
+	{"do":"setLength","at":["xs"],"length":4},
+	{"do":"set","at":["xs"],"key":3,"value":4},
+	{"do":"keys","at":["xs"]},
+	{"do":"abort"}
+]`));
 sortBy(`{"xs":[[1,[2,[3]]],[1,2,3],"1,2,3 ",[null],[[]],""]}`);
 // The dense check has two texts per site. assertDenseArray counts own keys
 // first (holes and named properties change the count: "must be dense and
