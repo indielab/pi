@@ -57,7 +57,7 @@
 //	change, err := tracker.BeginChange()
 //	state := change.State()                      // the root draft
 //	err = state.Set("status", "running")
-//	err = state.At("rows").Push(row)
+//	_, err = state.At("rows").Push(row)
 //	prepared, err := change.Prepare()            // or change.Abort()
 //	err = tracker.Adopt(prepared)                // commit
 //	publish(prepared.Ops())
