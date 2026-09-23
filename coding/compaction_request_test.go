@@ -122,8 +122,9 @@ func TestSummarizationRequestShape(t *testing.T) {
 // summary, and records every summarization request pi sends and the summary it
 // returns. The port's compaction over the same transcripts must send the same
 // requests byte for byte, in the same order, and return the same summary: the
-// history request's <conversation> wrapper and prompts, and the split-turn
-// prefix's "# Conversation" / "# Instructions" framing (upstream d192bd6dc).
+// system prompt, the history request's <conversation> wrapper and prompts, and
+// the split-turn prefix's "# Conversation" / "# Instructions" framing (upstream
+// d192bd6dc).
 func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 	data, err := os.ReadFile("testdata/compaction/requests-0.87.1.json")
 	if err != nil {
@@ -139,8 +140,9 @@ func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 			PrefixCount     int               `json:"prefixCount"`
 			PreviousSummary string            `json:"previousSummary"`
 			Requests        []struct {
-				Text      string `json:"text"`
-				MaxTokens int    `json:"maxTokens"`
+				SystemPrompt string `json:"systemPrompt"`
+				Text         string `json:"text"`
+				MaxTokens    int    `json:"maxTokens"`
 			} `json:"requests"`
 			Summary string `json:"summary"`
 		} `json:"scenarios"`
@@ -176,12 +178,16 @@ func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 			})
 			t.Cleanup(reg.Unregister)
 			type request struct {
-				text      string
-				maxTokens int
+				systemPrompt string
+				text         string
+				maxTokens    int
 			}
 			var got []request
 			record := func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, _ *providers.FauxState, _ *ai.Model) *ai.AssistantMessage {
 				var r request
+				if lead, ok := ai.GetInitialSystemMessage(req.Messages); ok {
+					r.systemPrompt = ai.GetSystemMessageText(lead)
+				}
 				if conversation := ai.WithoutInitialSystemMessage(req.Messages); len(conversation) == 1 {
 					r.text = userText(conversation[0])
 				} else {
@@ -210,6 +216,9 @@ func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 				t.Fatalf("sent %d summarization requests, pi sent %d", len(got), len(scenario.Requests))
 			}
 			for i, want := range scenario.Requests {
+				if got[i].systemPrompt != want.SystemPrompt {
+					t.Errorf("request %d system prompt drifts from pi.\n--- got ---\n%s\n--- pi ---\n%s", i+1, got[i].systemPrompt, want.SystemPrompt)
+				}
 				if got[i].text != want.Text {
 					t.Errorf("request %d text drifts from pi.\n--- got ---\n%s\n--- pi ---\n%s", i+1, got[i].text, want.Text)
 				}

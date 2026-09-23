@@ -41,9 +41,11 @@ const estimatedImageChars = 4800
 // results are truncated to this many characters when serialized for summarization.
 const toolResultMaxChars = 2000
 
-// summarizationSystemPrompt is pi's SUMMARIZATION_SYSTEM_PROMPT (utils.ts:168),
-// the dedicated system prompt for the summarization request. Byte-for-byte.
-const summarizationSystemPrompt = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.
+// summarizationSystemPrompt is pi's SUMMARIZATION_SYSTEM_PROMPT (utils.ts:156),
+// the dedicated system prompt for the summarization request. Byte-for-byte; it
+// names a neutral "AI assistant" so non-coding agents summarize correctly too
+// (pi #5401, upstream 72fd91135).
+const summarizationSystemPrompt = `You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.
 
 Do NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.`
 

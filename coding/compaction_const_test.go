@@ -6,18 +6,6 @@ import (
 	"github.com/sky-valley/pi/ai"
 )
 
-// TestSummarizationSystemPromptByteForByte pins SUMMARIZATION_SYSTEM_PROMPT
-// (utils.ts:168) exactly.
-func TestSummarizationSystemPromptByteForByte(t *testing.T) {
-	// Matches the built/shipped JS (dist utils.d.ts): "AI coding assistant".
-	// The TS source reads "AI assistant" but the distributed artifact — the
-	// cross-check source of truth — includes "coding".
-	want := "You are a context summarization assistant. Your task is to read a conversation between a user and an AI coding assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary."
-	if summarizationSystemPrompt != want {
-		t.Fatalf("SUMMARIZATION_SYSTEM_PROMPT drift:\n got: %q\nwant: %q", summarizationSystemPrompt, want)
-	}
-}
-
 // TestEstimateImageChars verifies the per-image token estimate uses pi's
 // ESTIMATED_IMAGE_CHARS = 4800 (compaction.ts:228), exercised via contentChars
 // and EstimateMessageTokens.
