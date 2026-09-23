@@ -1103,7 +1103,7 @@ scenario("scalar roots", { main: J(`1`), none: J(`null`), obj: J(`{"a":1}`) }, S
 	{"do":"prepare","t":"obj","c":"obj","p":"obj"}
 ]`));
 // Draft array operations, one at a time and in combination.
-const arrays =(steps: string) => S(`[{"do":"begin"},${steps},{"do":"prepare"}]`);
+const arrays = (steps: string) => S(`[{"do":"begin"},${steps},{"do":"prepare"}]`);
 scenario("push and pop cancel", { main: J(`{"v":[1,2]}`) }, arrays(`{"do":"push","at":["v"],"items":[3]},{"do":"pop","at":["v"]}`));
 scenario("pop and shift", { main: J(`{"v":[1,2,3,4]}`) }, arrays(`{"do":"pop","at":["v"]},{"do":"shift","at":["v"]}`));
 scenario("pop and shift an empty array", { main: J(`{"v":[]}`) }, arrays(`{"do":"pop","at":["v"]},{"do":"shift","at":["v"]}`));
