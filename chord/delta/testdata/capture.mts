@@ -1034,6 +1034,60 @@ sortBy(`{"xs":[-1e-7,-1,"-1e-6",0.1,1.5e-7]}`);
 sortBy(`{"xs":[1,0]}`, `{"do":"set","at":["xs"],"key":1,"value":-0}`);
 sortBy(`{"xs":[["a"],[["b"]]]}`);
 sortBy(`{"xs":[[1,[2,[3]]],[1,2,3],"1,2,3 ",[null],[[]],""]}`);
+// The dense check has two texts per site. assertDenseArray counts own keys
+// first (holes and named properties change the count: "must be dense and
+// contain only indexed entries"), then looks for an empty index (as many named
+// properties as holes: "must contain enumerable indexed data properties with
+// defined values"). And two sites: finalize checks an array of the revision
+// (draft.ts, "Draft arrays ..."), but an array created in the change is owned
+// by the transaction, written in place, and dropped as equal to itself, so
+// only the store's commit sees it (value.ts, "Replicated state arrays ...") -
+// after finalize has walked the whole tree, parent before child.
+scenario("dense check on arrays created in the change", { main: J(`{"list":[1]}`) }, S(`[
+	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"set","at":["fresh"],"key":3,"value":5},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"setLength","at":["fresh"],"length":3},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"set","at":["fresh"],"key":"foo","value":1},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"setLength","at":["fresh"],"length":2},{"do":"set","at":["fresh"],"key":"foo","value":1},{"do":"prepare"},
+	{"do":"begin"},{"do":"push","at":["list"],"items":[{"xs":[1]}]},{"do":"set","at":["list",1,"xs"],"key":2,"value":3},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":["list"],"key":3,"value":5},{"do":"prepare"},
+	{"do":"begin"},{"do":"setLength","at":["list"],"length":2},{"do":"set","at":["list"],"key":"foo","value":1},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":[],"key":"a","value":[1]},{"do":"setLength","at":["a"],"length":3},{"do":"setLength","at":["list"],"length":3},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":[],"key":"a","value":[1]},{"do":"set","at":[],"key":"b","value":[1]},{"do":"setLength","at":["b"],"length":3},{"do":"setLength","at":["a"],"length":2},{"do":"set","at":["a"],"key":"foo","value":1},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":[],"key":"p","value":[[1]]},{"do":"setLength","at":["p",0],"length":3},{"do":"setLength","at":["p"],"length":2},{"do":"set","at":["p"],"key":"foo","value":1},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"set","at":["fresh"],"key":1,"value":2},{"do":"set","at":["fresh"],"key":2,"value":3},{"do":"prepare"},
+	{"do":"begin"},{"do":"set","at":[],"key":"v","value":[[1],[2]]},{"do":"fill","at":["v"],"value":[7],"start":0,"end":1},{"do":"setLength","at":["v",0],"length":2},{"do":"prepare"},
+	{"do":"value"}
+]`));
+// Of several arrays that fail, the first in the walk is reported: here "a",
+// the one whose text differs, among six members inserted in key order.
+scenario("dense check reports the first array in key order", { main: J(`{"list":[1]}`) }, S(`[
+	{"do":"begin"},
+	{"do":"set","at":[],"key":"a","value":[1]},{"do":"set","at":[],"key":"b","value":[1]},{"do":"set","at":[],"key":"c","value":[1]},
+	{"do":"set","at":[],"key":"d","value":[1]},{"do":"set","at":[],"key":"e","value":[1]},{"do":"set","at":[],"key":"f","value":[1]},
+	{"do":"setLength","at":["a"],"length":2},{"do":"set","at":["a"],"key":"foo","value":1},
+	{"do":"setLength","at":["b"],"length":3},{"do":"setLength","at":["c"],"length":3},{"do":"setLength","at":["d"],"length":3},
+	{"do":"setLength","at":["e"],"length":3},{"do":"setLength","at":["f"],"length":3},{"do":"setLength","at":["list"],"length":0},
+	{"do":"prepare"},
+	{"do":"begin"},
+	{"do":"setLength","at":["list"],"length":3},{"do":"set","at":[],"key":"a","value":[1]},{"do":"setLength","at":["a"],"length":2},
+	{"do":"prepare"}
+]`));
+scenario("dense check on an array copyWithin created", { main: J(`{"v":[[1],[2]]}`) }, S(`[
+	{"do":"begin"},{"do":"copyWithin","at":["v"],"target":1,"start":0,"end":1},{"do":"setLength","at":["v",1],"length":3},{"do":"prepare"},
+	{"do":"begin"},{"do":"setLength","at":["v",1],"length":3},{"do":"prepare"}
+]`));
+scenario("dense check on arrays of the revision, child first", { main: J(`{"p":[[1]]}`) }, S(`[
+	{"do":"begin"},{"do":"setLength","at":["p",0],"length":3},{"do":"setLength","at":["p"],"length":2},{"do":"set","at":["p"],"key":"foo","value":1},{"do":"prepare"},
+	{"do":"value"}
+]`));
+// Copying a draft checks it at the assignment, with the draft's texts,
+// nested arrays included.
+scenario("assigning a draft that is not dense", { main: J(`{"list":[1],"v":{"inner":[1]}}`) }, S(`[
+	{"do":"begin"},{"do":"setLength","at":["list"],"length":2},{"do":"hold","at":["list"],"as":"list"},{"do":"set","at":[],"key":"copy","value":{"$held":"list"}},{"do":"abort"},
+	{"do":"begin"},{"do":"setLength","at":["list"],"length":2},{"do":"set","at":["list"],"key":"foo","value":1},{"do":"hold","at":["list"],"as":"list"},{"do":"set","at":[],"key":"copy","value":{"$held":"list"}},{"do":"abort"},
+	{"do":"begin"},{"do":"set","at":["v","inner"],"key":"name","value":1},{"do":"hold","at":["v"],"as":"v"},{"do":"set","at":[],"key":"copy","value":{"$held":"v"}},{"do":"push","at":["list"],"items":[{"$held":"v"}]},{"do":"abort"},
+	{"do":"value"}
+]`));
 // `array.length = v` is ArraySetLength: v goes through ToNumber (null 0,
 // booleans 0 and 1, strings as numeric literals after trimming JavaScript
 // whitespace, arrays and objects through their string form), and the result

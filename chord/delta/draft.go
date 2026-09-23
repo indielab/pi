@@ -35,6 +35,13 @@ type transaction struct {
 	root    *draftState
 	states  map[identity]*draftState
 	created []*draftState
+	// fresh holds the arrays this change created — every array a write copied
+	// in — which upstream's context.owned marks as the transaction's own: see
+	// finalize for what that changes.
+	fresh map[identity]bool
+	// committed is the first error the store's commit would raise for a fresh
+	// array, which upstream reports only once finalize has walked the tree.
+	committed error
 }
 
 // draftState is upstream's DraftState: one container of the base (or one a
@@ -63,7 +70,7 @@ func isHole(v any) bool {
 }
 
 func newTransaction(base any) *transaction {
-	tx := &transaction{active: true, states: map[identity]*draftState{}}
+	tx := &transaction{active: true, states: map[identity]*draftState{}, fresh: map[identity]bool{}}
 	tx.root = tx.stateFor(base)
 	return tx
 }
@@ -104,8 +111,14 @@ func (tx *transaction) draftValue(v any) any {
 // into a draft is checked and deep-copied at once, so later changes to the
 // caller's value — or to the draft it was read from — do not reach it.
 func (tx *transaction) assign(v any) (any, error) {
-	c := cloner{rules: assignRules}
+	c := tx.cloner()
 	return c.clone(v, nil)
+}
+
+// cloner is the copy a draft write makes: assignRules, and every array it
+// allocates recorded as fresh.
+func (tx *transaction) cloner() cloner {
+	return cloner{rules: assignRules, fresh: tx.fresh}
 }
 
 // release is upstream's: the transaction ends, and every state forgets its
@@ -115,7 +128,7 @@ func (tx *transaction) release() {
 	for _, s := range tx.created {
 		s.base, s.own, s.named = nil, nil, nil
 	}
-	tx.created, tx.states, tx.root = nil, nil, nil
+	tx.created, tx.states, tx.root, tx.fresh = nil, nil, nil, nil
 }
 
 // current is the container as the draft holds it now: the copy once there is
@@ -142,17 +155,33 @@ func (s *draftState) ensureCopy() any {
 
 // ─── Finishing ───────────────────────────────────────────────────────────────
 
-// finish is upstream's finish(): fold the draft into a revision, then release
-// it either way.
+// finish is upstream's finish() and the store's commit: fold the draft into a
+// revision, then release it either way.
 func (tx *transaction) finish() (any, error) {
 	defer tx.release()
-	return tx.finalize(tx.root, map[*draftState]bool{}, map[*draftState]any{})
+	v, err := tx.finalize(tx.root, map[*draftState]bool{}, map[*draftState]any{})
+	if err == nil {
+		err = tx.committed
+	}
+	if err != nil {
+		return nil, err
+	}
+	return v, nil
 }
 
 // finalize is upstream's: a state whose copy still equals its base drops the
 // copy; each member container with a state of its own is finalized in turn
-// and, if it changed, written into this container's copy (made now if the
-// container itself was not written). An array that was written must be dense.
+// (an object's in keyOrder) and, if it changed, written into this container's
+// copy (made now if the container itself was not written). An array that was
+// written must be dense.
+//
+// Which check reports a sparse array depends on where it came from. An array
+// of the revision is checked here, after its members, with draft.ts's text.
+// An array this change created is the transaction's own, which upstream
+// writes in place: its copy IS its base, so finalize drops it as unchanged and
+// never checks it, and the store's commit does — after finalize has walked
+// the whole tree, parent before child, with value.ts's text. That check is
+// recorded here in the commit's order, and finish reports it.
 func (tx *transaction) finalize(s *draftState, finalizing map[*draftState]bool, finalized map[*draftState]any) (any, error) {
 	if v, ok := finalized[s]; ok {
 		return v, nil
@@ -169,6 +198,15 @@ func (tx *transaction) finalize(s *draftState, finalizing map[*draftState]bool, 
 	current := s.current()
 	result := current
 	writable := s.own != nil
+	xs, isArray := current.([]any)
+	fresh := false
+	if isArray && writable {
+		id, _ := identityOf(s.base)
+		fresh = tx.fresh[id]
+	}
+	if fresh && tx.committed == nil {
+		tx.committed = denseError(xs, s.named, importRules)
+	}
 	member := func(v any) (any, bool, error) {
 		if !isContainer(v) {
 			return nil, false, nil
@@ -185,8 +223,8 @@ func (tx *transaction) finalize(s *draftState, finalizing map[*draftState]bool, 
 	}
 	switch c := current.(type) {
 	case map[string]any:
-		for k, v := range c {
-			f, changed, err := member(v)
+		for _, k := range keyOrder(c) {
+			f, changed, err := member(c[k])
 			if err != nil {
 				return nil, err
 			}
@@ -212,12 +250,46 @@ func (tx *transaction) finalize(s *draftState, finalizing map[*draftState]bool, 
 			}
 			result.([]any)[i] = f
 		}
-		if s.own != nil && (len(s.named) > 0 || slices.ContainsFunc(c, isHole)) {
-			return nil, &ValueError{Message: assignRules.dense}
+		if s.own != nil && !fresh {
+			if err := denseError(xs, s.named, assignRules); err != nil {
+				return nil, err
+			}
 		}
 	}
 	finalized[s] = result
 	return result, nil
+}
+
+// checkDense is denseError for the array a state holds now; nil for an
+// object.
+func (s *draftState) checkDense(rules cloneRules) error {
+	xs, ok := s.current().([]any)
+	if !ok {
+		return nil
+	}
+	return denseError(xs, s.named, rules)
+}
+
+// denseError is upstream's assertDenseArray over an array a draft holds: its
+// own keys — the indices that hold a value, "length" and any named property —
+// must number exactly its length plus one, or it is not "dense and contain
+// only indexed entries"; then no index may be empty, or it does not "contain
+// enumerable indexed data properties with defined values". The second text
+// needs as many named properties as holes.
+func denseError(xs []any, named map[string]any, rules cloneRules) error {
+	holes := 0
+	for _, v := range xs {
+		if isHole(v) {
+			holes++
+		}
+	}
+	switch {
+	case len(named) != holes:
+		return &ValueError{Message: rules.dense}
+	case holes > 0:
+		return &ValueError{Message: rules.defined}
+	}
+	return nil
 }
 
 // shallowEqual is upstream's: the same kind, the same members, each Object.is
@@ -1000,7 +1072,7 @@ func (d *Draft) CopyWithin(target, start, end int) error {
 	from, final := relativeIndex(start, len(xs)), relativeIndex(end, len(xs))
 	count := min(max(final-from, 0), len(xs)-to)
 	source := slices.Clone(xs[from : from+count])
-	c := cloner{rules: assignRules}
+	c := s.txn.cloner()
 	for offset, item := range source {
 		if isHole(item) {
 			return &ValueError{Message: undefinedMessage}

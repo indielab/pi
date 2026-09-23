@@ -690,6 +690,38 @@ func TestGoldenScenarios(t *testing.T) {
 	t.Logf("%d scenarios; pi's own member order differs from Go's in %d batches", len(g.Scenarios), reordered)
 }
 
+// The scenarios whose outcome depends on the order a change is walked in —
+// which of several sparse arrays a failed Prepare reports — replayed many
+// times: a Go map iterates in a randomized order, so a walk that followed it
+// would match pi only by chance.
+func TestGoldenScenariosAreDeterministic(t *testing.T) {
+	g := golden(t)
+	replayed := 0
+	for _, s := range g.Scenarios {
+		if !strings.HasPrefix(s.Name, "dense check") {
+			continue
+		}
+		replayed++
+		for range 50 {
+			r := newRunner(t, false)
+			for tname, initial := range s.Trackers {
+				tr, err := Track(r.b.raw(initial))
+				if err != nil {
+					t.Fatalf("%s: Track: %v", s.Name, err)
+				}
+				r.trackers[tname] = tr
+			}
+			r.run(s.Name, s)
+			if t.Failed() {
+				return
+			}
+		}
+	}
+	if replayed == 0 {
+		t.Fatal(`no "dense check" scenario in the golden`)
+	}
+}
+
 // state-fuzz.test.ts, differential: the same seeds and steps, each step's ops
 // and value hashed as pi's were.
 func TestGoldenFuzz(t *testing.T) {

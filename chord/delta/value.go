@@ -279,21 +279,25 @@ func compareUTF16(a, b string) int {
 // (draft.ts's cloneAssigned). Each message is upstream's TypeError text, then
 // what to do about it.
 type cloneRules struct {
-	cycle, strict, plain, dense string
+	cycle, strict, plain string
+	// dense and defined are assertDenseArray's two texts (see denseError).
+	dense, defined string
 }
 
 var (
 	importRules = cloneRules{
-		cycle:  "Replicated state cannot contain cycles",
-		strict: "Replicated state values must be strict JSON",
-		plain:  "Replicated state containers must be plain objects or arrays",
-		dense:  "Replicated state arrays must be dense and contain only indexed entries",
+		cycle:   "Replicated state cannot contain cycles",
+		strict:  "Replicated state values must be strict JSON",
+		plain:   "Replicated state containers must be plain objects or arrays",
+		dense:   "Replicated state arrays must be dense and contain only indexed entries",
+		defined: "Replicated state arrays must contain enumerable indexed data properties with defined values",
 	}
 	assignRules = cloneRules{
-		cycle:  "Assigned JSON values cannot contain cycles",
-		strict: "Assigned values must be strict JSON values",
-		plain:  "Assigned JSON containers must be plain objects or arrays",
-		dense:  "Draft arrays must be dense and contain only indexed entries",
+		cycle:   "Assigned JSON values cannot contain cycles",
+		strict:  "Assigned values must be strict JSON values",
+		plain:   "Assigned JSON containers must be plain objects or arrays",
+		dense:   "Draft arrays must be dense and contain only indexed entries",
+		defined: "Draft arrays must contain enumerable indexed data properties with defined values",
 	}
 )
 
@@ -314,7 +318,7 @@ func (e *ValueError) Error() string {
 	switch e.Message {
 	case importRules.cycle, assignRules.cycle:
 		return "delta: " + e.Message + " (a container reaches itself; break the cycle before handing the value over)"
-	case importRules.dense, assignRules.dense:
+	case importRules.dense, assignRules.dense, importRules.defined, assignRules.defined:
 		return "delta: " + e.Message + " (a JSON array holds values at indices 0..n-1 and nothing else: fill every slot SetLen or a write past the end left empty, and address array elements by index)"
 	case undefinedMessage:
 		return "delta: " + e.Message + " (the source range holds a slot SetLen or a write past the end left empty; fill it first)"
@@ -340,6 +344,9 @@ func (e *ValueError) Error() string {
 type cloner struct {
 	rules     cloneRules
 	ancestors map[identity]bool
+	// fresh, when set, records every array the copy allocates: the draft's
+	// transaction-owned arrays.
+	fresh map[identity]bool
 }
 
 // importValue is the store's import: a deep copy of v in the tracker's
@@ -359,15 +366,15 @@ func (c *cloner) clone(v any, tx *transaction) (any, error) {
 		if err != nil {
 			return nil, err
 		}
-		if len(s.named) > 0 {
-			return nil, &ValueError{Message: c.rules.dense}
+		if err := s.checkDense(c.rules); err != nil {
+			return nil, err
 		}
 		return c.clone(s.current(), s.txn)
 	case map[string]any, []any:
 		if tx != nil {
 			if s := tx.stateOf(x); s != nil {
-				if len(s.named) > 0 {
-					return nil, &ValueError{Message: c.rules.dense}
+				if err := s.checkDense(c.rules); err != nil {
+					return nil, err
 				}
 				v = s.current()
 			}
@@ -428,6 +435,10 @@ func (c *cloner) container(v any, tx *transaction) (any, error) {
 	switch x := v.(type) {
 	case []any:
 		out := newArray(len(x))
+		if c.fresh != nil {
+			id, _ := identityOf(out)
+			c.fresh[id] = true
+		}
 		for i, item := range x {
 			if isHole(item) {
 				return nil, &ValueError{Message: c.rules.dense}
