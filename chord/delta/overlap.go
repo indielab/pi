@@ -6,8 +6,9 @@ import (
 	"unicode/utf8"
 )
 
-// Upstream's defaults for overlap's probe and maxCandidates parameters. Its one
-// caller, the revision diff, never passes either, so here they are constants.
+// Upstream's defaults for overlap's probe and maxCandidates parameters. No
+// caller in pi passes either — not the revision diff, not upstream's tests —
+// so here they are constants.
 const (
 	// overlapProbe is the length, in UTF-16 code units, of the head of b
 	// tried first. A probe of length h can only find overlaps of at least h —
@@ -22,10 +23,13 @@ const (
 	overlapMaxCandidates = 8
 )
 
-// overlap is the longest suffix of a that is a prefix of b, looking back at
-// most scan code units of a. It probes with strings.Index and verifies exact
-// substring equality, so the hot loops are native; a hand-written KMP is
-// asymptotically equivalent and much slower in practice.
+// Overlap is the longest suffix of a that is a prefix of b, looking back at
+// most scan code units of a: upstream's exported overlap(a, b, scan), with its
+// default probe (64 units) and candidate budget (8). The revision diff uses it
+// to publish a rolling window as a front-truncation plus an append. It probes
+// with strings.Index and verifies exact substring equality, so the hot loops
+// are native; a hand-written KMP is asymptotically equivalent and much slower
+// in practice.
 //
 // Always correct: the returned n satisfies a[len(a)-n:] == b[:n] in UTF-16
 // code units. It is not always maximal — the candidate budget can give up on
@@ -42,7 +46,7 @@ const (
 // split, so a candidate must also continue with the same high surrogate; the
 // tail begins after the split pair, because a lone low surrogate opens no
 // string b could be.
-func overlap(a, b string, scan int) int {
+func Overlap(a, b string, scan int) int {
 	if a == "" || b == "" || scan <= 0 {
 		// a.slice(a.length - scan) with a negative scan is the empty tail.
 		return 0

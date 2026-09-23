@@ -155,7 +155,7 @@ func (d *differ) string(before, after string, path Path) {
 		d.emit(Append{Path: path, Text: after[len(before):]})
 		return
 	}
-	shared := overlap(before, after, defaultOverlapScan)
+	shared := Overlap(before, after, defaultOverlapScan)
 	if shared == 0 {
 		d.emit(Set{Path: path, Value: after})
 		return

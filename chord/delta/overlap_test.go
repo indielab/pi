@@ -10,12 +10,12 @@ import (
 func TestOverlap(t *testing.T) {
 	// "finds an overlap shorter than the long probe": the 64-unit probe is
 	// longer than b, so the head is all of b; only the 1-unit fallback finds it.
-	if got := overlap("abcdefgh", "defghxyz", 65_536); got != 5 {
-		t.Errorf("overlap(abcdefgh, defghxyz, 65536) = %d, want 5", got)
+	if got := Overlap("abcdefgh", "defghxyz", 65_536); got != 5 {
+		t.Errorf("Overlap(abcdefgh, defghxyz, 65536) = %d, want 5", got)
 	}
 	// "honors a disabled scan"
-	if got := overlap("abcdef", "defghi", 0); got != 0 {
-		t.Errorf("overlap(abcdef, defghi, 0) = %d, want 0", got)
+	if got := Overlap("abcdef", "defghi", 0); got != 0 {
+		t.Errorf("Overlap(abcdef, defghi, 0) = %d, want 0", got)
 	}
 }
 
@@ -41,15 +41,15 @@ func TestOverlapInvariant(t *testing.T) {
 	for _, tc := range cases {
 		a, b := utf16.Encode([]rune(tc.a)), utf16.Encode([]rune(tc.b))
 		for _, scan := range []int{0, 1, 3, 5, 64, 1_000, 1 << 20} {
-			n := overlap(tc.a, tc.b, scan)
+			n := Overlap(tc.a, tc.b, scan)
 			if n < 0 || n > len(a) || n > len(b) {
-				t.Fatalf("overlap(%q, %q, %d) = %d: out of range", tc.a, tc.b, scan, n)
+				t.Fatalf("Overlap(%q, %q, %d) = %d: out of range", tc.a, tc.b, scan, n)
 			}
 			if suffix, prefix := a[len(a)-n:], b[:n]; string(utf16.Decode(suffix)) != string(utf16.Decode(prefix)) {
-				t.Errorf("overlap(%q, %q, %d) = %d: suffix %q != prefix %q", tc.a, tc.b, scan, n, string(utf16.Decode(suffix)), string(utf16.Decode(prefix)))
+				t.Errorf("Overlap(%q, %q, %d) = %d: suffix %q != prefix %q", tc.a, tc.b, scan, n, string(utf16.Decode(suffix)), string(utf16.Decode(prefix)))
 			}
 			if n > 0 && scan > 0 && n > scan {
-				t.Errorf("overlap(%q, %q, %d) = %d: exceeds scan", tc.a, tc.b, scan, n)
+				t.Errorf("Overlap(%q, %q, %d) = %d: exceeds scan", tc.a, tc.b, scan, n)
 			}
 		}
 	}
@@ -57,10 +57,10 @@ func TestOverlapInvariant(t *testing.T) {
 
 // Pinned against pi: every `want` is the number upstream's overlap returns for
 // the same input (packages/chord/src/delta/index.ts at 64eeb82a4, run under
-// node). The numbers must match exactly — including the ones the candidate
-// budget turns into 0 — because the tracker puts them on the wire as a "t"
-// count, and a Go producer and a pi producer must emit the same ops for the
-// same mutation.
+// node; all re-checked at 9a139c62b, where overlap is unchanged). The numbers
+// must match exactly — including the ones the candidate budget turns into 0 —
+// because the tracker puts them on the wire as a "t" count, and a Go producer
+// and a pi producer must emit the same ops for the same mutation.
 func TestOverlapMatchesUpstream(t *testing.T) {
 	// U+1F600 and U+1F601 share their high surrogate, D83D; U+1F9D1 is in the
 	// next block, D83E.
@@ -89,6 +89,9 @@ func TestOverlapMatchesUpstream(t *testing.T) {
 		// The answer is exactly the eighth candidate — the last the budget
 		// allows. A budget of seven would give up on it.
 		{"eighth candidate", strings.Repeat("a", 11), "aaaa", 1 << 16, 4},
+		// ...and one past it, the ninth, is past the budget: 0. A budget of
+		// nine would find it.
+		{"ninth candidate", strings.Repeat("a", 12), "aaaa", 1 << 16, 0},
 		// "ab" repeats 20 times in the tail; the first eight candidates are all
 		// too long to be prefixes of b. Giving up returns 0.
 		{"gives up past the candidate budget", strings.Repeat("ab", 20), "abab", 1 << 16, 0},
@@ -154,7 +157,7 @@ func TestOverlapMatchesUpstream(t *testing.T) {
 		{"single astral b, no match", "ab" + grin, emoji, 1 << 16, 0},
 	}
 	for _, tc := range cases {
-		if got := overlap(tc.a, tc.b, tc.scan); got != tc.want {
+		if got := Overlap(tc.a, tc.b, tc.scan); got != tc.want {
 			t.Errorf("%s: overlap = %d, want %d", tc.name, got, tc.want)
 		}
 	}
