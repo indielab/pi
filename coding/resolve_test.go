@@ -1,6 +1,8 @@
 package coding
 
 import (
+	"encoding/json"
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -247,65 +249,47 @@ func TestResolveModelCustomIDFallbackInvalidSuffix(t *testing.T) {
 	}
 }
 
-// Upstream c1019d920 (Baseten) added one line to defaultModelPerProvider that the
-// port's first pass missed, because the commit's model-resolver.ts hunk sits in a
-// file that is otherwise host-only and triaged n/a — but this ONE table is ported.
-// Inert today: baseten has no catalog models until a release regen carries them,
-// so buildFallbackModel returns nil for it. It stops being inert on that regen,
-// at which point a missing entry would silently clone providerModels[0] instead
-// of GLM-5.2 — the same failure mode the qwen-token-plan entries below describe.
-// Locked now so the regen cannot introduce it quietly.
-func TestDefaultModelPerProviderBaseten(t *testing.T) {
-	if got := defaultModelPerProvider["baseten"]; got != "zai-org/GLM-5.2" {
-		t.Fatalf("default model for %q: got %q, want %q", "baseten", got, "zai-org/GLM-5.2")
+// testdata/defaultmodels/capture.mjs reads pi's defaultModelPerProvider from
+// the published build. The port's table must equal it: every provider, every
+// id. Entries were missed twice before (baseten in c1019d920, the
+// qwen-token-plan entries), because model-resolver.ts hunks sit in commits
+// whose other hunks are host-only, and a missed re-point to an id the catalog
+// still has passes TestDefaultModelsExistInCatalog. Re-capture at every re-pin.
+func TestDefaultModelPerProviderMatchesPi(t *testing.T) {
+	const file = "testdata/defaultmodels/default-models-0.87.1.json"
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v (regenerate it with testdata/defaultmodels/capture.mjs)", file, err)
 	}
-}
-
-// pi 77428858: the openai default model advanced gpt-5.4 → gpt-5.5. Only openai
-// moved — azure-openai-responses and github-copilot stay on gpt-5.4 (and
-// openai-codex was already gpt-5.5). Lock the buildFallbackModel template ids.
-func TestDefaultModelPerProviderOpenAI(t *testing.T) {
-	cases := map[string]string{
-		"openai":                 "gpt-5.5",
-		"azure-openai-responses": "gpt-5.4",
-		"github-copilot":         "gpt-5.4",
-		"openai-codex":           "gpt-5.5",
+	var capture struct {
+		Defaults map[string]string `json:"defaultModelPerProvider"`
 	}
-	for provider, want := range cases {
-		if got := defaultModelPerProvider[provider]; got != want {
-			t.Fatalf("default model for %q: got %q, want %q", provider, got, want)
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatalf("decode %s: %v", file, err)
+	}
+	if len(capture.Defaults) == 0 {
+		t.Fatalf("%s holds no defaults", file)
+	}
+	for provider, want := range capture.Defaults {
+		if got, ok := defaultModelPerProvider[provider]; !ok || got != want {
+			t.Errorf("default model for %q = %q, pi %q", provider, got, want)
+		}
+	}
+	for provider, got := range defaultModelPerProvider {
+		if _, ok := capture.Defaults[provider]; !ok {
+			t.Errorf("default model for %q = %q, but pi has no entry for it", provider, got)
 		}
 	}
 }
 
-// The port was missing three of pi's defaultModelPerProvider entries. The two
-// qwen-token-plan ones are load-bearing: without them a custom model id under
-// those providers falls through to providerModels[0] — MiniMax-M2.5 after the
-// sort — and clones its contextWindow/maxTokens (196608/32768) instead of
-// qwen3.7-max's (1000000/131072), which changes the emitted max_tokens and the
-// context clamp. "radius" is absent from the catalog, so it is inert, but it is
-// carried for faithfulness; upstream 9767ba275 moved it from "auto" to
-// "balanced" once Radius models are selected after catalog discovery. The
-// qwen-token-plan values are pi 0.83.0's model-resolver.
-func TestDefaultModelPerProviderQwenTokenPlanAndRadius(t *testing.T) {
-	cases := map[string]string{
-		"qwen-token-plan":            "qwen3.7-max",
-		"qwen-token-plan-cn":         "qwen3.7-max",
-		"qwen-token-plan-individual": "qwen3.8-max",
-		"radius":                     "balanced",
-	}
-	for provider, want := range cases {
-		t.Run(provider, func(t *testing.T) {
-			if got := defaultModelPerProvider[provider]; got != want {
-				t.Fatalf("default model for %q: got %q, want %q", provider, got, want)
-			}
-		})
-	}
-
-	// Lock the consequence, not just the table entry: the qwen-token-plan
-	// fallback must inherit qwen3.7-max's limits, never MiniMax-M2.5's.
+// Without their defaultModelPerProvider entries, a custom model id under the
+// qwen-token-plan providers falls through to providerModels[0] — MiniMax-M2.5
+// after the sort — and clones its contextWindow/maxTokens (196608/32768)
+// instead of qwen3.7-max's (1000000/131072), which changes the emitted
+// max_tokens and the context clamp. Lock the consequence, not just the entry.
+func TestDefaultModelPerProviderQwenTokenPlanLimits(t *testing.T) {
 	for _, provider := range []string{"qwen-token-plan", "qwen-token-plan-cn"} {
-		t.Run(provider+"/limits", func(t *testing.T) {
+		t.Run(provider, func(t *testing.T) {
 			tmpl := ai.GetModel(provider, defaultModelPerProvider[provider])
 			if tmpl == nil {
 				t.Fatalf("%s/%s missing from catalog", provider, defaultModelPerProvider[provider])
@@ -315,40 +299,6 @@ func TestDefaultModelPerProviderQwenTokenPlanAndRadius(t *testing.T) {
 					provider, tmpl.ContextWindow, tmpl.MaxTokens)
 			}
 		})
-	}
-}
-
-// pi e429d90b8: the Z.AI Coding Plan defaults advance glm-5.1 → glm-5.3.
-// glm-5.1 left the zai catalogs at 0.84.1, so the defaults had been dangling
-// for a whole release; 0.84.2 adds glm-5.3 and e429d90b8 re-points them.
-// Mirrors upstream's "zai, minimax, cerebras, and ant-ling defaults track
-// current models" as of that commit.
-func TestDefaultModelPerProviderZaiCohort(t *testing.T) {
-	cases := map[string]string{
-		"zai":           "glm-5.3",
-		"zai-coding-cn": "glm-5.3",
-		"minimax":       "MiniMax-M2.7",
-		"minimax-cn":    "MiniMax-M2.7",
-		"cerebras":      "gpt-oss-120b",
-		"ant-ling":      "Ring-2.6-1T",
-	}
-	for provider, want := range cases {
-		t.Run(provider, func(t *testing.T) {
-			if got := defaultModelPerProvider[provider]; got != want {
-				t.Fatalf("default model for %q: got %q, want %q", provider, got, want)
-			}
-		})
-	}
-}
-
-// pi 1a584a7a5: the xAI default advances grok-4.6 → grok-4.7. It was held
-// until grok-4.7 reached the xai catalog (absent from 0.87.0, present from the
-// 0.87.1 regen), because a default naming a model the catalog lacks orphans
-// every fallback templated from it — TestDefaultModelsExistInCatalog guards
-// that. Mirrors upstream's "xai default tracks current model".
-func TestDefaultModelPerProviderXai(t *testing.T) {
-	if got := defaultModelPerProvider["xai"]; got != "grok-4.7" {
-		t.Fatalf("default model for %q: got %q, want %q", "xai", got, "grok-4.7")
 	}
 }
 
@@ -403,15 +353,5 @@ func TestResolveModelXaiFallbackDefault(t *testing.T) {
 	got := buildFallbackModel("xai", "my-custom-grok", models)
 	if got == nil || got.ID != "my-custom-grok" || got.ContextWindow != 470_000 || got.MaxTokens != 47_000 {
 		t.Fatalf("fallback must be templated from grok-4.7 (cw=470000 mt=47000), got %+v", got)
-	}
-}
-
-// pi b73412a37 adds Meta to defaultModelPerProvider. The table is what
-// buildFallbackModel templates a custom id from, and model-resolver.ts is the
-// file whose omissions this port has already been caught by twice, so the
-// entry is pinned on its own.
-func TestMetaFallbackDefault(t *testing.T) {
-	if got := defaultModelPerProvider["meta"]; got != "muse-spark-1.3" {
-		t.Fatalf("meta default = %q, want muse-spark-1.3", got)
 	}
 }
