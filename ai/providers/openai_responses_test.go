@@ -1967,6 +1967,46 @@ func TestResponsesPromptCacheParamsFromCatalog(t *testing.T) {
 	}
 }
 
+// Mirrors openai-responses-compat.test.ts "sends none reasoning effort for
+// OpenAI %s when no reasoning is requested" (db91e0331 adds gpt-6-sol and
+// gpt-6-luna) and its sibling "omits reasoning effort for OpenAI %s when off is
+// unsupported", driven by the real catalog. With no reasoning requested, pi
+// sends reasoning {effort: thinkingLevelMap.off ?? "none"} unless off is null,
+// so each row's wire value comes from its catalog off entry. A regen that moves
+// one of these off entries fails here.
+func TestResponsesReasoningOffFromCatalog(t *testing.T) {
+	req := ai.Context{SystemPrompt: "sys", Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	for _, id := range []string{
+		"gpt-5.1", "gpt-5.2", "gpt-5.3-codex", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano",
+		"gpt-5.5", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna", "gpt-6-sol", "gpt-6-luna",
+	} {
+		t.Run("sends none/"+id, func(t *testing.T) {
+			model := ai.GetModel("openai", id)
+			if model == nil {
+				t.Fatalf("catalog has no openai/%s", id)
+			}
+			got, has := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{})["reasoning"]
+			if !has {
+				t.Fatal(`reasoning missing, want {"effort":"none"}`)
+			}
+			if diff := gotWantJSON(t, got, `{"effort":"none"}`); diff != "" {
+				t.Error(diff)
+			}
+		})
+	}
+	for _, id := range []string{"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5-pro", "gpt-5.2-pro", "gpt-5.4-pro", "gpt-5.5-pro"} {
+		t.Run("omits/"+id, func(t *testing.T) {
+			model := ai.GetModel("openai", id)
+			if model == nil {
+				t.Fatalf("catalog has no openai/%s", id)
+			}
+			if got, has := mustBuildResponsesParams(t, model, req, &OpenAIResponsesOptions{})["reasoning"]; has {
+				t.Errorf("reasoning = %#v, want absent (off is null)", got)
+			}
+		})
+	}
+}
+
 // gotWantJSON renders got as JSON and compares it byte-for-byte with want.
 func gotWantJSON(t *testing.T, got any, want string) string {
 	t.Helper()
