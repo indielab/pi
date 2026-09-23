@@ -89,15 +89,15 @@ func main() {
 			resumePath = latest.Path
 		}
 	}
-	var resumeCtx *coding.BranchContext
+	var resumeBranch *coding.BranchProjection
 	var resumeHasThinkingEntry bool
 	if resumePath != "" {
 		tree, err := coding.LoadSessionTree(resumePath)
 		if err != nil {
 			fatal(err)
 		}
-		ctx := tree.BuildContext()
-		resumeCtx = &ctx
+		branch := tree.BuildProjection()
+		resumeBranch = &branch
 		for _, e := range tree.Entries {
 			if e.Type == "thinking_level_change" {
 				resumeHasThinkingEntry = true
@@ -108,11 +108,11 @@ func main() {
 
 	var model *ai.Model
 	parsedThink := ""
-	if modelSpec == "" && resumeCtx != nil && resumeCtx.Provider != "" && resumeCtx.ModelID != "" {
+	if modelSpec == "" && resumeBranch != nil && resumeBranch.Provider != "" && resumeBranch.ModelID != "" {
 		// Restore the session's model when no -m flag is given.
-		model = ai.GetModel(resumeCtx.Provider, resumeCtx.ModelID)
+		model = ai.GetModel(resumeBranch.Provider, resumeBranch.ModelID)
 		if model == nil {
-			fmt.Fprintf(os.Stderr, "\033[33mWarning: Could not restore model %s/%s\033[0m\n", resumeCtx.Provider, resumeCtx.ModelID)
+			fmt.Fprintf(os.Stderr, "\033[33mWarning: Could not restore model %s/%s\033[0m\n", resumeBranch.Provider, resumeBranch.ModelID)
 		}
 	}
 	if model == nil {
@@ -136,8 +136,8 @@ func main() {
 	if think == "" {
 		think = parsedThink
 	}
-	if think == "" && resumeCtx != nil && resumeHasThinkingEntry {
-		think = resumeCtx.ThinkingLevel
+	if think == "" && resumeBranch != nil && resumeHasThinkingEntry {
+		think = resumeBranch.ThinkingLevel
 	}
 
 	sess := coding.NewSession(coding.SessionOptions{
@@ -151,19 +151,10 @@ func main() {
 	})
 
 	if resumePath != "" {
-		sess.LoadBranch(*resumeCtx)
-		fmt.Fprintf(os.Stderr, "\033[2mresumed %d messages from %s\033[0m\n", len(resumeCtx.Messages), resumePath)
-		// Resume APPENDS to the existing session file (pi setSessionFile), never
-		// forks a new one.
-		if rec, err := coding.ResumeSession(resumePath); err == nil {
-			if !resumeHasThinkingEntry {
-				// pi appends a thinking_level_change when the resumed session
-				// lacks one (sdk.ts:359-361).
-				rec.RecordThinkingLevel(string(sess.Agent.State().ThinkingLevel))
-			}
-			sess.Record(rec)
+		if rec := resume(sess, resumePath, *resumeBranch, resumeHasThinkingEntry); rec != nil {
 			defer rec.Close()
 		}
+		fmt.Fprintf(os.Stderr, "\033[2mresumed %d messages from %s\033[0m\n", len(resumeBranch.Messages), resumePath)
 	} else {
 		// Record this session to disk (model_change + thinking_level_change,
 		// like pi's createAgentSession for new sessions).
@@ -191,6 +182,26 @@ func main() {
 	}
 
 	interactive(ctx, sess, model)
+}
+
+// resume continues sess from the session file at path, whose active branch is
+// branch: its messages and newest compaction (Session.LoadBranch, so the next
+// compaction extends that one). Recording then APPENDS to the same file (pi
+// setSessionFile), never forking a new one; the recorder it returns, when
+// the file opened, must be closed.
+func resume(sess *coding.Session, path string, branch coding.BranchProjection, hasThinkingEntry bool) *coding.SessionRecorder {
+	sess.LoadBranch(branch)
+	rec, err := coding.ResumeSession(path)
+	if err != nil {
+		return nil
+	}
+	if !hasThinkingEntry {
+		// pi appends a thinking_level_change when the resumed session lacks
+		// one (sdk.ts:359-361).
+		rec.RecordThinkingLevel(string(sess.Agent.State().ThinkingLevel))
+	}
+	sess.Record(rec)
+	return rec
 }
 
 func interactive(ctx context.Context, sess *coding.Session, model *ai.Model) {

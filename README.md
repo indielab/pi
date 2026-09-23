@@ -139,7 +139,8 @@ res, err := sess.Run(ctx, "refactor foo.go and add a test")
 Mid-session you can `sess.SetModel`, `sess.SetThinkingLevel`, `sess.Steer`,
 `sess.FollowUp`, `sess.Continue`, `sess.Abort`, and persist/resume via
 `coding.StartSession` + `sess.Record` / `coding.LoadSessionTree` +
-`sess.LoadBranch` (which also resumes the session's compaction). A complete
+`sess.LoadBranch(tree.BuildProjection())` (which also resumes the session's
+compaction). A complete
 runnable example is in [`examples/sdk`](examples/sdk/main.go).
 
 ## Fidelity notes

@@ -472,20 +472,46 @@ func (s *Session) setCompaction(c *compactionCheckpoint) {
 	s.compactState.mu.Unlock()
 }
 
-// resumedCheckpoint is the checkpoint a resumed branch's compaction amounts
-// to, as pi's prepareCompaction reads the entry: its summary is the previous
-// summary, its stored system message the replay, its details' file lists (only
-// when an extension did not produce it) the lists to merge, and its kept
-// messages where the next cut search starts. The replayed system message and
-// summary at the head of the branch's messages fall before prefixLen, so
-// applying the checkpoint rebuilds the same view.
-func resumedCheckpoint(c *BranchCompaction) *compactionCheckpoint {
-	e := c.Entry
+// resumedCheckpoint is the checkpoint a resumed branch's newest compaction
+// amounts to, or nil. pi's prepareCompaction takes the first projected entry
+// as the previous compaction when it is a compaction that still contributes
+// messages; a context edit that omitted it leaves none, and pi then has no
+// previous compaction. Its summary is the previous summary, its stored system
+// message the replay, and its details' file lists (only when an extension did
+// not produce it) the lists to merge.
+//
+// The projection's messages open with the compaction's own: the replayed
+// system message when it stored one, then the summary, which fall before
+// prefixLen, where the next cut search starts (pi boundaryStart). The messages
+// it kept follow (an inlined retainedTail is its own), then the messages
+// recorded after it, from compactedLen: the first of those entries is the
+// compaction entry's child on the path. Applying the checkpoint rebuilds the
+// same view.
+func resumedCheckpoint(p BranchProjection) *compactionCheckpoint {
+	if len(p.Entries) == 0 {
+		return nil
+	}
+	head := p.Entries[0]
+	e := head.SourceEntry
+	if e.Type != "compaction" || len(head.Messages) == 0 {
+		return nil
+	}
 	checkpoint := &compactionCheckpoint{
-		prefixLen:     c.KeptStart,
-		compactedLen:  c.KeptEnd,
+		prefixLen:     1,
+		compactedLen:  len(p.Messages),
 		systemMessage: e.SystemMessage,
 		summary:       e.Summary,
+	}
+	if e.SystemMessage != nil {
+		checkpoint.prefixLen++
+	}
+	offset := 0
+	for _, entry := range p.Entries {
+		if entry.SourceEntry.ParentID == e.ID {
+			checkpoint.compactedLen = offset
+			break
+		}
+		offset += len(entry.Messages)
 	}
 	if !e.FromHook {
 		checkpoint.readFiles = detailsFileList(e.Details, "readFiles")

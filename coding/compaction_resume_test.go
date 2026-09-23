@@ -22,7 +22,7 @@ import (
 // summary, starts the cut search after it, and merges its details' file lists
 // (unless an extension produced it); compact() then sends its requests, and the
 // new compaction's context follows. Resumed as cmd/pi resumes a file
-// (LoadSessionTree, BuildContext, LoadBranch), the port must send the same
+// (LoadSessionTree, BuildProjection, LoadBranch), the port must send the same
 // requests and rebuild the same context.
 func TestResumedCompactionMatchesPiCapture(t *testing.T) {
 	data, err := os.ReadFile("testdata/compaction/resume-0.87.1.json")
@@ -74,7 +74,7 @@ func TestResumedCompactionMatchesPiCapture(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			branch := tree.BuildContext()
+			branch := tree.BuildProjection()
 			if got := describeMessages(branch.Messages); !slices.Equal(got, scenario.Resumed) {
 				t.Fatalf("resumed context drifts from pi:\n got %q\n  pi %q", got, scenario.Resumed)
 			}

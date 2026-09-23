@@ -943,7 +943,7 @@ func FindSessionByID(cwd, id, sessionDir string) (string, bool) {
 // compaction summary in place of the pre-compaction turns) rather than naively
 // concatenating every message entry. The messages alone do not carry the
 // compaction a later one extends: to resume with it, pass the tree's
-// BuildContext to Session.LoadBranch.
+// BuildProjection to Session.LoadBranch.
 func LoadSessionMessages(path string) ([]agent.AgentMessage, error) {
 	tree, err := LoadSessionTree(path)
 	if err != nil {
