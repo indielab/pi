@@ -10,15 +10,15 @@
 				{
 					"type": "session",
 					"version": 3,
-					"id": "01a0ce55-4322-7551-a7fc-8d4476cc162a",
-					"timestamp": "2026-09-23T12:54:49.379Z",
+					"id": "01a0ce70-c3d1-76cf-b9d3-a88d668b4d31",
+					"timestamp": "2026-09-23T13:24:51.794Z",
 					"cwd": "/tmp/capture-resume"
 				},
 				{
 					"type": "message",
-					"id": "a90e0310",
+					"id": "6226c9fd",
 					"parentId": null,
-					"timestamp": "2026-09-23T12:54:49.381Z",
+					"timestamp": "2026-09-23T13:24:51.795Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -32,9 +32,9 @@
 				},
 				{
 					"type": "message",
-					"id": "309a656f",
-					"parentId": "a90e0310",
-					"timestamp": "2026-09-23T12:54:49.381Z",
+					"id": "7494e5d4",
+					"parentId": "6226c9fd",
+					"timestamp": "2026-09-23T13:24:51.795Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -66,9 +66,9 @@
 				},
 				{
 					"type": "message",
-					"id": "dbe2ba2c",
-					"parentId": "309a656f",
-					"timestamp": "2026-09-23T12:54:49.381Z",
+					"id": "1ba3e97b",
+					"parentId": "7494e5d4",
+					"timestamp": "2026-09-23T13:24:51.795Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -82,9 +82,9 @@
 				},
 				{
 					"type": "message",
-					"id": "9c81734f",
-					"parentId": "dbe2ba2c",
-					"timestamp": "2026-09-23T12:54:49.381Z",
+					"id": "fffd9a08",
+					"parentId": "1ba3e97b",
+					"timestamp": "2026-09-23T13:24:51.795Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -116,11 +116,11 @@
 				},
 				{
 					"type": "compaction",
-					"id": "c7cdd27a",
-					"parentId": "9c81734f",
-					"timestamp": "2026-09-23T12:54:49.381Z",
+					"id": "718ddc10",
+					"parentId": "fffd9a08",
+					"timestamp": "2026-09-23T13:24:51.795Z",
 					"summary": "",
-					"firstKeptEntryId": "dbe2ba2c",
+					"firstKeptEntryId": "1ba3e97b",
 					"tokensBefore": 100,
 					"details": {
 						"readFiles": [],
@@ -130,9 +130,9 @@
 				},
 				{
 					"type": "message",
-					"id": "12ab12a0",
-					"parentId": "c7cdd27a",
-					"timestamp": "2026-09-23T12:54:49.381Z",
+					"id": "c640abc1",
+					"parentId": "718ddc10",
+					"timestamp": "2026-09-23T13:24:51.795Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -146,9 +146,9 @@
 				},
 				{
 					"type": "message",
-					"id": "0c8ecb25",
-					"parentId": "12ab12a0",
-					"timestamp": "2026-09-23T12:54:49.381Z",
+					"id": "1177af84",
+					"parentId": "c640abc1",
+					"timestamp": "2026-09-23T13:24:51.795Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -180,9 +180,9 @@
 				},
 				{
 					"type": "message",
-					"id": "5e82d219",
-					"parentId": "0c8ecb25",
-					"timestamp": "2026-09-23T12:54:49.381Z",
+					"id": "f4f4b143",
+					"parentId": "1177af84",
+					"timestamp": "2026-09-23T13:24:51.795Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -227,15 +227,15 @@
 				{
 					"type": "session",
 					"version": 3,
-					"id": "01a0ce55-4326-7551-a7fc-8d48599fa8bb",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "01a0ce70-c3d5-76cf-b9d3-a891d8133edb",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"cwd": "/tmp/capture-resume"
 				},
 				{
 					"type": "message",
-					"id": "5f9e6448",
+					"id": "833ac98d",
 					"parentId": null,
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -249,9 +249,9 @@
 				},
 				{
 					"type": "message",
-					"id": "88668acb",
-					"parentId": "5f9e6448",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "12f22615",
+					"parentId": "833ac98d",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -291,9 +291,9 @@
 				},
 				{
 					"type": "message",
-					"id": "8eb7f673",
-					"parentId": "88668acb",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "b04e18bf",
+					"parentId": "12f22615",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "toolResult",
 						"toolCallId": "r1",
@@ -310,9 +310,9 @@
 				},
 				{
 					"type": "message",
-					"id": "b29a6439",
-					"parentId": "8eb7f673",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "ed6c9860",
+					"parentId": "b04e18bf",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -344,9 +344,9 @@
 				},
 				{
 					"type": "message",
-					"id": "13c98b97",
-					"parentId": "b29a6439",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "4cd0cfe0",
+					"parentId": "ed6c9860",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -360,9 +360,9 @@
 				},
 				{
 					"type": "message",
-					"id": "702eb105",
-					"parentId": "13c98b97",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "c8ba82b3",
+					"parentId": "4cd0cfe0",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -394,11 +394,11 @@
 				},
 				{
 					"type": "compaction",
-					"id": "f78f74a4",
-					"parentId": "702eb105",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "5c2c86b5",
+					"parentId": "c8ba82b3",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"summary": "## Goal\nold work\n\n<read-files>\n/a/old.go\n</read-files>\n\n<modified-files>\n/a/changed.go\n</modified-files>",
-					"firstKeptEntryId": "13c98b97",
+					"firstKeptEntryId": "4cd0cfe0",
 					"tokensBefore": 100,
 					"details": {
 						"readFiles": [
@@ -412,9 +412,9 @@
 				},
 				{
 					"type": "message",
-					"id": "11ac41a9",
-					"parentId": "f78f74a4",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "eec9fd54",
+					"parentId": "5c2c86b5",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -428,9 +428,9 @@
 				},
 				{
 					"type": "message",
-					"id": "f684fd29",
-					"parentId": "11ac41a9",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "aca46ea4",
+					"parentId": "eec9fd54",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -472,9 +472,9 @@
 				},
 				{
 					"type": "message",
-					"id": "81fd417d",
-					"parentId": "f684fd29",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "8a66da79",
+					"parentId": "aca46ea4",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "toolResult",
 						"toolCallId": "e1",
@@ -491,9 +491,9 @@
 				},
 				{
 					"type": "message",
-					"id": "4ac59f9f",
-					"parentId": "81fd417d",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "f9719e28",
+					"parentId": "8a66da79",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -525,9 +525,9 @@
 				},
 				{
 					"type": "message",
-					"id": "2efe8a57",
-					"parentId": "4ac59f9f",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "3e449ea8",
+					"parentId": "f9719e28",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -579,15 +579,15 @@
 				{
 					"type": "session",
 					"version": 3,
-					"id": "01a0ce55-4326-7551-a7fc-8d4d3116c857",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "01a0ce70-c3d5-76cf-b9d3-a894b0212b67",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"cwd": "/tmp/capture-resume"
 				},
 				{
 					"type": "message",
-					"id": "575fec8d",
+					"id": "fa2dad6e",
 					"parentId": null,
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -601,9 +601,9 @@
 				},
 				{
 					"type": "message",
-					"id": "351ce209",
-					"parentId": "575fec8d",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "e7b51e1c",
+					"parentId": "fa2dad6e",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -635,9 +635,9 @@
 				},
 				{
 					"type": "message",
-					"id": "bb9c2264",
-					"parentId": "351ce209",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "b7dca51a",
+					"parentId": "e7b51e1c",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -651,9 +651,9 @@
 				},
 				{
 					"type": "message",
-					"id": "86cc9b25",
-					"parentId": "bb9c2264",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "d1e94b31",
+					"parentId": "b7dca51a",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -685,11 +685,11 @@
 				},
 				{
 					"type": "compaction",
-					"id": "a2fa33cc",
-					"parentId": "86cc9b25",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "3b1aa367",
+					"parentId": "d1e94b31",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"summary": "## Goal\nhook work",
-					"firstKeptEntryId": "bb9c2264",
+					"firstKeptEntryId": "b7dca51a",
 					"tokensBefore": 100,
 					"details": {
 						"readFiles": [
@@ -701,9 +701,9 @@
 				},
 				{
 					"type": "message",
-					"id": "e86b7035",
-					"parentId": "a2fa33cc",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "5f1055a7",
+					"parentId": "3b1aa367",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -717,9 +717,9 @@
 				},
 				{
 					"type": "message",
-					"id": "053a45df",
-					"parentId": "e86b7035",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "1e8e8c22",
+					"parentId": "5f1055a7",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -751,9 +751,9 @@
 				},
 				{
 					"type": "message",
-					"id": "30ff9db7",
-					"parentId": "053a45df",
-					"timestamp": "2026-09-23T12:54:49.382Z",
+					"id": "c0ac69f1",
+					"parentId": "1e8e8c22",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -793,34 +793,20 @@
 			]
 		},
 		{
-			"name": "previous-summary-system-messages",
+			"name": "previous-summary-from-hook-truthy",
 			"entries": [
 				{
 					"type": "session",
 					"version": 3,
-					"id": "01a0ce55-4327-7551-a7fc-8d51c42548c7",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "01a0ce70-c3d5-76cf-b9d3-a899657fafa6",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"cwd": "/tmp/capture-resume"
 				},
 				{
 					"type": "message",
-					"id": "996ef542",
+					"id": "78ad4b38",
 					"parentId": null,
-					"timestamp": "2026-09-23T12:54:49.383Z",
-					"message": {
-						"role": "system",
-						"content": "",
-						"sections": {
-							"preamble": "v1"
-						},
-						"timestamp": 1789603200026
-					}
-				},
-				{
-					"type": "message",
-					"id": "6c07a08f",
-					"parentId": "996ef542",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -829,14 +815,14 @@
 								"text": "q1"
 							}
 						],
-						"timestamp": 1789603200027
+						"timestamp": 1789603200026
 					}
 				},
 				{
 					"type": "message",
-					"id": "bb4641ec",
-					"parentId": "6c07a08f",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "65075f6e",
+					"parentId": "78ad4b38",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -863,28 +849,14 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200028
+						"timestamp": 1789603200027
 					}
 				},
 				{
 					"type": "message",
-					"id": "d34853e9",
-					"parentId": "bb4641ec",
-					"timestamp": "2026-09-23T12:54:49.383Z",
-					"message": {
-						"role": "system",
-						"content": "",
-						"sections": {
-							"preamble": "v2"
-						},
-						"timestamp": 1789603200029
-					}
-				},
-				{
-					"type": "message",
-					"id": "464b59d4",
-					"parentId": "d34853e9",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "9396c1f9",
+					"parentId": "65075f6e",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -893,14 +865,14 @@
 								"text": "q2"
 							}
 						],
-						"timestamp": 1789603200030
+						"timestamp": 1789603200028
 					}
 				},
 				{
 					"type": "message",
-					"id": "3eee5320",
-					"parentId": "464b59d4",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "11f42d6a",
+					"parentId": "9396c1f9",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -927,50 +899,30 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200031
+						"timestamp": 1789603200029
 					}
 				},
 				{
 					"type": "compaction",
-					"id": "d8db86e1",
-					"parentId": "3eee5320",
-					"timestamp": "2026-09-23T12:54:49.383Z",
-					"summary": "## Goal\nprompted work",
-					"firstKeptEntryId": "464b59d4",
+					"id": "2bc76334",
+					"parentId": "11f42d6a",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"summary": "## Goal\nhook work",
+					"firstKeptEntryId": "9396c1f9",
 					"tokensBefore": 100,
 					"details": {
-						"readFiles": [],
+						"readFiles": [
+							"/a/hook.go"
+						],
 						"modifiedFiles": []
 					},
-					"fromHook": false,
-					"systemMessage": {
-						"role": "system",
-						"content": "",
-						"sections": {
-							"preamble": "v2"
-						},
-						"timestamp": 1790168089383
-					}
+					"fromHook": 1
 				},
 				{
 					"type": "message",
-					"id": "3635eaf1",
-					"parentId": "d8db86e1",
-					"timestamp": "2026-09-23T12:54:49.383Z",
-					"message": {
-						"role": "system",
-						"content": "",
-						"sections": {
-							"preamble": "v3"
-						},
-						"timestamp": 1789603200032
-					}
-				},
-				{
-					"type": "message",
-					"id": "22aa9f57",
-					"parentId": "3635eaf1",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "afce47cf",
+					"parentId": "2bc76334",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -979,14 +931,14 @@
 								"text": "q3"
 							}
 						],
-						"timestamp": 1789603200033
+						"timestamp": 1789603200030
 					}
 				},
 				{
 					"type": "message",
-					"id": "7896eb44",
-					"parentId": "22aa9f57",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "37bf1f40",
+					"parentId": "afce47cf",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1013,14 +965,14 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200034
+						"timestamp": 1789603200031
 					}
 				},
 				{
 					"type": "message",
-					"id": "4cd37894",
-					"parentId": "7896eb44",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "55cbfd15",
+					"parentId": "37bf1f40",
+					"timestamp": "2026-09-23T13:24:51.797Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1029,7 +981,495 @@
 								"text": "q4"
 							}
 						],
+						"timestamp": 1789603200032
+					}
+				}
+			],
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nhook work\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nhook work",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nhook work\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1",
+			"details": {
+				"readFiles": [],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-falsy",
+			"entries": [
+				{
+					"type": "session",
+					"version": 3,
+					"id": "01a0ce70-c3d5-76cf-b9d3-a89d01d3170e",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"cwd": "/tmp/capture-resume"
+				},
+				{
+					"type": "message",
+					"id": "b9cbc5b3",
+					"parentId": null,
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "q1"
+							}
+						],
+						"timestamp": 1789603200033
+					}
+				},
+				{
+					"type": "message",
+					"id": "d4de4aed",
+					"parentId": "b9cbc5b3",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "a1"
+							}
+						],
+						"api": "openai-completions",
+						"provider": "p",
+						"model": "m",
+						"usage": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"totalTokens": 0,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1789603200034
+					}
+				},
+				{
+					"type": "message",
+					"id": "85032cea",
+					"parentId": "d4de4aed",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "q2"
+							}
+						],
 						"timestamp": 1789603200035
+					}
+				},
+				{
+					"type": "message",
+					"id": "ec01ccd3",
+					"parentId": "85032cea",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "a2"
+							}
+						],
+						"api": "openai-completions",
+						"provider": "p",
+						"model": "m",
+						"usage": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"totalTokens": 0,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1789603200036
+					}
+				},
+				{
+					"type": "compaction",
+					"id": "e9e1600e",
+					"parentId": "ec01ccd3",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"summary": "## Goal\nown work",
+					"firstKeptEntryId": "85032cea",
+					"tokensBefore": 100,
+					"details": {
+						"readFiles": [
+							"/a/own.go"
+						],
+						"modifiedFiles": []
+					},
+					"fromHook": ""
+				},
+				{
+					"type": "message",
+					"id": "e65bfe39",
+					"parentId": "e9e1600e",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "q3"
+							}
+						],
+						"timestamp": 1789603200037
+					}
+				},
+				{
+					"type": "message",
+					"id": "8d616308",
+					"parentId": "e65bfe39",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "a3"
+							}
+						],
+						"api": "openai-completions",
+						"provider": "p",
+						"model": "m",
+						"usage": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"totalTokens": 0,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1789603200038
+					}
+				},
+				{
+					"type": "message",
+					"id": "5bf4ccc2",
+					"parentId": "8d616308",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "q4"
+							}
+						],
+						"timestamp": 1789603200039
+					}
+				}
+			],
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nown work\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nown work",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nown work\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1\n\n<read-files>\n/a/own.go\n</read-files>",
+			"details": {
+				"readFiles": [
+					"/a/own.go"
+				],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n\n<read-files>\n/a/own.go\n</read-files>\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-system-messages",
+			"entries": [
+				{
+					"type": "session",
+					"version": 3,
+					"id": "01a0ce70-c3d5-76cf-b9d3-a8a0bb97cd7a",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"cwd": "/tmp/capture-resume"
+				},
+				{
+					"type": "message",
+					"id": "049292c9",
+					"parentId": null,
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "system",
+						"content": "",
+						"sections": {
+							"preamble": "v1"
+						},
+						"timestamp": 1789603200040
+					}
+				},
+				{
+					"type": "message",
+					"id": "1b5ef700",
+					"parentId": "049292c9",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "q1"
+							}
+						],
+						"timestamp": 1789603200041
+					}
+				},
+				{
+					"type": "message",
+					"id": "6dbfb8f6",
+					"parentId": "1b5ef700",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "a1"
+							}
+						],
+						"api": "openai-completions",
+						"provider": "p",
+						"model": "m",
+						"usage": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"totalTokens": 0,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1789603200042
+					}
+				},
+				{
+					"type": "message",
+					"id": "3836823f",
+					"parentId": "6dbfb8f6",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "system",
+						"content": "",
+						"sections": {
+							"preamble": "v2"
+						},
+						"timestamp": 1789603200043
+					}
+				},
+				{
+					"type": "message",
+					"id": "34865d74",
+					"parentId": "3836823f",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "q2"
+							}
+						],
+						"timestamp": 1789603200044
+					}
+				},
+				{
+					"type": "message",
+					"id": "90ce8340",
+					"parentId": "34865d74",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "a2"
+							}
+						],
+						"api": "openai-completions",
+						"provider": "p",
+						"model": "m",
+						"usage": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"totalTokens": 0,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1789603200045
+					}
+				},
+				{
+					"type": "compaction",
+					"id": "3ad44fc1",
+					"parentId": "90ce8340",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"summary": "## Goal\nprompted work",
+					"firstKeptEntryId": "34865d74",
+					"tokensBefore": 100,
+					"details": {
+						"readFiles": [],
+						"modifiedFiles": []
+					},
+					"fromHook": false,
+					"systemMessage": {
+						"role": "system",
+						"content": "",
+						"sections": {
+							"preamble": "v2"
+						},
+						"timestamp": 1790169891797
+					}
+				},
+				{
+					"type": "message",
+					"id": "4ad3da30",
+					"parentId": "3ad44fc1",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "system",
+						"content": "",
+						"sections": {
+							"preamble": "v3"
+						},
+						"timestamp": 1789603200046
+					}
+				},
+				{
+					"type": "message",
+					"id": "f7d42bed",
+					"parentId": "4ad3da30",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "q3"
+							}
+						],
+						"timestamp": 1789603200047
+					}
+				},
+				{
+					"type": "message",
+					"id": "1f4867b4",
+					"parentId": "f7d42bed",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "assistant",
+						"content": [
+							{
+								"type": "text",
+								"text": "a3"
+							}
+						],
+						"api": "openai-completions",
+						"provider": "p",
+						"model": "m",
+						"usage": {
+							"input": 0,
+							"output": 0,
+							"cacheRead": 0,
+							"cacheWrite": 0,
+							"totalTokens": 0,
+							"cost": {
+								"input": 0,
+								"output": 0,
+								"cacheRead": 0,
+								"cacheWrite": 0,
+								"total": 0
+							}
+						},
+						"stopReason": "stop",
+						"timestamp": 1789603200048
+					}
+				},
+				{
+					"type": "message",
+					"id": "c95fb21c",
+					"parentId": "1f4867b4",
+					"timestamp": "2026-09-23T13:24:51.797Z",
+					"message": {
+						"role": "user",
+						"content": [
+							{
+								"type": "text",
+								"text": "q4"
+							}
+						],
+						"timestamp": 1789603200049
 					}
 				}
 			],
@@ -1068,15 +1508,15 @@
 				{
 					"type": "session",
 					"version": 3,
-					"id": "01a0ce55-4327-7551-a7fc-8d55ba7eba7c",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "01a0ce70-c3d6-76cf-b9d3-a8a498476eef",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"cwd": "/tmp/capture-resume"
 				},
 				{
 					"type": "message",
-					"id": "6ddcc2e7",
+					"id": "ad6763d4",
 					"parentId": null,
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1085,14 +1525,14 @@
 								"text": "q1"
 							}
 						],
-						"timestamp": 1789603200036
+						"timestamp": 1789603200050
 					}
 				},
 				{
 					"type": "message",
-					"id": "ad2f90fd",
-					"parentId": "6ddcc2e7",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "6ad46c38",
+					"parentId": "ad6763d4",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1119,14 +1559,14 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200037
+						"timestamp": 1789603200051
 					}
 				},
 				{
 					"type": "message",
-					"id": "74e48a43",
-					"parentId": "ad2f90fd",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "2ffc5fa3",
+					"parentId": "6ad46c38",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1135,14 +1575,14 @@
 								"text": "q2"
 							}
 						],
-						"timestamp": 1789603200038
+						"timestamp": 1789603200052
 					}
 				},
 				{
 					"type": "message",
-					"id": "8e6591c0",
-					"parentId": "74e48a43",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "9cf10225",
+					"parentId": "2ffc5fa3",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1169,16 +1609,16 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200039
+						"timestamp": 1789603200053
 					}
 				},
 				{
 					"type": "compaction",
-					"id": "25c3842a",
-					"parentId": "8e6591c0",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "b013cf65",
+					"parentId": "9cf10225",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"summary": "## Goal\nold work",
-					"firstKeptEntryId": "74e48a43",
+					"firstKeptEntryId": "2ffc5fa3",
 					"tokensBefore": 100,
 					"details": {
 						"readFiles": [],
@@ -1188,9 +1628,9 @@
 				},
 				{
 					"type": "message",
-					"id": "d247ef89",
-					"parentId": "25c3842a",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "115d73b6",
+					"parentId": "b013cf65",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1199,14 +1639,14 @@
 								"text": "q3"
 							}
 						],
-						"timestamp": 1789603200040
+						"timestamp": 1789603200054
 					}
 				},
 				{
 					"type": "message",
-					"id": "74540b44",
-					"parentId": "d247ef89",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "79a3c265",
+					"parentId": "115d73b6",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1233,14 +1673,14 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200041
+						"timestamp": 1789603200055
 					}
 				},
 				{
 					"type": "message",
-					"id": "303e3127",
-					"parentId": "74540b44",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "019a31f2",
+					"parentId": "79a3c265",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1249,14 +1689,14 @@
 								"text": "q4"
 							}
 						],
-						"timestamp": 1789603200042
+						"timestamp": 1789603200056
 					}
 				},
 				{
 					"type": "message",
-					"id": "265f87f7",
-					"parentId": "303e3127",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "01338f97",
+					"parentId": "019a31f2",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1283,7 +1723,7 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200043
+						"timestamp": 1789603200057
 					}
 				}
 			],
@@ -1325,15 +1765,15 @@
 				{
 					"type": "session",
 					"version": 3,
-					"id": "01a0ce55-4327-7551-a7fc-8d5b80b10652",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "01a0ce70-c3d6-76cf-b9d3-a8ab44990975",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"cwd": "/tmp/capture-resume"
 				},
 				{
 					"type": "message",
-					"id": "04e02320",
+					"id": "24ea2aac",
 					"parentId": null,
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1342,14 +1782,14 @@
 								"text": "q1"
 							}
 						],
-						"timestamp": 1789603200044
+						"timestamp": 1789603200058
 					}
 				},
 				{
 					"type": "message",
-					"id": "578a0289",
-					"parentId": "04e02320",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "f7eee877",
+					"parentId": "24ea2aac",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1376,16 +1816,16 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200045
+						"timestamp": 1789603200059
 					}
 				},
 				{
 					"type": "compaction",
-					"id": "18c7c381",
-					"parentId": "578a0289",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "77dd892d",
+					"parentId": "f7eee877",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"summary": "",
-					"firstKeptEntryId": "18c7c381",
+					"firstKeptEntryId": "77dd892d",
 					"tokensBefore": 100,
 					"details": {
 						"readFiles": [],
@@ -1395,9 +1835,9 @@
 				},
 				{
 					"type": "message",
-					"id": "a544ae89",
-					"parentId": "18c7c381",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "c5fb4a20",
+					"parentId": "77dd892d",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1406,14 +1846,14 @@
 								"text": "q2"
 							}
 						],
-						"timestamp": 1789603200046
+						"timestamp": 1789603200060
 					}
 				},
 				{
 					"type": "message",
-					"id": "af2bf7a4",
-					"parentId": "a544ae89",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "12fee699",
+					"parentId": "c5fb4a20",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1440,7 +1880,7 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200047
+						"timestamp": 1789603200061
 					}
 				}
 			],
@@ -1473,15 +1913,15 @@
 				{
 					"type": "session",
 					"version": 3,
-					"id": "01a0ce55-4327-7551-a7fc-8d5e9329b5d2",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "01a0ce70-c3d6-76cf-b9d3-a8aecda925cb",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"cwd": "/tmp/capture-resume"
 				},
 				{
 					"type": "message",
-					"id": "c42b5ee7",
+					"id": "b9f1b390",
 					"parentId": null,
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1490,14 +1930,14 @@
 								"text": "q1"
 							}
 						],
-						"timestamp": 1789603200048
+						"timestamp": 1789603200062
 					}
 				},
 				{
 					"type": "message",
-					"id": "8b0cb9ec",
-					"parentId": "c42b5ee7",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "e89e9d51",
+					"parentId": "b9f1b390",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1524,14 +1964,14 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200049
+						"timestamp": 1789603200063
 					}
 				},
 				{
 					"type": "message",
-					"id": "74cae604",
-					"parentId": "8b0cb9ec",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "04a87f22",
+					"parentId": "e89e9d51",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1540,14 +1980,14 @@
 								"text": "q2"
 							}
 						],
-						"timestamp": 1789603200050
+						"timestamp": 1789603200064
 					}
 				},
 				{
 					"type": "message",
-					"id": "87e29383",
-					"parentId": "74cae604",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "a01ddf69",
+					"parentId": "04a87f22",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1574,16 +2014,16 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200051
+						"timestamp": 1789603200065
 					}
 				},
 				{
 					"type": "compaction",
-					"id": "1e9398d6",
-					"parentId": "87e29383",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "508a24e7",
+					"parentId": "a01ddf69",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"summary": "## Goal\nhidden work",
-					"firstKeptEntryId": "74cae604",
+					"firstKeptEntryId": "04a87f22",
 					"tokensBefore": 100,
 					"details": {
 						"readFiles": [
@@ -1596,16 +2036,16 @@
 				{
 					"type": "context_edit",
 					"id": "0mit0000",
-					"parentId": "1e9398d6",
-					"timestamp": "2026-09-23T12:54:49.383Z",
-					"targetId": "1e9398d6",
+					"parentId": "508a24e7",
+					"timestamp": "2026-09-23T13:24:51.798Z",
+					"targetId": "508a24e7",
 					"replacement": null
 				},
 				{
 					"type": "message",
-					"id": "f243abec",
+					"id": "9d521847",
 					"parentId": "0mit0000",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1614,14 +2054,14 @@
 								"text": "q3"
 							}
 						],
-						"timestamp": 1789603200052
+						"timestamp": 1789603200066
 					}
 				},
 				{
 					"type": "message",
-					"id": "9d26029c",
-					"parentId": "f243abec",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "9d3ca5c7",
+					"parentId": "9d521847",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "assistant",
 						"content": [
@@ -1648,14 +2088,14 @@
 							}
 						},
 						"stopReason": "stop",
-						"timestamp": 1789603200053
+						"timestamp": 1789603200067
 					}
 				},
 				{
 					"type": "message",
-					"id": "19d27c8a",
-					"parentId": "9d26029c",
-					"timestamp": "2026-09-23T12:54:49.383Z",
+					"id": "5a922731",
+					"parentId": "9d3ca5c7",
+					"timestamp": "2026-09-23T13:24:51.798Z",
 					"message": {
 						"role": "user",
 						"content": [
@@ -1664,7 +2104,7 @@
 								"text": "q4"
 							}
 						],
-						"timestamp": 1789603200054
+						"timestamp": 1789603200068
 					}
 				}
 			],

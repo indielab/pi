@@ -80,7 +80,9 @@ type Scenario = {
 	keptIndex?: number;
 	summary: string;
 	details?: unknown;
-	fromHook?: boolean;
+	// Written as given: appendCompaction does not check its type, and pi reads
+	// it by truthiness.
+	fromHook?: unknown;
 	// A context edit that omits the compaction entry. SessionManager refuses
 	// to write one (a compaction is not editable), so it is appended raw, as a
 	// hand-edited or foreign file would hold it; the projection still honours
@@ -129,6 +131,24 @@ const scenarios: Scenario[] = [
 		summary: "## Goal\nhook work",
 		details: { readFiles: ["/a/hook.go"], modifiedFiles: [] },
 		fromHook: true,
+		after: [user("q3"), assistant("a3"), user("q4")],
+	},
+	{
+		name: "previous-summary-from-hook-truthy",
+		before: [user("q1"), assistant("a1"), user("q2"), assistant("a2")],
+		keptIndex: 2,
+		summary: "## Goal\nhook work",
+		details: { readFiles: ["/a/hook.go"], modifiedFiles: [] },
+		fromHook: 1,
+		after: [user("q3"), assistant("a3"), user("q4")],
+	},
+	{
+		name: "previous-summary-from-hook-falsy",
+		before: [user("q1"), assistant("a1"), user("q2"), assistant("a2")],
+		keptIndex: 2,
+		summary: "## Goal\nown work",
+		details: { readFiles: ["/a/own.go"], modifiedFiles: [] },
+		fromHook: "",
 		after: [user("q3"), assistant("a3"), user("q4")],
 	},
 	{

@@ -44,8 +44,8 @@ type SessionEntry struct {
 	// CompactionEntry.details): pi's own compactions store their file lists
 	// there. Nil when absent.
 	Details json.RawMessage
-	// FromHook marks a compaction an extension produced (pi fromHook); pi
-	// ignores its details.
+	// FromHook marks a compaction an extension produced (pi fromHook, read by
+	// truthiness); pi ignores its details.
 	FromHook bool
 	// custom_message
 	CustomType string
@@ -125,7 +125,7 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			SystemMessage    json.RawMessage   `json:"systemMessage"`
 			RetainedTail     []json.RawMessage `json:"retainedTail"`
 			Details          json.RawMessage   `json:"details"`
-			FromHook         bool              `json:"fromHook"`
+			FromHook         json.RawMessage   `json:"fromHook"`
 			CustomType       string            `json:"customType"`
 			Content          json.RawMessage   `json:"content"`
 			TargetID         string            `json:"targetId"`
@@ -168,7 +168,7 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			if len(head.Details) > 0 && string(head.Details) != "null" {
 				e.Details = head.Details
 			}
-			e.FromHook = head.FromHook
+			e.FromHook = jsonTruthy(head.FromHook)
 		}
 		if head.Type == "custom_message" && len(head.Content) > 0 {
 			e.Content = parseCustomContent(head.Content)
@@ -207,6 +207,28 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 		t.LeafID = t.Entries[len(t.Entries)-1].ID
 	}
 	return t, nil
+}
+
+// jsonTruthy is JavaScript truthiness of a JSON value as written: false for an
+// absent value, null, false, 0, and ""; true for anything else. pi reads a
+// compaction's fromHook this way, and nothing checks its type when it is
+// written, so a value that is not a boolean must not fail the entry's decode.
+func jsonTruthy(raw json.RawMessage) bool {
+	var v any
+	if len(raw) == 0 || json.Unmarshal(raw, &v) != nil {
+		return false
+	}
+	switch x := v.(type) {
+	case nil:
+		return false
+	case bool:
+		return x
+	case float64:
+		return x != 0
+	case string:
+		return x != ""
+	}
+	return true
 }
 
 // resolveLeaf mirrors pi's leaf selection in buildSessionContext: a known id is

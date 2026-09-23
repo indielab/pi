@@ -495,7 +495,10 @@ func resumedCheckpoint(c *BranchCompaction) *compactionCheckpoint {
 
 // detailsFileList reads one file list from a compaction's details, as pi's
 // extractFileOperations does: only when the member is an array. pi's own
-// compactions write arrays of strings; any other element is skipped.
+// compactions write arrays of strings (an extension's are ignored, fromHook),
+// so an element of another type comes only from a hand-edited file. It is
+// skipped: a deliberate divergence, since pi would add it to its Set and
+// print its String().
 func detailsFileList(details json.RawMessage, key string) []string {
 	var members map[string]json.RawMessage
 	if json.Unmarshal(details, &members) != nil {
