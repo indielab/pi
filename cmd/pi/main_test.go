@@ -25,32 +25,24 @@ func TestResumeExtendsTheSessionsCompaction(t *testing.T) {
 	}
 	var capture struct {
 		Scenarios []struct {
-			Name    string            `json:"name"`
-			Entries []json.RawMessage `json:"entries"`
+			Name string `json:"name"`
+			File string `json:"file"`
 		} `json:"scenarios"`
 	}
 	if err := json.Unmarshal(data, &capture); err != nil {
 		t.Fatal(err)
 	}
-	var file strings.Builder
+	var file string
 	for _, scenario := range capture.Scenarios {
-		if scenario.Name != "previous-summary-with-files" {
-			continue
-		}
-		for _, entry := range scenario.Entries {
-			line, err := json.Marshal(entry)
-			if err != nil {
-				t.Fatal(err)
-			}
-			file.Write(line)
-			file.WriteByte('\n')
+		if scenario.Name == "previous-summary-with-files" {
+			file = scenario.File
 		}
 	}
-	if file.Len() == 0 {
+	if file == "" {
 		t.Fatal("the capture holds no previous-summary-with-files scenario")
 	}
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	if err := os.WriteFile(path, []byte(file.String()), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(file), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	tree, err := coding.LoadSessionTree(path)

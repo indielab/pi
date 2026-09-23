@@ -10,8 +10,9 @@
 //
 // Each scenario builds a session with pi's own SessionManager: messages, one
 // compaction entry (summary, firstKeptEntryId, details, fromHook, and the
-// system message appendCompaction stores), then more messages. The output keeps
-// the file's entries as written, so the port resumes the same bytes. pi then
+// system message appendCompaction stores), then more messages. The file is
+// written out and opened again with SessionManager.open, as pi resumes one; the
+// output keeps it as written, so the port resumes the same bytes. pi then
 // compacts that branch again, as _runAutoCompaction does: prepareCompaction
 // reads the previous summary, the boundary and the file lists from the entry,
 // and compact() runs with a stub streamFn that records each request's system
@@ -19,6 +20,7 @@
 // appended with compact()'s result, and the context pi sends next
 // (buildSessionContext, then convertToLlm) is recorded one line per message.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -80,9 +82,13 @@ type Scenario = {
 	keptIndex?: number;
 	summary: string;
 	details?: unknown;
-	// Written as given: appendCompaction does not check its type, and pi reads
-	// it by truthiness.
+	// Written as given, null included: appendCompaction does not check its
+	// type, and pi reads it by truthiness. Absent, the capture writes false.
 	fromHook?: unknown;
+	// JSON text no JavaScript value serializes to (a number past float64's
+	// range): each key, a JSON string in the file, is replaced by its value
+	// before pi opens the file.
+	raw?: Record<string, string>;
 	// A context edit that omits the compaction entry. SessionManager refuses
 	// to write one (a compaction is not editable), so it is appended raw, as a
 	// hand-edited or foreign file would hold it; the projection still honours
@@ -190,6 +196,31 @@ const scenarios: Scenario[] = [
 		omitCompaction: true,
 		after: [user("q3"), assistant("a3"), user("q4")],
 	},
+	// Appended last, so earlier scenarios keep their message timestamps.
+	//
+	// fromHook by truthiness: null, 0, -0 and 1e-400 (0 once parsed) are
+	// falsy and the details merge; [], {}, "0", "false" and 1e400 (Infinity)
+	// are truthy and pi ignores the details.
+	...[
+		["null", null],
+		["0", 0],
+		["raw-negative-0", "raw:-0"],
+		["empty-array", []],
+		["empty-object", {}],
+		["string-0", "0"],
+		["string-false", "false"],
+		["raw-1e400", "raw:1e400"],
+		["raw-1e-400", "raw:1e-400"],
+	].map(([label, fromHook]): Scenario => ({
+		name: `previous-summary-from-hook-${label}`,
+		before: [user("q1"), assistant("a1"), user("q2"), assistant("a2")],
+		keptIndex: 2,
+		summary: "## Goal\nwork",
+		details: { readFiles: [`/a/${label}.go`], modifiedFiles: [] },
+		fromHook,
+		...(typeof fromHook === "string" && fromHook.startsWith("raw:") ? { raw: { [fromHook]: fromHook.slice(4) } } : {}),
+		after: [user("q3"), assistant("a3"), user("q4")],
+	})),
 ];
 
 const textOf = (content: unknown): string =>
@@ -216,26 +247,36 @@ const describe = (message: any): string => {
 };
 
 const out = { version, reserveTokens, contextWindow: model.contextWindow, modelMaxTokens: model.maxTokens, scenarios: [] as unknown[] };
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), "capture-resume-"));
 for (const scenario of scenarios) {
-	const sm = SessionManager.inMemory("/tmp/capture-resume");
+	const writer = SessionManager.inMemory("/tmp/capture-resume");
 	let keptId: string | undefined;
 	scenario.before.forEach((message, i) => {
-		const id = sm.appendMessage(message);
+		const id = writer.appendMessage(message);
 		if (i === scenario.keptIndex) keptId = id;
 	});
-	const compactionId = sm.appendCompaction(scenario.summary, keptId, 100, scenario.details, scenario.fromHook ?? false);
+	const fromHook = "fromHook" in scenario ? scenario.fromHook : false;
+	const compactionId = writer.appendCompaction(scenario.summary, keptId, 100, scenario.details, fromHook);
 	if (scenario.omitCompaction) {
-		sm._appendEntry({
+		writer._appendEntry({
 			type: "context_edit",
 			id: "0mit0000",
-			parentId: sm.getLeafId(),
+			parentId: writer.getLeafId(),
 			timestamp: new Date().toISOString(),
 			targetId: compactionId,
 			replacement: null,
 		});
 	}
-	for (const message of scenario.after) sm.appendMessage(message);
-	const entries = [sm.getHeader(), ...sm.getEntries()];
+	for (const message of scenario.after) writer.appendMessage(message);
+	// The file as written, then resumed the way pi resumes one.
+	let file = `${[writer.getHeader(), ...writer.getEntries()].map((entry) => JSON.stringify(entry)).join("\n")}\n`;
+	for (const [key, value] of Object.entries(scenario.raw ?? {})) {
+		if (!file.includes(JSON.stringify(key))) throw new Error(`${scenario.name}: ${key} is not in the file`);
+		file = file.replaceAll(JSON.stringify(key), value);
+	}
+	const sessionFile = path.join(dir, `${scenario.name}.jsonl`);
+	fs.writeFileSync(sessionFile, file);
+	const sm = SessionManager.open(sessionFile, dir);
 	const resumed = convertToLlm(sm.buildSessionContext().messages).map(describe);
 
 	const preparation = prepareCompaction(sm.getBranch(), { enabled: true, reserveTokens, keepRecentTokens: 1 });
@@ -256,7 +297,7 @@ for (const scenario of scenarios) {
 
 	out.scenarios.push({
 		name: scenario.name,
-		entries,
+		file,
 		resumed,
 		previousSummary: preparation.previousSummary,
 		requests,

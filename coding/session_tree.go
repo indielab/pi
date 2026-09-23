@@ -8,6 +8,7 @@ import (
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 func timeParseISO(iso string) (time.Time, error) {
@@ -168,7 +169,12 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			if len(head.Details) > 0 && string(head.Details) != "null" {
 				e.Details = head.Details
 			}
-			e.FromHook = jsonTruthy(head.FromHook)
+			// pi reads fromHook by truthiness, and nothing checks its type when
+			// it is written, so a value that is not a boolean must not fail the
+			// entry's decode. An absent one is undefined: falsy.
+			if fromHook, err := jstext.Parse(head.FromHook); err == nil {
+				e.FromHook = jstext.Truthy(fromHook)
+			}
 		}
 		if head.Type == "custom_message" && len(head.Content) > 0 {
 			e.Content = parseCustomContent(head.Content)
@@ -207,28 +213,6 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 		t.LeafID = t.Entries[len(t.Entries)-1].ID
 	}
 	return t, nil
-}
-
-// jsonTruthy is JavaScript truthiness of a JSON value as written: false for an
-// absent value, null, false, 0, and ""; true for anything else. pi reads a
-// compaction's fromHook this way, and nothing checks its type when it is
-// written, so a value that is not a boolean must not fail the entry's decode.
-func jsonTruthy(raw json.RawMessage) bool {
-	var v any
-	if len(raw) == 0 || json.Unmarshal(raw, &v) != nil {
-		return false
-	}
-	switch x := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return x
-	case float64:
-		return x != 0
-	case string:
-		return x != ""
-	}
-	return true
 }
 
 // resolveLeaf mirrors pi's leaf selection in buildSessionContext: a known id is

@@ -34,9 +34,10 @@ func TestResumedCompactionMatchesPiCapture(t *testing.T) {
 		ContextWindow  int `json:"contextWindow"`
 		ModelMaxTokens int `json:"modelMaxTokens"`
 		Scenarios      []struct {
-			Name    string            `json:"name"`
-			Entries []json.RawMessage `json:"entries"`
-			Resumed []string          `json:"resumed"`
+			Name string `json:"name"`
+			// File is the session file as pi wrote it.
+			File    string   `json:"file"`
+			Resumed []string `json:"resumed"`
 			// PreviousSummary is absent when pi's prepareCompaction found no
 			// previous compaction.
 			PreviousSummary *string `json:"previousSummary"`
@@ -57,7 +58,7 @@ func TestResumedCompactionMatchesPiCapture(t *testing.T) {
 	}
 	for _, scenario := range capture.Scenarios {
 		t.Run(scenario.Name, func(t *testing.T) {
-			tree, err := LoadSessionTree(writeCapturedSession(t, scenario.Entries))
+			tree, err := LoadSessionTree(writeSessionText(t, scenario.File))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -311,8 +312,14 @@ func writeCapturedSession(t *testing.T, entries []json.RawMessage) string {
 		file.Write(line)
 		file.WriteByte('\n')
 	}
+	return writeSessionText(t, file.String())
+}
+
+// writeSessionText writes a session file's text as is and returns its path.
+func writeSessionText(t *testing.T, text string) string {
+	t.Helper()
 	path := filepath.Join(t.TempDir(), "session.jsonl")
-	if err := os.WriteFile(path, []byte(file.String()), 0o600); err != nil {
+	if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	return path

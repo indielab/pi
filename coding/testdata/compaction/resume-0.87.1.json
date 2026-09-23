@@ -6,195 +6,7 @@
 	"scenarios": [
 		{
 			"name": "previous-summary-empty",
-			"entries": [
-				{
-					"type": "session",
-					"version": 3,
-					"id": "01a0ce70-c3d1-76cf-b9d3-a88d668b4d31",
-					"timestamp": "2026-09-23T13:24:51.794Z",
-					"cwd": "/tmp/capture-resume"
-				},
-				{
-					"type": "message",
-					"id": "6226c9fd",
-					"parentId": null,
-					"timestamp": "2026-09-23T13:24:51.795Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q1"
-							}
-						],
-						"timestamp": 1789603200001
-					}
-				},
-				{
-					"type": "message",
-					"id": "7494e5d4",
-					"parentId": "6226c9fd",
-					"timestamp": "2026-09-23T13:24:51.795Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a1"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200002
-					}
-				},
-				{
-					"type": "message",
-					"id": "1ba3e97b",
-					"parentId": "7494e5d4",
-					"timestamp": "2026-09-23T13:24:51.795Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q2"
-							}
-						],
-						"timestamp": 1789603200003
-					}
-				},
-				{
-					"type": "message",
-					"id": "fffd9a08",
-					"parentId": "1ba3e97b",
-					"timestamp": "2026-09-23T13:24:51.795Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a2"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200004
-					}
-				},
-				{
-					"type": "compaction",
-					"id": "718ddc10",
-					"parentId": "fffd9a08",
-					"timestamp": "2026-09-23T13:24:51.795Z",
-					"summary": "",
-					"firstKeptEntryId": "1ba3e97b",
-					"tokensBefore": 100,
-					"details": {
-						"readFiles": [],
-						"modifiedFiles": []
-					},
-					"fromHook": false
-				},
-				{
-					"type": "message",
-					"id": "c640abc1",
-					"parentId": "718ddc10",
-					"timestamp": "2026-09-23T13:24:51.795Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q3"
-							}
-						],
-						"timestamp": 1789603200005
-					}
-				},
-				{
-					"type": "message",
-					"id": "1177af84",
-					"parentId": "c640abc1",
-					"timestamp": "2026-09-23T13:24:51.795Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a3"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200006
-					}
-				},
-				{
-					"type": "message",
-					"id": "f4f4b143",
-					"parentId": "1177af84",
-					"timestamp": "2026-09-23T13:24:51.795Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q4"
-							}
-						],
-						"timestamp": 1789603200007
-					}
-				}
-			],
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-1698-73a3-ae42-c4895e15aa78\",\"timestamp\":\"2026-09-23T14:34:01.752Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"6a714361\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.754Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200001}}\n{\"type\":\"message\",\"id\":\"a796f8ce\",\"parentId\":\"6a714361\",\"timestamp\":\"2026-09-23T14:34:01.754Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200002}}\n{\"type\":\"message\",\"id\":\"ed0044a7\",\"parentId\":\"a796f8ce\",\"timestamp\":\"2026-09-23T14:34:01.754Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200003}}\n{\"type\":\"message\",\"id\":\"5cfda891\",\"parentId\":\"ed0044a7\",\"timestamp\":\"2026-09-23T14:34:01.754Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200004}}\n{\"type\":\"compaction\",\"id\":\"bddaeaeb\",\"parentId\":\"5cfda891\",\"timestamp\":\"2026-09-23T14:34:01.754Z\",\"summary\":\"\",\"firstKeptEntryId\":\"ed0044a7\",\"tokensBefore\":100,\"details\":{\"readFiles\":[],\"modifiedFiles\":[]},\"fromHook\":false}\n{\"type\":\"message\",\"id\":\"27af142f\",\"parentId\":\"bddaeaeb\",\"timestamp\":\"2026-09-23T14:34:01.754Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200005}}\n{\"type\":\"message\",\"id\":\"537f0899\",\"parentId\":\"27af142f\",\"timestamp\":\"2026-09-23T14:34:01.754Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200006}}\n{\"type\":\"message\",\"id\":\"0f55563d\",\"parentId\":\"537f0899\",\"timestamp\":\"2026-09-23T14:34:01.754Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200007}}\n",
 			"resumed": [
 				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n\n</summary>",
 				"user:q2",
@@ -223,323 +35,7 @@
 		},
 		{
 			"name": "previous-summary-with-files",
-			"entries": [
-				{
-					"type": "session",
-					"version": 3,
-					"id": "01a0ce70-c3d5-76cf-b9d3-a891d8133edb",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"cwd": "/tmp/capture-resume"
-				},
-				{
-					"type": "message",
-					"id": "833ac98d",
-					"parentId": null,
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q1"
-							}
-						],
-						"timestamp": 1789603200008
-					}
-				},
-				{
-					"type": "message",
-					"id": "12f22615",
-					"parentId": "833ac98d",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "reading"
-							},
-							{
-								"type": "toolCall",
-								"id": "r1",
-								"name": "read",
-								"arguments": {
-									"path": "/a/old.go"
-								}
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "toolUse",
-						"timestamp": 1789603200009
-					}
-				},
-				{
-					"type": "message",
-					"id": "b04e18bf",
-					"parentId": "12f22615",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "toolResult",
-						"toolCallId": "r1",
-						"toolName": "read",
-						"content": [
-							{
-								"type": "text",
-								"text": "package old"
-							}
-						],
-						"isError": false,
-						"timestamp": 1789603200010
-					}
-				},
-				{
-					"type": "message",
-					"id": "ed6c9860",
-					"parentId": "b04e18bf",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a1"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200011
-					}
-				},
-				{
-					"type": "message",
-					"id": "4cd0cfe0",
-					"parentId": "ed6c9860",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q2"
-							}
-						],
-						"timestamp": 1789603200012
-					}
-				},
-				{
-					"type": "message",
-					"id": "c8ba82b3",
-					"parentId": "4cd0cfe0",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a2"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200013
-					}
-				},
-				{
-					"type": "compaction",
-					"id": "5c2c86b5",
-					"parentId": "c8ba82b3",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"summary": "## Goal\nold work\n\n<read-files>\n/a/old.go\n</read-files>\n\n<modified-files>\n/a/changed.go\n</modified-files>",
-					"firstKeptEntryId": "4cd0cfe0",
-					"tokensBefore": 100,
-					"details": {
-						"readFiles": [
-							"/a/old.go"
-						],
-						"modifiedFiles": [
-							"/a/changed.go"
-						]
-					},
-					"fromHook": false
-				},
-				{
-					"type": "message",
-					"id": "eec9fd54",
-					"parentId": "5c2c86b5",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q3"
-							}
-						],
-						"timestamp": 1789603200014
-					}
-				},
-				{
-					"type": "message",
-					"id": "aca46ea4",
-					"parentId": "eec9fd54",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "editing"
-							},
-							{
-								"type": "toolCall",
-								"id": "e1",
-								"name": "edit",
-								"arguments": {
-									"path": "/a/new.go",
-									"oldText": "a",
-									"newText": "b"
-								}
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "toolUse",
-						"timestamp": 1789603200015
-					}
-				},
-				{
-					"type": "message",
-					"id": "8a66da79",
-					"parentId": "aca46ea4",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "toolResult",
-						"toolCallId": "e1",
-						"toolName": "edit",
-						"content": [
-							{
-								"type": "text",
-								"text": "ok"
-							}
-						],
-						"isError": false,
-						"timestamp": 1789603200016
-					}
-				},
-				{
-					"type": "message",
-					"id": "f9719e28",
-					"parentId": "8a66da79",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a3"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200017
-					}
-				},
-				{
-					"type": "message",
-					"id": "3e449ea8",
-					"parentId": "f9719e28",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q4"
-							}
-						],
-						"timestamp": 1789603200018
-					}
-				}
-			],
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-169c-73a3-ae42-c48cdbf9efb6\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"8728ba77\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200008}}\n{\"type\":\"message\",\"id\":\"ff08c3c0\",\"parentId\":\"8728ba77\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"reading\"},{\"type\":\"toolCall\",\"id\":\"r1\",\"name\":\"read\",\"arguments\":{\"path\":\"/a/old.go\"}}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"toolUse\",\"timestamp\":1789603200009}}\n{\"type\":\"message\",\"id\":\"f7020cf4\",\"parentId\":\"ff08c3c0\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"r1\",\"toolName\":\"read\",\"content\":[{\"type\":\"text\",\"text\":\"package old\"}],\"isError\":false,\"timestamp\":1789603200010}}\n{\"type\":\"message\",\"id\":\"f21d1d2f\",\"parentId\":\"f7020cf4\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200011}}\n{\"type\":\"message\",\"id\":\"0b250639\",\"parentId\":\"f21d1d2f\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200012}}\n{\"type\":\"message\",\"id\":\"cc08dc09\",\"parentId\":\"0b250639\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200013}}\n{\"type\":\"compaction\",\"id\":\"1a671fe2\",\"parentId\":\"cc08dc09\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"summary\":\"## Goal\\nold work\\n\\n<read-files>\\n/a/old.go\\n</read-files>\\n\\n<modified-files>\\n/a/changed.go\\n</modified-files>\",\"firstKeptEntryId\":\"0b250639\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/old.go\"],\"modifiedFiles\":[\"/a/changed.go\"]},\"fromHook\":false}\n{\"type\":\"message\",\"id\":\"d71f0d1f\",\"parentId\":\"1a671fe2\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200014}}\n{\"type\":\"message\",\"id\":\"8206b984\",\"parentId\":\"d71f0d1f\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"editing\"},{\"type\":\"toolCall\",\"id\":\"e1\",\"name\":\"edit\",\"arguments\":{\"path\":\"/a/new.go\",\"oldText\":\"a\",\"newText\":\"b\"}}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"toolUse\",\"timestamp\":1789603200015}}\n{\"type\":\"message\",\"id\":\"4cb0909c\",\"parentId\":\"8206b984\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"toolResult\",\"toolCallId\":\"e1\",\"toolName\":\"edit\",\"content\":[{\"type\":\"text\",\"text\":\"ok\"}],\"isError\":false,\"timestamp\":1789603200016}}\n{\"type\":\"message\",\"id\":\"12141a54\",\"parentId\":\"4cb0909c\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200017}}\n{\"type\":\"message\",\"id\":\"b102eabf\",\"parentId\":\"12141a54\",\"timestamp\":\"2026-09-23T14:34:01.756Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200018}}\n",
 			"resumed": [
 				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nold work\n\n<read-files>\n/a/old.go\n</read-files>\n\n<modified-files>\n/a/changed.go\n</modified-files>\n</summary>",
 				"user:q2",
@@ -575,197 +71,7 @@
 		},
 		{
 			"name": "previous-summary-from-hook",
-			"entries": [
-				{
-					"type": "session",
-					"version": 3,
-					"id": "01a0ce70-c3d5-76cf-b9d3-a894b0212b67",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"cwd": "/tmp/capture-resume"
-				},
-				{
-					"type": "message",
-					"id": "fa2dad6e",
-					"parentId": null,
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q1"
-							}
-						],
-						"timestamp": 1789603200019
-					}
-				},
-				{
-					"type": "message",
-					"id": "e7b51e1c",
-					"parentId": "fa2dad6e",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a1"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200020
-					}
-				},
-				{
-					"type": "message",
-					"id": "b7dca51a",
-					"parentId": "e7b51e1c",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q2"
-							}
-						],
-						"timestamp": 1789603200021
-					}
-				},
-				{
-					"type": "message",
-					"id": "d1e94b31",
-					"parentId": "b7dca51a",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a2"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200022
-					}
-				},
-				{
-					"type": "compaction",
-					"id": "3b1aa367",
-					"parentId": "d1e94b31",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"summary": "## Goal\nhook work",
-					"firstKeptEntryId": "b7dca51a",
-					"tokensBefore": 100,
-					"details": {
-						"readFiles": [
-							"/a/hook.go"
-						],
-						"modifiedFiles": []
-					},
-					"fromHook": true
-				},
-				{
-					"type": "message",
-					"id": "5f1055a7",
-					"parentId": "3b1aa367",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q3"
-							}
-						],
-						"timestamp": 1789603200023
-					}
-				},
-				{
-					"type": "message",
-					"id": "1e8e8c22",
-					"parentId": "5f1055a7",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a3"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200024
-					}
-				},
-				{
-					"type": "message",
-					"id": "c0ac69f1",
-					"parentId": "1e8e8c22",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q4"
-							}
-						],
-						"timestamp": 1789603200025
-					}
-				}
-			],
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-169d-73a3-ae42-c490b131592b\",\"timestamp\":\"2026-09-23T14:34:01.757Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"1528158f\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.757Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200019}}\n{\"type\":\"message\",\"id\":\"08d71d5e\",\"parentId\":\"1528158f\",\"timestamp\":\"2026-09-23T14:34:01.757Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200020}}\n{\"type\":\"message\",\"id\":\"e340f7b5\",\"parentId\":\"08d71d5e\",\"timestamp\":\"2026-09-23T14:34:01.757Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200021}}\n{\"type\":\"message\",\"id\":\"96467f94\",\"parentId\":\"e340f7b5\",\"timestamp\":\"2026-09-23T14:34:01.757Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200022}}\n{\"type\":\"compaction\",\"id\":\"a1dff924\",\"parentId\":\"96467f94\",\"timestamp\":\"2026-09-23T14:34:01.757Z\",\"summary\":\"## Goal\\nhook work\",\"firstKeptEntryId\":\"e340f7b5\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/hook.go\"],\"modifiedFiles\":[]},\"fromHook\":true}\n{\"type\":\"message\",\"id\":\"e609f4ef\",\"parentId\":\"a1dff924\",\"timestamp\":\"2026-09-23T14:34:01.757Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200023}}\n{\"type\":\"message\",\"id\":\"2abdfaa4\",\"parentId\":\"e609f4ef\",\"timestamp\":\"2026-09-23T14:34:01.757Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200024}}\n{\"type\":\"message\",\"id\":\"3999f86b\",\"parentId\":\"2abdfaa4\",\"timestamp\":\"2026-09-23T14:34:01.757Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200025}}\n",
 			"resumed": [
 				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nhook work\n</summary>",
 				"user:q2",
@@ -794,197 +100,7 @@
 		},
 		{
 			"name": "previous-summary-from-hook-truthy",
-			"entries": [
-				{
-					"type": "session",
-					"version": 3,
-					"id": "01a0ce70-c3d5-76cf-b9d3-a899657fafa6",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"cwd": "/tmp/capture-resume"
-				},
-				{
-					"type": "message",
-					"id": "78ad4b38",
-					"parentId": null,
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q1"
-							}
-						],
-						"timestamp": 1789603200026
-					}
-				},
-				{
-					"type": "message",
-					"id": "65075f6e",
-					"parentId": "78ad4b38",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a1"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200027
-					}
-				},
-				{
-					"type": "message",
-					"id": "9396c1f9",
-					"parentId": "65075f6e",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q2"
-							}
-						],
-						"timestamp": 1789603200028
-					}
-				},
-				{
-					"type": "message",
-					"id": "11f42d6a",
-					"parentId": "9396c1f9",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a2"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200029
-					}
-				},
-				{
-					"type": "compaction",
-					"id": "2bc76334",
-					"parentId": "11f42d6a",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"summary": "## Goal\nhook work",
-					"firstKeptEntryId": "9396c1f9",
-					"tokensBefore": 100,
-					"details": {
-						"readFiles": [
-							"/a/hook.go"
-						],
-						"modifiedFiles": []
-					},
-					"fromHook": 1
-				},
-				{
-					"type": "message",
-					"id": "afce47cf",
-					"parentId": "2bc76334",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q3"
-							}
-						],
-						"timestamp": 1789603200030
-					}
-				},
-				{
-					"type": "message",
-					"id": "37bf1f40",
-					"parentId": "afce47cf",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a3"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200031
-					}
-				},
-				{
-					"type": "message",
-					"id": "55cbfd15",
-					"parentId": "37bf1f40",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q4"
-							}
-						],
-						"timestamp": 1789603200032
-					}
-				}
-			],
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-169e-73a3-ae42-c495e149049d\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"fd1a02b7\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200026}}\n{\"type\":\"message\",\"id\":\"78a7397f\",\"parentId\":\"fd1a02b7\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200027}}\n{\"type\":\"message\",\"id\":\"8e87dcb4\",\"parentId\":\"78a7397f\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200028}}\n{\"type\":\"message\",\"id\":\"55c7b7c2\",\"parentId\":\"8e87dcb4\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200029}}\n{\"type\":\"compaction\",\"id\":\"0b20cb94\",\"parentId\":\"55c7b7c2\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"summary\":\"## Goal\\nhook work\",\"firstKeptEntryId\":\"8e87dcb4\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/hook.go\"],\"modifiedFiles\":[]},\"fromHook\":1}\n{\"type\":\"message\",\"id\":\"c69acc64\",\"parentId\":\"0b20cb94\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200030}}\n{\"type\":\"message\",\"id\":\"000830d0\",\"parentId\":\"c69acc64\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200031}}\n{\"type\":\"message\",\"id\":\"f548aacd\",\"parentId\":\"000830d0\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200032}}\n",
 			"resumed": [
 				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nhook work\n</summary>",
 				"user:q2",
@@ -1013,197 +129,7 @@
 		},
 		{
 			"name": "previous-summary-from-hook-falsy",
-			"entries": [
-				{
-					"type": "session",
-					"version": 3,
-					"id": "01a0ce70-c3d5-76cf-b9d3-a89d01d3170e",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"cwd": "/tmp/capture-resume"
-				},
-				{
-					"type": "message",
-					"id": "b9cbc5b3",
-					"parentId": null,
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q1"
-							}
-						],
-						"timestamp": 1789603200033
-					}
-				},
-				{
-					"type": "message",
-					"id": "d4de4aed",
-					"parentId": "b9cbc5b3",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a1"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200034
-					}
-				},
-				{
-					"type": "message",
-					"id": "85032cea",
-					"parentId": "d4de4aed",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q2"
-							}
-						],
-						"timestamp": 1789603200035
-					}
-				},
-				{
-					"type": "message",
-					"id": "ec01ccd3",
-					"parentId": "85032cea",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a2"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200036
-					}
-				},
-				{
-					"type": "compaction",
-					"id": "e9e1600e",
-					"parentId": "ec01ccd3",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"summary": "## Goal\nown work",
-					"firstKeptEntryId": "85032cea",
-					"tokensBefore": 100,
-					"details": {
-						"readFiles": [
-							"/a/own.go"
-						],
-						"modifiedFiles": []
-					},
-					"fromHook": ""
-				},
-				{
-					"type": "message",
-					"id": "e65bfe39",
-					"parentId": "e9e1600e",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q3"
-							}
-						],
-						"timestamp": 1789603200037
-					}
-				},
-				{
-					"type": "message",
-					"id": "8d616308",
-					"parentId": "e65bfe39",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a3"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200038
-					}
-				},
-				{
-					"type": "message",
-					"id": "5bf4ccc2",
-					"parentId": "8d616308",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q4"
-							}
-						],
-						"timestamp": 1789603200039
-					}
-				}
-			],
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-169e-73a3-ae42-c498c47e1502\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"d2cafc09\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200033}}\n{\"type\":\"message\",\"id\":\"5c992c91\",\"parentId\":\"d2cafc09\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200034}}\n{\"type\":\"message\",\"id\":\"019dfd46\",\"parentId\":\"5c992c91\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200035}}\n{\"type\":\"message\",\"id\":\"f805fa54\",\"parentId\":\"019dfd46\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200036}}\n{\"type\":\"compaction\",\"id\":\"f5ac573b\",\"parentId\":\"f805fa54\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"summary\":\"## Goal\\nown work\",\"firstKeptEntryId\":\"019dfd46\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/own.go\"],\"modifiedFiles\":[]},\"fromHook\":\"\"}\n{\"type\":\"message\",\"id\":\"9adb1ce8\",\"parentId\":\"f5ac573b\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200037}}\n{\"type\":\"message\",\"id\":\"07d977bf\",\"parentId\":\"9adb1ce8\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200038}}\n{\"type\":\"message\",\"id\":\"3bd022ad\",\"parentId\":\"07d977bf\",\"timestamp\":\"2026-09-23T14:34:01.758Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200039}}\n",
 			"resumed": [
 				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nown work\n</summary>",
 				"user:q2",
@@ -1234,245 +160,7 @@
 		},
 		{
 			"name": "previous-summary-system-messages",
-			"entries": [
-				{
-					"type": "session",
-					"version": 3,
-					"id": "01a0ce70-c3d5-76cf-b9d3-a8a0bb97cd7a",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"cwd": "/tmp/capture-resume"
-				},
-				{
-					"type": "message",
-					"id": "049292c9",
-					"parentId": null,
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "system",
-						"content": "",
-						"sections": {
-							"preamble": "v1"
-						},
-						"timestamp": 1789603200040
-					}
-				},
-				{
-					"type": "message",
-					"id": "1b5ef700",
-					"parentId": "049292c9",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q1"
-							}
-						],
-						"timestamp": 1789603200041
-					}
-				},
-				{
-					"type": "message",
-					"id": "6dbfb8f6",
-					"parentId": "1b5ef700",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a1"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200042
-					}
-				},
-				{
-					"type": "message",
-					"id": "3836823f",
-					"parentId": "6dbfb8f6",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "system",
-						"content": "",
-						"sections": {
-							"preamble": "v2"
-						},
-						"timestamp": 1789603200043
-					}
-				},
-				{
-					"type": "message",
-					"id": "34865d74",
-					"parentId": "3836823f",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q2"
-							}
-						],
-						"timestamp": 1789603200044
-					}
-				},
-				{
-					"type": "message",
-					"id": "90ce8340",
-					"parentId": "34865d74",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a2"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200045
-					}
-				},
-				{
-					"type": "compaction",
-					"id": "3ad44fc1",
-					"parentId": "90ce8340",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"summary": "## Goal\nprompted work",
-					"firstKeptEntryId": "34865d74",
-					"tokensBefore": 100,
-					"details": {
-						"readFiles": [],
-						"modifiedFiles": []
-					},
-					"fromHook": false,
-					"systemMessage": {
-						"role": "system",
-						"content": "",
-						"sections": {
-							"preamble": "v2"
-						},
-						"timestamp": 1790169891797
-					}
-				},
-				{
-					"type": "message",
-					"id": "4ad3da30",
-					"parentId": "3ad44fc1",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "system",
-						"content": "",
-						"sections": {
-							"preamble": "v3"
-						},
-						"timestamp": 1789603200046
-					}
-				},
-				{
-					"type": "message",
-					"id": "f7d42bed",
-					"parentId": "4ad3da30",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q3"
-							}
-						],
-						"timestamp": 1789603200047
-					}
-				},
-				{
-					"type": "message",
-					"id": "1f4867b4",
-					"parentId": "f7d42bed",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a3"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200048
-					}
-				},
-				{
-					"type": "message",
-					"id": "c95fb21c",
-					"parentId": "1f4867b4",
-					"timestamp": "2026-09-23T13:24:51.797Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q4"
-							}
-						],
-						"timestamp": 1789603200049
-					}
-				}
-			],
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-169f-73a3-ae42-c49cefb66a58\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"30288715\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"v1\"},\"timestamp\":1789603200040}}\n{\"type\":\"message\",\"id\":\"507313a8\",\"parentId\":\"30288715\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200041}}\n{\"type\":\"message\",\"id\":\"f205f277\",\"parentId\":\"507313a8\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200042}}\n{\"type\":\"message\",\"id\":\"1e1df339\",\"parentId\":\"f205f277\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"v2\"},\"timestamp\":1789603200043}}\n{\"type\":\"message\",\"id\":\"302a6e3e\",\"parentId\":\"1e1df339\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200044}}\n{\"type\":\"message\",\"id\":\"e626bdeb\",\"parentId\":\"302a6e3e\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200045}}\n{\"type\":\"compaction\",\"id\":\"caff89c4\",\"parentId\":\"e626bdeb\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"summary\":\"## Goal\\nprompted work\",\"firstKeptEntryId\":\"302a6e3e\",\"tokensBefore\":100,\"details\":{\"readFiles\":[],\"modifiedFiles\":[]},\"fromHook\":false,\"systemMessage\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"v2\"},\"timestamp\":1790174041759}}\n{\"type\":\"message\",\"id\":\"d4a1dfc5\",\"parentId\":\"caff89c4\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"system\",\"content\":\"\",\"sections\":{\"preamble\":\"v3\"},\"timestamp\":1789603200046}}\n{\"type\":\"message\",\"id\":\"9ae78334\",\"parentId\":\"d4a1dfc5\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200047}}\n{\"type\":\"message\",\"id\":\"bfeb4982\",\"parentId\":\"9ae78334\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200048}}\n{\"type\":\"message\",\"id\":\"89e08098\",\"parentId\":\"bfeb4982\",\"timestamp\":\"2026-09-23T14:34:01.759Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200049}}\n",
 			"resumed": [
 				"system:v2",
 				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nprompted work\n</summary>",
@@ -1504,229 +192,7 @@
 		},
 		{
 			"name": "previous-summary-split-turn",
-			"entries": [
-				{
-					"type": "session",
-					"version": 3,
-					"id": "01a0ce70-c3d6-76cf-b9d3-a8a498476eef",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"cwd": "/tmp/capture-resume"
-				},
-				{
-					"type": "message",
-					"id": "ad6763d4",
-					"parentId": null,
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q1"
-							}
-						],
-						"timestamp": 1789603200050
-					}
-				},
-				{
-					"type": "message",
-					"id": "6ad46c38",
-					"parentId": "ad6763d4",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a1"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200051
-					}
-				},
-				{
-					"type": "message",
-					"id": "2ffc5fa3",
-					"parentId": "6ad46c38",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q2"
-							}
-						],
-						"timestamp": 1789603200052
-					}
-				},
-				{
-					"type": "message",
-					"id": "9cf10225",
-					"parentId": "2ffc5fa3",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a2"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200053
-					}
-				},
-				{
-					"type": "compaction",
-					"id": "b013cf65",
-					"parentId": "9cf10225",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"summary": "## Goal\nold work",
-					"firstKeptEntryId": "2ffc5fa3",
-					"tokensBefore": 100,
-					"details": {
-						"readFiles": [],
-						"modifiedFiles": []
-					},
-					"fromHook": false
-				},
-				{
-					"type": "message",
-					"id": "115d73b6",
-					"parentId": "b013cf65",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q3"
-							}
-						],
-						"timestamp": 1789603200054
-					}
-				},
-				{
-					"type": "message",
-					"id": "79a3c265",
-					"parentId": "115d73b6",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a3"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200055
-					}
-				},
-				{
-					"type": "message",
-					"id": "019a31f2",
-					"parentId": "79a3c265",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q4"
-							}
-						],
-						"timestamp": 1789603200056
-					}
-				},
-				{
-					"type": "message",
-					"id": "01338f97",
-					"parentId": "019a31f2",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a4"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200057
-					}
-				}
-			],
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a0-73a3-ae42-c4a032f8e25b\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"b14fbf2a\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200050}}\n{\"type\":\"message\",\"id\":\"9d332111\",\"parentId\":\"b14fbf2a\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200051}}\n{\"type\":\"message\",\"id\":\"36562926\",\"parentId\":\"9d332111\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200052}}\n{\"type\":\"message\",\"id\":\"027023f9\",\"parentId\":\"36562926\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200053}}\n{\"type\":\"compaction\",\"id\":\"b3e239a5\",\"parentId\":\"027023f9\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"summary\":\"## Goal\\nold work\",\"firstKeptEntryId\":\"36562926\",\"tokensBefore\":100,\"details\":{\"readFiles\":[],\"modifiedFiles\":[]},\"fromHook\":false}\n{\"type\":\"message\",\"id\":\"8c198d0a\",\"parentId\":\"b3e239a5\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200054}}\n{\"type\":\"message\",\"id\":\"e36198c6\",\"parentId\":\"8c198d0a\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200055}}\n{\"type\":\"message\",\"id\":\"2c3c57ff\",\"parentId\":\"e36198c6\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200056}}\n{\"type\":\"message\",\"id\":\"06e24e66\",\"parentId\":\"2c3c57ff\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a4\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200057}}\n",
 			"resumed": [
 				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nold work\n</summary>",
 				"user:q2",
@@ -1761,129 +227,7 @@
 		},
 		{
 			"name": "previous-summary-empty-retain-none-split-turn",
-			"entries": [
-				{
-					"type": "session",
-					"version": 3,
-					"id": "01a0ce70-c3d6-76cf-b9d3-a8ab44990975",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"cwd": "/tmp/capture-resume"
-				},
-				{
-					"type": "message",
-					"id": "24ea2aac",
-					"parentId": null,
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q1"
-							}
-						],
-						"timestamp": 1789603200058
-					}
-				},
-				{
-					"type": "message",
-					"id": "f7eee877",
-					"parentId": "24ea2aac",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a1"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200059
-					}
-				},
-				{
-					"type": "compaction",
-					"id": "77dd892d",
-					"parentId": "f7eee877",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"summary": "",
-					"firstKeptEntryId": "77dd892d",
-					"tokensBefore": 100,
-					"details": {
-						"readFiles": [],
-						"modifiedFiles": []
-					},
-					"fromHook": false
-				},
-				{
-					"type": "message",
-					"id": "c5fb4a20",
-					"parentId": "77dd892d",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q2"
-							}
-						],
-						"timestamp": 1789603200060
-					}
-				},
-				{
-					"type": "message",
-					"id": "12fee699",
-					"parentId": "c5fb4a20",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a2"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200061
-					}
-				}
-			],
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a0-73a3-ae42-c4a6eea13f10\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"cafb2cc3\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200058}}\n{\"type\":\"message\",\"id\":\"36879e81\",\"parentId\":\"cafb2cc3\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200059}}\n{\"type\":\"compaction\",\"id\":\"3d2ce7f5\",\"parentId\":\"36879e81\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"summary\":\"\",\"firstKeptEntryId\":\"3d2ce7f5\",\"tokensBefore\":100,\"details\":{\"readFiles\":[],\"modifiedFiles\":[]},\"fromHook\":false}\n{\"type\":\"message\",\"id\":\"9f47ad26\",\"parentId\":\"3d2ce7f5\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200060}}\n{\"type\":\"message\",\"id\":\"4296ccd4\",\"parentId\":\"9f47ad26\",\"timestamp\":\"2026-09-23T14:34:01.760Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200061}}\n",
 			"resumed": [
 				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n\n</summary>",
 				"user:q2",
@@ -1909,205 +253,7 @@
 		},
 		{
 			"name": "compaction-omitted-by-context-edit",
-			"entries": [
-				{
-					"type": "session",
-					"version": 3,
-					"id": "01a0ce70-c3d6-76cf-b9d3-a8aecda925cb",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"cwd": "/tmp/capture-resume"
-				},
-				{
-					"type": "message",
-					"id": "b9f1b390",
-					"parentId": null,
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q1"
-							}
-						],
-						"timestamp": 1789603200062
-					}
-				},
-				{
-					"type": "message",
-					"id": "e89e9d51",
-					"parentId": "b9f1b390",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a1"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200063
-					}
-				},
-				{
-					"type": "message",
-					"id": "04a87f22",
-					"parentId": "e89e9d51",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q2"
-							}
-						],
-						"timestamp": 1789603200064
-					}
-				},
-				{
-					"type": "message",
-					"id": "a01ddf69",
-					"parentId": "04a87f22",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a2"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200065
-					}
-				},
-				{
-					"type": "compaction",
-					"id": "508a24e7",
-					"parentId": "a01ddf69",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"summary": "## Goal\nhidden work",
-					"firstKeptEntryId": "04a87f22",
-					"tokensBefore": 100,
-					"details": {
-						"readFiles": [
-							"/a/hidden.go"
-						],
-						"modifiedFiles": []
-					},
-					"fromHook": false
-				},
-				{
-					"type": "context_edit",
-					"id": "0mit0000",
-					"parentId": "508a24e7",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"targetId": "508a24e7",
-					"replacement": null
-				},
-				{
-					"type": "message",
-					"id": "9d521847",
-					"parentId": "0mit0000",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q3"
-							}
-						],
-						"timestamp": 1789603200066
-					}
-				},
-				{
-					"type": "message",
-					"id": "9d3ca5c7",
-					"parentId": "9d521847",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "assistant",
-						"content": [
-							{
-								"type": "text",
-								"text": "a3"
-							}
-						],
-						"api": "openai-completions",
-						"provider": "p",
-						"model": "m",
-						"usage": {
-							"input": 0,
-							"output": 0,
-							"cacheRead": 0,
-							"cacheWrite": 0,
-							"totalTokens": 0,
-							"cost": {
-								"input": 0,
-								"output": 0,
-								"cacheRead": 0,
-								"cacheWrite": 0,
-								"total": 0
-							}
-						},
-						"stopReason": "stop",
-						"timestamp": 1789603200067
-					}
-				},
-				{
-					"type": "message",
-					"id": "5a922731",
-					"parentId": "9d3ca5c7",
-					"timestamp": "2026-09-23T13:24:51.798Z",
-					"message": {
-						"role": "user",
-						"content": [
-							{
-								"type": "text",
-								"text": "q4"
-							}
-						],
-						"timestamp": 1789603200068
-					}
-				}
-			],
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a1-73a3-ae42-c4aafa216166\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"f3737b72\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200062}}\n{\"type\":\"message\",\"id\":\"8ad2b2aa\",\"parentId\":\"f3737b72\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200063}}\n{\"type\":\"message\",\"id\":\"0d30b69e\",\"parentId\":\"8ad2b2aa\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200064}}\n{\"type\":\"message\",\"id\":\"898776d2\",\"parentId\":\"0d30b69e\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200065}}\n{\"type\":\"compaction\",\"id\":\"cb33ce97\",\"parentId\":\"898776d2\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"summary\":\"## Goal\\nhidden work\",\"firstKeptEntryId\":\"0d30b69e\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/hidden.go\"],\"modifiedFiles\":[]},\"fromHook\":false}\n{\"type\":\"context_edit\",\"id\":\"0mit0000\",\"parentId\":\"cb33ce97\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"targetId\":\"cb33ce97\",\"replacement\":null}\n{\"type\":\"message\",\"id\":\"b8354a53\",\"parentId\":\"0mit0000\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200066}}\n{\"type\":\"message\",\"id\":\"2c270653\",\"parentId\":\"b8354a53\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200067}}\n{\"type\":\"message\",\"id\":\"5d74d925\",\"parentId\":\"2c270653\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200068}}\n",
 			"resumed": [
 				"user:q2",
 				"assistant:a2",
@@ -2129,6 +275,275 @@
 			},
 			"compacted": [
 				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-null",
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a1-73a3-ae42-c4af6d2ad1f7\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"492b6a3a\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200069}}\n{\"type\":\"message\",\"id\":\"9d7e439d\",\"parentId\":\"492b6a3a\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200070}}\n{\"type\":\"message\",\"id\":\"2604dc17\",\"parentId\":\"9d7e439d\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200071}}\n{\"type\":\"message\",\"id\":\"5e1ba88f\",\"parentId\":\"2604dc17\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200072}}\n{\"type\":\"compaction\",\"id\":\"3cd2af9f\",\"parentId\":\"5e1ba88f\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"summary\":\"## Goal\\nwork\",\"firstKeptEntryId\":\"2604dc17\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/null.go\"],\"modifiedFiles\":[]},\"fromHook\":null}\n{\"type\":\"message\",\"id\":\"7a61188d\",\"parentId\":\"3cd2af9f\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200073}}\n{\"type\":\"message\",\"id\":\"f2884c61\",\"parentId\":\"7a61188d\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200074}}\n{\"type\":\"message\",\"id\":\"38182a47\",\"parentId\":\"f2884c61\",\"timestamp\":\"2026-09-23T14:34:01.761Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200075}}\n",
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nwork\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nwork",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nwork\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1\n\n<read-files>\n/a/null.go\n</read-files>",
+			"details": {
+				"readFiles": [
+					"/a/null.go"
+				],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n\n<read-files>\n/a/null.go\n</read-files>\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-0",
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a2-73a3-ae42-c4b34aaa70fa\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"81fce6f5\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200076}}\n{\"type\":\"message\",\"id\":\"4b2641ec\",\"parentId\":\"81fce6f5\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200077}}\n{\"type\":\"message\",\"id\":\"abfbbc8e\",\"parentId\":\"4b2641ec\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200078}}\n{\"type\":\"message\",\"id\":\"36cac173\",\"parentId\":\"abfbbc8e\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200079}}\n{\"type\":\"compaction\",\"id\":\"13ffd623\",\"parentId\":\"36cac173\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"summary\":\"## Goal\\nwork\",\"firstKeptEntryId\":\"abfbbc8e\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/0.go\"],\"modifiedFiles\":[]},\"fromHook\":0}\n{\"type\":\"message\",\"id\":\"6cfe9b46\",\"parentId\":\"13ffd623\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200080}}\n{\"type\":\"message\",\"id\":\"1f9ff8de\",\"parentId\":\"6cfe9b46\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200081}}\n{\"type\":\"message\",\"id\":\"bd11c073\",\"parentId\":\"1f9ff8de\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200082}}\n",
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nwork\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nwork",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nwork\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1\n\n<read-files>\n/a/0.go\n</read-files>",
+			"details": {
+				"readFiles": [
+					"/a/0.go"
+				],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n\n<read-files>\n/a/0.go\n</read-files>\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-raw-negative-0",
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a2-73a3-ae42-c4b6272a69fd\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"9e39b389\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200083}}\n{\"type\":\"message\",\"id\":\"1e3f3234\",\"parentId\":\"9e39b389\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200084}}\n{\"type\":\"message\",\"id\":\"4cdbc630\",\"parentId\":\"1e3f3234\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200085}}\n{\"type\":\"message\",\"id\":\"86f547d7\",\"parentId\":\"4cdbc630\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200086}}\n{\"type\":\"compaction\",\"id\":\"411e54ab\",\"parentId\":\"86f547d7\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"summary\":\"## Goal\\nwork\",\"firstKeptEntryId\":\"4cdbc630\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/raw-negative-0.go\"],\"modifiedFiles\":[]},\"fromHook\":-0}\n{\"type\":\"message\",\"id\":\"53d4e2b9\",\"parentId\":\"411e54ab\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200087}}\n{\"type\":\"message\",\"id\":\"127122b1\",\"parentId\":\"53d4e2b9\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200088}}\n{\"type\":\"message\",\"id\":\"9527350d\",\"parentId\":\"127122b1\",\"timestamp\":\"2026-09-23T14:34:01.762Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200089}}\n",
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nwork\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nwork",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nwork\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1\n\n<read-files>\n/a/raw-negative-0.go\n</read-files>",
+			"details": {
+				"readFiles": [
+					"/a/raw-negative-0.go"
+				],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n\n<read-files>\n/a/raw-negative-0.go\n</read-files>\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-empty-array",
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a3-73a3-ae42-c4bbde907fbf\",\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"8393698c\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200090}}\n{\"type\":\"message\",\"id\":\"6050fb87\",\"parentId\":\"8393698c\",\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200091}}\n{\"type\":\"message\",\"id\":\"9edf8c6d\",\"parentId\":\"6050fb87\",\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200092}}\n{\"type\":\"message\",\"id\":\"99da6eed\",\"parentId\":\"9edf8c6d\",\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200093}}\n{\"type\":\"compaction\",\"id\":\"16ca4930\",\"parentId\":\"99da6eed\",\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"summary\":\"## Goal\\nwork\",\"firstKeptEntryId\":\"9edf8c6d\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/empty-array.go\"],\"modifiedFiles\":[]},\"fromHook\":[]}\n{\"type\":\"message\",\"id\":\"239cb480\",\"parentId\":\"16ca4930\",\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200094}}\n{\"type\":\"message\",\"id\":\"01d52f65\",\"parentId\":\"239cb480\",\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200095}}\n{\"type\":\"message\",\"id\":\"dddf5b86\",\"parentId\":\"01d52f65\",\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200096}}\n",
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nwork\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nwork",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nwork\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1",
+			"details": {
+				"readFiles": [],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-empty-object",
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a3-73a3-ae42-c4be1959f046\",\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"3c22a423\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.763Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200097}}\n{\"type\":\"message\",\"id\":\"a666969a\",\"parentId\":\"3c22a423\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200098}}\n{\"type\":\"message\",\"id\":\"b9884d4f\",\"parentId\":\"a666969a\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200099}}\n{\"type\":\"message\",\"id\":\"f60e67bf\",\"parentId\":\"b9884d4f\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200100}}\n{\"type\":\"compaction\",\"id\":\"b97ac208\",\"parentId\":\"f60e67bf\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"summary\":\"## Goal\\nwork\",\"firstKeptEntryId\":\"b9884d4f\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/empty-object.go\"],\"modifiedFiles\":[]},\"fromHook\":{}}\n{\"type\":\"message\",\"id\":\"e7a0ef38\",\"parentId\":\"b97ac208\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200101}}\n{\"type\":\"message\",\"id\":\"d7b9ef9d\",\"parentId\":\"e7a0ef38\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200102}}\n{\"type\":\"message\",\"id\":\"0409869a\",\"parentId\":\"d7b9ef9d\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200103}}\n",
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nwork\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nwork",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nwork\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1",
+			"details": {
+				"readFiles": [],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-string-0",
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a4-73a3-ae42-c4c23d5f70eb\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"b14fab55\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200104}}\n{\"type\":\"message\",\"id\":\"1f980462\",\"parentId\":\"b14fab55\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200105}}\n{\"type\":\"message\",\"id\":\"f3d3a4a1\",\"parentId\":\"1f980462\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200106}}\n{\"type\":\"message\",\"id\":\"4faae6bc\",\"parentId\":\"f3d3a4a1\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200107}}\n{\"type\":\"compaction\",\"id\":\"8c988cdf\",\"parentId\":\"4faae6bc\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"summary\":\"## Goal\\nwork\",\"firstKeptEntryId\":\"f3d3a4a1\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/string-0.go\"],\"modifiedFiles\":[]},\"fromHook\":\"0\"}\n{\"type\":\"message\",\"id\":\"7b398142\",\"parentId\":\"8c988cdf\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200108}}\n{\"type\":\"message\",\"id\":\"fd87761e\",\"parentId\":\"7b398142\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200109}}\n{\"type\":\"message\",\"id\":\"7143fdde\",\"parentId\":\"fd87761e\",\"timestamp\":\"2026-09-23T14:34:01.764Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200110}}\n",
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nwork\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nwork",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nwork\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1",
+			"details": {
+				"readFiles": [],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-string-false",
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a5-73a3-ae42-c4c78d11049b\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"25b23fa6\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200111}}\n{\"type\":\"message\",\"id\":\"370f8284\",\"parentId\":\"25b23fa6\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200112}}\n{\"type\":\"message\",\"id\":\"b0eada31\",\"parentId\":\"370f8284\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200113}}\n{\"type\":\"message\",\"id\":\"71408be2\",\"parentId\":\"b0eada31\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200114}}\n{\"type\":\"compaction\",\"id\":\"8a616a19\",\"parentId\":\"71408be2\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"summary\":\"## Goal\\nwork\",\"firstKeptEntryId\":\"b0eada31\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/string-false.go\"],\"modifiedFiles\":[]},\"fromHook\":\"false\"}\n{\"type\":\"message\",\"id\":\"3a6d9679\",\"parentId\":\"8a616a19\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200115}}\n{\"type\":\"message\",\"id\":\"af5a40e0\",\"parentId\":\"3a6d9679\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200116}}\n{\"type\":\"message\",\"id\":\"6085c7b6\",\"parentId\":\"af5a40e0\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200117}}\n",
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nwork\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nwork",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nwork\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1",
+			"details": {
+				"readFiles": [],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-raw-1e400",
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a5-73a3-ae42-c4cb6d67dc93\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"6b98fe5d\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200118}}\n{\"type\":\"message\",\"id\":\"83585b1e\",\"parentId\":\"6b98fe5d\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200119}}\n{\"type\":\"message\",\"id\":\"8536c0ac\",\"parentId\":\"83585b1e\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200120}}\n{\"type\":\"message\",\"id\":\"06c4b508\",\"parentId\":\"8536c0ac\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200121}}\n{\"type\":\"compaction\",\"id\":\"b1a04b1d\",\"parentId\":\"06c4b508\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"summary\":\"## Goal\\nwork\",\"firstKeptEntryId\":\"8536c0ac\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/raw-1e400.go\"],\"modifiedFiles\":[]},\"fromHook\":1e400}\n{\"type\":\"message\",\"id\":\"387fb2d5\",\"parentId\":\"b1a04b1d\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200122}}\n{\"type\":\"message\",\"id\":\"646ae522\",\"parentId\":\"387fb2d5\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200123}}\n{\"type\":\"message\",\"id\":\"a071df02\",\"parentId\":\"646ae522\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200124}}\n",
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nwork\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nwork",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nwork\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1",
+			"details": {
+				"readFiles": [],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n</summary>",
+				"user:q4"
+			]
+		},
+		{
+			"name": "previous-summary-from-hook-raw-1e-400",
+			"file": "{\"type\":\"session\",\"version\":3,\"id\":\"01a0ceb0-16a5-73a3-ae42-c4cf7fd09ae1\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"cwd\":\"/tmp/capture-resume\"}\n{\"type\":\"message\",\"id\":\"f93881b2\",\"parentId\":null,\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q1\"}],\"timestamp\":1789603200125}}\n{\"type\":\"message\",\"id\":\"7e352b08\",\"parentId\":\"f93881b2\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a1\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200126}}\n{\"type\":\"message\",\"id\":\"a397477a\",\"parentId\":\"7e352b08\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q2\"}],\"timestamp\":1789603200127}}\n{\"type\":\"message\",\"id\":\"8f7f5316\",\"parentId\":\"a397477a\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a2\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200128}}\n{\"type\":\"compaction\",\"id\":\"e1eaa78a\",\"parentId\":\"8f7f5316\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"summary\":\"## Goal\\nwork\",\"firstKeptEntryId\":\"a397477a\",\"tokensBefore\":100,\"details\":{\"readFiles\":[\"/a/raw-1e-400.go\"],\"modifiedFiles\":[]},\"fromHook\":1e-400}\n{\"type\":\"message\",\"id\":\"56d96dad\",\"parentId\":\"e1eaa78a\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q3\"}],\"timestamp\":1789603200129}}\n{\"type\":\"message\",\"id\":\"75e49684\",\"parentId\":\"56d96dad\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"text\",\"text\":\"a3\"}],\"api\":\"openai-completions\",\"provider\":\"p\",\"model\":\"m\",\"usage\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"totalTokens\":0,\"cost\":{\"input\":0,\"output\":0,\"cacheRead\":0,\"cacheWrite\":0,\"total\":0}},\"stopReason\":\"stop\",\"timestamp\":1789603200130}}\n{\"type\":\"message\",\"id\":\"6119a78f\",\"parentId\":\"75e49684\",\"timestamp\":\"2026-09-23T14:34:01.765Z\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"q4\"}],\"timestamp\":1789603200131}}\n",
+			"resumed": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\n## Goal\nwork\n</summary>",
+				"user:q2",
+				"assistant:a2",
+				"user:q3",
+				"assistant:a3",
+				"user:q4"
+			],
+			"previousSummary": "## Goal\nwork",
+			"requests": [
+				{
+					"systemPrompt": "You are a context summarization assistant. Your task is to read a conversation between a user and an AI assistant, then produce a structured summary following the exact format specified.\n\nDo NOT continue the conversation. Do NOT respond to any questions in the conversation. ONLY output the structured summary.",
+					"text": "<conversation>\n[User]: q2\n\n[Assistant]: a2\n\n[User]: q3\n\n[Assistant]: a3\n</conversation>\n\n<previous-summary>\n## Goal\nwork\n</previous-summary>\n\nThe messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.\n\nUpdate the existing structured summary with new information. RULES:\n- PRESERVE all existing information from the previous summary\n- ADD new progress, decisions, and context from the new messages\n- UPDATE the Progress section: move items from \"In Progress\" to \"Done\" when completed\n- UPDATE \"Next Steps\" based on what was accomplished\n- PRESERVE exact file paths, function names, and error messages\n- If something is no longer relevant, you may remove it\n\nUse this EXACT format:\n\n## Goal\n[Preserve existing goals, add new ones if the task expanded]\n\n## Constraints & Preferences\n- [Preserve existing, add new ones discovered]\n\n## Progress\n### Done\n- [x] [Include previously done items AND newly completed items]\n\n### In Progress\n- [ ] [Current work - update based on progress]\n\n### Blocked\n- [Current blockers - remove if resolved]\n\n## Key Decisions\n- **[Decision]**: [Brief rationale] (preserve all previous, add new)\n\n## Next Steps\n1. [Update based on current state]\n\n## Critical Context\n- [Preserve important context, add new if needed]\n\nKeep each section concise. Preserve exact file paths, function names, and error messages.",
+					"maxTokens": 1600
+				}
+			],
+			"summary": "SUMMARY 1\n\n<read-files>\n/a/raw-1e-400.go\n</read-files>",
+			"details": {
+				"readFiles": [
+					"/a/raw-1e-400.go"
+				],
+				"modifiedFiles": []
+			},
+			"compacted": [
+				"user:The conversation history before this point was compacted into the following summary:\n\n<summary>\nSUMMARY 1\n\n<read-files>\n/a/raw-1e-400.go\n</read-files>\n</summary>",
 				"user:q4"
 			]
 		}
