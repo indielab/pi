@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
@@ -298,20 +299,62 @@ func TestCompactionKeepsAnEmptySummary(t *testing.T) {
 // pi discards an aborted compaction: _runAutoCompaction calls
 // signal.throwIfAborted() after compact() returns and before appendCompaction,
 // so neither the text produced so far nor an empty reply becomes a checkpoint.
+// A split turn is no exception: pi's compact() goes on to the turn-prefix
+// request after an aborted history summary (2 streamFn calls) and returns
+// "partial\n\n---\n\n**Turn Context (split turn):**\n\n", which the session
+// then drops. An AbortSignal fires for a timeout too, so a context whose
+// deadline passes aborts the same way as one that is cancelled.
 func TestCompactionAbortedDoesNotCheckpoint(t *testing.T) {
-	for _, tc := range []struct{ name, text string }{
-		{"partial text", "## Goal\npartial summar"},
-		{"no text", ""},
+	historyOnly := bigTranscript(6)
+	// Keeping 1 token cuts at the final assistant: q1, a1 are the history and
+	// q2 the split turn's prefix.
+	splitTurn := []agent.AgentMessage{
+		ai.NewUserText("q1", 1),
+		ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "a1"}}, StopReason: ai.StopStop, Timestamp: 2},
+		ai.NewUserText("q2", 3),
+		ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "kept"}}, StopReason: ai.StopStop, Timestamp: 4},
+	}
+	if p, _ := prepareCompaction(splitTurn, 0, 1); !p.isSplitTurn || len(p.messagesToSummarize) != 2 || len(p.turnPrefixMessages) != 1 {
+		t.Fatalf("setup: not a split turn with history: %+v", p)
+	}
+	for _, tc := range []struct {
+		name      string
+		messages  []agent.AgentMessage
+		settings  CompactionSettings
+		window    int
+		text      string // what the aborted summary streamed first
+		deadline  bool   // abort by an expiring deadline, not by cancel
+		wantCalls int
+	}{
+		{"partial text", historyOnly, compactionTestSettings, 1000, "## Goal\npartial summar", false, 1},
+		{"no text", historyOnly, compactionTestSettings, 1000, "", false, 1},
+		{"deadline", historyOnly, compactionTestSettings, 1000, "## Goal\npartial summar", true, 1},
+		{"split turn", splitTurn, CompactionSettings{Enabled: true, ReserveTokens: 2000, KeepRecentTokens: 1}, 2000, "partial", false, 2},
+		{"split turn deadline", splitTurn, CompactionSettings{Enabled: true, ReserveTokens: 2000, KeepRecentTokens: 1}, 2000, "partial", true, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
-			// The run is aborted while the summary streams.
-			abortMidStream := func(_ context.Context, model *ai.Model, _ ai.TranscriptContext, _ *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
-				cancel()
+			if tc.deadline {
+				var cancelDeadline context.CancelFunc
+				ctx, cancelDeadline = context.WithTimeout(ctx, 10*time.Millisecond)
+				defer cancelDeadline()
+			}
+			// The run is aborted while the first summary streams: every
+			// request comes back aborted, the first with tc.text.
+			calls := 0
+			abortMidStream := func(streamCtx context.Context, model *ai.Model, _ ai.TranscriptContext, _ *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+				calls++
 				var content ai.ContentList
-				if tc.text != "" {
-					content = ai.ContentList{ai.TextContent{Text: tc.text}}
+				if calls == 1 {
+					if tc.deadline {
+						<-streamCtx.Done()
+					} else {
+						cancel()
+					}
+					if tc.text != "" {
+						content = ai.ContentList{ai.TextContent{Text: tc.text}}
+					}
 				}
 				s := ai.NewAssistantMessageEventStream()
 				s.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: ai.StopAborted, Error: &ai.AssistantMessage{
@@ -321,17 +364,19 @@ func TestCompactionAbortedDoesNotCheckpoint(t *testing.T) {
 				s.End()
 				return s
 			}
-			model := &ai.Model{ID: "m", Api: "faux", Provider: "faux", ContextWindow: 1000}
+			model := &ai.Model{ID: "m", Api: "faux", Provider: "faux", ContextWindow: tc.window, MaxTokens: 8192}
 			sess := NewSession(SessionOptions{Model: model, Cwd: t.TempDir(), NoTools: NoToolsAll, StreamFn: abortMidStream})
 
-			messages := bigTranscript(6)
-			state := &compactionState{settings: compactionTestSettings}
-			out := sess.compact(ctx, state, messages)
+			state := &compactionState{settings: tc.settings}
+			out := sess.compact(ctx, state, tc.messages)
+			if calls != tc.wantCalls {
+				t.Errorf("sent %d summarization requests, pi sends %d", calls, tc.wantCalls)
+			}
 			if state.checkpoint != nil {
 				t.Fatalf("aborted compaction checkpointed %q", state.checkpoint.summary)
 			}
-			if len(out) != len(messages) {
-				t.Fatalf("aborted compaction changed the view: %d messages, want the full %d", len(out), len(messages))
+			if len(out) != len(tc.messages) {
+				t.Fatalf("aborted compaction changed the view: %d messages, want the full %d", len(out), len(tc.messages))
 			}
 		})
 	}
