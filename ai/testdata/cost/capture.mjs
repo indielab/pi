@@ -80,6 +80,11 @@ cases.push(
 	["openai-codex", "gpt-5.6-luna", { input: 70401, output: 35384, cacheRead: 199520, cacheWrite: 2080, cacheWrite1h: 577 }],
 	["openai-codex", "gpt-6-luna", { input: 265984, output: 27648, cacheRead: 5632, cacheWrite: 384, cacheWrite1h: 299 }],
 	["openai-codex", "gpt-6-luna", { input: 113488, output: 31544, cacheRead: 151633, cacheWrite: 6880, cacheWrite1h: 2748 }],
+	// One usage per conversion the rows above leave unlocked: fusing the
+	// cacheRead product into the total, and the short cacheWrite product into
+	// the cacheWrite sum, each land a last bit off pi's here.
+	["amazon-bedrock", "amazon.nova-2-lite-v1:0", { input: 145664, output: 32768, cacheRead: 73248, cacheWrite: 22656, cacheWrite1h: 22092 }],
+	["amazon-bedrock", "amazon.nova-2-lite-v1:0", { input: 115328, output: 29312, cacheRead: 64608, cacheWrite: 46816, cacheWrite1h: 31298 }],
 );
 
 const rows = cases.map(([provider, id, usage]) => {
