@@ -1,7 +1,9 @@
 package ai
 
 import (
+	"encoding/json"
 	"math"
+	"os"
 	"testing"
 )
 
@@ -41,4 +43,59 @@ func TestCalculateCostAppliesInputTiers(t *testing.T) {
 	approx("long.Output", long.Output, 4.5)
 	approx("long.CacheRead", long.CacheRead, 0.072)
 	approx("long.CacheWrite", long.CacheWrite, 0.0000125)
+}
+
+// calculateCostCaptureFile is written by testdata/cost/capture.mjs from the
+// published pi-ai build's calculateCost and catalog.
+const calculateCostCaptureFile = "testdata/cost/calculate-cost-0.87.1.json"
+
+// TestCalculateCostMatchesPi prices every captured usage at the captured rates
+// and requires pi's exact doubles, not a tolerance: usage.cost is persisted in
+// sessions and sent over the protocol, so the last bit is visible. The rows sit
+// at and just above each catalog pricing tier with 1h cache writes, where a
+// fused multiply-add (one rounding where V8 rounds twice) moves the result.
+// Only a target the compiler fuses on can show that (arm64; amd64 at
+// GOAMD64=v3); baseline amd64 never fuses, so there this pins the rest.
+func TestCalculateCostMatchesPi(t *testing.T) {
+	data, err := os.ReadFile(calculateCostCaptureFile)
+	if err != nil {
+		t.Fatalf("read %s: %v (regenerate it with testdata/cost/capture.mjs)", calculateCostCaptureFile, err)
+	}
+	var capture struct {
+		Rows []struct {
+			Model string        `json:"model"`
+			Rates ModelCost     `json:"rates"`
+			Usage Usage         `json:"usage"`
+			Cost  CostBreakdown `json:"cost"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatalf("decode %s: %v", calculateCostCaptureFile, err)
+	}
+	if len(capture.Rows) == 0 {
+		t.Fatalf("%s has no rows", calculateCostCaptureFile)
+	}
+	for i, row := range capture.Rows {
+		usage := row.Usage
+		got := CalculateCost(&Model{Cost: row.Rates}, &usage)
+		for _, f := range []struct {
+			name      string
+			got, want float64
+		}{
+			{"input", got.Input, row.Cost.Input},
+			{"output", got.Output, row.Cost.Output},
+			{"cacheRead", got.CacheRead, row.Cost.CacheRead},
+			{"cacheWrite", got.CacheWrite, row.Cost.CacheWrite},
+			{"total", got.Total, row.Cost.Total},
+		} {
+			if math.Float64bits(f.got) != math.Float64bits(f.want) {
+				u := row.Usage
+				t.Errorf("row %d %s (input %d, output %d, cacheRead %d, cacheWrite %d, cacheWrite1h %d): cost.%s = %v, pi %v",
+					i, row.Model, u.Input, u.Output, u.CacheRead, u.CacheWrite, u.CacheWrite1h, f.name, f.got, f.want)
+			}
+		}
+		if usage.Cost != got {
+			t.Errorf("row %d %s: usage.Cost = %+v, want the returned %+v", i, row.Model, usage.Cost, got)
+		}
+	}
 }

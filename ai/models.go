@@ -69,12 +69,18 @@ func CalculateCost(model *Model, usage *Usage) CostBreakdown {
 	}
 
 	// Anthropic charges 2x base input for 1h cache writes.
+	//
+	// Each product is converted explicitly before it is summed. The Go spec
+	// lets the compiler fuse x*y + z into one FMA (arm64 does; so does amd64 at
+	// GOAMD64=v3), rounding once where V8 rounds the multiply and the add
+	// separately, and the conversion is what forbids that fusion. Without it the
+	// total and cacheWrite land a last bit off pi's on some usages.
 	longWrite := usage.CacheWrite1h
 	shortWrite := usage.CacheWrite - longWrite
-	usage.Cost.Input = rateInput / 1_000_000 * float64(usage.Input)
-	usage.Cost.Output = rateOutput / 1_000_000 * float64(usage.Output)
-	usage.Cost.CacheRead = rateCacheRead / 1_000_000 * float64(usage.CacheRead)
-	usage.Cost.CacheWrite = (rateCacheWrite*float64(shortWrite) + rateInput*2*float64(longWrite)) / 1_000_000
+	usage.Cost.Input = float64(rateInput / 1_000_000 * float64(usage.Input))
+	usage.Cost.Output = float64(rateOutput / 1_000_000 * float64(usage.Output))
+	usage.Cost.CacheRead = float64(rateCacheRead / 1_000_000 * float64(usage.CacheRead))
+	usage.Cost.CacheWrite = (float64(rateCacheWrite*float64(shortWrite)) + float64(rateInput*2*float64(longWrite))) / 1_000_000
 	usage.Cost.Total = usage.Cost.Input + usage.Cost.Output + usage.Cost.CacheRead + usage.Cost.CacheWrite
 	return usage.Cost
 }
