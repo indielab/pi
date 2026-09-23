@@ -86,7 +86,8 @@ type Scenario = {
 	summary: string;
 	details?: unknown;
 	// Written as given, null included: appendCompaction does not check its
-	// type, and pi reads it by truthiness. Absent, the capture writes false.
+	// type, and pi reads it by truthiness. Absent, the capture writes false;
+	// present but undefined, the entry has no fromHook key.
 	fromHook?: unknown;
 	// JSON text no JavaScript value serializes to (a number past float64's
 	// range): each key, a JSON string in the file, is replaced by its value
@@ -286,6 +287,29 @@ const scenarios: Scenario[] = [
 		details,
 		after: [user("q3"), assistant("a3"), user("q4")],
 	})),
+	{
+		// true, false and null each held once by the Sets (SameValueZero),
+		// within a list and across the two: the read list drops the false and
+		// null the modified set holds.
+		name: "previous-summary-details-duplicate-primitives",
+		before: [user("q1"), assistant("a1"), user("q2"), assistant("a2")],
+		keptIndex: 2,
+		summary: "## Goal\nwork",
+		details: { readFiles: [true, true, null, null, false, "/a/r.go"], modifiedFiles: [false, null, null] },
+		after: [user("q3"), assistant("a3"), user("q4")],
+	},
+	{
+		// appendCompaction called without fromHook writes no fromHook key; pi
+		// reads the absent value as undefined, which is falsy, and merges the
+		// details.
+		name: "previous-summary-from-hook-absent",
+		before: [user("q1"), assistant("a1"), user("q2"), assistant("a2")],
+		keptIndex: 2,
+		summary: "## Goal\nwork",
+		details: { readFiles: ["/a/absent.go"], modifiedFiles: [] },
+		fromHook: undefined,
+		after: [user("q3"), assistant("a3"), user("q4")],
+	},
 ];
 
 const textOf = (content: unknown): string =>
