@@ -240,8 +240,9 @@ func estimateContextTokensUsageAware(messages []agent.AgentMessage) int {
 		if !ok {
 			continue
 		}
-		// pi's getAssistantUsage returns the last valid usage: it skips aborted,
-		// error, AND all-zero-usage messages (upstream cd95c274 added the
+		// pi's estimateContextTokens anchors on getLastAssistantUsageInfo: the
+		// last message getAssistantUsage accepts, which is not aborted, not an
+		// error, and has non-zero usage (upstream cd95c274 added the
 		// calculateContextTokens(usage) > 0 guard so a malformed all-zero usage
 		// response is not trusted as the anchor).
 		if am.StopReason == ai.StopAborted || am.StopReason == ai.StopError {
