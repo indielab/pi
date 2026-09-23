@@ -365,18 +365,20 @@ func (s *Session) Record(r *SessionRecorder) {
 // resume a session file together with its compaction, use LoadBranch.
 func (s *Session) LoadHistory(messages []agent.AgentMessage) {
 	s.Agent.SetMessages(messages)
-	s.setCompaction(nil)
+	s.setCompaction(nil, 0)
 }
 
 // LoadBranch resumes a session branch from its projection
 // (SessionTree.BuildProjection): its messages become the transcript and its
 // newest compaction the session's checkpoint, so the next compaction extends
 // it as pi's does — from the messages it kept, with its summary as the
-// previous summary and its file lists merged. Without a compaction it is
-// LoadHistory.
+// previous summary and its file lists merged. An assistant usage recorded
+// before the branch's latest compaction or context edit measured a context
+// that has since changed, so, as in pi, it does not decide the next
+// compaction.
 func (s *Session) LoadBranch(p BranchProjection) {
 	s.Agent.SetMessages(p.Messages)
-	s.setCompaction(resumedCheckpoint(p))
+	s.setCompaction(resumedCompaction(p))
 }
 
 // SetModel switches the active model (and API key) for future turns.
@@ -417,7 +419,7 @@ func (s *Session) Reset() error {
 	if err := s.Agent.Reset(); err != nil {
 		return err
 	}
-	s.setCompaction(nil)
+	s.setCompaction(nil, 0)
 	return nil
 }
 

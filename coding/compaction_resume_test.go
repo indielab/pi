@@ -57,20 +57,7 @@ func TestResumedCompactionMatchesPiCapture(t *testing.T) {
 	}
 	for _, scenario := range capture.Scenarios {
 		t.Run(scenario.Name, func(t *testing.T) {
-			var file strings.Builder
-			for _, entry := range scenario.Entries {
-				line, err := json.Marshal(entry)
-				if err != nil {
-					t.Fatal(err)
-				}
-				file.Write(line)
-				file.WriteByte('\n')
-			}
-			path := filepath.Join(t.TempDir(), "session.jsonl")
-			if err := os.WriteFile(path, []byte(file.String()), 0o600); err != nil {
-				t.Fatal(err)
-			}
-			tree, err := LoadSessionTree(path)
+			tree, err := LoadSessionTree(writeCapturedSession(t, scenario.Entries))
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -138,6 +125,197 @@ func TestResumedCompactionMatchesPiCapture(t *testing.T) {
 			}
 		})
 	}
+}
+
+// testdata/compaction/capture-trigger.mts resumes session files through a real
+// pi AgentSession and prompts once, recording the requests up to the prompt's
+// own. pi's _checkCompaction decides before the prompt is sent: it skips an
+// assistant older than the latest compaction, and trusts usage only when it
+// was recorded after the latest compaction or context_edit
+// (estimateProjectedContextTokens); without trusted usage it estimates the
+// current system message once plus the other messages. Resumed as cmd/pi
+// resumes a file, the port must compact before the same prompts, with the
+// same requests, and send the same context.
+//
+// The port decides in its per-request transform, after the prompt and the
+// system message it declares are in the transcript; pi's check runs before
+// either lands. So the session's system prompt is kept small here, under
+// keepRecentTokens, or the cut would land on it instead of where pi's does.
+func TestResumedCompactionTriggerMatchesPi(t *testing.T) {
+	capture := loadTriggerCapture(t)
+	for _, scenario := range capture.Scenarios {
+		t.Run(scenario.Name, func(t *testing.T) {
+			tree, err := LoadSessionTree(writeCapturedSession(t, scenario.Entries))
+			if err != nil {
+				t.Fatal(err)
+			}
+			reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+				Models: []providers.FauxModelDefinition{{ID: "faux-1", ContextWindow: capture.ContextWindow, MaxTokens: 8192}},
+			})
+			t.Cleanup(reg.Unregister)
+			var got []triggerRequest
+			prompted := false
+			summaries := 0
+			record := func(req ai.TranscriptContext, _ *ai.SimpleStreamOptions, _ *providers.FauxState, _ *ai.Model) *ai.AssistantMessage {
+				if lead, ok := ai.GetInitialSystemMessage(req.Messages); ok && ai.GetSystemMessageText(lead) == summarizationSystemPrompt {
+					if !prompted {
+						text := userText(ai.WithoutInitialSystemMessage(req.Messages)[0])
+						got = append(got, triggerRequest{Summarization: &text})
+					}
+					summaries++
+					return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: fmt.Sprintf("SUMMARY %d", summaries)}}, ai.StopStop)
+				}
+				if !prompted {
+					prompted = true
+					var lines []string
+					for _, m := range req.Messages {
+						if m.MessageRole() == ai.RoleSystem {
+							continue
+						}
+						line := string(m.MessageRole()) + ":"
+						switch v := m.(type) {
+						case ai.UserMessage:
+							line += textOf(v.Content)
+						case ai.AssistantMessage:
+							line += textOf(v.Content)
+						case ai.ToolResultMessage:
+							line += textOf(v.Content)
+						}
+						lines = append(lines, line)
+					}
+					got = append(got, triggerRequest{Prompt: lines})
+				}
+				return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "reply"}}, ai.StopStop)
+			}
+			reg.SetResponses([]providers.FauxResponseStep{record, record, record, record})
+			settings := CompactionSettings{Enabled: capture.Settings.Enabled, ReserveTokens: capture.Settings.ReserveTokens, KeepRecentTokens: capture.Settings.KeepRecentTokens}
+			sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir(), SystemPrompt: "test", NoTools: NoToolsAll, Compaction: &settings})
+			sess.LoadBranch(tree.BuildProjection())
+			if _, err := sess.Run(context.Background(), scenario.Prompt); err != nil {
+				t.Fatal(err)
+			}
+			if len(got) != len(scenario.Requests) {
+				t.Fatalf("sent %d requests up to the prompt's, pi sent %d:\n got %s\n  pi %s", len(got), len(scenario.Requests), describeTriggerRequests(got), describeTriggerRequests(scenario.Requests))
+			}
+			for i, want := range scenario.Requests {
+				switch {
+				case (got[i].Summarization != nil) != (want.Summarization != nil):
+					t.Fatalf("request %d: got %s, pi sent %s", i+1, describeTriggerRequests(got[i:i+1]), describeTriggerRequests(scenario.Requests[i:i+1]))
+				case want.Summarization != nil && *got[i].Summarization != *want.Summarization:
+					t.Errorf("summarization request %d drifts from pi.\n--- got ---\n%s\n--- pi ---\n%s", i+1, *got[i].Summarization, *want.Summarization)
+				case want.Summarization == nil && !slices.Equal(got[i].Prompt, want.Prompt):
+					t.Errorf("the prompt's request drifts from pi:\n got %q\n  pi %q", got[i].Prompt, want.Prompt)
+				}
+			}
+		})
+	}
+}
+
+// pi's prepareCompaction finds nothing to compact when the branch's last entry
+// is the compaction itself; the port finds nothing when no message was
+// recorded after its checkpoint. capture-trigger.mts records what pi's
+// prepareCompaction finds on each file as written. Compacting the resumed
+// transcript as is, with a reserve that always calls for compaction, the port
+// must summarize exactly when pi prepared something.
+func TestResumedCompactionPreparesWhatPiPrepares(t *testing.T) {
+	capture := loadTriggerCapture(t)
+	for _, scenario := range capture.Scenarios {
+		t.Run(scenario.Name, func(t *testing.T) {
+			tree, err := LoadSessionTree(writeCapturedSession(t, scenario.Entries))
+			if err != nil {
+				t.Fatal(err)
+			}
+			reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+				Models: []providers.FauxModelDefinition{{ID: "faux-1", ContextWindow: capture.ContextWindow, MaxTokens: 8192}},
+			})
+			t.Cleanup(reg.Unregister)
+			requests := 0
+			step := func(ai.TranscriptContext, *ai.SimpleStreamOptions, *providers.FauxState, *ai.Model) *ai.AssistantMessage {
+				requests++
+				return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "SUMMARY"}}, ai.StopStop)
+			}
+			reg.SetResponses([]providers.FauxResponseStep{step, step})
+			sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir(), NoTools: NoToolsAll,
+				Compaction: &CompactionSettings{Enabled: true, ReserveTokens: capture.ContextWindow, KeepRecentTokens: capture.Settings.KeepRecentTokens}})
+			sess.LoadBranch(tree.BuildProjection())
+			sess.compact(context.Background(), sess.compactState, sess.History())
+			if (requests > 0) != scenario.Prepared {
+				t.Fatalf("sent %d summarization requests; pi's prepareCompaction prepared a compaction: %v", requests, scenario.Prepared)
+			}
+		})
+	}
+}
+
+// triggerCapture is testdata/compaction/trigger-0.87.1.json, written by
+// capture-trigger.mts.
+type triggerCapture struct {
+	ContextWindow int `json:"contextWindow"`
+	Settings      struct {
+		Enabled          bool `json:"enabled"`
+		ReserveTokens    int  `json:"reserveTokens"`
+		KeepRecentTokens int  `json:"keepRecentTokens"`
+	} `json:"settings"`
+	Scenarios []struct {
+		Name     string            `json:"name"`
+		Entries  []json.RawMessage `json:"entries"`
+		Prepared bool              `json:"prepared"`
+		Prompt   string            `json:"prompt"`
+		Requests []triggerRequest  `json:"requests"`
+	} `json:"scenarios"`
+}
+
+func loadTriggerCapture(t *testing.T) triggerCapture {
+	t.Helper()
+	data, err := os.ReadFile("testdata/compaction/trigger-0.87.1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capture triggerCapture
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatal(err)
+	}
+	if len(capture.Scenarios) == 0 {
+		t.Fatal("capture holds no scenarios")
+	}
+	return capture
+}
+
+// triggerRequest is one request capture-trigger.mts records: a summarization
+// request's user text, or the prompt's own request as its non-system messages.
+type triggerRequest struct {
+	Summarization *string  `json:"summarization"`
+	Prompt        []string `json:"prompt"`
+}
+
+func describeTriggerRequests(requests []triggerRequest) string {
+	kinds := make([]string, len(requests))
+	for i, r := range requests {
+		kinds[i] = "prompt"
+		if r.Summarization != nil {
+			kinds[i] = "summarization"
+		}
+	}
+	return "[" + strings.Join(kinds, ", ") + "]"
+}
+
+// writeCapturedSession writes a capture's session entries as a JSONL file and
+// returns its path.
+func writeCapturedSession(t *testing.T, entries []json.RawMessage) string {
+	t.Helper()
+	var file strings.Builder
+	for _, entry := range entries {
+		line, err := json.Marshal(entry)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file.Write(line)
+		file.WriteByte('\n')
+	}
+	path := filepath.Join(t.TempDir(), "session.jsonl")
+	if err := os.WriteFile(path, []byte(file.String()), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
 
 // describeMessages renders each message as capture-resume.mts's describe does:

@@ -235,32 +235,58 @@ func EstimateContextTokens(messages []agent.AgentMessage) int {
 // of pi's estimateContextTokens). This is far more accurate than the pure
 // char/4 heuristic on large contexts (big repos), where it matters most.
 func estimateContextTokensUsageAware(messages []agent.AgentMessage) int {
-	lastIdx := -1
-	var lastUsage ai.Usage
-	for i, m := range messages {
-		am, ok := messageAsAssistant(m)
-		if !ok {
-			continue
+	i, usage, ok := lastAssistantUsage(messages)
+	if !ok {
+		return EstimateContextTokens(messages)
+	}
+	return usageAnchoredTokens(messages, i, usage)
+}
+
+// estimateProjectedContextTokens is pi's estimateProjectedContextTokens: the
+// usage-anchored estimate when the last usage was recorded at or after
+// trustedFrom (after the latest compaction or context edit), and otherwise a
+// pure estimate that counts the current system message once, however many
+// system messages built it, plus every other message.
+func estimateProjectedContextTokens(messages []agent.AgentMessage, trustedFrom int) int {
+	if i, usage, ok := lastAssistantUsage(messages); ok && i >= trustedFrom {
+		return usageAnchoredTokens(messages, i, usage)
+	}
+	tokens := 0
+	if system, ok := ai.GetCurrentSystemMessage(messages); ok {
+		tokens = EstimateMessageTokens(system)
+	}
+	for _, m := range messages {
+		if m.MessageRole() != ai.RoleSystem {
+			tokens += EstimateMessageTokens(m)
 		}
-		// pi's estimateContextTokens anchors on getLastAssistantUsageInfo: the
-		// last message getAssistantUsage accepts, which is not aborted, not an
-		// error, and has non-zero usage (upstream cd95c274 added the
-		// calculateContextTokens(usage) > 0 guard so a malformed all-zero usage
-		// response is not trusted as the anchor).
-		if am.StopReason == ai.StopAborted || am.StopReason == ai.StopError {
+	}
+	return tokens
+}
+
+// lastAssistantUsage is pi's getLastAssistantUsageInfo: the last message
+// getAssistantUsage accepts, an assistant message that is not aborted, not an
+// error, and has non-zero usage (upstream cd95c274 added the
+// calculateContextTokens(usage) > 0 guard so a malformed all-zero usage
+// response is not trusted as the anchor).
+func lastAssistantUsage(messages []agent.AgentMessage) (index int, usage ai.Usage, ok bool) {
+	for i := len(messages) - 1; i >= 0; i-- {
+		am, isAssistant := messageAsAssistant(messages[i])
+		if !isAssistant || am.StopReason == ai.StopAborted || am.StopReason == ai.StopError {
 			continue
 		}
 		if contextTokensFromUsage(am.Usage) > 0 {
-			lastIdx = i
-			lastUsage = am.Usage
+			return i, am.Usage, true
 		}
 	}
-	if lastIdx == -1 {
-		return EstimateContextTokens(messages)
-	}
-	total := contextTokensFromUsage(lastUsage)
-	for i := lastIdx + 1; i < len(messages); i++ {
-		total += EstimateMessageTokens(messages[i])
+	return -1, ai.Usage{}, false
+}
+
+// usageAnchoredTokens is the usage messages[i] reported plus an estimate of
+// every message after it.
+func usageAnchoredTokens(messages []agent.AgentMessage, i int, usage ai.Usage) int {
+	total := contextTokensFromUsage(usage)
+	for _, m := range messages[i+1:] {
+		total += EstimateMessageTokens(m)
 	}
 	return total
 }
@@ -428,6 +454,11 @@ type compactionState struct {
 	// back as a defined previousSummary "". A published checkpoint is never
 	// modified; a new compaction replaces the pointer.
 	checkpoint *compactionCheckpoint
+	// usageFrom indexes the transcript: an assistant usage recorded before it
+	// predates the latest compaction or context edit, and measured a context
+	// that has since changed. pi's estimateProjectedContextTokens trusts only
+	// usage recorded after both. 0 trusts every usage.
+	usageFrom int
 }
 
 // EnableCompaction fills the compaction stage of the session's per-request
@@ -456,68 +487,86 @@ func (s *Session) EnableCompaction(settings CompactionSettings) {
 	}
 }
 
-// setCompaction replaces the session's checkpoint: nil for a new transcript
-// (pi's /new starts a fresh SessionManager, with no compaction entry), or the
-// compaction a resumed branch carries. The settings stay. A session that never
-// enabled compaction keeps the checkpoint for a later EnableCompaction.
-func (s *Session) setCompaction(c *compactionCheckpoint) {
+// setCompaction replaces the session's compaction state: none for a new
+// transcript (pi's /new starts a fresh SessionManager, with no compaction
+// entry), or what a resumed branch carries. The settings stay. A session that
+// never enabled compaction keeps the state for a later EnableCompaction.
+func (s *Session) setCompaction(c *compactionCheckpoint, usageFrom int) {
 	if s.compactState == nil {
-		if c == nil {
+		if c == nil && usageFrom == 0 {
 			return
 		}
 		s.compactState = &compactionState{}
 	}
 	s.compactState.mu.Lock()
 	s.compactState.checkpoint = c
+	s.compactState.usageFrom = usageFrom
 	s.compactState.mu.Unlock()
 }
 
-// resumedCheckpoint is the checkpoint a resumed branch's newest compaction
-// amounts to, or nil. pi's prepareCompaction takes the first projected entry
-// as the previous compaction when it is a compaction that still contributes
-// messages; a context edit that omitted it leaves none, and pi then has no
-// previous compaction. Its summary is the previous summary, its stored system
-// message the replay, and its details' file lists (only when an extension did
-// not produce it) the lists to merge.
+// resumedCompaction is the compaction state a resumed branch carries: its
+// newest compaction as a checkpoint, or nil, and the index its trusted usage
+// starts from.
+//
+// pi's prepareCompaction takes the first projected entry as the previous
+// compaction when it is a compaction that still contributes messages; a
+// context edit that omitted it leaves none, and pi then has no previous
+// compaction. Its summary is the previous summary, its stored system message
+// the replay, and its details' file lists (only when an extension did not
+// produce it) the lists to merge.
 //
 // The projection's messages open with the compaction's own: the replayed
 // system message when it stored one, then the summary, which fall before
 // prefixLen, where the next cut search starts (pi boundaryStart). The messages
 // it kept follow (an inlined retainedTail is its own), then the messages
 // recorded after it, from compactedLen: the first of those entries is the
-// compaction entry's child on the path. Applying the checkpoint rebuilds the
-// same view.
-func resumedCheckpoint(p BranchProjection) *compactionCheckpoint {
-	if len(p.Entries) == 0 {
-		return nil
+// compaction entry's child on the path, and from it on the entries keep the
+// path's order. Applying the checkpoint rebuilds the same view.
+//
+// pi's estimateProjectedContextTokens trusts a usage only when its entry comes
+// after the branch's latest compaction or context_edit, omitted or not, so
+// usageFrom is the first message after the later of the two.
+func resumedCompaction(p BranchProjection) (checkpoint *compactionCheckpoint, usageFrom int) {
+	var compaction *SessionEntry
+	if len(p.Entries) > 0 && p.Entries[0].SourceEntry.Type == "compaction" {
+		compaction = p.Entries[0].SourceEntry
 	}
-	head := p.Entries[0]
-	e := head.SourceEntry
-	if e.Type != "compaction" || len(head.Messages) == 0 {
-		return nil
-	}
-	checkpoint := &compactionCheckpoint{
-		prefixLen:     1,
-		compactedLen:  len(p.Messages),
-		systemMessage: e.SystemMessage,
-		summary:       e.Summary,
-	}
-	if e.SystemMessage != nil {
-		checkpoint.prefixLen++
-	}
+	// Without a compaction every entry is in path order.
+	after := compaction == nil
+	compactedLen := len(p.Messages)
 	offset := 0
-	for _, entry := range p.Entries {
-		if entry.SourceEntry.ParentID == e.ID {
-			checkpoint.compactedLen = offset
-			break
+	for i, entry := range p.Entries {
+		if !after && i > 0 && entry.SourceEntry.ParentID == compaction.ID {
+			after = true
+			compactedLen = offset
+			usageFrom = offset
+		}
+		if after && entry.SourceEntry.Type == "context_edit" {
+			usageFrom = offset + len(entry.Messages)
 		}
 		offset += len(entry.Messages)
 	}
-	if !e.FromHook {
-		checkpoint.readFiles = detailsFileList(e.Details, "readFiles")
-		checkpoint.modifiedFiles = detailsFileList(e.Details, "modifiedFiles")
+	if !after {
+		// Nothing was recorded after the compaction.
+		usageFrom = compactedLen
 	}
-	return checkpoint
+	if compaction == nil || len(p.Entries[0].Messages) == 0 {
+		return nil, usageFrom
+	}
+	checkpoint = &compactionCheckpoint{
+		prefixLen:     1,
+		compactedLen:  compactedLen,
+		systemMessage: compaction.SystemMessage,
+		summary:       compaction.Summary,
+	}
+	if compaction.SystemMessage != nil {
+		checkpoint.prefixLen++
+	}
+	if !compaction.FromHook {
+		checkpoint.readFiles = detailsFileList(compaction.Details, "readFiles")
+		checkpoint.modifiedFiles = detailsFileList(compaction.Details, "modifiedFiles")
+	}
+	return checkpoint, usageFrom
 }
 
 // detailsFileList reads one file list from a compaction's details, as pi's
@@ -602,6 +651,7 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	state.mu.Lock()
 	settings := state.settings
 	previous := state.checkpoint
+	usageFrom := state.usageFrom
 	state.mu.Unlock()
 
 	// Always re-apply the checkpoint first (permanence), even one whose summary
@@ -617,7 +667,18 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	}
 
 	tokens := estimateContextTokensUsageAware(current)
+	if usageFrom > 0 {
+		// usageFrom is never before the checkpoint's compactedLen, and the view
+		// ends with every message from compactedLen on, so it indexes the
+		// view's tail.
+		tokens = estimateProjectedContextTokens(current, len(current)-max(len(messages)-usageFrom, 0))
+	}
 	if !shouldCompact(tokens, window, settings) {
+		return current
+	}
+	// pi's prepareCompaction finds nothing to compact when the branch's last
+	// entry is the compaction itself.
+	if previous != nil && len(messages) <= previous.compactedLen {
 		return current
 	}
 
@@ -702,6 +763,7 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 
 	state.mu.Lock()
 	state.checkpoint = next
+	state.usageFrom = next.compactedLen
 	state.mu.Unlock()
 
 	return next.apply(messages)

@@ -296,6 +296,45 @@ func TestCompactionKeepsAnEmptySummary(t *testing.T) {
 	}
 }
 
+// A usage recorded before a compaction measured the context the compaction
+// replaced. pi's _checkCompaction skips an assistant older than the latest
+// compaction, and estimateProjectedContextTokens trusts only usage recorded
+// after it, so the prompt after a compaction does not compact again on the
+// usage that triggered it. Usage recorded after the compaction is trusted
+// again. (The resumed-file case is TestResumedCompactionTriggerMatchesPi.)
+func TestCompactionDistrustsUsageFromBeforeIt(t *testing.T) {
+	sess, reg := newCompactionTestSession(t) // window 1000: compacts past 800 tokens
+	requests := 0
+	summary := func(ai.TranscriptContext, *ai.SimpleStreamOptions, *providers.FauxState, *ai.Model) *ai.AssistantMessage {
+		requests++
+		return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: "summary"}}, ai.StopStop)
+	}
+	reg.SetResponses([]providers.FauxResponseStep{summary, summary, summary, summary})
+	reply := func(text string, totalTokens int, ts int64) agent.AgentMessage {
+		return ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: text}}, Usage: ai.Usage{TotalTokens: totalTokens}, StopReason: ai.StopStop, Timestamp: ts}
+	}
+	state := &compactionState{settings: CompactionSettings{Enabled: true, ReserveTokens: 200, KeepRecentTokens: 1}}
+	messages := []agent.AgentMessage{ai.NewUserText("q1", 1), reply("a1", 100, 2), ai.NewUserText("q2", 3), reply("a2", 900, 4)}
+
+	sess.compact(context.Background(), state, messages)
+	if requests == 0 {
+		t.Fatal("a2's usage of 900 did not compact")
+	}
+	compacted := requests
+
+	messages = append(messages, ai.NewUserText("q3", 5))
+	sess.compact(context.Background(), state, messages)
+	if requests != compacted {
+		t.Fatalf("compacted again on a2's usage, recorded before the compaction (%d more requests)", requests-compacted)
+	}
+
+	messages = append(messages, reply("a3", 900, 6), ai.NewUserText("q4", 7))
+	sess.compact(context.Background(), state, messages)
+	if requests == compacted {
+		t.Fatal("a3's usage of 900, recorded after the compaction, did not compact")
+	}
+}
+
 // pi discards an aborted compaction: _runAutoCompaction calls
 // signal.throwIfAborted() after compact() returns and before appendCompaction,
 // so neither the text produced so far nor an empty reply becomes a checkpoint.
