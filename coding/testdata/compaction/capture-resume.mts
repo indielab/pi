@@ -221,6 +221,50 @@ const scenarios: Scenario[] = [
 		...(typeof fromHook === "string" && fromHook.startsWith("raw:") ? { raw: { [fromHook]: fromHook.slice(4) } } : {}),
 		after: [user("q3"), assistant("a3"), user("q4")],
 	})),
+	{
+		// appendCompaction stores details unchecked, and extractFileOperations
+		// adds every element of their lists to its Sets: a primitive by
+		// SameValueZero (5.0 is 5, -0 is 0; 5 and "5" are two), each object
+		// or array as its own element. The read list drops what the modified
+		// set holds, both sort by String(value), ties keeping their order, and
+		// join writes null as "".
+		name: "previous-summary-details-odd-types",
+		before: [user("q1"), assistant("a1"), user("q2"), assistant("a2")],
+		keptIndex: 2,
+		summary: "## Goal\nodd work",
+		details: {
+			readFiles: [
+				5,
+				"/a/r.go",
+				null,
+				{ x: 1 },
+				["b", "c"],
+				true,
+				"/a/m.go",
+				"5",
+				"raw:5.0",
+				"raw:-0",
+				0,
+				[null, "x", ["y", 2]],
+				{},
+				1e21,
+				0.1,
+				"raw:1e400",
+				"Infinity",
+				"/a/😀.go",
+				"/a/｡.go",
+			],
+			modifiedFiles: ["/a/m.go", 7, 0],
+		},
+		raw: { "raw:5.0": "5.0", "raw:-0": "-0", "raw:1e400": "1e400" },
+		after: [
+			user("q3"),
+			assistant("editing", [["e1", "edit", { path: "/a/r.go", oldText: "a", newText: "b" }]]),
+			toolResult("e1", "edit", "ok"),
+			assistant("a3"),
+			user("q4"),
+		],
+	},
 ];
 
 const textOf = (content: unknown): string =>

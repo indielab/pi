@@ -114,31 +114,6 @@ func TestValidateToolArgumentsWrongType(t *testing.T) {
 	}
 }
 
-func TestJSNumberToString(t *testing.T) {
-	cases := []struct {
-		in   float64
-		want string
-	}{
-		{1000000, "1000000"},
-		{0.0000001, "1e-7"},
-		{1e21, "1e+21"},
-		{1e20, "100000000000000000000"},
-		{1e-6, "0.000001"},
-		{1e-7, "1e-7"},
-		{123.456, "123.456"},
-		{-0.5, "-0.5"},
-		{0, "0"},
-		{42, "42"},
-		{1.5e22, "1.5e+22"},
-		{1234567890123456789, "1234567890123456800"},
-	}
-	for _, c := range cases {
-		if got := jsNumberToString(c.in); got != c.want {
-			t.Errorf("jsNumberToString(%v) = %q, want %q", c.in, got, c.want)
-		}
-	}
-}
-
 // TestStringCoercionMatchesJSNumberFormat mirrors pi validation.ts:135 String(value).
 func TestStringCoercionMatchesJSNumberFormat(t *testing.T) {
 	tool := Tool{Name: "echo", Parameters: Object(Prop("value", String()))}

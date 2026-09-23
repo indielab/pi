@@ -570,27 +570,24 @@ func resumedCompaction(p BranchProjection) (checkpoint *compactionCheckpoint, us
 }
 
 // detailsFileList reads one file list from a compaction's details, as pi's
-// extractFileOperations does: only when the member is an array. pi's own
-// compactions write arrays of strings (an extension's are ignored, fromHook),
-// so an element of another type comes only from a hand-edited file. It is
-// skipped: a deliberate divergence, since pi would add it to its Set and
-// print its String().
-func detailsFileList(details json.RawMessage, key string) []string {
+// extractFileOperations does: only when the member is an array, and every
+// element as JSON.parse returns it. pi's own compactions write paths, but
+// appendCompaction (public SDK API) stores whatever details it is given.
+func detailsFileList(details json.RawMessage, key string) []fileListItem {
 	var members map[string]json.RawMessage
 	if json.Unmarshal(details, &members) != nil {
 		return nil
 	}
-	var list []any
-	if json.Unmarshal(members[key], &list) != nil {
+	list, err := jstext.Parse(members[key])
+	elements, isArray := list.([]any)
+	if err != nil || !isArray {
 		return nil
 	}
-	var files []string
-	for _, f := range list {
-		if f, ok := f.(string); ok {
-			files = append(files, f)
-		}
+	items := make([]fileListItem, len(elements))
+	for i, v := range elements {
+		items[i] = detailsItem(v)
 	}
-	return files
+	return items
 }
 
 // compactionCheckpoint is one compaction as pi's session file records it.
@@ -612,8 +609,8 @@ type compactionCheckpoint struct {
 	// readFiles and modifiedFiles are the file lists the compaction recorded
 	// (pi CompactionEntry.details), merged into the next compaction's (pi
 	// extractFileOperations).
-	readFiles     []string
-	modifiedFiles []string
+	readFiles     []fileListItem
+	modifiedFiles []fileListItem
 }
 
 // apply builds the compacted view in pi buildSessionContext's order: the
@@ -729,20 +726,20 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 
 	// Merge file ops from the previous compaction's lists plus the newly
 	// summarized messages (pi extractFileOperations + split-turn extraction).
-	ops := newFileOps()
+	var ops fileOps
 	if previous != nil {
 		for _, f := range previous.readFiles {
-			ops.read[f] = true
+			ops.read.add(f)
 		}
 		for _, f := range previous.modifiedFiles {
-			ops.edited[f] = true
+			ops.edited.add(f)
 		}
 	}
 	for _, m := range history {
-		extractFileOpsFromMessage(m, ops)
+		extractFileOpsFromMessage(m, &ops)
 	}
 	for _, m := range turnPrefix {
-		extractFileOpsFromMessage(m, ops)
+		extractFileOpsFromMessage(m, &ops)
 	}
 	readFiles, modifiedFiles := ops.lists()
 	newSummary += formatFileOperations(readFiles, modifiedFiles)
@@ -1082,15 +1079,69 @@ func sliceUTF16(s string, n int) string {
 	return s
 }
 
-// fileOps mirrors pi's FileOperations (utils.ts createFileOps).
+// fileOps mirrors pi's FileOperations (utils.ts createFileOps): three Sets.
+// The zero value is empty and ready to use.
 type fileOps struct {
-	read    map[string]bool
-	written map[string]bool
-	edited  map[string]bool
+	read, written, edited fileSet
 }
 
-func newFileOps() *fileOps {
-	return &fileOps{read: map[string]bool{}, written: map[string]bool{}, edited: map[string]bool{}}
+// fileSet is a JavaScript Set of file-list values: insertion-ordered, each
+// primitive held once (SameValueZero), each object or array on its own.
+type fileSet struct {
+	items []fileListItem
+	ids   map[string]bool
+}
+
+func (s *fileSet) add(item fileListItem) {
+	if item.id != "" {
+		if s.ids[item.id] {
+			return
+		}
+		if s.ids == nil {
+			s.ids = map[string]bool{}
+		}
+		s.ids[item.id] = true
+	}
+	s.items = append(s.items, item)
+}
+
+func (s *fileSet) has(item fileListItem) bool { return item.id != "" && s.ids[item.id] }
+
+// fileListItem is one value of a compaction's file lists. A tool call
+// contributes the path it names. A compaction's details, which pi's
+// appendCompaction stores unchecked, can hold any JSON value, and pi's
+// extractFileOperations adds each element to its Set as it is.
+type fileListItem struct {
+	// id is the value's identity under SameValueZero, which a Set uses: its
+	// type and value for a primitive; empty for an object or array, each of
+	// which is its own element.
+	id string
+	// text is String(value), which Array.prototype.sort compares.
+	text string
+	// null marks JSON null, which sorts as "null" and joins as "".
+	null bool
+}
+
+// filePath is the path a tool call names.
+func filePath(path string) fileListItem { return fileListItem{id: "s" + path, text: path} }
+
+// detailsItem is one element of a details file list, as JSON.parse returns it
+// (jstext.Parse).
+func detailsItem(v any) fileListItem {
+	text := jstext.ToString(v)
+	switch x := v.(type) {
+	case nil:
+		return fileListItem{id: "null", text: text, null: true}
+	case bool:
+		return fileListItem{id: "b" + text, text: text}
+	case json.Number:
+		// String(number) tells two numbers apart exactly when SameValueZero
+		// does: 5.0 is 5, and -0 is 0.
+		return fileListItem{id: "n" + text, text: text}
+	case string:
+		return filePath(x)
+	}
+	return fileListItem{text: text}
 }
 
 // extractFileOpsFromMessage collects file paths from read/write/edit tool calls
@@ -1111,61 +1162,75 @@ func extractFileOpsFromMessage(m agent.AgentMessage, ops *fileOps) {
 		}
 		switch tc.Name {
 		case "read":
-			ops.read[path] = true
+			ops.read.add(filePath(path))
 		case "write":
-			ops.written[path] = true
+			ops.written.add(filePath(path))
 		case "edit":
-			ops.edited[path] = true
+			ops.edited.add(filePath(path))
 		}
 	}
 }
 
 // lists computes the final sorted file lists (port of utils.ts computeFileLists):
 // modified = edited + written; readFiles excludes any file that was also modified.
-func (ops *fileOps) lists() (readFiles, modifiedFiles []string) {
-	modified := map[string]bool{}
-	for f := range ops.edited {
-		modified[f] = true
+func (ops *fileOps) lists() (readFiles, modifiedFiles []fileListItem) {
+	var modified fileSet
+	for _, f := range ops.edited.items {
+		modified.add(f)
 	}
-	for f := range ops.written {
-		modified[f] = true
+	for _, f := range ops.written.items {
+		modified.add(f)
 	}
-	for f := range ops.read {
-		if !modified[f] {
+	for _, f := range ops.read.items {
+		if !modified.has(f) {
 			readFiles = append(readFiles, f)
 		}
 	}
-	for f := range modified {
-		modifiedFiles = append(modifiedFiles, f)
-	}
-	// Array.prototype.sort's default order: by UTF-16 code unit.
-	slices.SortFunc(readFiles, jstext.CompareUTF16)
-	slices.SortFunc(modifiedFiles, jstext.CompareUTF16)
+	modifiedFiles = modified.items
+	sortFileList(readFiles)
+	sortFileList(modifiedFiles)
 	return readFiles, modifiedFiles
+}
+
+// sortFileList is Array.prototype.sort's default order: by String(value), in
+// UTF-16 code units, and stable, so equal texts keep their Set order.
+func sortFileList(items []fileListItem) {
+	slices.SortStableFunc(items, func(a, b fileListItem) int { return jstext.CompareUTF16(a.text, b.text) })
 }
 
 // computeFileLists derives the read-only and modified file lists from read/edit/
 // write tool calls in the given messages.
-func computeFileLists(messages []agent.AgentMessage) (readFiles, modifiedFiles []string) {
-	ops := newFileOps()
+func computeFileLists(messages []agent.AgentMessage) (readFiles, modifiedFiles []fileListItem) {
+	var ops fileOps
 	for _, m := range messages {
-		extractFileOpsFromMessage(m, ops)
+		extractFileOpsFromMessage(m, &ops)
 	}
 	return ops.lists()
 }
 
 // formatFileOperations formats read/modified file lists as XML tags appended to
 // the summary (port of utils.ts formatFileOperations).
-func formatFileOperations(readFiles, modifiedFiles []string) string {
+func formatFileOperations(readFiles, modifiedFiles []fileListItem) string {
 	var sections []string
 	if len(readFiles) > 0 {
-		sections = append(sections, "<read-files>\n"+strings.Join(readFiles, "\n")+"\n</read-files>")
+		sections = append(sections, "<read-files>\n"+joinFileList(readFiles)+"\n</read-files>")
 	}
 	if len(modifiedFiles) > 0 {
-		sections = append(sections, "<modified-files>\n"+strings.Join(modifiedFiles, "\n")+"\n</modified-files>")
+		sections = append(sections, "<modified-files>\n"+joinFileList(modifiedFiles)+"\n</modified-files>")
 	}
 	if len(sections) == 0 {
 		return ""
 	}
 	return "\n\n" + strings.Join(sections, "\n\n")
+}
+
+// joinFileList is Array.prototype.join("\n"), which writes null as "".
+func joinFileList(items []fileListItem) string {
+	texts := make([]string, len(items))
+	for i, f := range items {
+		if !f.null {
+			texts[i] = f.text
+		}
+	}
+	return strings.Join(texts, "\n")
 }
