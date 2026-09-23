@@ -186,6 +186,65 @@ func TestTrackerLifecycleErrors(t *testing.T) {
 	}
 }
 
+// noPanic runs fn and fails the test, rather than crashing it, if fn panics.
+func noPanic(t *testing.T, what string, fn func() error) (err error) {
+	t.Helper()
+	defer func() {
+		if r := recover(); r != nil {
+			t.Errorf("%s panicked: %v", what, r)
+			err = nil
+		}
+	}()
+	return fn()
+}
+
+// Go only: the zero values of the exported types. A zero Tracker holds no
+// revision and a zero Prepared was prepared by no tracker, so each call
+// reports how to get a real one instead of panicking — the zero Prepared as
+// upstream's adopt reports any object that is not a PreparedImpl ("belongs to
+// a different tracker", tracker.ts:135-136).
+func TestTrackerZeroValues(t *testing.T) {
+	var zero Tracker[any]
+	if err := noPanic(t, "BeginChange on a zero Tracker", func() error { _, err := zero.BeginChange(); return err }); !errors.Is(err, ErrZeroTracker) {
+		t.Errorf("BeginChange on a zero Tracker: %v, want ErrZeroTracker", err)
+	}
+	if err := noPanic(t, "PrepareReplace on a zero Tracker", func() error {
+		_, err := zero.PrepareReplace(map[string]any{})
+		return err
+	}); !errors.Is(err, ErrZeroTracker) {
+		t.Errorf("PrepareReplace on a zero Tracker: %v, want ErrZeroTracker", err)
+	}
+	tr := mustTrack(t, `{"value": 0}`)
+	p, err := tr.PrepareReplace(tree(t, `{"value": 1}`))
+	must(t, err)
+	if err := noPanic(t, "Adopt on a zero Tracker", func() error { return zero.Adopt(p) }); !errors.Is(err, ErrZeroTracker) {
+		t.Errorf("Adopt on a zero Tracker: %v, want ErrZeroTracker", err)
+	}
+	if err := noPanic(t, "Adopt of a zero Prepared", func() error { return tr.Adopt(&Prepared[any]{}) }); !errors.Is(err, ErrForeignPrepared) {
+		t.Errorf("Adopt of a zero Prepared: %v, want ErrForeignPrepared", err)
+	}
+	must(t, tr.Adopt(p)) // the refusals changed nothing
+
+	var change Change[any]
+	if err := noPanic(t, "Prepare of a zero Change", func() error { _, err := change.Prepare(); return err }); err == nil || !strings.Contains(err.Error(), "BeginChange") {
+		t.Errorf("Prepare of a zero Change: %v, want an error naming BeginChange", err)
+	}
+	noPanic(t, "Abort of a zero Change", func() error { change.Abort(); return nil })
+	if err := noPanic(t, "Set through a zero Change's State", func() error { return change.State().Set("x", 1) }); !errors.Is(err, errNilDraft) {
+		t.Errorf("Set through a zero Change's State: %v, want errNilDraft", err)
+	}
+	var draft Draft
+	if err := noPanic(t, "Set on a zero Draft", func() error { return draft.Set("x", 1) }); !errors.Is(err, errNilDraft) {
+		t.Errorf("Set on a zero Draft: %v, want errNilDraft", err)
+	}
+	noPanic(t, "reading a zero Draft", func() error {
+		if draft.Len() != 0 || draft.Keys() != nil || draft.Has("x") {
+			t.Error("a zero Draft reads as non-empty")
+		}
+		return nil
+	})
+}
+
 // delta.test.ts "aborts and revokes without changing the committed value" and
 // "releases the tracker and revokes drafts when preparation fails".
 func TestTrackerAbortAndFailedPrepareRelease(t *testing.T) {

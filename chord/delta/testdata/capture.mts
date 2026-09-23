@@ -805,6 +805,34 @@ scenario("adopt during a change", { main: J(`{"value":0}`) }, S(`[
 	{"do":"adopt","p":"waiting"},
 	{"do":"value"}
 ]`));
+// tracker.ts adopt's order: a used or aborted prepared change is refused as
+// such even while another change is open.
+scenario("adopt checks used and aborted before the open change", { main: J(`{"value":0}`) }, S(`[
+	{"do":"begin"},
+	{"do":"set","at":[],"key":"value","value":1},
+	{"do":"prepare","p":"used"},
+	{"do":"adopt","p":"used"},
+	{"do":"begin","c":"second"},
+	{"do":"set","c":"second","at":[],"key":"value","value":2},
+	{"do":"prepare","c":"second","p":"aborted"},
+	{"do":"abort","c":"second"},
+	{"do":"begin","c":"open"},
+	{"do":"adopt","p":"used"},
+	{"do":"adopt","p":"aborted"},
+	{"do":"abort","c":"open"},
+	{"do":"value"}
+]`));
+// change.abort() after the prepared change was adopted leaves it used, not
+// aborted (tracker.ts's `status === "prepared"` guard).
+scenario("abort after adopt", { main: J(`{"value":0}`) }, S(`[
+	{"do":"begin"},
+	{"do":"set","at":[],"key":"value","value":1},
+	{"do":"prepare"},
+	{"do":"adopt"},
+	{"do":"abort"},
+	{"do":"adopt"},
+	{"do":"value"}
+]`));
 // delta.test.ts "canonical strings".
 scenario("canonical strings", { main: J(`{"text":"abcdefgh"}`) }, S(`[
 	{"do":"begin"},

@@ -24,6 +24,10 @@ var (
 	ErrPreparedAborted   = errors.New("delta: Prepared change has been aborted (its change was aborted after it was prepared; prepare it again)")
 	ErrAdoptDuringChange = errors.New("delta: Cannot adopt while a change is active (prepare or abort the active change first)")
 	ErrStalePrepared     = errors.New("delta: Prepared change is stale (the tracker adopted another revision after it was prepared; prepare it again against Tracker.Value)")
+
+	// ErrZeroTracker is Go's own: a Tracker that Track did not make holds no
+	// revision, so BeginChange, PrepareReplace and Adopt refuse it.
+	ErrZeroTracker = errors.New("delta: Tracker holds no revision (it is a zero Tracker; make one with Track)")
 )
 
 // owner is a tracker's identity as a prepared change records it. It is not
@@ -58,7 +62,8 @@ type preparedMeta struct {
 // either way the result takes effect only when adopted.
 //
 // A Tracker is not safe for concurrent use. At most one change is active at a
-// time.
+// time. The zero Tracker holds no revision and refuses every change with
+// ErrZeroTracker; make one with Track.
 type Tracker[T any] struct {
 	owner    *owner
 	value    T
@@ -103,6 +108,9 @@ func (t *Tracker[T]) Value() T { return t.value }
 // caller mutates, then prepares or aborts. A tracker has at most one active
 // change, and nothing can be adopted while it is open.
 func (t *Tracker[T]) BeginChange() (*Change[T], error) {
+	if t.owner == nil {
+		return nil, ErrZeroTracker
+	}
 	if t.changing {
 		return nil, ErrChangeActive
 	}
@@ -116,6 +124,9 @@ func (t *Tracker[T]) BeginChange() (*Change[T], error) {
 // in one member publishes one op; one that is deeply equal publishes none, and
 // its Value is the committed revision itself.
 func (t *Tracker[T]) PrepareReplace(value T) (*Prepared[T], error) {
+	if t.owner == nil {
+		return nil, ErrZeroTracker
+	}
 	if t.changing {
 		return nil, ErrChangeActive
 	}
@@ -128,9 +139,13 @@ func (t *Tracker[T]) PrepareReplace(value T) (*Prepared[T], error) {
 
 // Adopt commits a prepared change. It must come from this tracker, be
 // neither used nor aborted, and have been prepared against the committed
-// revision; no change may be active.
+// revision; no change may be active. A nil or zero Prepared belongs to no
+// tracker.
 func (t *Tracker[T]) Adopt(p *Prepared[T]) error {
-	if p == nil || p.meta.owner != t.owner {
+	if t.owner == nil {
+		return ErrZeroTracker
+	}
+	if p == nil || p.meta == nil || p.meta.owner != t.owner {
 		return ErrForeignPrepared
 	}
 	switch p.meta.status {
@@ -225,6 +240,10 @@ type Change[T any] struct {
 // State is the draft of the root.
 func (c *Change[T]) State() *Draft { return c.root }
 
+// errZeroChange is Go's own: a Change that BeginChange did not open has no
+// draft to prepare.
+var errZeroChange = errors.New("delta: Change was never begun (it is a zero Change; open one with Tracker.BeginChange)")
+
 // Prepare settles the change: it finishes the draft and diffs the result
 // against the revision the change began from. The tracker is free for the next
 // change afterwards, whether or not Prepare succeeds; a failure (an array left
@@ -232,6 +251,9 @@ func (c *Change[T]) State() *Draft { return c.root }
 func (c *Change[T]) Prepare() (*Prepared[T], error) {
 	if c.status != changeOpen {
 		return nil, ErrChangeSettled
+	}
+	if c.tracker == nil {
+		return nil, errZeroChange
 	}
 	t, tx := c.tracker, c.txn
 	c.tracker, c.txn = nil, nil
@@ -246,8 +268,8 @@ func (c *Change[T]) Prepare() (*Prepared[T], error) {
 }
 
 // Abort settles the change without preparing it, or — after Prepare —
-// invalidates the prepared change if it has not been adopted. Aborting twice
-// does nothing.
+// invalidates the prepared change if it has not been adopted. Aborting twice,
+// or aborting a zero Change, does nothing.
 func (c *Change[T]) Abort() {
 	switch c.status {
 	case changeAborted:
@@ -262,6 +284,9 @@ func (c *Change[T]) Abort() {
 	}
 	c.status = changeAborted
 	t, tx := c.tracker, c.txn
+	if t == nil {
+		return
+	}
 	c.tracker, c.txn = nil, nil
 	tx.release()
 	t.changing = false

@@ -352,6 +352,13 @@
 			"results": [{"ops":[["s",["value"],1]],"noop":false,"value":{"value":1}},{},{"error":"Cannot adopt while a change is active"},{"error":"Tracker already has an active change"},{},{},{"value":{"value":1}}]
 		},
 		{
+			"name": "adopt checks used and aborted before the open change",
+			"trackers": {"main":{"value":0}},
+			"steps": [{"do":"begin"},{"at":[],"do":"set","key":"value","value":1},{"do":"prepare","p":"used"},{"do":"adopt","p":"used"},{"c":"second","do":"begin"},{"at":[],"c":"second","do":"set","key":"value","value":2},{"c":"second","do":"prepare","p":"aborted"},{"c":"second","do":"abort"},{"c":"open","do":"begin"},{"do":"adopt","p":"used"},{"do":"adopt","p":"aborted"},{"c":"open","do":"abort"},{"do":"value"}],
+			"results": [{},{},{"ops":[["s",["value"],1]],"noop":false,"value":{"value":1}},{},{},{},{"ops":[["s",["value"],2]],"noop":false,"value":{"value":2}},{},{},{"error":"Prepared change has already been used"},{"error":"Prepared change has been aborted"},{},{"value":{"value":1}}]
+		},
+		{"name":"abort after adopt","trackers":{"main":{"value":0}},"steps":[{"do":"begin"},{"at":[],"do":"set","key":"value","value":1},{"do":"prepare"},{"do":"adopt"},{"do":"abort"},{"do":"adopt"},{"do":"value"}],"results":[{},{},{"ops":[["s",["value"],1]],"noop":false,"value":{"value":1}},{},{},{"error":"Prepared change has already been used"},{"value":{"value":1}}]},
+		{
 			"name": "canonical strings",
 			"trackers": {"main":{"text":"abcdefgh"}},
 			"steps": [{"do":"begin"},{"at":[],"do":"append","key":"text","text":"ij"},{"do":"prepare"},{"do":"adopt"},{"do":"begin"},{"at":[],"do":"set","key":"text","value":"defghijxyz"},{"do":"prepare"}],

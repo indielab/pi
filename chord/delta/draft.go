@@ -270,7 +270,8 @@ func shallowEqual(left, right any) bool {
 // returns ErrDraftRevoked and a read panics with it: a read has no error to
 // return, and using a settled draft is a bug in the caller, like a send on a
 // closed channel. A nil *Draft — what At returns for a member that is not a
-// container — reads as empty, and every write to it returns an error.
+// container — reads as empty, and every write to it returns an error; so does
+// a zero Draft, which no change handed out.
 //
 // A Draft is not safe for concurrent use.
 type Draft struct{ s *draftState }
@@ -285,7 +286,7 @@ var (
 
 // live is the state behind a draft that may be written, or why it may not.
 func (d *Draft) live() (*draftState, error) {
-	if d == nil {
+	if d == nil || d.s == nil {
 		return nil, errNilDraft
 	}
 	if !d.s.txn.active {
@@ -294,10 +295,10 @@ func (d *Draft) live() (*draftState, error) {
 	return d.s, nil
 }
 
-// read is the state behind a draft being read: nil for a nil draft; a panic
-// for a revoked one.
+// read is the state behind a draft being read: nil for a nil or zero draft; a
+// panic for a revoked one.
 func (d *Draft) read() *draftState {
-	if d == nil {
+	if d == nil || d.s == nil {
 		return nil
 	}
 	if !d.s.txn.active {
