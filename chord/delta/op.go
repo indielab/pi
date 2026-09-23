@@ -509,9 +509,11 @@ func ParseWireOp(v any) (WireOp, error) {
 		if err := arity(t, 3, `["#", id, path]`); err != nil {
 			return nil, err
 		}
-		id, err := parseCount("#", "id", t[1])
-		if err != nil {
-			return nil, err
+		// An address, as the id a path ref names is: exact past 2^31 on every
+		// platform, and Validate checks its range.
+		id, ok := integer(t[1])
+		if !ok {
+			return nil, fmt.Errorf("%w: \"#\" id must be a non-negative integer, got %s", ErrInvalidOp, describe(t[1]))
 		}
 		path, err := parsePath(t[2])
 		if err != nil {
@@ -627,10 +629,10 @@ func parseText(v any) (string, error) {
 	return s, nil
 }
 
-// parseCount reads an integer count, index or id. Shape only: its sign is the
-// op's Validate to check, and a magnitude past what an int holds saturates —
-// pi's apply clamps a count against a length, so 1e300 and math.MaxInt
-// truncate or remove the same.
+// parseCount reads an integer count or splice index: a quantity, never an
+// address. Shape only: its sign is the op's Validate to check, and a magnitude
+// past what an int holds saturates — pi's apply clamps a count against a
+// length, so 1e300 and math.MaxInt truncate or remove the same.
 func parseCount(verb, name string, v any) (int, error) {
 	n, ok := integer(v)
 	if !ok {

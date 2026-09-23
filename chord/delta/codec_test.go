@@ -599,6 +599,21 @@ func TestCodecDecoderPreviousPathAndRedefinition(t *testing.T) {
 	wantOps(t, decode(t, &dec, wireOps(t, `[["d", 0]]`)), `[["d", ["b"]]]`)
 }
 
+// A "#" id is an address, as the path id that refers to it is, so an id past
+// 2^31 names the same path on a 32-bit build. pi at 9a139c62b: the decoded
+// batch below.
+func TestCodecDefineIDPastInt32(t *testing.T) {
+	op, err := ParseWireOp(tree(t, `["#", 3e9, ["a"]]`))
+	if err != nil {
+		t.Fatalf(`["#", 3e9, ["a"]]: %v`, err)
+	}
+	if id := op.(Define).ID; id != 3000000000 {
+		t.Errorf(`["#", 3e9, ["a"]]: ID = %d, want 3000000000`, id)
+	}
+	var dec Decoder
+	wantOps(t, decode(t, &dec, wireOps(t, `[["#", 3e9, ["x"]], ["s", 3e9, 1]]`)), `[["s", ["x"], 1]]`)
+}
+
 // A decode error terminates the batch where it happens: ops before it are
 // not returned, so a consumer cannot half-apply a batch it must discard.
 func TestCodecDecodeErrorReturnsNoOps(t *testing.T) {
