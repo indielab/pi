@@ -249,12 +249,14 @@ func TestResolveModelCustomIDFallbackInvalidSuffix(t *testing.T) {
 	}
 }
 
-// testdata/defaultmodels/capture.mjs reads pi's defaultModelPerProvider from
-// the published build. The port's table must equal it: every provider, every
-// id. Entries were missed twice before (baseten in c1019d920, the
-// qwen-token-plan entries), because model-resolver.ts hunks sit in commits
+// testdata/defaultmodels/capture.mjs reads pi's defaultModelPerProvider: from
+// the published build when the pin is a release, from the source at the pin
+// (its --src mode) between releases. The port's table must equal it: every
+// provider, every id. Entries were missed twice before (baseten in c1019d920,
+// the qwen-token-plan entries), because model-resolver.ts hunks sit in commits
 // whose other hunks are host-only, and a missed re-point to an id the catalog
-// still has passes TestDefaultModelsExistInCatalog. Re-capture at every re-pin.
+// still has passes TestDefaultModelsExistInCatalog. Re-capture at every
+// re-pin, and point file at the capture for the new pin.
 func TestDefaultModelPerProviderMatchesPi(t *testing.T) {
 	const file = "testdata/defaultmodels/default-models-0.87.1.json"
 	data, err := os.ReadFile(file)

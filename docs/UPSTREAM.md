@@ -77,7 +77,7 @@ ledger has already recorded twice:
 
 | file | ported half | host half |
 |---|---|---|
-| `core/model-resolver.ts` | `defaultModelPerProvider` and the fallback-model construction → `coding/resolve.go:18-21,381` | the host resolution flow. **The table has been the source of a MISS twice** (2026-07-26 `24e5cc04`, 2026-08-04 `c1019d920`); the standing rule to diff `defaultModelPerProvider` on every touch is still in force. At each release crossing, re-capture `coding/testdata/defaultmodels` from the new npm build: `TestDefaultModelPerProviderMatchesPi` requires the whole table to equal it |
+| `core/model-resolver.ts` | `defaultModelPerProvider` and the fallback-model construction → `coding/resolve.go:18-21,381` | the host resolution flow. **The table has been the source of a MISS twice** (2026-07-26 `24e5cc04`, 2026-08-04 `c1019d920`); the standing rule to diff `defaultModelPerProvider` on every touch is still in force. At every re-pin, re-capture `coding/testdata/defaultmodels` — from the npm build when the pin is a release, from a src extraction at the pin otherwise (`capture.mjs --src`, file named by the sha) — and point the test at it: `TestDefaultModelPerProviderMatchesPi` requires the whole table to equal it |
 | `core/package-manager.ts` | project/user skill discovery → `coding/resources.go` (it is the `if (projectTrusted)` site the 2026-08-27 trust ruling cites) | npm install / self-update, no Go surface |
 | `core/trust-manager.ts` | the trust decision and gate (2026-08-27) | the prompt, selector and persistent store |
 | `packages/telemetry/src/index.ts` | the runtime `Span` contract (2026-08-06) | the schema half — E3 |
