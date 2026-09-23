@@ -320,7 +320,7 @@ func (e *ValueError) Error() string {
 		return "delta: " + e.Message + " (the source range holds a slot SetLen or a write past the end left empty; fill it first)"
 	}
 	var got string
-	if f, ok := e.Value.(float64); ok {
+	if f, ok := number(e.Value); ok {
 		got = jsNumber(f)
 		if math.IsNaN(f) {
 			got = "NaN"
@@ -376,16 +376,13 @@ func (c *cloner) clone(v any, tx *transaction) (any, error) {
 	case nil, bool, string:
 		return x, nil
 	case float64:
-		if math.IsInf(x, 0) || math.IsNaN(x) {
-			return nil, &ValueError{Message: c.rules.strict, Value: x}
-		}
-		return x, nil
+		return c.finite(x, x)
 	case json.Number:
 		f, err := x.Float64()
-		if err != nil || math.IsInf(f, 0) {
+		if err != nil {
 			return nil, &ValueError{Message: c.rules.strict, Value: x}
 		}
-		return f, nil
+		return c.finite(f, x)
 	}
 	rv := reflect.ValueOf(v)
 	switch rv.Kind() {
@@ -395,14 +392,25 @@ func (c *cloner) clone(v any, tx *transaction) (any, error) {
 		return rv.String(), nil
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
-		reflect.Float32:
+		reflect.Float32, reflect.Float64:
 		f, _ := number(v)
-		return f, nil
+		return c.finite(f, v)
 	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Pointer:
 		// typeof "object" in JavaScript: a container, but not a plain one.
 		return nil, &ValueError{Message: c.rules.plain, Value: v}
 	}
 	return nil, &ValueError{Message: c.rules.strict, Value: v}
+}
+
+// finite is a number as the tracker holds it: f, which v was converted to,
+// unless it is NaN or infinite — upstream's Number.isFinite, which every Go
+// numeric kind and json.Number must pass (ParseFloat reads "NaN" and "Inf"
+// without an error).
+func (c *cloner) finite(f float64, v any) (any, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return nil, &ValueError{Message: c.rules.strict, Value: v}
+	}
+	return f, nil
 }
 
 // container copies an object or array, refusing a cycle.

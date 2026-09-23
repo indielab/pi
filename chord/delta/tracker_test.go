@@ -333,12 +333,13 @@ func TestTrackerImportDetachesAndExpandsAliases(t *testing.T) {
 // handed it. Anything else with no JSON form is refused with pi's text.
 func TestTrackerImportRepresentation(t *testing.T) {
 	type myInt int
+	type myFloat float64
 	tr, err := Track(map[string]any{
 		"int": 1, "int64": int64(2), "uint8": uint8(3), "float32": float32(0.5), "named": myInt(4),
-		"number": json.Number("5e2"), "nilMap": map[string]any(nil), "nilSlice": []any(nil),
+		"namedFloat": myFloat(6.5), "number": json.Number("5e2"), "nilMap": map[string]any(nil), "nilSlice": []any(nil),
 	})
 	must(t, err)
-	wantJSON(t, tr.Value(), tree(t, `{"int":1,"int64":2,"uint8":3,"float32":0.5,"named":4,"number":500,"nilMap":{},"nilSlice":[]}`))
+	wantJSON(t, tr.Value(), tree(t, `{"int":1,"int64":2,"uint8":3,"float32":0.5,"named":4,"namedFloat":6.5,"number":500,"nilMap":{},"nilSlice":[]}`))
 	for k, v := range tr.Value() {
 		switch v.(type) {
 		case float64, map[string]any, []any:
@@ -357,6 +358,14 @@ func TestTrackerImportRepresentation(t *testing.T) {
 		{math.NaN(), "Replicated state values must be strict JSON"},
 		{math.Inf(-1), "Replicated state values must be strict JSON"},
 		{json.Number("1e400"), "Replicated state values must be strict JSON"},
+		// Every numeric kind is checked, not only float64: pi's assertPrimitive
+		// is Number.isFinite on the one number type.
+		{float32(math.NaN()), "Replicated state values must be strict JSON"},
+		{float32(math.Inf(1)), "Replicated state values must be strict JSON"},
+		{float32(math.Inf(-1)), "Replicated state values must be strict JSON"},
+		{json.Number("NaN"), "Replicated state values must be strict JSON"},
+		{json.Number("Inf"), "Replicated state values must be strict JSON"},
+		{json.Number("-Infinity"), "Replicated state values must be strict JSON"},
 		{func() {}, "Replicated state values must be strict JSON"},
 		{complex(1, 2), "Replicated state values must be strict JSON"},
 		{make(chan int), "Replicated state values must be strict JSON"},
@@ -370,8 +379,31 @@ func TestTrackerImportRepresentation(t *testing.T) {
 		_, err := Track(map[string]any{"v": tc.value})
 		var ve *ValueError
 		if !errors.As(err, &ve) || ve.Message != tc.text {
-			t.Errorf("Track(%T): %v, want %q", tc.value, err, tc.text)
+			t.Errorf("Track(%T %v): %v, want %q", tc.value, tc.value, err, tc.text)
 		}
+	}
+	// The same refusals through PrepareReplace and a draft write, which says
+	// so in draft.ts's words; the committed revision is untouched.
+	tr, err = Track(map[string]any{"v": 1, "xs": []any{}})
+	must(t, err)
+	for _, bad := range []any{float32(math.NaN()), float32(math.Inf(1)), json.Number("NaN")} {
+		var ve *ValueError
+		if _, err := tr.PrepareReplace(map[string]any{"v": bad}); !errors.As(err, &ve) || ve.Message != "Replicated state values must be strict JSON" {
+			t.Errorf("PrepareReplace(%T %v): %v", bad, bad, err)
+		}
+		c := mustBegin(t, tr)
+		if err := c.State().Set("v", bad); !errors.As(err, &ve) || ve.Message != "Assigned values must be strict JSON values" {
+			t.Errorf("Set(%T %v): %v", bad, bad, err)
+		}
+		if _, err := c.State().At("xs").Push(bad); !errors.As(err, &ve) || ve.Message != "Assigned values must be strict JSON values" {
+			t.Errorf("Push(%T %v): %v", bad, bad, err)
+		}
+		c.Abort()
+	}
+	wantJSON(t, tr.Value(), tree(t, `{"v": 1, "xs": []}`))
+	// The error names the number, whatever kind it came as.
+	if _, err := Track(map[string]any{"v": float32(math.Inf(-1))}); err == nil || !strings.Contains(err.Error(), "got -Inf") {
+		t.Errorf("float32 -Inf: %v, want the error to say it got -Inf", err)
 	}
 	cyclic := map[string]any{}
 	cyclic["self"] = cyclic
