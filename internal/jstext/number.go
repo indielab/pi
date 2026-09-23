@@ -87,24 +87,36 @@ func NumberToString(f float64) string {
 // "true" or "false", a number as NumberToString writes it, a string as is, an
 // array as Array.prototype.join(",") writes it (null elements as ""), and an
 // object as "[object Object]".
-func ToString(v any) string {
+//
+// ok is false for a value with no string form, where String() throws a
+// TypeError: an object with its own "toString" member, directly or inside an
+// array. JSON cannot make that member callable, so String() falls back to
+// valueOf, which returns the object itself.
+func ToString(v any) (s string, ok bool) {
 	switch x := v.(type) {
 	case nil:
-		return "null"
+		return "null", true
 	case bool:
-		return strconv.FormatBool(x)
+		return strconv.FormatBool(x), true
 	case json.Number:
-		return NumberToString(Number(x))
+		return NumberToString(Number(x)), true
 	case string:
-		return x
+		return x, true
 	case []any:
 		parts := make([]string, len(x))
 		for i, e := range x {
-			if e != nil {
-				parts[i] = ToString(e)
+			if e == nil {
+				continue
+			}
+			if parts[i], ok = ToString(e); !ok {
+				return "", false
 			}
 		}
-		return strings.Join(parts, ",")
+		return strings.Join(parts, ","), true
+	case map[string]any:
+		if _, own := x["toString"]; own {
+			return "", false
+		}
 	}
-	return "[object Object]"
+	return "[object Object]", true
 }

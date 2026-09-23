@@ -23,7 +23,9 @@ import (
 // (unless an extension produced it); compact() then sends its requests, and the
 // new compaction's context follows. Resumed as cmd/pi resumes a file
 // (LoadSessionTree, BuildProjection, LoadBranch), the port must send the same
-// requests and rebuild the same context.
+// requests and rebuild the same context. Where pi's compact() throws after its
+// requests (a details value with no string form), the port's compaction fails
+// too, and the resumed checkpoint keeps rebuilding the context pi keeps.
 func TestResumedCompactionMatchesPiCapture(t *testing.T) {
 	data, err := os.ReadFile("testdata/compaction/resume-0.87.1.json")
 	if err != nil {
@@ -46,7 +48,9 @@ func TestResumedCompactionMatchesPiCapture(t *testing.T) {
 				Text         string `json:"text"`
 				MaxTokens    int    `json:"maxTokens"`
 			} `json:"requests"`
-			Summary   string   `json:"summary"`
+			Summary string `json:"summary"`
+			// Error is compact()'s message when it threw; nothing was appended.
+			Error     string   `json:"error"`
 			Compacted []string `json:"compacted"`
 		} `json:"scenarios"`
 	}
@@ -118,7 +122,11 @@ func TestResumedCompactionMatchesPiCapture(t *testing.T) {
 					t.Errorf("request %d maxTokens = %d, pi %d", i+1, got[i].maxTokens, want.MaxTokens)
 				}
 			}
-			if checkpoint := checkpointOf(t, sess.compactState); checkpoint.summary != scenario.Summary {
+			if scenario.Error != "" {
+				if sess.compactState.checkpoint != checkpoint {
+					t.Errorf("pi's compact() threw %q and appended nothing, but the port compacted: %q", scenario.Error, sess.compactState.checkpoint.summary)
+				}
+			} else if checkpoint := checkpointOf(t, sess.compactState); checkpoint.summary != scenario.Summary {
 				t.Errorf("summary drifts from pi.\n--- got ---\n%q\n--- pi ---\n%q", checkpoint.summary, scenario.Summary)
 			}
 			if got := describeMessages(out); !slices.Equal(got, scenario.Compacted) {

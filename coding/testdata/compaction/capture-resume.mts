@@ -19,6 +19,9 @@
 // prompt, user text and maxTokens and answers "SUMMARY n". The new compaction is
 // appended with compact()'s result, and the context pi sends next
 // (buildSessionContext, then convertToLlm) is recorded one line per message.
+// When compact() throws, as _runAutoCompaction catches it, its message is
+// recorded as "error", nothing is appended, and the context recorded is the
+// one pi keeps sending.
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -265,6 +268,24 @@ const scenarios: Scenario[] = [
 			user("q4"),
 		],
 	},
+	// A value with no string form: an object with its own "toString" member
+	// (JSON cannot make it callable, so String() falls to valueOf, which
+	// returns the object, and throws a TypeError), directly or inside an
+	// array. computeFileLists' sort and formatFileOperations' join take
+	// String() of every element, so compact() throws after its summary
+	// request; an own "valueOf" member alone is harmless.
+	...[
+		["no-string-form", { readFiles: [{ toString: 1 }, "/a/r.go"], modifiedFiles: [] }],
+		["nested-no-string-form", { readFiles: ["/a/r.go"], modifiedFiles: [[{ toString: "x" }]] }],
+		["value-of", { readFiles: [{ valueOf: 1 }, "/a/r.go"], modifiedFiles: [] }],
+	].map(([label, details]): Scenario => ({
+		name: `previous-summary-details-${label}`,
+		before: [user("q1"), assistant("a1"), user("q2"), assistant("a2")],
+		keptIndex: 2,
+		summary: "## Goal\nwork",
+		details,
+		after: [user("q3"), assistant("a3"), user("q4")],
+	})),
 ];
 
 const textOf = (content: unknown): string =>
@@ -335,8 +356,14 @@ for (const scenario of scenarios) {
 		const response = { ...assistant(`SUMMARY ${requests.length}`), timestamp: 0 };
 		return { result: async () => response };
 	};
-	const result = await compact(preparation, model, "test-key", undefined, undefined, undefined, undefined, streamFn);
-	sm.appendCompaction(result.summary, result.firstKeptEntryId, result.tokensBefore, result.details, false);
+	let result: any;
+	let error: string | undefined;
+	try {
+		result = await compact(preparation, model, "test-key", undefined, undefined, undefined, undefined, streamFn);
+	} catch (e) {
+		error = e instanceof Error ? e.message : String(e);
+	}
+	if (result) sm.appendCompaction(result.summary, result.firstKeptEntryId, result.tokensBefore, result.details, false);
 	const compacted = convertToLlm(sm.buildSessionContext().messages).map(describe);
 
 	out.scenarios.push({
@@ -345,8 +372,7 @@ for (const scenario of scenarios) {
 		resumed,
 		previousSummary: preparation.previousSummary,
 		requests,
-		summary: result.summary,
-		details: result.details,
+		...(result ? { summary: result.summary, details: result.details } : { error }),
 		compacted,
 	});
 }

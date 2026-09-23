@@ -742,6 +742,11 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 		extractFileOpsFromMessage(m, &ops)
 	}
 	readFiles, modifiedFiles := ops.lists()
+	// A previous compaction's details value with no string form makes pi's
+	// sort or join throw, and the compaction fails after its summaries.
+	if !stringForms(readFiles) || !stringForms(modifiedFiles) {
+		return current
+	}
 	newSummary += formatFileOperations(readFiles, modifiedFiles)
 
 	// pi appendCompaction stores the prompt and tool state the context replays
@@ -1120,6 +1125,15 @@ type fileListItem struct {
 	text string
 	// null marks JSON null, which sorts as "null" and joins as "".
 	null bool
+	// noString marks a value String() throws on (jstext.ToString), so pi's
+	// sort and join of a list holding it throw.
+	noString bool
+}
+
+// stringForms reports whether every item has a string form, as pi's
+// computeFileLists sort and formatFileOperations join need.
+func stringForms(items []fileListItem) bool {
+	return !slices.ContainsFunc(items, func(f fileListItem) bool { return f.noString })
 }
 
 // filePath is the path a tool call names.
@@ -1128,7 +1142,10 @@ func filePath(path string) fileListItem { return fileListItem{id: "s" + path, te
 // detailsItem is one element of a details file list, as JSON.parse returns it
 // (jstext.Parse).
 func detailsItem(v any) fileListItem {
-	text := jstext.ToString(v)
+	text, ok := jstext.ToString(v)
+	if !ok {
+		return fileListItem{noString: true}
+	}
 	switch x := v.(type) {
 	case nil:
 		return fileListItem{id: "null", text: text, null: true}

@@ -34,33 +34,51 @@ func TestNumberToString(t *testing.T) {
 	}
 }
 
-// String(JSON.parse(text)) in node, for each text.
+// String(JSON.parse(text)) in node, for each text; throws marks the texts
+// whose String() throws "TypeError: Cannot convert object to primitive value".
 func TestToStringMatchesNode(t *testing.T) {
-	for _, tc := range []struct{ text, want string }{
-		{"null", "null"},
-		{"true", "true"},
-		{"false", "false"},
-		{"5", "5"},
-		{"5.0", "5"},
-		{"-0", "0"},
-		{"1e21", "1e+21"},
-		{"0.1", "0.1"},
-		{"1e400", "Infinity"},
-		{"-1e400", "-Infinity"},
-		{`"x"`, "x"},
-		{"[]", ""},
-		{"[null]", ""},
-		{`[null,"x",["y",2]]`, ",x,y,2"},
-		{"[[],[[]]]", ","},
-		{"{}", "[object Object]"},
-		{`{"x":1}`, "[object Object]"},
-		{"[{}]", "[object Object]"},
+	for _, tc := range []struct {
+		text, want string
+		throws     bool
+	}{
+		{text: "null", want: "null"},
+		{text: "true", want: "true"},
+		{text: "false", want: "false"},
+		{text: "5", want: "5"},
+		{text: "5.0", want: "5"},
+		{text: "-0", want: "0"},
+		{text: "1e21", want: "1e+21"},
+		{text: "0.1", want: "0.1"},
+		{text: "1e400", want: "Infinity"},
+		{text: "-1e400", want: "-Infinity"},
+		{text: `"x"`, want: "x"},
+		{text: "[]", want: ""},
+		{text: "[null]", want: ""},
+		{text: `[null,"x",["y",2]]`, want: ",x,y,2"},
+		{text: "[[],[[]]]", want: ","},
+		{text: "{}", want: "[object Object]"},
+		{text: `{"x":1}`, want: "[object Object]"},
+		{text: "[{}]", want: "[object Object]"},
+		{text: `{"valueOf":1}`, want: "[object Object]"},
+		{text: `{"a":{"toString":1}}`, want: "[object Object]"},
+		{text: `{"__proto__":{"toString":1}}`, want: "[object Object]"},
+		{text: `{"toString":1}`, throws: true},
+		{text: `{"toString":1,"valueOf":2}`, throws: true},
+		{text: `[{"toString":"x"}]`, throws: true},
+		{text: `[1,{"toString":1}]`, throws: true},
+		{text: `[[{"toString":null}]]`, throws: true},
 	} {
 		v, err := Parse([]byte(tc.text))
 		if err != nil {
 			t.Fatalf("Parse(%s): %v", tc.text, err)
 		}
-		if got := ToString(v); got != tc.want {
+		got, ok := ToString(v)
+		switch {
+		case tc.throws && ok:
+			t.Errorf("ToString(%s) = %q, but node's String() throws", tc.text, got)
+		case !tc.throws && !ok:
+			t.Errorf("ToString(%s) has no string form, node says %q", tc.text, tc.want)
+		case got != tc.want:
 			t.Errorf("ToString(%s) = %q, node says %q", tc.text, got, tc.want)
 		}
 	}
