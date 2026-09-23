@@ -168,7 +168,7 @@ func (d *differ) string(before, after string, path Path) {
 
 // unitsOffset is the byte offset in s after its first units UTF-16 code
 // units — s.slice(units), for a cut that lands on a rune boundary, which
-// overlap's answer always does.
+// Overlap's answer always does.
 func unitsOffset(s string, units int) int {
 	i := 0
 	for units > 0 && i < len(s) {
