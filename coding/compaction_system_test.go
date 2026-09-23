@@ -143,8 +143,8 @@ func TestCompactionViewSkipsKeptSystemMessagesAndKeepsLaterOnes(t *testing.T) {
 	}
 	state := &compactionState{settings: compactionTestSettings}
 	sess.compact(context.Background(), state, messages)
-	if state.prefixLen != 5 {
-		t.Fatalf("prefixLen = %d, want 5", state.prefixLen)
+	if cp := checkpointOf(t, state); cp.prefixLen != 5 {
+		t.Fatalf("prefixLen = %d, want 5", cp.prefixLen)
 	}
 
 	messages = append(messages, later, ai.NewUserText("after", 11))
@@ -208,11 +208,11 @@ func TestCompactionDoesNotSummarizeSystemMessages(t *testing.T) {
 	if want := "# Conversation\n[User]: one long turn\n\n# Instructions\n" + turnPrefixSummarizationPrompt; prompts[0] != want {
 		t.Fatalf("turn-prefix request:\n--- got ---\n%s\n--- want ---\n%s", prompts[0], want)
 	}
-	if state.prefixLen != 2 {
-		t.Fatalf("first kept index = %d, want the assistant (2)", state.prefixLen)
+	if cp := checkpointOf(t, state); cp.prefixLen != 2 {
+		t.Fatalf("first kept index = %d, want the assistant (2)", cp.prefixLen)
 	}
-	if want := "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\nPREFIX"; !strings.HasPrefix(state.summary, want) {
-		t.Fatalf("summary = %q, want prefix %q", state.summary, want)
+	if want := "No prior history.\n\n---\n\n**Turn Context (split turn):**\n\nPREFIX"; !strings.HasPrefix(state.checkpoint.summary, want) {
+		t.Fatalf("summary = %q, want prefix %q", state.checkpoint.summary, want)
 	}
 	if got := roles(out); !reflect.DeepEqual(got, []string{"system", "user", "assistant"}) {
 		t.Fatalf("compacted view roles = %v", got)
@@ -347,8 +347,8 @@ func TestCompactionWithOnlySystemHistoryDoesNothing(t *testing.T) {
 	if called {
 		t.Fatal("a system message alone must not be summarized")
 	}
-	if len(out) != len(messages) || state.compacted {
-		t.Fatalf("view changed: %v (checkpoint %q)", roles(out), state.summary)
+	if len(out) != len(messages) || state.checkpoint != nil {
+		t.Fatalf("view changed: %v (checkpoint %+v)", roles(out), state.checkpoint)
 	}
 }
 
@@ -402,11 +402,8 @@ func TestCompactionSplitTurnSeedsHistoryWithPreviousSummary(t *testing.T) {
 	messages := append(bigTranscript(6),
 		ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: big}}, StopReason: ai.StopStop, Timestamp: 12})
 	state := &compactionState{
-		settings:     CompactionSettings{Enabled: true, ReserveTokens: 200, KeepRecentTokens: 400},
-		compacted:    true,
-		prefixLen:    10,
-		compactedLen: 10,
-		summary:      "PREV SUMMARY",
+		settings:   CompactionSettings{Enabled: true, ReserveTokens: 200, KeepRecentTokens: 400},
+		checkpoint: &compactionCheckpoint{prefixLen: 10, compactedLen: 10, summary: "PREV SUMMARY"},
 	}
 	sess.compact(context.Background(), state, messages)
 
@@ -421,8 +418,8 @@ func TestCompactionSplitTurnSeedsHistoryWithPreviousSummary(t *testing.T) {
 	if !strings.Contains(prompts[0], "# Instructions\nThe messages above are earlier context from an ongoing conversation.") {
 		t.Fatalf("turn-prefix request lacks the continuation instructions:\n%.300s", prompts[0])
 	}
-	if want := "PREV SUMMARY\n\n---\n\n**Turn Context (split turn):**\n\nPREFIX"; !strings.HasPrefix(state.summary, want) {
-		t.Fatalf("summary = %q, want prefix %q", state.summary, want)
+	if want := "PREV SUMMARY\n\n---\n\n**Turn Context (split turn):**\n\nPREFIX"; !strings.HasPrefix(checkpointOf(t, state).summary, want) {
+		t.Fatalf("summary = %q, want prefix %q", state.checkpoint.summary, want)
 	}
 }
 

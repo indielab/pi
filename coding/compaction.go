@@ -420,27 +420,12 @@ func withoutSystemMessages(messages []agent.AgentMessage) []agent.AgentMessage {
 type compactionState struct {
 	mu       sync.Mutex
 	settings CompactionSettings
-	// compacted reports whether a checkpoint exists (pi: the branch holds a
-	// compaction entry). An empty summary does not mean there is none: pi
-	// persists the empty summary a model's empty reply produces, and reads it
-	// back as a defined previousSummary "".
-	compacted bool
-	// prefixLen indexes the ORIGINAL message list: the first kept message (pi
-	// firstKeptEntryId).
-	prefixLen int
-	// compactedLen is the length of the original message list when the
-	// checkpoint was taken, where pi appends the compaction entry: kept
-	// messages before it drop their system messages, which the replay already
-	// holds; messages from it on come after the compaction and keep theirs.
-	compactedLen int
-	// systemMessage is the prompt and tool state replayed at the checkpoint (pi
-	// CompactionEntry.systemMessage); nil when the transcript had none.
-	systemMessage *ai.SystemMessage
-	summary       string // cached summary text (includes the file-ops appendix, like pi)
-	// readFiles/modifiedFiles persist the previous compaction's file lists so the
-	// next compaction can merge them (pi extractFileOperations).
-	readFiles     []string
-	modifiedFiles []string
+	// checkpoint is the newest compaction (pi: the compaction entry on the
+	// branch), nil when there is none. An empty summary is still a checkpoint:
+	// pi persists the empty summary a model's empty reply produces, and reads it
+	// back as a defined previousSummary "". A published checkpoint is never
+	// modified; a new compaction replaces the pointer.
+	checkpoint *compactionCheckpoint
 }
 
 // EnableCompaction fills the compaction stage of the session's per-request
@@ -469,18 +454,49 @@ func (s *Session) EnableCompaction(settings CompactionSettings) {
 	}
 }
 
+// setCompaction replaces the session's checkpoint: nil for a new transcript
+// (pi's /new starts a fresh SessionManager, with no compaction entry), or the
+// compaction a resumed branch carries. The settings stay. A session that never
+// enabled compaction keeps the checkpoint for a later EnableCompaction.
+func (s *Session) setCompaction(c *compactionCheckpoint) {
+	if s.compactState == nil {
+		if c == nil {
+			return
+		}
+		s.compactState = &compactionState{}
+	}
+	s.compactState.mu.Lock()
+	s.compactState.checkpoint = c
+	s.compactState.mu.Unlock()
+}
+
 // compactionCheckpoint is one compaction as pi's session file records it.
 type compactionCheckpoint struct {
-	prefixLen     int
-	compactedLen  int
+	// prefixLen indexes the ORIGINAL message list: the first kept message (pi
+	// firstKeptEntryId).
+	prefixLen int
+	// compactedLen is the length of the original message list when the
+	// checkpoint was taken, where pi appends the compaction entry: kept
+	// messages before it drop their system messages, which the replay already
+	// holds; messages from it on come after the compaction and keep theirs.
+	compactedLen int
+	// systemMessage is the prompt and tool state replayed at the checkpoint (pi
+	// CompactionEntry.systemMessage); nil when the transcript had none.
 	systemMessage *ai.SystemMessage
-	summary       string
+	// summary is the summary text, file-ops appendix included (pi
+	// CompactionEntry.summary).
+	summary string
+	// readFiles and modifiedFiles are the file lists the compaction recorded
+	// (pi CompactionEntry.details), merged into the next compaction's (pi
+	// extractFileOperations).
+	readFiles     []string
+	modifiedFiles []string
 }
 
 // apply builds the compacted view in pi buildSessionContext's order: the
 // replayed system message, the summary, the kept messages without their system
 // messages, then every message after the compaction.
-func (c compactionCheckpoint) apply(messages []agent.AgentMessage) []agent.AgentMessage {
+func (c *compactionCheckpoint) apply(messages []agent.AgentMessage) []agent.AgentMessage {
 	// Defensive: the transcript was replaced or shrunk.
 	prefixLen := min(c.prefixLen, len(messages))
 	compactedLen := min(max(c.compactedLen, prefixLen), len(messages))
@@ -499,9 +515,10 @@ func (c compactionCheckpoint) apply(messages []agent.AgentMessage) []agent.Agent
 // only decides whether to EXTEND the compaction by summarizing a larger prefix,
 // merging via the <previous-summary> update flow (pi prepareCompaction/compact).
 //
-// state.prefixLen and state.compactedLen index the ORIGINAL message list, which
-// the agent only ever grows by appending, so they stay valid across turns and
-// re-compactions.
+// The checkpoint's prefixLen and compactedLen index the ORIGINAL message list,
+// which the agent only ever grows by appending, so they stay valid across turns
+// and re-compactions. Replacing the transcript replaces the checkpoint
+// (setCompaction).
 func (s *Session) compact(ctx context.Context, state *compactionState, messages []agent.AgentMessage) []agent.AgentMessage {
 	window := 0
 	if s.Model != nil {
@@ -509,40 +526,35 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	}
 
 	state.mu.Lock()
-	compacted := state.compacted
-	previous := compactionCheckpoint{
-		prefixLen:     state.prefixLen,
-		compactedLen:  state.compactedLen,
-		systemMessage: state.systemMessage,
-		summary:       state.summary,
-	}
-	prevRead := state.readFiles
-	prevModified := state.modifiedFiles
+	settings := state.settings
+	previous := state.checkpoint
 	state.mu.Unlock()
-	boundaryStart := min(previous.prefixLen, len(messages))
 
-	// Always re-apply the cached checkpoint first (permanence), even one whose
-	// summary is empty.
+	// Always re-apply the checkpoint first (permanence), even one whose summary
+	// is empty. A new compaction extends it from its first kept message (pi
+	// boundaryStart) with its summary as the previous one.
 	current := messages
-	if compacted {
+	boundaryStart := 0
+	previousSummary := ""
+	if previous != nil {
 		current = previous.apply(messages)
+		boundaryStart = min(previous.prefixLen, len(messages))
+		previousSummary = previous.summary
 	}
 
 	tokens := estimateContextTokensUsageAware(current)
-	if !shouldCompact(tokens, window, state.settings) {
+	if !shouldCompact(tokens, window, settings) {
 		return current
 	}
 
-	// Extend: find a new cut within the kept tail (pi boundaryStart = previous
-	// firstKeptEntryIndex).
-	preparation, ok := prepareCompaction(messages, boundaryStart, state.settings.KeepRecentTokens)
+	preparation, ok := prepareCompaction(messages, boundaryStart, settings.KeepRecentTokens)
 	if !ok {
 		return current // nothing new safely summarizable
 	}
 	history, turnPrefix := preparation.messagesToSummarize, preparation.turnPrefixMessages
 
 	// Generate summaries (pi compact). Sequential, as upstream is since f58c1156.
-	// generateSummary takes previous.summary as is: pi picks the update prompt on
+	// generateSummary takes previousSummary as is: pi picks the update prompt on
 	// `previousSummary ? ... : ...`, and an empty summary is falsy like an
 	// absent one.
 	var newSummary string
@@ -550,23 +562,23 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 		// pi: `previousSummary ?? "No prior history."`. Only a missing
 		// compaction falls back; an empty previous summary stays empty.
 		historyResult := "No prior history."
-		if compacted {
+		if previous != nil {
 			historyResult = previous.summary
 		}
 		if len(history) > 0 {
-			hr, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, previous.summary, state.settings.SessionID)
+			hr, ok := s.generateSummary(ctx, history, settings.ReserveTokens, previousSummary, settings.SessionID)
 			if !ok {
 				return current // summarization failed; keep current view
 			}
 			historyResult = hr
 		}
-		tp, ok := s.generateTurnPrefixSummary(ctx, turnPrefix, state.settings.ReserveTokens, state.settings.SessionID)
+		tp, ok := s.generateTurnPrefixSummary(ctx, turnPrefix, settings.ReserveTokens, settings.SessionID)
 		if !ok {
 			return current
 		}
 		newSummary = historyResult + "\n\n---\n\n**Turn Context (split turn):**\n\n" + tp
 	} else {
-		ns, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, previous.summary, state.settings.SessionID)
+		ns, ok := s.generateSummary(ctx, history, settings.ReserveTokens, previousSummary, settings.SessionID)
 		if !ok {
 			return current
 		}
@@ -583,11 +595,13 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	// Merge file ops from the previous compaction's lists plus the newly
 	// summarized messages (pi extractFileOperations + split-turn extraction).
 	ops := newFileOps()
-	for _, f := range prevRead {
-		ops.read[f] = true
-	}
-	for _, f := range prevModified {
-		ops.edited[f] = true
+	if previous != nil {
+		for _, f := range previous.readFiles {
+			ops.read[f] = true
+		}
+		for _, f := range previous.modifiedFiles {
+			ops.edited[f] = true
+		}
 	}
 	for _, m := range history {
 		extractFileOpsFromMessage(m, ops)
@@ -600,10 +614,12 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 
 	// pi appendCompaction stores the prompt and tool state the context replays
 	// at this point, stamped with the compaction's time.
-	next := compactionCheckpoint{
-		prefixLen:    preparation.firstKeptIndex,
-		compactedLen: len(messages),
-		summary:      newSummary,
+	next := &compactionCheckpoint{
+		prefixLen:     preparation.firstKeptIndex,
+		compactedLen:  len(messages),
+		summary:       newSummary,
+		readFiles:     readFiles,
+		modifiedFiles: modifiedFiles,
 	}
 	if replay, ok := ai.GetCurrentSystemMessage(current); ok {
 		replay.Timestamp = nowMillisCoding()
@@ -611,13 +627,7 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	}
 
 	state.mu.Lock()
-	state.compacted = true
-	state.prefixLen = next.prefixLen
-	state.compactedLen = next.compactedLen
-	state.systemMessage = next.systemMessage
-	state.summary = next.summary
-	state.readFiles = readFiles
-	state.modifiedFiles = modifiedFiles
+	state.checkpoint = next
 	state.mu.Unlock()
 
 	return next.apply(messages)

@@ -558,7 +558,8 @@ func TestSessionReEnableCompactionKeepsTheCheckpoint(t *testing.T) {
 	sess.EnableCompaction(CompactionSettings{Enabled: true, ReserveTokens: 1000})
 	first := sess.compactState
 	first.mu.Lock()
-	first.compacted, first.prefixLen, first.compactedLen, first.summary = true, 3, 7, "an existing summary"
+	checkpoint := &compactionCheckpoint{prefixLen: 3, compactedLen: 7, summary: "an existing summary"}
+	first.checkpoint = checkpoint
 	first.mu.Unlock()
 
 	sess.EnableCompaction(CompactionSettings{Enabled: true, ReserveTokens: 2000})
@@ -567,8 +568,8 @@ func TestSessionReEnableCompactionKeepsTheCheckpoint(t *testing.T) {
 	}
 	first.mu.Lock()
 	defer first.mu.Unlock()
-	if !first.compacted || first.summary != "an existing summary" || first.prefixLen != 3 || first.compactedLen != 7 {
-		t.Fatalf("checkpoint lost: compacted=%v prefixLen=%d compactedLen=%d summary=%q", first.compacted, first.prefixLen, first.compactedLen, first.summary)
+	if first.checkpoint != checkpoint || checkpoint.summary != "an existing summary" || checkpoint.prefixLen != 3 || checkpoint.compactedLen != 7 {
+		t.Fatalf("checkpoint lost: %+v", first.checkpoint)
 	}
 	if first.settings.ReserveTokens != 2000 {
 		t.Fatalf("settings not updated: ReserveTokens = %d, want 2000", first.settings.ReserveTokens)

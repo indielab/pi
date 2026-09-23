@@ -221,7 +221,7 @@ func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 				settings: CompactionSettings{Enabled: true, ReserveTokens: capture.ReserveTokens, KeepRecentTokens: 1},
 			}
 			if scenario.PreviousSummary != nil {
-				state.compacted, state.summary = true, *scenario.PreviousSummary
+				state.checkpoint = &compactionCheckpoint{summary: *scenario.PreviousSummary}
 			}
 			sess.compact(context.Background(), state, messages)
 
@@ -239,12 +239,15 @@ func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 					t.Errorf("request %d maxTokens = %d, pi %d", i+1, got[i].maxTokens, want.MaxTokens)
 				}
 			}
-			if !state.compacted || state.prefixLen != preparation.firstKeptIndex || state.compactedLen != len(messages) {
-				t.Errorf("no checkpoint (compacted %v, prefixLen %d, compactedLen %d): pi's compact() returned %q here and AgentSession appends it as the compaction",
-					state.compacted, state.prefixLen, state.compactedLen, scenario.Summary)
+			checkpoint := state.checkpoint
+			if checkpoint == nil {
+				t.Fatalf("no checkpoint: pi's compact() returned %q here and AgentSession appends it as the compaction", scenario.Summary)
 			}
-			if state.summary != scenario.Summary {
-				t.Errorf("summary drifts from pi.\n--- got ---\n%q\n--- pi ---\n%q", state.summary, scenario.Summary)
+			if checkpoint.prefixLen != preparation.firstKeptIndex || checkpoint.compactedLen != len(messages) {
+				t.Errorf("checkpoint keeps from %d (compacted at %d), want %d (%d)", checkpoint.prefixLen, checkpoint.compactedLen, preparation.firstKeptIndex, len(messages))
+			}
+			if checkpoint.summary != scenario.Summary {
+				t.Errorf("summary drifts from pi.\n--- got ---\n%q\n--- pi ---\n%q", checkpoint.summary, scenario.Summary)
 			}
 		})
 	}

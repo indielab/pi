@@ -360,9 +360,12 @@ func (s *Session) Record(r *SessionRecorder) {
 	})
 }
 
-// LoadHistory seeds the agent transcript from a prior session's messages.
+// LoadHistory replaces the transcript with a prior session's messages. It
+// drops the session's compaction, which indexes the transcript it replaces; to
+// resume a session file together with its compaction, use LoadBranch.
 func (s *Session) LoadHistory(messages []agent.AgentMessage) {
 	s.Agent.SetMessages(messages)
+	s.setCompaction(nil)
 }
 
 // SetModel switches the active model (and API key) for future turns.
@@ -396,8 +399,16 @@ func (s *Session) SystemPrompt() (string, error) {
 	return BuildSystemPrompt(s.systemPromptOptions)
 }
 
-// Reset clears the transcript. It errors while a run is active.
-func (s *Session) Reset() error { return s.Agent.Reset() }
+// Reset clears the transcript and drops its compaction: a new transcript
+// starts with none, as pi's /new starts a fresh SessionManager. It errors while
+// a run is active.
+func (s *Session) Reset() error {
+	if err := s.Agent.Reset(); err != nil {
+		return err
+	}
+	s.setCompaction(nil)
+	return nil
+}
 
 // LastAssistantText returns the most recent assistant message text.
 func (s *Session) LastAssistantText() string {

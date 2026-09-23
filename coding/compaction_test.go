@@ -184,6 +184,15 @@ func newCompactionTestSession(t *testing.T) (*Session, *providers.FauxProviderRe
 	return sess, reg
 }
 
+// checkpointOf is the state's checkpoint, failing the test when there is none.
+func checkpointOf(t *testing.T, state *compactionState) *compactionCheckpoint {
+	t.Helper()
+	if state.checkpoint == nil {
+		t.Fatal("no compaction checkpoint")
+	}
+	return state.checkpoint
+}
+
 func checkpointText(t *testing.T, m agent.AgentMessage) string {
 	t.Helper()
 	um, ok := m.(ai.UserMessage)
@@ -209,8 +218,8 @@ func TestCompactionPermanentAfterSmallUsage(t *testing.T) {
 	if len(out) != 3 { // checkpoint + messages[10:12]
 		t.Fatalf("first compaction: expected 3 messages, got %d", len(out))
 	}
-	if state.prefixLen != 10 || state.summary == "" {
-		t.Fatalf("compaction state not recorded: prefixLen=%d summary=%q", state.prefixLen, state.summary)
+	if cp := checkpointOf(t, state); cp.prefixLen != 10 || cp.summary == "" {
+		t.Fatalf("compaction state not recorded: prefixLen=%d summary=%q", cp.prefixLen, cp.summary)
 	}
 
 	// The next turn reports SMALL usage (the provider saw the compacted context).
@@ -267,8 +276,8 @@ func TestCompactionKeepsAnEmptySummary(t *testing.T) {
 	emptyCheckpoint := compactionSummaryPrefix + compactionSummarySuffix
 
 	out := sess.compact(context.Background(), state, messages)
-	if !state.compacted || state.prefixLen != 8 || state.summary != "" {
-		t.Errorf("empty reply: compacted=%v prefixLen=%d summary=%q, want a checkpoint of \"\" keeping from 8", state.compacted, state.prefixLen, state.summary)
+	if cp := checkpointOf(t, state); cp.prefixLen != 8 || cp.summary != "" {
+		t.Errorf("empty reply: prefixLen=%d summary=%q, want a checkpoint of \"\" keeping from 8", cp.prefixLen, cp.summary)
 	}
 	if len(out) != 3 || userText(out[0]) != emptyCheckpoint {
 		t.Errorf("empty reply: view %v, want the empty checkpoint + messages[8:10]", roles(out))
@@ -318,8 +327,8 @@ func TestCompactionAbortedDoesNotCheckpoint(t *testing.T) {
 			messages := bigTranscript(6)
 			state := &compactionState{settings: compactionTestSettings}
 			out := sess.compact(ctx, state, messages)
-			if state.compacted || state.summary != "" {
-				t.Fatalf("aborted compaction checkpointed %q", state.summary)
+			if state.checkpoint != nil {
+				t.Fatalf("aborted compaction checkpointed %q", state.checkpoint.summary)
 			}
 			if len(out) != len(messages) {
 				t.Fatalf("aborted compaction changed the view: %d messages, want the full %d", len(out), len(messages))
@@ -342,9 +351,9 @@ func TestCompactionExtendsWithPreviousSummary(t *testing.T) {
 	state := &compactionState{settings: compactionTestSettings}
 	messages := bigTranscript(6)
 	sess.compact(context.Background(), state, messages)
-	firstSummary := state.summary
-	if state.prefixLen != 10 {
-		t.Fatalf("first compaction prefixLen = %d, want 10", state.prefixLen)
+	firstSummary := checkpointOf(t, state).summary
+	if state.checkpoint.prefixLen != 10 {
+		t.Fatalf("first compaction prefixLen = %d, want 10", state.checkpoint.prefixLen)
 	}
 	// The first summary carries the file-ops appendix (pi stores it that way).
 	if !strings.Contains(firstSummary, "<read-files>\n/a/seen.go\n</read-files>") {
@@ -371,8 +380,8 @@ func TestCompactionExtendsWithPreviousSummary(t *testing.T) {
 	out := sess.compact(context.Background(), state, messages)
 
 	// Second compaction covers a larger prefix (cut at the user at index 14).
-	if state.prefixLen != 14 {
-		t.Fatalf("second compaction prefixLen = %d, want 14", state.prefixLen)
+	if state.checkpoint.prefixLen != 14 {
+		t.Fatalf("second compaction prefixLen = %d, want 14", state.checkpoint.prefixLen)
 	}
 	if len(out) != 3 { // checkpoint + messages[14:16]
 		t.Fatalf("expected 3 messages after extension, got %d", len(out))
@@ -399,8 +408,8 @@ func TestCompactionExtendsWithPreviousSummary(t *testing.T) {
 
 	// File-ops carryover: the second summarized chunk has no tool calls, but the
 	// read from the first compaction must persist in the new appendix.
-	if !strings.Contains(state.summary, "<read-files>\n/a/seen.go\n</read-files>") {
-		t.Fatalf("file ops did not carry over:\n%s", state.summary)
+	if !strings.Contains(state.checkpoint.summary, "<read-files>\n/a/seen.go\n</read-files>") {
+		t.Fatalf("file ops did not carry over:\n%s", state.checkpoint.summary)
 	}
 }
 
@@ -493,8 +502,8 @@ func TestCompactionSplitTurnSummaries(t *testing.T) {
 	if !strings.Contains(checkpointText(t, out[0]), "HIST\n\n---\n\n**Turn Context (split turn):**\n\nPREFIX") {
 		t.Fatalf("merged split-turn summary missing:\n%s", checkpointText(t, out[0]))
 	}
-	if state.prefixLen != 11 {
-		t.Fatalf("split-turn prefixLen = %d, want 11", state.prefixLen)
+	if cp := checkpointOf(t, state); cp.prefixLen != 11 {
+		t.Fatalf("split-turn prefixLen = %d, want 11", cp.prefixLen)
 	}
 	if len(out) != 2 { // checkpoint + kept assistant
 		t.Fatalf("expected 2 messages, got %d", len(out))
@@ -707,8 +716,8 @@ func TestSummarizationLengthStopRejected(t *testing.T) {
 	if len(got) != len(messages) {
 		t.Fatalf("length-stopped summarization must not compact: got %d messages, want the full %d", len(got), len(messages))
 	}
-	if state.compacted || state.summary != "" {
-		t.Fatalf("truncated summary must not be checkpointed, got %q", state.summary)
+	if state.checkpoint != nil {
+		t.Fatalf("truncated summary must not be checkpointed, got %q", state.checkpoint.summary)
 	}
 }
 
