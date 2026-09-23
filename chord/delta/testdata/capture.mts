@@ -1152,6 +1152,16 @@ sortBy(`{"xs":[-1e-7,-1,"-1e-6",0.1,1.5e-7]}`);
 sortBy(`{"xs":[1,0]}`, `{"do":"set","at":["xs"],"key":1,"value":-0}`);
 sortBy(`{"xs":[["a"],[["b"]]]}`);
 sortBy(`{"xs":[["l"],[{}]]}`);
+// The sort reads each element as the draft holds it now, through nested
+// drafts too: a written element orders by its new value, and a named
+// "toString" or "join" on a nested array reaches its String() as well.
+sortBy(`{"xs":[[2],[1]]}`, `{"do":"set","at":["xs",0],"key":0,"value":0}`);
+sortBy(`{"xs":[[[2]],[[1]]]}`, `{"do":"set","at":["xs",0,0],"key":0,"value":0}`);
+sortBy(`{"xs":[[[2]],[[1]]]}`, `{"do":"set","at":["xs",0,0],"key":"toString","value":1}`);
+sortBy(`{"xs":[[[2]],[[1]]]}`, `{"do":"set","at":["xs",0,0],"key":"join","value":1}`);
+// Ties keep their order: the sort is stable. Past 12 elements an unstable
+// sort (Go's pdqsort) would move distinguishable ties such as 1 and "1" here.
+sortBy(`{"xs":[3,"3",1,"1",[1],[[1]],["1"],[["1"]],2,"2",[3],[2],1]}`);
 // A branch that was only read keeps its identity in the prepared revision,
 // even when the change has other effects.
 scenario("a read-only branch keeps its identity", { main: J(`{"n":0,"o":{"p":{"q":1},"r":[1]}}`) }, S(`[
@@ -1252,6 +1262,8 @@ scenario("assigning a draft that is not dense", { main: J(`{"list":[1],"v":{"inn
 		"0X2", "0O7", "0b2", "1e", "1e+", "e5", ".", "+", "2e0.", "0x1p1", "1e1000", "4294967296", "1 2",
 		[2], [], [[3]], [" 1 "], ["0x1"], [1, 2], [0.5], [true], {},
 		{ toString: 1 }, { valueOf: 1 }, [{ toString: 1 }], 2.5, 4294967296, -1, -0, 3, "3",
+		// Every whitespace class the trim knows, and hex digits of both cases.
+		"\v2", "\f2", "2\u2029", "0xa", "0xA", "0xf", "0XB",
 	];
 	const steps: Step[] = [];
 	for (const value of lengths) {
