@@ -341,14 +341,14 @@ func TestDefaultModelPerProviderZaiCohort(t *testing.T) {
 	}
 }
 
-// pi 70e878d4c: the xAI default advances grok-4.5 → grok-4.6 alongside the
-// move of every built-in xAI model onto the Responses API. grok-4.6 is already
-// in the 0.84.2 catalog (as openai-completions until the next regen carries
-// the routing flip), so the default is not dangling. Mirrors upstream's "xai
-// default tracks current model".
+// pi 1a584a7a5: the xAI default advances grok-4.6 → grok-4.7. It was held
+// until grok-4.7 reached the xai catalog (absent from 0.87.0, present from the
+// 0.87.1 regen), because a default naming a model the catalog lacks orphans
+// every fallback templated from it — TestDefaultModelsExistInCatalog guards
+// that. Mirrors upstream's "xai default tracks current model".
 func TestDefaultModelPerProviderXai(t *testing.T) {
-	if got := defaultModelPerProvider["xai"]; got != "grok-4.6" {
-		t.Fatalf("default model for %q: got %q, want %q", "xai", got, "grok-4.6")
+	if got := defaultModelPerProvider["xai"]; got != "grok-4.7" {
+		t.Fatalf("default model for %q: got %q, want %q", "xai", got, "grok-4.7")
 	}
 }
 
@@ -372,12 +372,10 @@ func TestDefaultModelsExistInCatalog(t *testing.T) {
 }
 
 // pi a01baaae re-pointed defaultModelPerProvider's xai entry to grok-4.5 at
-// 0.80.10; pi 70e878d4c advances it to grok-4.6. Pin the constant through the
-// custom-id fallback: the synthetic model must be templated from grok-4.6.
+// 0.80.10; pi 70e878d4c advanced it to grok-4.6 and 1a584a7a5 to grok-4.7.
+// Pin it through the custom-id fallback: the synthetic model must be templated
+// from grok-4.7.
 func TestResolveModelXaiFallbackDefault(t *testing.T) {
-	if defaultModelPerProvider["xai"] != "grok-4.6" {
-		t.Fatalf("xai default = %q, want grok-4.6", defaultModelPerProvider["xai"])
-	}
 	r, err := ResolveModelPattern("xai/my-custom-grok")
 	if err != nil {
 		t.Fatal(err)
@@ -385,14 +383,26 @@ func TestResolveModelXaiFallbackDefault(t *testing.T) {
 	if string(r.Model.Provider) != "xai" || r.Model.ID != "my-custom-grok" {
 		t.Fatalf("xai fallback wrong: %s/%s", r.Model.Provider, r.Model.ID)
 	}
-	// The template is the grok-4.6 catalog entry (clone carries its limits).
-	tmpl, err := ResolveModel("xai/grok-4.6")
+	// The template is the grok-4.7 catalog entry (clone carries its limits).
+	tmpl, err := ResolveModel("xai/grok-4.7")
 	if err != nil {
-		t.Fatalf("grok-4.6 must exist in the catalog: %v", err)
+		t.Fatalf("grok-4.7 must exist in the catalog: %v", err)
 	}
 	if r.Model.ContextWindow != tmpl.ContextWindow || r.Model.MaxTokens != tmpl.MaxTokens {
-		t.Fatalf("fallback not templated from grok-4.6: cw=%d/%d mt=%d/%d",
+		t.Fatalf("fallback not templated from grok-4.7: cw=%d/%d mt=%d/%d",
 			r.Model.ContextWindow, tmpl.ContextWindow, r.Model.MaxTokens, tmpl.MaxTokens)
+	}
+
+	// At 0.87.1 the catalog's grok-4.6 and grok-4.7 differ only in id and name,
+	// both of which the clone overwrites, so the check above cannot tell the two
+	// templates apart. Give them distinct limits and the choice is observable.
+	models := []*ai.Model{
+		{ID: "grok-4.6", Provider: "xai", ContextWindow: 460_000, MaxTokens: 46_000},
+		{ID: "grok-4.7", Provider: "xai", ContextWindow: 470_000, MaxTokens: 47_000},
+	}
+	got := buildFallbackModel("xai", "my-custom-grok", models)
+	if got == nil || got.ID != "my-custom-grok" || got.ContextWindow != 470_000 || got.MaxTokens != 47_000 {
+		t.Fatalf("fallback must be templated from grok-4.7 (cw=470000 mt=47000), got %+v", got)
 	}
 }
 

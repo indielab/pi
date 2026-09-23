@@ -1,7 +1,7 @@
 {
   "name": "kimi-k3-anchored-tool-additions",
-  "note": "Upstream 9e05370b2 (mid-conversation system messages). openai-completions Kimi K3 with compat.supportsMidConvoSystemMessages + supportsMidConvoToolAdditions (the generator's Kimi K3 flags; deferredToolsMode is gone): the transcript stays in place, body.tools carries only the leading message's tools, and a later system message that adds late_tool while the tool history is purely additive is sent as a Kimi {role:\"system\", tools} message (no content key) followed by its rendered update text (content + 'Updated system prompt section' framing) under the system instruction role. The update lands between a tool result and the next assistant turn, where transformMessages holds it until the pending calls close. backend src: npm 0.85.1 predates the transcript model.",
-  "backend": "src",
+  "note": "Upstream 9e05370b2 (mid-conversation system messages). openai-completions Kimi K3 with compat.supportsMidConvoSystemMessages + supportsMidConvoToolAdditions (the generator's Kimi K3 flags; deferredToolsMode is gone): the transcript stays in place, body.tools carries only the leading message's tools, and a later system message that adds late_tool while the tool history is purely additive is sent as a Kimi {role:\"system\", tools} message (no content key) followed by its rendered update text (content + 'Updated system prompt section' framing) under the system instruction role. The update lands between a tool result and the next assistant turn, where transformMessages holds it until the pending calls close. npm 0.85.1 predated the transcript model; it shipped in pi-ai 0.86.1, and the backend flipped to dist at the 0.87.1 re-pin (README rule).",
+  "backend": "dist",
   "api": "openai-completions",
   "entry": "streamSimple",
   "model": {

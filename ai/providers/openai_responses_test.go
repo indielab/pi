@@ -1916,8 +1916,10 @@ func TestResponsesPromptCacheParams(t *testing.T) {
 // The same split, driven by the REAL catalog rather than hand-built compat —
 // upstream's cache-retention test pins exactly this pair (17de82d7b). gpt-4o-mini
 // carries no explicit-cache compat and keeps "24h"; gpt-6-astra arrived with the
-// 0.85.1 regen carrying supportsExplicitPromptCacheMode and takes ttl "30m". A
-// regen that changes either model's compat fails here.
+// 0.85.1 regen carrying supportsExplicitPromptCacheMode and takes ttl "30m";
+// db91e0331 extends upstream's table with gpt-6-sol and gpt-6-luna, which
+// arrived with the 0.87.1 regen. A regen that changes any of these models'
+// compat fails here.
 func TestResponsesPromptCacheParamsFromCatalog(t *testing.T) {
 	tests := []struct {
 		modelID       string
@@ -1926,6 +1928,8 @@ func TestResponsesPromptCacheParamsFromCatalog(t *testing.T) {
 	}{
 		{"gpt-4o-mini", `"24h"`, ""},
 		{"gpt-6-astra", "", `{"ttl":"30m"}`},
+		{"gpt-6-sol", "", `{"ttl":"30m"}`},
+		{"gpt-6-luna", "", `{"ttl":"30m"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.modelID, func(t *testing.T) {

@@ -1,7 +1,7 @@
 {
   "name": "responses-midconvo-fallback",
-  "note": "Native variant of responses-deferred-additional-tools (upstream 9e05370b2): compat.supportsMidConvoSystemMessages keeps the mid-transcript system message in place, and it carries content, so its rendered update is sent as a developer message where it sits (after the first tool result; transformMessages holds it behind the pending call until the next assistant message, which does not move it). The update also sets one section, removes another and removes base_tool, so the tool history is not additive: body.tools falls back to the complete current tool state (late_tool alone), no additional_tools item is sent, and the developer update renders the section changes ('falls back to the complete current tool state when removals are unsupported'). backend src: npm 0.85.1 predates the transcript model.",
-  "backend": "src",
+  "note": "Native variant of responses-deferred-additional-tools (upstream 9e05370b2): compat.supportsMidConvoSystemMessages keeps the mid-transcript system message in place, and it carries content, so its rendered update is sent as a developer message where it sits (after the first tool result; transformMessages holds it behind the pending call until the next assistant message, which does not move it). The update also sets one section, removes another and removes base_tool, so the tool history is not additive: body.tools falls back to the complete current tool state (late_tool alone), no additional_tools item is sent, and the developer update renders the section changes ('falls back to the complete current tool state when removals are unsupported'). npm 0.85.1 predated the transcript model; it shipped in pi-ai 0.86.1, and the backend flipped to dist at the 0.87.1 re-pin (README rule).",
+  "backend": "dist",
   "api": "openai-responses",
   "entry": "streamSimple",
   "model": {

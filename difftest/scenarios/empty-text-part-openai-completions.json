@@ -1,7 +1,7 @@
 {
   "name": "empty-text-part-openai-completions",
-  "note": "Upstream 1b6ddca87 (pi #9797): openai-completions drops empty text parts from array-form user content, so an image-only message carries no {type:\"text\",text:\"\"} part, and a message of only empty text is skipped. Post-dates the 0.87.0 build, so backend is src.",
-  "backend": "src",
+  "note": "Upstream 1b6ddca87 (pi #9797): openai-completions drops empty text parts from array-form user content, so an image-only message carries no {type:\"text\",text:\"\"} part, and a message of only empty text is skipped. Post-dated the 0.87.0 build (against it this scenario FAILs: $.messages has 4 elements, not 3). Shipped in pi-ai 0.87.1; backend flipped to dist (README rule).",
+  "backend": "dist",
   "api": "openai-completions",
   "entry": "streamSimple",
   "model": {
