@@ -1043,7 +1043,8 @@ const serviceTierCaptureFile = "testdata/service-tier/service-tier-0.87.1.json"
 // the cost is persisted in sessions and sent over the protocol. The gpt-5.5
 // priority rows (x2.5) are usages where a fused multiply-add in the re-added
 // total (one rounding where V8 rounds twice) moves the last bit, on a target
-// the compiler fuses on (arm64; amd64 at GOAMD64=v3).
+// the compiler fuses on (arm64; amd64 at GOAMD64=v3): one row per bucket, the
+// cacheWrite one at a synthetic rate the row carries.
 func TestResponsesServiceTierPricingMatchesPi(t *testing.T) {
 	data, err := os.ReadFile(serviceTierCaptureFile)
 	if err != nil {

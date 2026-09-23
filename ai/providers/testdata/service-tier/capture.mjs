@@ -6,16 +6,20 @@
 //
 // Each row streams the published build's openai-responses adapter against a
 // loopback server that answers with the row's SSE body, so neither side needs a
-// key or the network. The row records that body, the model's cost table as
-// pi's catalog has it, and the requested service tier; the Go test replays the
-// same body at the same rates.
+// key or the network. The row records that body, the cost table pi priced it
+// at (the catalog's, with a case's overrides), and the requested service tier;
+// the Go test replays the same body at the same rates.
 //
 // applyServiceTierPricing multiplies each bucket and then re-adds the total.
 // V8 rounds every multiply and add separately; Go may fuse x*y + z into one
 // FMA (arm64; amd64 at GOAMD64=v3), which moves the total's last bit when the
 // multiplier is not a power of two: gpt-5.5 at priority (x2.5). The usages are
-// ones a sweep found to differ that way; the x2 and x0.5 rows are exact either
-// way and pin the multiplier selection.
+// ones a sweep found to differ that way: the first rows move the total when the
+// input or output product fuses, usage(890, ...) when the cacheRead one does. No catalog rate can show the cacheWrite product fusing (every gpt-5.5
+// entry has cacheWrite 0, and the other multipliers are powers of two), so the
+// last row prices gpt-5.5 at a synthetic cacheWrite rate, which the row records
+// like any other. The x2 and x0.5 rows are exact either way and pin the
+// multiplier selection.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
@@ -57,7 +61,7 @@ const usage = (input, output, cached, cacheWrite) => ({
 	input_tokens_details: { cached_tokens: cached, cache_write_tokens: cacheWrite },
 });
 
-// [model id, requested serviceTier, response service_tier, usage]
+// [model id, requested serviceTier, response service_tier, usage, rates over the catalog's]
 const cases = [
 	["gpt-5.5", "priority", "", usage(77945, 61893, 23632, 0)],
 	["gpt-5.5", "priority", "", usage(256288, 31010, 8780, 0)],
@@ -66,6 +70,8 @@ const cases = [
 	["gpt-5", "priority", "", usage(77945, 61893, 23632, 0)],
 	["gpt-5", "flex", "", usage(256288, 31010, 8780, 0)],
 	["gpt-5.5", "priority", "default", usage(77945, 61893, 23632, 0)],
+	["gpt-5.5", "priority", "", usage(890, 17103, 149970, 17074)],
+	["gpt-5.5", "priority", "", usage(89278, 1675, 10506, 18820), { cacheWrite: 6.25 }],
 ];
 
 async function run(model, serviceTier, body) {
@@ -92,9 +98,10 @@ async function run(model, serviceTier, body) {
 }
 
 const rows = [];
-for (const [id, serviceTier, responseTier, u] of cases) {
-	const model = MODELS.openai[id];
-	if (!model) throw new Error(`catalog has no openai/${id}`);
+for (const [id, serviceTier, responseTier, u, rates] of cases) {
+	const catalog = MODELS.openai[id];
+	if (!catalog) throw new Error(`catalog has no openai/${id}`);
+	const model = rates ? { ...catalog, cost: { ...catalog.cost, ...rates } } : catalog;
 	const body = sse(u, responseTier);
 	const got = await run(model, serviceTier, body);
 	rows.push({ model: `openai/${id}`, rates: model.cost, serviceTier, sse: body, cost: got.cost });
