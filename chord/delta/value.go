@@ -260,7 +260,7 @@ func compareKeys(a, b string) int {
 // leading zeros.
 func canonicalIndex(s string) (int, bool) {
 	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 || n > maxArrayIndex || strconv.Itoa(n) != s {
+	if err != nil || n < 0 || uint64(n) > maxArrayIndex || strconv.Itoa(n) != s {
 		return 0, false
 	}
 	return n, true

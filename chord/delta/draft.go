@@ -491,7 +491,7 @@ func (d *Draft) At(key any) *Draft {
 func arrayIndexOf(seg Seg) (int, bool) {
 	switch s := seg.(type) {
 	case Index:
-		if s >= 0 && s <= maxArrayIndex {
+		if s >= 0 && uint64(s) <= maxArrayIndex {
 			return int(s), true
 		}
 	case Key:
