@@ -29,6 +29,12 @@ import (
 // consumer decode its own, or use ApplyImmutable. A batch that crosses a real
 // boundary is already distinct, because serialisation produces fresh values.
 //
+// A Tracker's batches, and what the encoder makes of them, are not the
+// consumer's to own: their payloads are the tracker's committed revisions,
+// which pi freezes — its apply throws a TypeError on them — and which Apply
+// would write into, silently. Apply those with ApplyImmutable (see the
+// package doc, Streams).
+//
 // Apply is not transactional: ops before the failing one have already changed
 // the replica. An error terminates the stream — discard the replica and its
 // decoder and recover from a later base batch.

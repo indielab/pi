@@ -383,18 +383,22 @@ func TestCodecEmptyBatches(t *testing.T) {
 // the replica a fresh decoder rebuilds from that base batch on. The immutable
 // tracker has no rebase; a producer publishes a base batch by sending the
 // committed revision as one Replace, as pico3's legacy tracker does
-// (upstream 9a139c62b).
+// (upstream 9a139c62b). That Replace IS revision 5, which the replay must not
+// modify: pi's recovery, run the same way with apply, throws "TypeError Cannot
+// redefine property: deep" on the frozen revision.
 func TestCodecSurvivesRecoveryFromTheLastBaseBatch(t *testing.T) {
 	var enc Encoder
 	tr := mustTrack(t, `{"a": {"deep": ""}, "b": {"deep": ""}}`)
 	var wire [][]WireOp
+	var retained any // the committed revision the base batch carries
 	for i := range 8 {
 		batch := commit(t, tr, func(d *Draft) {
 			concat(t, d.At("a"), "deep", "x"+string(rune('0'+i)))
 			concat(t, d.At("b"), "deep", "y"+string(rune('0'+i)))
 		})
 		if i == 5 {
-			batch = []Op{Replace{Value: tr.Value()}}
+			retained = tr.Value()
+			batch = []Op{Replace{Value: retained}}
 		}
 		wire = append(wire, enc.Encode(batch))
 	}
@@ -420,16 +424,22 @@ func TestCodecSurvivesRecoveryFromTheLastBaseBatch(t *testing.T) {
 	if lastBase != 5 {
 		t.Fatalf("last base batch at %d, want 5", lastBase)
 	}
+	// In-process, the decoded batches still hold the tracker's revisions, so
+	// the replica applies them immutably, as pi's replicas do; pi's apply would
+	// throw on the frozen revision, and Go's would write into it.
 	var dec Decoder
 	var replica any
 	for _, w := range wire[lastBase:] {
 		var err error
-		if replica, err = Apply(replica, decode(t, &dec, w)); err != nil {
+		if replica, err = ApplyImmutable(replica, decode(t, &dec, w)); err != nil {
 			t.Fatal(err)
 		}
 	}
 	wantJSON(t, replica, tr.Value())
 	wantJSON(t, replica, tree(t, `{"a": {"deep": "x0x1x2x3x4x5x6x7"}, "b": {"deep": "y0y1y2y3y4y5y6y7"}}`))
+	// The replay read the base batch's payload - the tracker's revision 5 -
+	// and left it as it was.
+	wantJSON(t, retained, tree(t, `{"a": {"deep": "x0x1x2x3x4x5"}, "b": {"deep": "y0y1y2y3y4y5"}}`))
 }
 
 // delta.test.ts (upstream 64eeb82a4) "codec" → "round-trips random streams",

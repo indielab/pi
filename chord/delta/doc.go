@@ -125,7 +125,8 @@
 // Every committed revision — Tracker.Value, and the Base and Value of each
 // Prepared — is immutable and shares its unchanged subtrees with the revisions
 // around it; the ops' payloads share them too. Upstream freezes them; in Go
-// they are immutable by contract, so never modify one. Track and PrepareReplace
+// they are immutable by contract, so never modify one — which includes never
+// handing one to Apply (see Streams). Track and PrepareReplace
 // import a deep copy of what they are handed: every number becomes a float64
 // (JavaScript's one number type), a nil map or slice an empty one, and an
 // object or array reachable twice becomes two independent values.
@@ -157,6 +158,17 @@
 // over — with a base batch: []Op{Replace{Value: tracker.Value()}}. A decode or
 // apply error terminates the stream; discard its decoder and replica and
 // recover from a later base batch.
+//
+// A tracker's batches are made of its revisions: the payloads of
+// Prepared.Ops share Prepared.Value's containers, and a base batch carries
+// the committed revision itself, and so does the encoder's output for them.
+// Apply builds its replica out of what it is handed and writes into it, so
+// in-process it would modify the tracker's revisions — silently, where pi's
+// apply throws a TypeError on them, frozen — and the tracker would go on
+// publishing batches against a revision its replicas no longer match. Apply a
+// tracker's batches in-process with ApplyImmutable, as pi's own replicas do,
+// or detach them first; a batch that was marshalled and decoded on the way is
+// already detached.
 //
 // # JSON in Go
 //

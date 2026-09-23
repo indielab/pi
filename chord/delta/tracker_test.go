@@ -445,7 +445,7 @@ func TestDraftCopiesAssignedValues(t *testing.T) {
 		t.Error("repeated placements share one container")
 	}
 	wantJSON(t, v, tree(t, `{"rows": [{"nested": {"value": 1}}, {"nested": {"value": 1}}], "left": {"nested": {"value": 2}}, "right": {"nested": {"value": 1}}}`))
-	replica, err := Apply(cloneJSON(p.Base()), p.Ops())
+	replica, err := ApplyImmutable(p.Base(), p.Ops())
 	must(t, err)
 	wantJSON(t, replica, v)
 }
