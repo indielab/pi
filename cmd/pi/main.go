@@ -151,7 +151,7 @@ func main() {
 	})
 
 	if resumePath != "" {
-		sess.LoadHistory(resumeCtx.Messages)
+		sess.LoadBranch(*resumeCtx)
 		fmt.Fprintf(os.Stderr, "\033[2mresumed %d messages from %s\033[0m\n", len(resumeCtx.Messages), resumePath)
 		// Resume APPENDS to the existing session file (pi setSessionFile), never
 		// forks a new one.

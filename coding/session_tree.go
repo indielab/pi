@@ -40,6 +40,13 @@ type SessionEntry struct {
 	// these messages. Already filtered through convertToLlm (excluded entries drop
 	// out during parse).
 	RetainedTail []agent.AgentMessage
+	// Details is a compaction's extension data as written (pi
+	// CompactionEntry.details): pi's own compactions store their file lists
+	// there. Nil when absent.
+	Details json.RawMessage
+	// FromHook marks a compaction an extension produced (pi fromHook); pi
+	// ignores its details.
+	FromHook bool
 	// custom_message
 	CustomType string
 	Content    ai.ContentList
@@ -117,6 +124,8 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 			FirstKeptEntryID string            `json:"firstKeptEntryId"`
 			SystemMessage    json.RawMessage   `json:"systemMessage"`
 			RetainedTail     []json.RawMessage `json:"retainedTail"`
+			Details          json.RawMessage   `json:"details"`
+			FromHook         bool              `json:"fromHook"`
 			CustomType       string            `json:"customType"`
 			Content          json.RawMessage   `json:"content"`
 			TargetID         string            `json:"targetId"`
@@ -156,6 +165,10 @@ func LoadSessionTree(path string) (*SessionTree, error) {
 					e.RetainedTail = append(e.RetainedTail, m)
 				}
 			}
+			if len(head.Details) > 0 && string(head.Details) != "null" {
+				e.Details = head.Details
+			}
+			e.FromHook = head.FromHook
 		}
 		if head.Type == "custom_message" && len(head.Content) > 0 {
 			e.Content = parseCustomContent(head.Content)
@@ -252,6 +265,28 @@ type BranchContext struct {
 	ThinkingLevel string
 	Provider      string
 	ModelID       string
+	// Compaction locates the branch's newest compaction in Messages; nil when
+	// the branch has none, or when a context edit omitted it (pi's
+	// prepareCompaction then finds no previous compaction either).
+	// Session.LoadBranch resumes it, so the next compaction extends it.
+	Compaction *BranchCompaction
+}
+
+// BranchCompaction is where a branch's newest compaction sits in
+// BranchContext.Messages, which hold its replayed system message (when it
+// stored one) and summary, then the messages it kept, then the messages
+// recorded after it.
+type BranchCompaction struct {
+	// Entry is the compaction entry: its summary, stored system message and
+	// details.
+	Entry *SessionEntry
+	// KeptStart indexes the first message after the replayed system message
+	// and summary: the first message the compaction kept, where the next
+	// compaction's cut search starts (pi boundaryStart).
+	KeptStart int
+	// KeptEnd indexes the first message recorded after the compaction entry;
+	// it equals KeptStart when the compaction kept nothing.
+	KeptEnd int
 }
 
 // BuildContextNull returns the empty context pi produces for an explicit-null
@@ -321,7 +356,7 @@ func (t *SessionTree) BuildProjection(leafID ...string) BranchProjection {
 		}
 	}
 
-	selected := contextEntries(path)
+	selected, afterStart := contextEntries(path)
 	edits := map[string]*SessionEntry{}
 	for _, e := range selected {
 		if e.Type == "context_edit" {
@@ -339,13 +374,27 @@ func (t *SessionTree) BuildProjection(leafID ...string) BranchProjection {
 		}
 		p.Entries[i].Messages = projectContextEntry(e, edits[e.ID])
 		p.Messages = append(p.Messages, p.Entries[i].Messages...)
+		// pi's prepareCompaction takes the newest compaction as the previous
+		// one only while it still contributes messages.
+		if i == 0 && e.Type == "compaction" && len(p.Messages) > 0 {
+			keptStart := 1 // the summary
+			if e.SystemMessage != nil {
+				keptStart++
+			}
+			p.Compaction = &BranchCompaction{Entry: e, KeptStart: keptStart}
+		}
+		if p.Compaction != nil && i+1 == afterStart {
+			p.Compaction.KeptEnd = len(p.Messages)
+		}
 	}
 	return p
 }
 
 // contextEntries selects the path entries that feed model context (pi
-// buildContextEntries).
-func contextEntries(path []*SessionEntry) []*SessionEntry {
+// buildContextEntries). With a compaction, afterStart indexes the first
+// selected entry recorded after it: the compaction and the entries it kept come
+// first. Without one it is 0.
+func contextEntries(path []*SessionEntry) (selected []*SessionEntry, afterStart int) {
 	compactionIdx := -1
 	for i, e := range path {
 		if e.Type == "compaction" {
@@ -353,10 +402,10 @@ func contextEntries(path []*SessionEntry) []*SessionEntry {
 		}
 	}
 	if compactionIdx < 0 {
-		return path
+		return path, 0
 	}
 	compaction := path[compactionIdx]
-	selected := []*SessionEntry{compaction}
+	selected = []*SessionEntry{compaction}
 	// A retainedTail inlined on the entry (upstream 9e7582aa) replaces the
 	// firstKeptEntryId walk: the compaction's own messages carry the kept tail.
 	if len(compaction.RetainedTail) == 0 {
@@ -370,7 +419,8 @@ func contextEntries(path []*SessionEntry) []*SessionEntry {
 			}
 		}
 	}
-	return append(selected, path[compactionIdx+1:]...)
+	afterStart = len(selected)
+	return append(selected, path[compactionIdx+1:]...), afterStart
 }
 
 // sessionEntryMessages is an entry's own contribution to model context, already

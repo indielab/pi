@@ -368,6 +368,20 @@ func (s *Session) LoadHistory(messages []agent.AgentMessage) {
 	s.setCompaction(nil)
 }
 
+// LoadBranch resumes a session branch: its messages become the transcript and
+// its newest compaction the session's checkpoint, so the next compaction
+// extends it as pi's does — from the messages it kept, with its summary as the
+// previous summary and its file lists merged. Without a compaction it is
+// LoadHistory.
+func (s *Session) LoadBranch(branch BranchContext) {
+	s.Agent.SetMessages(branch.Messages)
+	var checkpoint *compactionCheckpoint
+	if branch.Compaction != nil {
+		checkpoint = resumedCheckpoint(branch.Compaction)
+	}
+	s.setCompaction(checkpoint)
+}
+
 // SetModel switches the active model (and API key) for future turns.
 func (s *Session) SetModel(model *ai.Model, apiKey string) {
 	s.Model = model

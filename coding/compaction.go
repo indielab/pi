@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -468,6 +469,49 @@ func (s *Session) setCompaction(c *compactionCheckpoint) {
 	s.compactState.mu.Lock()
 	s.compactState.checkpoint = c
 	s.compactState.mu.Unlock()
+}
+
+// resumedCheckpoint is the checkpoint a resumed branch's compaction amounts
+// to, as pi's prepareCompaction reads the entry: its summary is the previous
+// summary, its stored system message the replay, its details' file lists (only
+// when an extension did not produce it) the lists to merge, and its kept
+// messages where the next cut search starts. The replayed system message and
+// summary at the head of the branch's messages fall before prefixLen, so
+// applying the checkpoint rebuilds the same view.
+func resumedCheckpoint(c *BranchCompaction) *compactionCheckpoint {
+	e := c.Entry
+	checkpoint := &compactionCheckpoint{
+		prefixLen:     c.KeptStart,
+		compactedLen:  c.KeptEnd,
+		systemMessage: e.SystemMessage,
+		summary:       e.Summary,
+	}
+	if !e.FromHook {
+		checkpoint.readFiles = detailsFileList(e.Details, "readFiles")
+		checkpoint.modifiedFiles = detailsFileList(e.Details, "modifiedFiles")
+	}
+	return checkpoint
+}
+
+// detailsFileList reads one file list from a compaction's details, as pi's
+// extractFileOperations does: only when the member is an array. pi's own
+// compactions write arrays of strings; any other element is skipped.
+func detailsFileList(details json.RawMessage, key string) []string {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(details, &members) != nil {
+		return nil
+	}
+	var list []any
+	if json.Unmarshal(members[key], &list) != nil {
+		return nil
+	}
+	var files []string
+	for _, f := range list {
+		if f, ok := f.(string); ok {
+			files = append(files, f)
+		}
+	}
+	return files
 }
 
 // compactionCheckpoint is one compaction as pi's session file records it.

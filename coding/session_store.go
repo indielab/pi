@@ -941,7 +941,9 @@ func FindSessionByID(cwd, id, sessionDir string) (string, bool) {
 // file for resume. It routes through SessionTree.BuildContext so compacted,
 // branched, and custom-message sessions resume identically to pi (emitting the
 // compaction summary in place of the pre-compaction turns) rather than naively
-// concatenating every message entry.
+// concatenating every message entry. The messages alone do not carry the
+// compaction a later one extends: to resume with it, pass the tree's
+// BuildContext to Session.LoadBranch.
 func LoadSessionMessages(path string) ([]agent.AgentMessage, error) {
 	tree, err := LoadSessionTree(path)
 	if err != nil {
