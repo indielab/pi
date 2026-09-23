@@ -37,9 +37,13 @@ const (
 
 // DiffRevisions computes a compact batch that turns before into after — the
 // ops a tracker publishes for a change. It is exported, as upstream's
-// diffRevisions is, for any two revisions: they need not come from a tracker,
-// and identity (a shared map, or a slice with the same backing array and
-// length) is only ever a shortcut for equality.
+// diffRevisions is, for any two revisions: they need not come from a tracker.
+// Identity is upstream's ===: a shared map, or a slice with the same backing
+// array and length, is one container, which skips a subtree and anchors an
+// array alignment, so it decides which ops describe the change, never the
+// value they produce. An empty slice with no capacity — every [] encoding/json
+// decodes — is identical to nothing; to share an empty array between two
+// revisions, give it capacity.
 //
 // Strings become appends and front-truncations where they can, arrays splices
 // and permutations anchored on the elements the revisions share, and objects

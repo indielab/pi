@@ -131,8 +131,9 @@ func checkBatch(t *testing.T, where string, got []Op, want goldenBatch) (reorder
 
 // ─── Building values ─────────────────────────────────────────────────────────
 
-// builder turns a golden value spec into a Go value: fresh containers, with
-// the capture's markers resolved.
+// builder turns a golden value spec into a Go value: fresh containers as
+// encoding/json makes them (an empty array has no capacity), with the
+// capture's markers resolved.
 type builder struct {
 	t     *testing.T
 	refs  map[string]json.RawMessage
@@ -161,6 +162,11 @@ func (b *builder) build(spec any) any {
 				b.built = map[string]any{}
 			}
 			v := b.build(raw)
+			if xs, ok := v.([]any); ok && len(xs) == 0 {
+				// A shared array is one array in pi. An empty Go slice has an
+				// identity only once it has capacity (value.go, anonymous).
+				v = make([]any, 0, 1)
+			}
 			b.built[name] = v
 			return v
 		}

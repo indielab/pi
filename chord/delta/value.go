@@ -33,7 +33,9 @@ import (
 //     container's identity — the thing upstream's === compares — is its
 //     address: a map's header, a slice's first element and length. Two empty Go
 //     slices made by make([]any, 0) share one zero-size address, which is why
-//     an empty revision array still allocates a slot.
+//     an empty revision array still allocates a slot — and why an empty slice
+//     with no capacity, which is every [] encoding/json decodes, is identical
+//     to nothing (see anonymous).
 
 // identity is a container's JavaScript object identity: the map header's
 // address, or a slice's backing array together with its length (a shorter
@@ -52,6 +54,19 @@ func identityOf(v any) (identity, bool) {
 		return identity{ptr: reflect.ValueOf(c).Pointer(), len: len(c)}, true
 	}
 	return identity{}, false
+}
+
+// anonymous reports whether v is an array with no identity of its own: an
+// empty slice with no capacity. Go gives every such slice one address, so
+// the []s encoding/json decodes — each its own array in JavaScript, since
+// JSON.parse makes a new one for each — would otherwise all be ONE array, and
+// anchor alignments pi never makes. Treating them as identical to nothing is
+// exact for decoded values; the tracker's own arrays always have capacity, so
+// a caller that means to share an empty array between revisions gives it one
+// too (make([]any, 0, 1)).
+func anonymous(v any) bool {
+	xs, ok := v.([]any)
+	return ok && cap(xs) == 0
 }
 
 func isContainer(v any) bool {
@@ -77,7 +92,7 @@ func cloneArray(xs []any) []any {
 
 // same is upstream's `left === right` on two JSON values: scalars by value —
 // numbers of any Go kind as the one JavaScript number, so 0 === -0 — and
-// containers by identity.
+// containers by identity, which an anonymous array does not have.
 func same(a, b any) bool {
 	switch x := a.(type) {
 	case nil:
@@ -89,6 +104,11 @@ func same(a, b any) bool {
 		y, ok := b.(string)
 		return ok && x == y
 	case map[string]any, []any:
+		if anonymous(x) {
+			// An anonymous b needs no check of its own: no container with an
+			// identity has its zero-size address.
+			return false
+		}
 		ia, _ := identityOf(x)
 		ib, ok := identityOf(b)
 		return ok && ia == ib
@@ -121,8 +141,8 @@ type valueKey struct {
 	id   identity
 }
 
-// keyOf is v's map key; false for a value that is not JSON, which matches
-// nothing.
+// keyOf is v's map key; false for a value that is not JSON, or an anonymous
+// array, which matches nothing.
 func keyOf(v any) (valueKey, bool) {
 	switch x := v.(type) {
 	case nil:
@@ -132,6 +152,9 @@ func keyOf(v any) (valueKey, bool) {
 	case string:
 		return valueKey{kind: 's', s: x}, true
 	case map[string]any, []any:
+		if anonymous(x) {
+			return valueKey{}, false
+		}
 		id, _ := identityOf(x)
 		return valueKey{kind: 'c', id: id}, true
 	}

@@ -406,6 +406,16 @@ diffCase("permutation matches -0 and 0", {}, { v: [0, 1] }, { v: [1, -0] });
 diffCase("astral and high-BMP keys", {}, J(`{"😀":1,"｡":1,"a":1}`), J(`{"😀":2,"｡":2,"a":2}`));
 diffCase("negative zero", {}, J(`{"a":0}`), { a: -0 });
 diffCase("large numbers", {}, J(`{"a":1,"b":1}`), J(`{"a":1e21,"b":1.5e-7}`));
+// Every [] JSON.parse makes is an array of its own, so none anchors an
+// alignment by identity - though encoding/json gives every [] it decodes the
+// same address. A [] shared through a ref IS one array, and anchors.
+diffCase("parsed empty arrays are distinct", {}, J(`[1,[],2]`), J(`[2,[],1]`));
+diffCase("parsed empty arrays are distinct, nested", {}, J(`{"a":[1,[],2,[]]}`), J(`{"a":[[],2,[],1]}`));
+diffCase("parsed empty arrays do not align", {}, J(`[[[],1]]`), J(`[[[],2],3]`));
+diffCase("parsed empty arrays do not align, nested", {}, J(`{"a":[[[],1]]}`), J(`{"a":[[[],2],3]}`));
+diffCase("parsed empty arrays do not permute", {}, J(`{"v":[[],1,[]]}`), J(`{"v":[[],1,[],[]]}`));
+diffCase("a shared empty array anchors", { e: [] }, { v: [R("e"), 1] }, { v: [1, R("e")] });
+diffCase("a shared empty array aligns", { e: [] }, { v: [[R("e"), 1]] }, { v: [[R("e"), 2], 3] });
 
 // Large generated inputs; golden_test.go builds the same ones by name.
 {
