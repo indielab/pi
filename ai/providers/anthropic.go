@@ -30,7 +30,7 @@ const (
 	// midConvoToolChangesBeta turns on tool_addition/tool_removal blocks in
 	// mid-conversation system messages (upstream 9e05370b2).
 	midConvoToolChangesBeta = "mid-conversation-tool-changes-2026-07-01"
-	claudeCodeVersion       = "2.1.251"
+	claudeCodeVersion       = "2.1.280"
 	anthropicDefaultBaseURL = "https://api.anthropic.com"
 )
 
