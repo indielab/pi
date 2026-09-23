@@ -415,10 +415,23 @@ func TestTrackerImportRepresentation(t *testing.T) {
 	if _, err := Track(map[string]any{"v": loop}); err == nil || !strings.Contains(err.Error(), "cycles") {
 		t.Errorf("array cycle: %v", err)
 	}
+	// A scalar root is a revision, as in pi's runtime (golden "scalar
+	// roots"). It has no draft, and the refusal leaves no change active.
 	for _, root := range []any{nil, 1.0, "x", true} {
-		if _, err := Track(root); err == nil || !strings.Contains(err.Error(), "JSON object") {
-			t.Errorf("Track(%#v): %v, want a root error", root, err)
+		tr, err := Track(root)
+		if err != nil {
+			t.Fatalf("Track(%#v): %v", root, err)
 		}
+		if _, err := tr.BeginChange(); !errors.Is(err, ErrScalarRevision) {
+			t.Errorf("BeginChange on %#v: %v, want ErrScalarRevision", root, err)
+		}
+		if _, err := tr.PrepareReplace(map[string]any{}); err != nil {
+			t.Errorf("PrepareReplace after the refused change on %#v: %v", root, err)
+		}
+	}
+	// A typed root keeps the type the import gives it: numbers become float64.
+	if _, err := Track(1); err == nil || !strings.Contains(err.Error(), "int cannot hold the float64") {
+		t.Errorf("Track[int]: %v, want the error to name both types", err)
 	}
 }
 

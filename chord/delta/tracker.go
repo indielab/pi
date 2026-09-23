@@ -25,6 +25,11 @@ var (
 	ErrAdoptDuringChange = errors.New("delta: Cannot adopt while a change is active (prepare or abort the active change first)")
 	ErrStalePrepared     = errors.New("delta: Prepared change is stale (the tracker adopted another revision after it was prepared; prepare it again against Tracker.Value)")
 
+	// ErrScalarRevision is BeginChange's refusal of a scalar revision, with
+	// the text of the TypeError pi's draft throws: it keys its states by the
+	// root in a WeakMap, which takes only objects.
+	ErrScalarRevision = errors.New("delta: Invalid value used as weak map key (a change drafts a JSON object or array, and the committed revision is a scalar; replace it with PrepareReplace)")
+
 	// ErrZeroTracker is Go's own: a Tracker that Track did not make holds no
 	// revision, so BeginChange, PrepareReplace and Adopt refuse it.
 	ErrZeroTracker = errors.New("delta: Tracker holds no revision (it is a zero Tracker; make one with Track)")
@@ -52,9 +57,11 @@ type preparedMeta struct {
 	status   preparedStatus
 }
 
-// Tracker holds one committed revision of a JSON object or array and turns
-// changes to it into batches of ops. T is the root's Go type: map[string]any,
-// []any, or any when it is not known.
+// Tracker holds one committed revision of a JSON value and turns changes to it
+// into batches of ops. T is the root's Go type: map[string]any, []any, or any
+// when it is not known. The revision is an object or array to draft; a scalar
+// is accepted too, as pi's runtime accepts one under its `T extends object`
+// type, and only PrepareReplace can change it.
 //
 // The committed revision is immutable: Value, and the Base, Value and Ops of
 // every Prepared, share its containers, and none of them may be modified.
@@ -71,8 +78,9 @@ type Tracker[T any] struct {
 	changing bool
 }
 
-// Track starts tracking a deep copy of initial, which must be a JSON object
-// (map[string]any) or array ([]any). The copy is the first committed
+// Track starts tracking a deep copy of initial, a JSON object
+// (map[string]any) or array ([]any) — or a scalar, which BeginChange cannot
+// draft but PrepareReplace can replace. The copy is the first committed
 // revision: numbers become float64, a nil map or slice an empty one, and an
 // object or array reachable twice becomes two independent values. A cycle, a
 // number that is not finite, or a Go type with no JSON form is a *ValueError.
@@ -91,12 +99,13 @@ func importRoot[T any](root T) (T, error) {
 	if err != nil {
 		return zero, err
 	}
-	if !isContainer(v) {
-		return zero, errNotContainer(root)
+	if v == nil {
+		// JSON null: only an interface T holds it, and root was one.
+		return zero, nil
 	}
 	out, ok := v.(T)
 	if !ok {
-		return zero, fmt.Errorf("delta: a tracked revision is a map[string]any or []any, which %T cannot hold (track with T = map[string]any, []any or any)", zero)
+		return zero, fmt.Errorf("delta: a tracked revision is imported as nil, bool, float64, string, map[string]any or []any, and %T cannot hold the %T this one became (track with T = any, or with that type)", zero, v)
 	}
 	return out, nil
 }
@@ -106,13 +115,17 @@ func (t *Tracker[T]) Value() T { return t.value }
 
 // BeginChange opens a change: a draft of the committed revision that the
 // caller mutates, then prepares or aborts. A tracker has at most one active
-// change, and nothing can be adopted while it is open.
+// change, and nothing can be adopted while it is open. A scalar revision has
+// no draft: ErrScalarRevision.
 func (t *Tracker[T]) BeginChange() (*Change[T], error) {
 	if t.owner == nil {
 		return nil, ErrZeroTracker
 	}
 	if t.changing {
 		return nil, ErrChangeActive
+	}
+	if !isContainer(any(t.value)) {
+		return nil, ErrScalarRevision
 	}
 	t.changing = true
 	tx := newTransaction(any(t.value))

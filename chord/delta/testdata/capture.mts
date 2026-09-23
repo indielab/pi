@@ -1072,8 +1072,36 @@ scenario("import refusals", { main: J(`{"ok":true}`) }, S(`[
 	{"do":"replace","value":{"value":{"$date":true}}},
 	{"do":"value"}
 ]`));
+// A scalar root. track() and prepareReplace() are typed `T extends object`,
+// but the import accepts any strict JSON value: a scalar revision publishes
+// ["r", scalar], and only beginChange refuses it (a draft needs a container,
+// and the WeakMap it keys by throws).
+scenario("scalar roots", { main: J(`1`), none: J(`null`), obj: J(`{"a":1}`) }, S(`[
+	{"do":"value"},
+	{"do":"begin"},
+	{"do":"replace","value":1},
+	{"do":"replace","value":2},
+	{"do":"adopt"},
+	{"do":"value"},
+	{"do":"replace","value":{"b":2}},
+	{"do":"adopt"},
+	{"do":"value"},
+	{"do":"begin","t":"none"},
+	{"do":"value","t":"none"},
+	{"do":"replace","t":"none","p":"none","value":"s"},
+	{"do":"replace","t":"obj","p":"obj","value":null},
+	{"do":"replace","t":"obj","p":"obj","value":false},
+	{"do":"replace","t":"obj","p":"obj","value":-0},
+	{"do":"adopt","t":"obj","p":"obj"},
+	{"do":"replace","t":"obj","p":"obj","value":0},
+	{"do":"replace","t":"obj","p":"obj","value":[2]},
+	{"do":"adopt","t":"obj","p":"obj"},
+	{"do":"begin","t":"obj","c":"obj"},
+	{"do":"push","t":"obj","c":"obj","at":[],"items":[3]},
+	{"do":"prepare","t":"obj","c":"obj","p":"obj"}
+]`));
 // Draft array operations, one at a time and in combination.
-const arrays = (steps: string) => S(`[{"do":"begin"},${steps},{"do":"prepare"}]`);
+const arrays =(steps: string) => S(`[{"do":"begin"},${steps},{"do":"prepare"}]`);
 scenario("push and pop cancel", { main: J(`{"v":[1,2]}`) }, arrays(`{"do":"push","at":["v"],"items":[3]},{"do":"pop","at":["v"]}`));
 scenario("pop and shift", { main: J(`{"v":[1,2,3,4]}`) }, arrays(`{"do":"pop","at":["v"]},{"do":"shift","at":["v"]}`));
 scenario("pop and shift an empty array", { main: J(`{"v":[]}`) }, arrays(`{"do":"pop","at":["v"]},{"do":"shift","at":["v"]}`));

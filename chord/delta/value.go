@@ -488,8 +488,3 @@ func (c *cloner) container(v any, tx *transaction) (any, error) {
 	}
 	panic("unreachable: container called on a scalar")
 }
-
-// errNotContainer is the error for a tracked root that is not a container.
-func errNotContainer(v any) error {
-	return fmt.Errorf("delta: tracked state must be a JSON object (map[string]any) or array ([]any), got %s (decode the value with encoding/json, or build it from those two types)", describe(v))
-}
