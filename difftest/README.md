@@ -53,7 +53,8 @@ escalated, pre-existing divergence makes scenarios fail, that would permanently
 pin the exit code at 1, the exit code would carry no information, and the next
 NEW regression would hide inside the noise — reviewers would learn to read
 "3 FAIL" as normal. (The baseline is currently EMPTY: `known-divergences.json`
-holds no entries and the suite is 56 PASS / 0 KNOWN / 0 FAIL.)
+holds no entries, so a clean run is every scenario PASS, 0 KNOWN, 0 FAIL. The
+scenario count is kept in one place, the snapshot under "Scenarios".)
 
 **A run that never reaches the scenarios is DARK, not FAIL, and never PASS.**
 `run.sh` executes the pi capture and the Go driver in one shot each *before* the
