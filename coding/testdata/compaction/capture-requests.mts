@@ -175,6 +175,35 @@ const scenarios: Array<{
 		prefixCount: 0,
 		previousSummary: "",
 	},
+	{
+		// computeFileLists sorts with Array.prototype.sort: by UTF-16 code unit,
+		// which puts an astral character (a surrogate) before U+E000..U+FFFF,
+		// where UTF-8 byte order puts it after.
+		name: "history-only-file-ops-utf16-order",
+		messages: [
+			user("please read and edit these"),
+			assistant(
+				"on it",
+				[
+					["r1", "read", { path: "/a/｡.go" }],
+					["r2", "read", { path: "/a/😀.go" }],
+					["r3", "read", { path: "/a/z.go" }],
+					["e1", "edit", { path: "/a/ﬀ.go", oldText: "a", newText: "b" }],
+					["e2", "edit", { path: "/a/𝔞.go", oldText: "a", newText: "b" }],
+				],
+				"toolUse",
+			),
+			toolResult("r1", "read", "one"),
+			toolResult("r2", "read", "two"),
+			toolResult("r3", "read", "three"),
+			toolResult("e1", "edit", "ok"),
+			toolResult("e2", "edit", "ok"),
+			assistant("done"),
+			user("next question"),
+		],
+		historyCount: 8,
+		prefixCount: 0,
+	},
 ];
 
 const textOf = (content: unknown): string =>

@@ -7,7 +7,8 @@ import (
 	"reflect"
 	"slices"
 	"strconv"
-	"unicode/utf8"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // ─── Immutable JSON revisions ────────────────────────────────────────────────
@@ -252,7 +253,7 @@ func compareKeys(a, b string) int {
 	case okb:
 		return 1
 	}
-	return compareUTF16(a, b)
+	return jstext.CompareUTF16(a, b)
 }
 
 // canonicalIndex reports whether s is an array index as JavaScript spells
@@ -268,32 +269,6 @@ func canonicalIndex(s string) (int, bool) {
 
 // maxArrayIndex is the largest index a JavaScript array has: 2^32 - 2.
 const maxArrayIndex = 1<<32 - 2
-
-// compareUTF16 orders two strings by UTF-16 code unit, as JavaScript's < does.
-// It differs from Go's byte order only between an astral rune and a BMP rune
-// above the surrogate range, which UTF-8 puts first and UTF-16 last.
-func compareUTF16(a, b string) int {
-	for a != "" && b != "" {
-		ra, na := utf8.DecodeRuneInString(a)
-		rb, nb := utf8.DecodeRuneInString(b)
-		if ra != rb {
-			ua, ub := ra, rb
-			if ua >= 0x10000 {
-				ua = 0xD800 + (ua-0x10000)>>10
-			}
-			if ub >= 0x10000 {
-				ub = 0xD800 + (ub-0x10000)>>10
-			}
-			if ua != ub {
-				return int(ua) - int(ub)
-			}
-			// Same high surrogate: the low surrogates order as the runes do.
-			return int(ra) - int(rb)
-		}
-		a, b = a[na:], b[nb:]
-	}
-	return len(a) - len(b)
-}
 
 // ─── Import ──────────────────────────────────────────────────────────────────
 

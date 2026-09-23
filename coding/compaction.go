@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -1049,8 +1050,9 @@ func (ops *fileOps) lists() (readFiles, modifiedFiles []string) {
 	for f := range modified {
 		modifiedFiles = append(modifiedFiles, f)
 	}
-	sort.Strings(readFiles)
-	sort.Strings(modifiedFiles)
+	// Array.prototype.sort's default order: by UTF-16 code unit.
+	slices.SortFunc(readFiles, jstext.CompareUTF16)
+	slices.SortFunc(modifiedFiles, jstext.CompareUTF16)
 	return readFiles, modifiedFiles
 }
 

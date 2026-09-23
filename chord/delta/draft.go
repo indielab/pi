@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // ─── Drafts ──────────────────────────────────────────────────────────────────
@@ -887,7 +889,7 @@ func (tx *transaction) sortByString(items []any) error {
 		}
 		keys[i] = keyed{key, item}
 	}
-	slices.SortStableFunc(keys, func(a, b keyed) int { return compareUTF16(a.key, b.key) })
+	slices.SortStableFunc(keys, func(a, b keyed) int { return jstext.CompareUTF16(a.key, b.key) })
 	for i, k := range keys {
 		items[i] = k.item
 	}
