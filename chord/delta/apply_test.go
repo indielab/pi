@@ -273,6 +273,52 @@ func TestApplyImmutableValidatesBeforeWalking(t *testing.T) {
 	}
 }
 
+// A string segment that reaches an array on the way down. apply's resolve
+// applies the array rule first — always *UnsafePathError — but
+// applyImmutable's copyContainers asks Object.hasOwn first: a key the array
+// does not own ("5" past the end, "01", "foo", "-1", "4294967295") is an
+// unresolvable path, and only one it does own ("0", "length") meets the
+// array rule. The last segment of an s/d/a/t path is the leaf, not the walk.
+// Every row is pi's at 9a139c62b, under node, on {"xs":[{"a":1}]}.
+func TestApplyStringSegmentThroughAnArray(t *testing.T) {
+	cases := []struct {
+		op        string
+		immutable string // the PathError's ref, or "" for *UnsafePathError
+	}{
+		{`["s", ["xs", "5", "a"], 2]`, `["xs","5"]`},
+		{`["s", ["xs", "1", "a"], 2]`, `["xs","1"]`},
+		{`["s", ["xs", "01", "a"], 2]`, `["xs","01"]`},
+		{`["s", ["xs", "foo", "a"], 2]`, `["xs","foo"]`},
+		{`["s", ["xs", "-1", "a"], 2]`, `["xs","-1"]`},
+		{`["s", ["xs", "4294967295", "a"], 2]`, `["xs","4294967295"]`},
+		{`["s", ["xs", "5", "a", "b"], 2]`, `["xs","5","a"]`},
+		{`["p", ["xs", "5"], 0, 0, []]`, `["xs","5"]`},
+		{`["m", ["xs", "foo"], []]`, `["xs","foo"]`},
+		{`["s", ["xs", "0", "a"], 2]`, ""},
+		{`["s", ["xs", "length", "a"], 2]`, ""},
+		{`["p", ["xs", "0"], 0, 0, []]`, ""},
+		{`["m", ["xs", "length"], []]`, ""},
+	}
+	for _, tc := range cases {
+		var unsafe *UnsafePathError
+		var pe *PathError
+		if _, err := Apply(tree(t, `{"xs": [{"a": 1}]}`), ops(t, "["+tc.op+"]")); !errors.As(err, &unsafe) {
+			t.Errorf("Apply %s: %v, want *UnsafePathError", tc.op, err)
+		}
+		_, err := ApplyImmutable(tree(t, `{"xs": [{"a": 1}]}`), ops(t, "["+tc.op+"]"))
+		switch {
+		case tc.immutable == "":
+			if !errors.As(err, &unsafe) {
+				t.Errorf("ApplyImmutable %s: %v, want *UnsafePathError", tc.op, err)
+			}
+		case !errors.As(err, &pe):
+			t.Errorf("ApplyImmutable %s: %v, want *PathError %s", tc.op, err, tc.immutable)
+		case refString(pe.Ref) != tc.immutable:
+			t.Errorf("ApplyImmutable %s: PathError ref %s, want %s", tc.op, refString(pe.Ref), tc.immutable)
+		}
+	}
+}
+
 // delta.test.ts "flush" → "allows a reserved name as a VALUE key". Reserved
 // as segments, not as values: a value is written whole and never walked.
 func TestApplyAllowsReservedNameAsValueKey(t *testing.T) {

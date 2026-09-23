@@ -156,7 +156,11 @@ func applyOne(root any, op Op, clone bool) (any, error) {
 //
 // The rules are upstream's resolveValue: own keys only, an index where the
 // node is an array (a key there is unsafe, not merely unresolvable), and a
-// PathError naming the whole path being resolved.
+// PathError naming the whole path being resolved. With clone set they are
+// copyContainers', which asks whether the node owns the segment before it
+// applies the array rule: a key an array does not own is unresolvable, and
+// only one it owns — a canonical index below its length, or "length" — is
+// unsafe.
 func walk(root any, path Path, clone bool, fn func(node any) (any, error)) (any, error) {
 	var descend func(node any, rest Path) (any, error)
 	descend = func(node any, rest Path) (any, error) {
@@ -183,6 +187,9 @@ func walk(root any, path Path, clone bool, fn func(node any) (any, error)) (any,
 		case []any:
 			i, ok := seg.(Index)
 			if !ok {
+				if clone && !ownsKey(c, seg) {
+					return nil, &PathError{Ref: path}
+				}
 				return nil, &UnsafePathError{Segment: seg}
 			}
 			if int(i) >= len(c) {
@@ -198,6 +205,17 @@ func walk(root any, path Path, clone bool, fn func(node any) (any, error)) (any,
 		return nil, &PathError{Ref: path}
 	}
 	return descend(root, path)
+}
+
+// ownsKey is Object.hasOwn(xs, key) for a string key of a JSON array: its
+// "length", or an index it holds, spelled canonically.
+func ownsKey(xs []any, key Seg) bool {
+	k := propertyKey(key)
+	if k == "length" {
+		return true
+	}
+	i, ok := canonicalIndex(k)
+	return ok && i < len(xs)
 }
 
 // atParent resolves an s/d/a/t op's parent — the path less its last segment,
