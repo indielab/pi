@@ -122,21 +122,25 @@ Use this EXACT format:
 Keep each section concise. Preserve exact file paths, function names, and error messages.`
 
 // turnPrefixSummarizationPrompt is pi's TURN_PREFIX_SUMMARIZATION_PROMPT
-// (compaction.ts:725), used for the prefix of a split turn. Byte-for-byte.
-const turnPrefixSummarizationPrompt = `This is the PREFIX of a turn that was too large to keep. The SUFFIX (recent work) is retained.
+// (compaction.ts:964), used for the prefix of a split turn. Byte-for-byte.
+// Its continuation wording, with the Markdown boundary generateTurnPrefixSummary
+// puts around the conversation, avoids the reasoning-extraction false positive
+// that made Claude Fable 5.1 refuse split-turn summaries (pi #9652, upstream
+// d192bd6dc).
+const turnPrefixSummarizationPrompt = `The messages above are earlier context from an ongoing conversation. Later messages are stored separately and do not need to be reconstructed.
 
-Summarize the prefix to provide context for the retained suffix:
+Create a concise checkpoint of the user's request and the progress shown above. This checkpoint will be placed before the later messages so the conversation can continue with the necessary context.
 
 ## Original Request
-[What did the user ask for in this turn?]
+[What did the user ask for?]
 
-## Early Progress
-- [Key decisions and work done in the prefix]
+## Progress So Far
+- [Key decisions and work completed in these messages]
 
-## Context for Suffix
-- [Information needed to understand the retained recent work]
+## Context Needed to Continue
+- [Information from these messages needed to understand the later work]
 
-Be concise. Focus on what's needed to understand the kept suffix.`
+Only summarize information explicitly present above. Do not infer or recreate later messages.`
 
 // EstimateMessageTokens estimates the token cost of a message (port of
 // estimateTokens: char count / 4, rounded up).
@@ -616,13 +620,16 @@ func (s *Session) summarize(ctx context.Context, older []agent.AgentMessage, res
 	return text + formatFileOperations(readFiles, modifiedFiles)
 }
 
-// generateSummary ports pi's generateSummary (compaction.ts:558-620): the
-// conversation is serialized to text, wrapped in <conversation>...</conversation>
-// (followed by <previous-summary>...</previous-summary> and the update prompt
-// variant when a previous summary exists), and sent with the dedicated
-// SUMMARIZATION_SYSTEM_PROMPT and a capped maxTokens. Returns ok=false where pi
-// fails the summarization (stopReason "error" or "length"); an aborted response
-// returns the text produced so far, like pi.
+// generateSummary ports pi's generateSummaryWithUsage (compaction.ts:718-788):
+// the conversation is serialized to text, wrapped in
+// <conversation>...</conversation> (followed by
+// <previous-summary>...</previous-summary> and the update prompt variant when a
+// previous summary exists), and sent with the dedicated
+// SUMMARIZATION_SYSTEM_PROMPT and a capped maxTokens. Only this history request
+// keeps the tag wrapper; a split turn's prefix is framed in Markdown (see
+// generateTurnPrefixSummary). Returns ok=false where pi fails the summarization
+// (stopReason "error" or "length"); an aborted response returns the text
+// produced so far, like pi.
 func (s *Session) generateSummary(ctx context.Context, older []agent.AgentMessage, reserveTokens int, previousSummary, sessionID string) (string, bool) {
 	conversationText := serializeConversation(messagesAsLlm(older))
 
@@ -638,11 +645,14 @@ func (s *Session) generateSummary(ctx context.Context, older []agent.AgentMessag
 }
 
 // generateTurnPrefixSummary ports pi's generateTurnPrefixSummary
-// (compaction.ts:836-876): the prefix of a split turn is summarized with the
-// dedicated turn-prefix prompt and a smaller (0.5 * reserve) token budget.
+// (compaction.ts:1098-1141): the prefix of a split turn is summarized with the
+// dedicated turn-prefix prompt and a smaller (0.5 * reserve) token budget. The
+// serialized prefix goes under a "# Conversation" heading and the prompt under
+// "# Instructions" — not the history request's <conversation> tags (pi #9652,
+// upstream d192bd6dc).
 func (s *Session) generateTurnPrefixSummary(ctx context.Context, messages []agent.AgentMessage, reserveTokens int, sessionID string) (string, bool) {
 	conversationText := serializeConversation(messagesAsLlm(messages))
-	promptText := "<conversation>\n" + conversationText + "\n</conversation>\n\n" + turnPrefixSummarizationPrompt
+	promptText := "# Conversation\n" + conversationText + "\n\n# Instructions\n" + turnPrefixSummarizationPrompt
 	return s.completeSummarization(ctx, promptText, s.summaryMaxTokens(0.5, reserveTokens), sessionID)
 }
 

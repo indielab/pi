@@ -202,8 +202,11 @@ func TestCompactionDoesNotSummarizeSystemMessages(t *testing.T) {
 	if len(prompts) != 1 {
 		t.Fatalf("expected only the turn-prefix summarization, got %d requests:\n%s", len(prompts), strings.Join(prompts, "\n=====\n"))
 	}
-	if !strings.HasSuffix(prompts[0], turnPrefixSummarizationPrompt) || !strings.Contains(prompts[0], "[User]: one long turn") {
-		t.Fatalf("turn-prefix request:\n%s", prompts[0])
+	// The prefix sits under a Markdown conversation boundary, as in
+	// agent-session-compaction.test.ts "uses the standalone compaction request
+	// context" (pi #9652, upstream d192bd6dc).
+	if want := "# Conversation\n[User]: one long turn\n\n# Instructions\n" + turnPrefixSummarizationPrompt; prompts[0] != want {
+		t.Fatalf("turn-prefix request:\n--- got ---\n%s\n--- want ---\n%s", prompts[0], want)
 	}
 	if state.prefixLen != 2 {
 		t.Fatalf("first kept index = %d, want the assistant (2)", state.prefixLen)
@@ -383,7 +386,9 @@ func TestFindCutPointPassesZeroTokenMessages(t *testing.T) {
 }
 
 // A split turn with no new history keeps the previous summary as its history
-// half (pi compact: `previousSummary ?? "No prior history."`).
+// half (pi compact: `previousSummary ?? "No prior history."`) —
+// compaction-summary-reasoning.test.ts "preserves the previous summary without
+// an empty history request for a split turn".
 func TestCompactionSplitTurnSeedsHistoryWithPreviousSummary(t *testing.T) {
 	sess, reg := newCompactionTestSession(t)
 	var prompts []string
@@ -406,6 +411,14 @@ func TestCompactionSplitTurnSeedsHistoryWithPreviousSummary(t *testing.T) {
 
 	if len(prompts) != 1 || !strings.HasSuffix(prompts[0], turnPrefixSummarizationPrompt) {
 		t.Fatalf("expected one turn-prefix request, got %d", len(prompts))
+	}
+	// Regression test for pi #9652 (upstream d192bd6dc): clear boundaries and
+	// continuation wording avoid the reasoning-extraction false positive.
+	if !strings.Contains(prompts[0], "# Conversation\n[User]: "+big) {
+		t.Fatalf("turn-prefix request lacks the Markdown conversation boundary:\n%.300s", prompts[0])
+	}
+	if !strings.Contains(prompts[0], "# Instructions\nThe messages above are earlier context from an ongoing conversation.") {
+		t.Fatalf("turn-prefix request lacks the continuation instructions:\n%.300s", prompts[0])
 	}
 	if want := "PREV SUMMARY\n\n---\n\n**Turn Context (split turn):**\n\nPREFIX"; !strings.HasPrefix(state.summary, want) {
 		t.Fatalf("summary = %q, want prefix %q", state.summary, want)

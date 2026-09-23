@@ -3,9 +3,11 @@ package coding
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -112,6 +114,113 @@ func TestSummarizationRequestShape(t *testing.T) {
 	}
 	if strings.Contains(summary, "<read-files>\n/a/changed.go") {
 		t.Fatalf("changed.go must not appear in read-files")
+	}
+}
+
+// testdata/compaction/capture-requests.mts runs the npm build's compact() over
+// split-turn and history-only preparations, with and without a previous
+// summary, and records every summarization request pi sends and the summary it
+// returns. The port's compaction over the same transcripts must send the same
+// requests byte for byte, in the same order, and return the same summary: the
+// history request's <conversation> wrapper and prompts, and the split-turn
+// prefix's "# Conversation" / "# Instructions" framing (upstream d192bd6dc).
+func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
+	data, err := os.ReadFile("testdata/compaction/requests-0.87.1.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capture struct {
+		ReserveTokens  int `json:"reserveTokens"`
+		ModelMaxTokens int `json:"modelMaxTokens"`
+		Scenarios      []struct {
+			Name            string            `json:"name"`
+			Messages        []json.RawMessage `json:"messages"`
+			HistoryCount    int               `json:"historyCount"`
+			PrefixCount     int               `json:"prefixCount"`
+			PreviousSummary string            `json:"previousSummary"`
+			Requests        []struct {
+				Text      string `json:"text"`
+				MaxTokens int    `json:"maxTokens"`
+			} `json:"requests"`
+			Summary string `json:"summary"`
+		} `json:"scenarios"`
+	}
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatal(err)
+	}
+	if len(capture.Scenarios) == 0 {
+		t.Fatal("the capture holds no scenarios")
+	}
+	for _, scenario := range capture.Scenarios {
+		t.Run(scenario.Name, func(t *testing.T) {
+			messages := make([]agent.AgentMessage, 0, len(scenario.Messages))
+			for _, raw := range scenario.Messages {
+				message, err := ai.UnmarshalMessage(raw)
+				if err != nil {
+					t.Fatal(err)
+				}
+				messages = append(messages, message)
+			}
+			// The port cuts the transcript itself. Keeping 1 token cuts at the last
+			// message; the scenario is only a check if that cut splits the
+			// transcript where pi's preparation did.
+			preparation, ok := prepareCompaction(messages, 0, 1)
+			if !ok || len(preparation.messagesToSummarize) != scenario.HistoryCount || len(preparation.turnPrefixMessages) != scenario.PrefixCount {
+				t.Fatalf("the port's cut (history %d, prefix %d) is not the capture's (%d, %d): fix the scenario in capture-requests.mts so a 1-token keep cuts where its counts say",
+					len(preparation.messagesToSummarize), len(preparation.turnPrefixMessages), scenario.HistoryCount, scenario.PrefixCount)
+			}
+
+			reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
+				// A window no larger than the reserve compacts any transcript.
+				Models: []providers.FauxModelDefinition{{ID: "faux-1", ContextWindow: capture.ReserveTokens, MaxTokens: capture.ModelMaxTokens}},
+			})
+			t.Cleanup(reg.Unregister)
+			type request struct {
+				text      string
+				maxTokens int
+			}
+			var got []request
+			record := func(req ai.TranscriptContext, opts *ai.SimpleStreamOptions, _ *providers.FauxState, _ *ai.Model) *ai.AssistantMessage {
+				var r request
+				if conversation := ai.WithoutInitialSystemMessage(req.Messages); len(conversation) == 1 {
+					r.text = userText(conversation[0])
+				} else {
+					t.Errorf("request %d carries %d messages after its system prompt, want 1", len(got)+1, len(conversation))
+				}
+				if opts != nil && opts.MaxTokens != nil {
+					r.maxTokens = *opts.MaxTokens
+				}
+				got = append(got, r)
+				return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: fmt.Sprintf("SUMMARY %d", len(got))}}, ai.StopStop)
+			}
+			steps := make([]providers.FauxResponseStep, len(scenario.Requests))
+			for i := range steps {
+				steps[i] = record
+			}
+			reg.SetResponses(steps)
+
+			sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir(), NoTools: NoToolsAll})
+			state := &compactionState{
+				settings: CompactionSettings{Enabled: true, ReserveTokens: capture.ReserveTokens, KeepRecentTokens: 1},
+				summary:  scenario.PreviousSummary,
+			}
+			sess.compact(context.Background(), state, messages)
+
+			if len(got) != len(scenario.Requests) {
+				t.Fatalf("sent %d summarization requests, pi sent %d", len(got), len(scenario.Requests))
+			}
+			for i, want := range scenario.Requests {
+				if got[i].text != want.Text {
+					t.Errorf("request %d text drifts from pi.\n--- got ---\n%s\n--- pi ---\n%s", i+1, got[i].text, want.Text)
+				}
+				if got[i].maxTokens != want.MaxTokens {
+					t.Errorf("request %d maxTokens = %d, pi %d", i+1, got[i].maxTokens, want.MaxTokens)
+				}
+			}
+			if state.summary != scenario.Summary {
+				t.Errorf("summary drifts from pi.\n--- got ---\n%s\n--- pi ---\n%s", state.summary, scenario.Summary)
+			}
+		})
 	}
 }
 
