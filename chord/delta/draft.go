@@ -485,7 +485,7 @@ func (d *Draft) Has(key any) bool {
 		if c, ok := s.current().([]any); ok {
 			if seg, err := parseSeg(key); err == nil {
 				if i, ok := arrayIndexOf(seg); ok {
-					return i < len(c) && !isHole(c[i])
+					return i < int64(len(c)) && !isHole(c[i])
 				}
 			}
 		}
@@ -524,7 +524,7 @@ func (d *Draft) Get(key any) (any, bool) {
 			}
 			return s.txn.draftValue(v), true
 		}
-		if i >= len(c) || isEmptySlot(c[i]) {
+		if i >= int64(len(c)) || isEmptySlot(c[i]) {
 			return nil, false
 		}
 		return s.txn.draftValue(c[i]), true
@@ -544,17 +544,25 @@ func (d *Draft) At(key any) *Draft {
 
 // arrayIndexOf is the index seg names on an array: an Index, or a Key that
 // spells one canonically. false for anything else — a named property, which
-// a JSON array cannot hold.
-func arrayIndexOf(seg Seg) (int, bool) {
+// a JSON array cannot hold. It is an int64: an index past 2^31 is one on a
+// 32-bit build too, past the end of every slice there.
+func arrayIndexOf(seg Seg) (int64, bool) {
 	switch s := seg.(type) {
 	case Index:
-		if s >= 0 && uint64(s) <= maxArrayIndex {
-			return int(s), true
+		if s >= 0 && s <= maxArrayIndex {
+			return int64(s), true
 		}
 	case Key:
 		return canonicalIndex(string(s))
 	}
 	return 0, false
+}
+
+// errArrayTooLong is growing an array past what a slice holds on this
+// platform: JavaScript keeps a long array sparse, and only a 32-bit build
+// reaches this (see D73 for what a 64-bit one allocates instead).
+func errArrayTooLong(length float64) error {
+	return fmt.Errorf("delta: an array of length %s is longer than a slice holds on this platform (at most %d elements); a 32-bit build cannot hold it, so keep the array shorter or use a 64-bit build", jsNumber(length), math.MaxInt)
 }
 
 var errArrayHole = errors.New("delta: Draft arrays cannot contain holes (remove array elements with Splice, Pop or Shift, not Delete)")
@@ -625,17 +633,21 @@ func (d *Draft) Set(key any, value any) error {
 			s.named[k] = stored
 			return nil
 		}
-		if i < len(c) && !isEmptySlot(c[i]) && objectIs(c[i], stored) {
+		if i >= math.MaxInt {
+			return errArrayTooLong(float64(i) + 1)
+		}
+		at := int(i)
+		if at < len(c) && !isEmptySlot(c[at]) && objectIs(c[at], stored) {
 			return nil
 		}
 		xs := s.ensureCopy().([]any)
-		for len(xs) < i {
+		for len(xs) < at {
 			xs = append(xs, hole)
 		}
-		if i == len(xs) {
+		if at == len(xs) {
 			xs = append(xs, stored)
 		} else {
-			xs[i] = stored
+			xs[at] = stored
 		}
 		s.own = xs
 	}
@@ -690,6 +702,9 @@ func (d *Draft) setLen(s *draftState, n float64, v any) error {
 	xs := s.ensureCopy().([]any)
 	if !(n >= 0 && n <= maxArrayIndex+1 && n == math.Trunc(n)) {
 		return errArrayLength(v)
+	}
+	if n > math.MaxInt {
+		return errArrayTooLong(n)
 	}
 	length := int(n)
 	if length < len(xs) {

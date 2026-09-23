@@ -198,7 +198,7 @@ func walk(root any, path Path, clone bool, fn func(node any) (any, error)) (any,
 				}
 				return nil, &UnsafePathError{Segment: seg}
 			}
-			if int(i) >= len(c) {
+			if i >= Index(len(c)) {
 				return nil, &PathError{Ref: path}
 			}
 			next, err := descend(c[i], rest[1:])
@@ -221,7 +221,7 @@ func ownsKey(xs []any, key Seg) bool {
 		return true
 	}
 	i, ok := canonicalIndex(k)
-	return ok && i < len(xs)
+	return ok && i < int64(len(xs))
 }
 
 // atParent resolves an s/d/a/t op's parent — the path less its last segment,
@@ -341,7 +341,7 @@ func arrayIndex(xs []any, key Seg) (int, error) {
 	if !ok {
 		return 0, &UnsafePathError{Segment: key}
 	}
-	if int(i) > len(xs) {
+	if i > Index(len(xs)) {
 		return 0, &UnsafePathError{Segment: key}
 	}
 	return int(i), nil

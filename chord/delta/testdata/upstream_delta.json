@@ -1034,6 +1034,12 @@
 				{"error":"Cannot use a draft outside its change callback"},
 				{"error":"Cannot use a draft outside its change callback"}
 			]
+		},
+		{
+			"name": "keys past 2^31",
+			"trackers": {"main":{"o":{}}},
+			"steps": [{"do":"begin"},{"at":["o"],"do":"set","key":"!","value":1},{"at":["o"],"do":"set","key":"4294967295","value":2},{"at":["o"],"do":"set","key":"4294967294","value":3},{"at":["o"],"do":"set","key":"2147483648","value":4},{"at":["o"],"do":"set","key":"7","value":5},{"at":["o"],"do":"keys"},{"do":"prepare"},{"do":"adopt"},{"do":"value"}],
+			"results": [{},{},{},{},{},{},{"value":["7","2147483648","4294967294","!","4294967295"]},{"ops":[["s",["o","7"],5],["s",["o","2147483648"],4],["s",["o","4294967294"],3],["s",["o","!"],1],["s",["o","4294967295"],2]],"noop":false,"value":{"o":{"!":1,"2147483648":4,"4294967294":3,"4294967295":2,"7":5}}},{},{"value":{"o":{"!":1,"2147483648":4,"4294967294":3,"4294967295":2,"7":5}}}]
 		}
 	],
 	"generated": [

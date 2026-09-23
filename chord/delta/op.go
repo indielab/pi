@@ -610,7 +610,7 @@ func validateRef(ref PathRef) error {
 	case Path:
 		return r.Validate()
 	case PathID:
-		if r < 0 || int64(r) > maxSafeInteger {
+		if r < 0 || r > maxSafeInteger {
 			return fmt.Errorf("%w: path id must be a non-negative integer within Number.MAX_SAFE_INTEGER, got %d", ErrInvalidOp, r)
 		}
 		return nil
@@ -636,7 +636,7 @@ func parseCount(verb, name string, v any) (int, error) {
 	if !ok {
 		return 0, fmt.Errorf("%w: %q %s must be a non-negative integer, got %s", ErrInvalidOp, verb, name, describe(v))
 	}
-	return n, nil
+	return clampInt(n), nil
 }
 
 func spliceArgs(i, r, itemsArg any) (index, remove int, items []any, err error) {
@@ -669,7 +669,7 @@ func parsePermutation(v any) ([]int, error) {
 		if !ok {
 			return nil, fmt.Errorf("%w: \"m\" permutation is not a bijection: element %d is %s, want an integer index in [0, %d)", ErrInvalidOp, i, describe(x), len(xs))
 		}
-		out[i] = n
+		out[i] = clampInt(n)
 	}
 	return out, nil
 }

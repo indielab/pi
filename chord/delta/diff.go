@@ -622,7 +622,7 @@ func pathCost(path Path) int {
 		case Key:
 			cost += utf16Len(string(s)) + 2
 		case Index:
-			cost += len(strconv.Itoa(int(s)))
+			cost += len(s.String())
 		}
 		if i > 0 {
 			cost++

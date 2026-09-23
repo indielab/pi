@@ -1314,6 +1314,21 @@ scenario("revoked draft", { main: J(`{"o":{"n":1},"v":[1]}`) }, S(`[
 	{"do":"sort","from":"v","at":[],"by":null},
 	{"do":"setLength","from":"v","at":[],"length":0}
 ]`));
+// An array index runs to 2^32 - 2, past a 32-bit int: "2147483648" and
+// "4294967294" enumerate first, by value, and "4294967295" with the other
+// named keys (inserted in Go's order - D69).
+scenario("keys past 2^31", { main: J(`{"o":{}}`) }, S(`[
+	{"do":"begin"},
+	{"do":"set","at":["o"],"key":"!","value":1},
+	{"do":"set","at":["o"],"key":"4294967295","value":2},
+	{"do":"set","at":["o"],"key":"4294967294","value":3},
+	{"do":"set","at":["o"],"key":"2147483648","value":4},
+	{"do":"set","at":["o"],"key":"7","value":5},
+	{"do":"keys","at":["o"]},
+	{"do":"prepare"},
+	{"do":"adopt"},
+	{"do":"value"}
+]`));
 
 // ─── Generated tracker cases ─────────────────────────────────────────────────
 

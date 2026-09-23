@@ -1,6 +1,7 @@
 package delta
 
 import (
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"math"
@@ -247,7 +248,7 @@ func compareKeys(a, b string) int {
 	ib, okb := canonicalIndex(b)
 	switch {
 	case oka && okb:
-		return ia - ib
+		return cmp.Compare(ia, ib)
 	case oka:
 		return -1
 	case okb:
@@ -258,13 +259,14 @@ func compareKeys(a, b string) int {
 
 // canonicalIndex reports whether s is an array index as JavaScript spells
 // one: the decimal form of an integer in [0, 2^32-2], without sign or
-// leading zeros.
-func canonicalIndex(s string) (int, bool) {
-	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 || uint64(n) > maxArrayIndex || strconv.Itoa(n) != s {
+// leading zeros. It parses 32 bits whatever the platform's int, so an index
+// past 2^31 is one on a 32-bit build too.
+func canonicalIndex(s string) (int64, bool) {
+	n, err := strconv.ParseUint(s, 10, 32)
+	if err != nil || n > maxArrayIndex || strconv.FormatUint(n, 10) != s {
 		return 0, false
 	}
-	return n, true
+	return int64(n), true
 }
 
 // maxArrayIndex is the largest index a JavaScript array has: 2^32 - 2.

@@ -363,6 +363,10 @@ func TestHugeIntegers(t *testing.T) {
 		t.Errorf("t -1e300: got %v, want ErrInvalidOp", err)
 	}
 
+	// An address past 2^31 is exact whatever the platform's int: pi writes
+	// parent[3e9] to the property "3000000000".
+	wantTree(t, applied(t, `{"o": {}}`, ops(t, `[["s", ["o", 3e9], 1]]`)), `{"o": {"3000000000": 1}}`)
+
 	var unsafe *UnsafePathError
 	// pi: assertIndexInRange throws UnsafePathError(1e300) for an array parent.
 	if _, err := ParseOp(tree(t, `["s", ["xs", 1e300], 1]`)); !errors.As(err, &unsafe) {
@@ -540,10 +544,10 @@ func TestParseOpAcceptsGoIntegerKinds(t *testing.T) {
 	}
 	// A count past the safe range is a quantity and saturates; a segment
 	// past it is an address and is refused (TestHugeIntegers).
-	if _, err := ParseOp([]any{"t", []any{"s"}, 1 << 60}); err != nil {
+	if _, err := ParseOp([]any{"t", []any{"s"}, int64(1 << 60)}); err != nil {
 		t.Errorf("count beyond Number.MAX_SAFE_INTEGER: %v", err)
 	}
-	if _, err := ParseOp([]any{"s", []any{"xs", 1 << 60}, 1}); err == nil {
+	if _, err := ParseOp([]any{"s", []any{"xs", int64(1 << 60)}, 1}); err == nil {
 		t.Error("index beyond Number.MAX_SAFE_INTEGER accepted")
 	}
 }
