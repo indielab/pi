@@ -53,9 +53,13 @@ const calculateCostCaptureFile = "testdata/cost/calculate-cost-0.87.1.json"
 // and requires pi's exact doubles, not a tolerance: usage.cost is persisted in
 // sessions and sent over the protocol, so the last bit is visible. The rows sit
 // at and just above each catalog pricing tier with 1h cache writes, where a
-// fused multiply-add (one rounding where V8 rounds twice) moves the result.
-// Only a target the compiler fuses on can show that (arm64; amd64 at
-// GOAMD64=v3); baseline amd64 never fuses, so there this pins the rest.
+// fused multiply-add (one rounding where V8 rounds twice) moves the result,
+// plus rows for models without tiers (amazon.nova-2-lite-v1), the only ones
+// that lock the cacheRead and short cache-write conversions. Each float64()
+// conversion in CalculateCost has at least one row that fails when it is
+// removed, so no row may be pruned as redundant. Only a target the compiler
+// fuses on can show that (arm64; amd64 at GOAMD64=v3); baseline amd64 never
+// fuses, so there this pins the rest.
 func TestCalculateCostMatchesPi(t *testing.T) {
 	data, err := os.ReadFile(calculateCostCaptureFile)
 	if err != nil {

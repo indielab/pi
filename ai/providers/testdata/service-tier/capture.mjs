@@ -15,11 +15,12 @@
 // FMA (arm64; amd64 at GOAMD64=v3), which moves the total's last bit when the
 // multiplier is not a power of two: gpt-5.5 at priority (x2.5). The usages are
 // ones a sweep found to differ that way: the first rows move the total when the
-// input or output product fuses, usage(890, ...) when the cacheRead one does. No catalog rate can show the cacheWrite product fusing (every gpt-5.5
-// entry has cacheWrite 0, and the other multipliers are powers of two), so the
-// last row prices gpt-5.5 at a synthetic cacheWrite rate, which the row records
-// like any other. The x2 and x0.5 rows are exact either way and pin the
-// multiplier selection.
+// input or output product fuses, usage(890, ...) when the cacheRead one does.
+// No catalog rate can show the cacheWrite product fusing (every gpt-5.5 entry
+// has cacheWrite 0, and the other multipliers are powers of two), so the last
+// row prices gpt-5.5 at a synthetic cacheWrite rate, which the row records like
+// any other. The x2 and x0.5 rows are exact either way and pin the multiplier
+// selection.
 import http from "node:http";
 import fs from "node:fs";
 import path from "node:path";
