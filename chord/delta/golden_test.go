@@ -639,8 +639,10 @@ func (r *runner) check(where string, step map[string]any, got outcome, want gold
 	}
 	if got.prepare {
 		reordered = checkBatch(t, where, got.ops, want.goldenBatch)
-		if want.Noop == nil || *want.Noop != got.noop {
-			t.Errorf("%s: noop = %v, pi %v", where, got.noop, want.Noop)
+		if want.Noop == nil {
+			t.Errorf("%s: noop = %v, pi recorded none", where, got.noop)
+		} else if *want.Noop != got.noop {
+			t.Errorf("%s: noop = %v, pi %v", where, got.noop, *want.Noop)
 		}
 	}
 	switch {

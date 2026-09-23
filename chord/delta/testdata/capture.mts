@@ -1002,6 +1002,56 @@ scenario("no-op scalar writes", { main: J(`{"a":1,"s":"x","n":null,"v":[true]}`)
 scenario("negative zero write", { main: J(`{"a":0}`) }, arrays(`{"do":"set","at":[],"key":"a","value":-0}`));
 scenario("write then restore", { main: J(`{"a":1,"o":{"x":1}}`) }, arrays(`{"do":"set","at":[],"key":"a","value":2},{"do":"set","at":[],"key":"a","value":1},{"do":"set","at":["o"],"key":"x","value":5},{"do":"set","at":["o"],"key":"x","value":1}`));
 scenario("rolling window with astral characters", { main: J(`{"t":"😀😁😂"}`) }, arrays(`{"do":"set","at":[],"key":"t","value":"😁😂🤣"}`));
+// The default sort order is each element's String(): ToPrimitive, then
+// ToString. A JSON object's own "toString" member is never callable, and
+// Object.prototype.valueOf returns the object, so an object holding one has no
+// primitive at all - a TypeError, at the element or joined inside an array. A
+// thrown sort leaves the array as it was (V8 sorts a copy), and one element is
+// never compared.
+const sortBy = (initial: string, ...pre: string[]) =>
+	scenario(`default sort of ${initial}${pre.length > 0 ? " after writes" : ""}`, { main: J(initial) }, arrays([...pre, `{"do":"sort","at":["xs"],"by":null}`, `{"do":"get","at":[],"key":"xs"}`].join(",")));
+sortBy(`{"xs":[{"a":2},{"toString":"b"},{"a":1},3,1]}`);
+sortBy(`{"xs":[[{"toString":1}],[0]]}`);
+sortBy(`{"xs":[[[{"toString":1}]],[0]]}`);
+sortBy(`{"xs":[{"toString":null},{"a":1}]}`);
+sortBy(`{"xs":[{"valueOf":"v"},{"a":1}]}`);
+sortBy(`{"xs":[{"toString":1}]}`);
+sortBy(`{"xs":[[null,[1,[2]]],[true,"x"],{"toString2":1},[{}]]}`);
+// An array draft can hold a named "toString" (no string form either) or a
+// named "join" (Array.prototype.toString then falls back to "[object Array]");
+// the change cannot be prepared afterwards, but the sort's outcome shows.
+sortBy(`{"xs":[[2],[1]]}`, `{"do":"set","at":["xs",0],"key":"toString","value":1}`);
+sortBy(`{"xs":[[1],[2],["[object Array]0"]]}`, `{"do":"set","at":["xs",0],"key":"join","value":1}`);
+sortBy(`{"xs":[[2],[1]]}`, `{"do":"set","at":["xs",0],"key":"valueOf","value":1}`);
+// JavaScript's number spellings, which order the default sort: the shortest
+// round-trip digits, positional from 1e-6 up to 1e21, exponent outside it
+// with no leading zero in the exponent, and -0 as "0".
+sortBy(`{"xs":[1e-7,1e-10]}`);
+sortBy(`{"xs":[1e21,"1a"]}`);
+sortBy(`{"xs":[0.000001,0.00001]}`);
+sortBy(`{"xs":[999999999999999900000,1e21,"1e+20"]}`);
+sortBy(`{"xs":[-1e-7,-1,"-1e-6",0.1,1.5e-7]}`);
+sortBy(`{"xs":[1,0]}`, `{"do":"set","at":["xs"],"key":1,"value":-0}`);
+sortBy(`{"xs":[["a"],[["b"]]]}`);
+sortBy(`{"xs":[[1,[2,[3]]],[1,2,3],"1,2,3 ",[null],[[]],""]}`);
+// `array.length = v` is ArraySetLength: v goes through ToNumber (null 0,
+// booleans 0 and 1, strings as numeric literals after trimming JavaScript
+// whitespace, arrays and objects through their string form), and the result
+// must be an integer from 0 to 2^32 - 1.
+{
+	const lengths: unknown[] = [
+		null, true, false, "2", " 2 ", "", "  ", "\t\n2\r", "0x2", "0B11", "0o7", "1e0", "2.", "00", "-0",
+		" 2 ", "﻿1", "　2", "2\u0085", "x", "Infinity", "-0x2", "+0x2", "0x", "1_0", ".5",
+		"0X2", "0O7", "0b2", "1e", "1e+", "e5", ".", "+", "2e0.", "0x1p1", "1e1000", "4294967296", "1 2",
+		[2], [], [[3]], [" 1 "], ["0x1"], [1, 2], [0.5], [true], {},
+		{ toString: 1 }, { valueOf: 1 }, [{ toString: 1 }], 2.5, 4294967296, -1, -0, 3, "3",
+	];
+	const steps: Step[] = [];
+	for (const value of lengths) {
+		steps.push({ do: "begin" }, { do: "set", at: ["list"], key: "length", value }, { do: "prepare" });
+	}
+	scenario("length assignments convert as JavaScript does", { main: J(`{"list":[1,2,3]}`) }, steps);
+}
 scenario("revoked draft", { main: J(`{"o":{"n":1},"v":[1]}`) }, S(`[
 	{"do":"begin"},
 	{"do":"hold","at":["o"],"as":"o"},

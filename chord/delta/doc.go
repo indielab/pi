@@ -95,7 +95,7 @@
 //	key in draft                     d.Has(key)
 //	Object.keys(draft)               d.Keys()
 //	draft.length                     d.Len(); on an array, Get("length") too
-//	draft.length = n                 d.SetLen(n); on an array, Set("length", n) too
+//	draft.length = n                 d.SetLen(n); on an array, Set("length", v) too, v converted as JavaScript does
 //	draft.push(...items)             d.Push(items...)
 //	draft.pop() / draft.shift()      d.Pop() / d.Shift()   (value, present, err)
 //	draft.unshift(...items)          d.Unshift(items...)
