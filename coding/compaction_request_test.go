@@ -119,12 +119,18 @@ func TestSummarizationRequestShape(t *testing.T) {
 
 // testdata/compaction/capture-requests.mts runs the npm build's compact() over
 // split-turn and history-only preparations, with and without a previous
-// summary, and records every summarization request pi sends and the summary it
-// returns. The port's compaction over the same transcripts must send the same
-// requests byte for byte, in the same order, and return the same summary: the
-// system prompt, the history request's <conversation> wrapper and prompts, and
-// the split-turn prefix's "# Conversation" / "# Instructions" framing (upstream
+// summary, and records every summarization request pi sends, the reply it got
+// and the summary compact() returns. The port's compaction over the same
+// transcripts, answered with the same replies, must send the same requests byte
+// for byte, in the same order, and checkpoint the same summary: the system
+// prompt, the history request's <conversation> wrapper and prompts, and the
+// split-turn prefix's "# Conversation" / "# Instructions" framing (upstream
 // d192bd6dc).
+//
+// An empty reply is still a summary. pi's compact() returns it (plus the file
+// lists) and AgentSession appends it as the compaction, so every scenario must
+// leave a checkpoint behind. A previous summary that is present but empty is not
+// an absent one: `previousSummary ?? "No prior history."` keeps it.
 func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 	data, err := os.ReadFile("testdata/compaction/requests-0.87.1.json")
 	if err != nil {
@@ -138,11 +144,12 @@ func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 			Messages        []json.RawMessage `json:"messages"`
 			HistoryCount    int               `json:"historyCount"`
 			PrefixCount     int               `json:"prefixCount"`
-			PreviousSummary string            `json:"previousSummary"`
+			PreviousSummary *string           `json:"previousSummary"` // nil: no previous compaction
 			Requests        []struct {
 				SystemPrompt string `json:"systemPrompt"`
 				Text         string `json:"text"`
 				MaxTokens    int    `json:"maxTokens"`
+				Reply        string `json:"reply"`
 			} `json:"requests"`
 			Summary string `json:"summary"`
 		} `json:"scenarios"`
@@ -197,7 +204,11 @@ func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 					r.maxTokens = *opts.MaxTokens
 				}
 				got = append(got, r)
-				return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: fmt.Sprintf("SUMMARY %d", len(got))}}, ai.StopStop)
+				reply := fmt.Sprintf("unexpected request %d", len(got))
+				if len(got) <= len(scenario.Requests) {
+					reply = scenario.Requests[len(got)-1].Reply
+				}
+				return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: reply}}, ai.StopStop)
 			}
 			steps := make([]providers.FauxResponseStep, len(scenario.Requests))
 			for i := range steps {
@@ -208,7 +219,9 @@ func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 			sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: t.TempDir(), NoTools: NoToolsAll})
 			state := &compactionState{
 				settings: CompactionSettings{Enabled: true, ReserveTokens: capture.ReserveTokens, KeepRecentTokens: 1},
-				summary:  scenario.PreviousSummary,
+			}
+			if scenario.PreviousSummary != nil {
+				state.compacted, state.summary = true, *scenario.PreviousSummary
 			}
 			sess.compact(context.Background(), state, messages)
 
@@ -226,8 +239,12 @@ func TestSummarizationRequestsMatchPiCapture(t *testing.T) {
 					t.Errorf("request %d maxTokens = %d, pi %d", i+1, got[i].maxTokens, want.MaxTokens)
 				}
 			}
+			if !state.compacted || state.prefixLen != preparation.firstKeptIndex || state.compactedLen != len(messages) {
+				t.Errorf("no checkpoint (compacted %v, prefixLen %d, compactedLen %d): pi's compact() returned %q here and AgentSession appends it as the compaction",
+					state.compacted, state.prefixLen, state.compactedLen, scenario.Summary)
+			}
 			if state.summary != scenario.Summary {
-				t.Errorf("summary drifts from pi.\n--- got ---\n%s\n--- pi ---\n%s", state.summary, scenario.Summary)
+				t.Errorf("summary drifts from pi.\n--- got ---\n%q\n--- pi ---\n%q", state.summary, scenario.Summary)
 			}
 		})
 	}

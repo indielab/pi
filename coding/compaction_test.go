@@ -239,6 +239,95 @@ func TestCompactionPermanentAfterSmallUsage(t *testing.T) {
 	}
 }
 
+// An empty summarization reply is a summary: pi's compact() returns "" and
+// _runAutoCompaction appends it as the compaction. The checkpoint holds, so a
+// later request reuses it instead of summarizing the same history again.
+func TestCompactionKeepsAnEmptySummary(t *testing.T) {
+	sess, reg := newCompactionTestSession(t) // window 1000: compacts past 800 tokens
+	requests := 0
+	emptyReply := func(ai.TranscriptContext, *ai.SimpleStreamOptions, *providers.FauxState, *ai.Model) *ai.AssistantMessage {
+		requests++
+		return providers.FauxAssistantMessage(ai.ContentList{ai.TextContent{Text: ""}}, ai.StopStop)
+	}
+	reg.SetResponses([]providers.FauxResponseStep{emptyReply, emptyReply})
+
+	// Ten 100-token messages; keeping 150 tokens cuts at the user at index 8.
+	medium := strings.Repeat("m", 400)
+	turn := func(i int) []agent.AgentMessage {
+		return []agent.AgentMessage{
+			ai.NewUserText(medium, int64(2*i)),
+			ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: medium}}, StopReason: ai.StopStop, Timestamp: int64(2*i + 1)},
+		}
+	}
+	var messages []agent.AgentMessage
+	for i := range 5 {
+		messages = append(messages, turn(i)...)
+	}
+	state := &compactionState{settings: CompactionSettings{Enabled: true, ReserveTokens: 200, KeepRecentTokens: 150}}
+	emptyCheckpoint := compactionSummaryPrefix + compactionSummarySuffix
+
+	out := sess.compact(context.Background(), state, messages)
+	if !state.compacted || state.prefixLen != 8 || state.summary != "" {
+		t.Errorf("empty reply: compacted=%v prefixLen=%d summary=%q, want a checkpoint of \"\" keeping from 8", state.compacted, state.prefixLen, state.summary)
+	}
+	if len(out) != 3 || userText(out[0]) != emptyCheckpoint {
+		t.Errorf("empty reply: view %v, want the empty checkpoint + messages[8:10]", roles(out))
+	}
+
+	// One more turn: the full transcript (1200 tokens) is over the threshold,
+	// the compacted view (checkpoint + four kept messages) is not.
+	messages = append(messages, turn(5)...)
+	out = sess.compact(context.Background(), state, messages)
+	if requests != 1 {
+		t.Fatalf("sent %d summarization requests, want 1: the empty summary is the compaction", requests)
+	}
+	if len(out) != 5 || userText(out[0]) != emptyCheckpoint {
+		t.Fatalf("next turn: view %v, want the empty checkpoint + messages[8:12]", roles(out))
+	}
+}
+
+// pi discards an aborted compaction: _runAutoCompaction calls
+// signal.throwIfAborted() after compact() returns and before appendCompaction,
+// so neither the text produced so far nor an empty reply becomes a checkpoint.
+func TestCompactionAbortedDoesNotCheckpoint(t *testing.T) {
+	for _, tc := range []struct{ name, text string }{
+		{"partial text", "## Goal\npartial summar"},
+		{"no text", ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			// The run is aborted while the summary streams.
+			abortMidStream := func(_ context.Context, model *ai.Model, _ ai.TranscriptContext, _ *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+				cancel()
+				var content ai.ContentList
+				if tc.text != "" {
+					content = ai.ContentList{ai.TextContent{Text: tc.text}}
+				}
+				s := ai.NewAssistantMessageEventStream()
+				s.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: ai.StopAborted, Error: &ai.AssistantMessage{
+					Api: model.Api, Provider: model.Provider, Model: model.ID,
+					Content: content, StopReason: ai.StopAborted, ErrorMessage: "Request was aborted",
+				}})
+				s.End()
+				return s
+			}
+			model := &ai.Model{ID: "m", Api: "faux", Provider: "faux", ContextWindow: 1000}
+			sess := NewSession(SessionOptions{Model: model, Cwd: t.TempDir(), NoTools: NoToolsAll, StreamFn: abortMidStream})
+
+			messages := bigTranscript(6)
+			state := &compactionState{settings: compactionTestSettings}
+			out := sess.compact(ctx, state, messages)
+			if state.compacted || state.summary != "" {
+				t.Fatalf("aborted compaction checkpointed %q", state.summary)
+			}
+			if len(out) != len(messages) {
+				t.Fatalf("aborted compaction changed the view: %d messages, want the full %d", len(out), len(messages))
+			}
+		})
+	}
+}
+
 // TestCompactionExtendsWithPreviousSummary locks A1(b) + I6: when context grows
 // past the threshold again, the second compaction covers a larger prefix, the
 // summarization request carries the previous summary in <previous-summary> tags
@@ -593,7 +682,7 @@ func TestSummarizationAbortedReturnsPartialText(t *testing.T) {
 // TestSummarizationLengthStopRejected locks upstream 97fa14e39 (#7048): a
 // summarization that stopped on "length" holds a truncated summary, so it is a
 // failure and must never become a session checkpoint — unlike an aborted one,
-// which still contributes the text it produced.
+// whose text the summarizer still returns.
 func TestSummarizationLengthStopRejected(t *testing.T) {
 	sess, reg := newCompactionTestSession(t)
 	lengthStopped := func() {
@@ -617,7 +706,7 @@ func TestSummarizationLengthStopRejected(t *testing.T) {
 	if len(got) != len(messages) {
 		t.Fatalf("length-stopped summarization must not compact: got %d messages, want the full %d", len(got), len(messages))
 	}
-	if state.summary != "" {
+	if state.compacted || state.summary != "" {
 		t.Fatalf("truncated summary must not be checkpointed, got %q", state.summary)
 	}
 }

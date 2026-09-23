@@ -347,8 +347,8 @@ func TestCompactionWithOnlySystemHistoryDoesNothing(t *testing.T) {
 	if called {
 		t.Fatal("a system message alone must not be summarized")
 	}
-	if len(out) != len(messages) || state.summary != "" {
-		t.Fatalf("view changed: %v (summary %q)", roles(out), state.summary)
+	if len(out) != len(messages) || state.compacted {
+		t.Fatalf("view changed: %v (checkpoint %q)", roles(out), state.summary)
 	}
 }
 
@@ -403,6 +403,7 @@ func TestCompactionSplitTurnSeedsHistoryWithPreviousSummary(t *testing.T) {
 		ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: big}}, StopReason: ai.StopStop, Timestamp: 12})
 	state := &compactionState{
 		settings:     CompactionSettings{Enabled: true, ReserveTokens: 200, KeepRecentTokens: 400},
+		compacted:    true,
 		prefixLen:    10,
 		compactedLen: 10,
 		summary:      "PREV SUMMARY",

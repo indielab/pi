@@ -419,6 +419,11 @@ func withoutSystemMessages(messages []agent.AgentMessage) []agent.AgentMessage {
 type compactionState struct {
 	mu       sync.Mutex
 	settings CompactionSettings
+	// compacted reports whether a checkpoint exists (pi: the branch holds a
+	// compaction entry). An empty summary does not mean there is none: pi
+	// persists the empty summary a model's empty reply produces, and reads it
+	// back as a defined previousSummary "".
+	compacted bool
 	// prefixLen indexes the ORIGINAL message list: the first kept message (pi
 	// firstKeptEntryId).
 	prefixLen int
@@ -503,6 +508,7 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	}
 
 	state.mu.Lock()
+	compacted := state.compacted
 	previous := compactionCheckpoint{
 		prefixLen:     state.prefixLen,
 		compactedLen:  state.compactedLen,
@@ -514,9 +520,10 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	state.mu.Unlock()
 	boundaryStart := min(previous.prefixLen, len(messages))
 
-	// Always re-apply the cached checkpoint first (permanence).
+	// Always re-apply the cached checkpoint first (permanence), even one whose
+	// summary is empty.
 	current := messages
-	if previous.summary != "" {
+	if compacted {
 		current = previous.apply(messages)
 	}
 
@@ -535,13 +542,16 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 
 	// Generate summaries (pi compact, compaction.ts:747-815). Sequential, as
 	// upstream is since f58c1156.
+	// generateSummary takes previous.summary as is: pi picks the update prompt on
+	// `previousSummary ? ... : ...`, and an empty summary is falsy like an
+	// absent one.
 	var newSummary string
 	if preparation.isSplitTurn && len(turnPrefix) > 0 {
-		// pi: `previousSummary ?? "No prior history."`. The port's empty summary
-		// is pi's undefined: a compaction never records an empty one.
-		historyResult := previous.summary
-		if historyResult == "" {
-			historyResult = "No prior history."
+		// pi: `previousSummary ?? "No prior history."`. Only a missing
+		// compaction falls back; an empty previous summary stays empty.
+		historyResult := "No prior history."
+		if compacted {
+			historyResult = previous.summary
 		}
 		if len(history) > 0 {
 			hr, ok := s.generateSummary(ctx, history, state.settings.ReserveTokens, previous.summary, state.settings.SessionID)
@@ -562,8 +572,12 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 		}
 		newSummary = ns
 	}
-	if newSummary == "" {
-		return current // aborted with no text produced; keep current view
+	// An empty summary is still a compaction: pi's compact() returns it and the
+	// session appends it. Only an abort discards the result, whatever text it
+	// produced: _runAutoCompaction calls signal.throwIfAborted() after compact()
+	// and before appendCompaction.
+	if ctx.Err() != nil {
+		return current
 	}
 
 	// Merge file ops from the previous compaction's lists plus the newly
@@ -597,6 +611,7 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	}
 
 	state.mu.Lock()
+	state.compacted = true
 	state.prefixLen = next.prefixLen
 	state.compactedLen = next.compactedLen
 	state.systemMessage = next.systemMessage
@@ -626,7 +641,7 @@ func (s *Session) summarize(ctx context.Context, older []agent.AgentMessage, res
 // the conversation is serialized to text, wrapped in
 // <conversation>...</conversation> (followed by
 // <previous-summary>...</previous-summary> and the update prompt variant when a
-// previous summary exists), and sent with the dedicated
+// previous summary is non-empty), and sent with the dedicated
 // SUMMARIZATION_SYSTEM_PROMPT and a capped maxTokens. Only this history request
 // keeps the tag wrapper; a split turn's prefix is framed in Markdown (see
 // generateTurnPrefixSummary). Returns ok=false where pi fails the summarization
@@ -716,8 +731,9 @@ func (s *Session) summarizationRequestModel(ctx context.Context) *ai.Model {
 // persist as a checkpoint (pi getSummarizationFailure, compaction.ts, upstream
 // 97fa14e39 / #7048). A "length" stop means generation hit the token cap, so the
 // summary is truncated mid-thought and must not become a session checkpoint —
-// only "error" used to fail. An abort is not a failure: pi keeps the text it
-// produced.
+// only "error" used to fail. An abort is not a failure here: the summarizer
+// returns the text produced so far, and compact then discards the aborted
+// compaction as a whole, as pi's session does.
 //
 // pi builds a "<label> failed: <reason>" message here, with a different label at
 // each of its three call sites (Summarization, Turn prefix summarization, Branch

@@ -16,8 +16,16 @@
 // optional previous summary and the file operations of both lists, as
 // prepareCompaction builds them. compact() runs with a stub streamFn that
 // records each request's system prompt, user text and maxTokens, and answers
-// request n with "SUMMARY n". The output keeps the messages as pi reads them,
-// the requests in order, and the summary compact() returns.
+// request n with the scenario's replies[n-1], or "SUMMARY n" when it has none.
+// The output keeps the messages as pi reads them, the requests in order with
+// the reply each got, and the summary compact() returns.
+//
+// An empty reply is a summary, not a failure: compact() returns "" plus the
+// file lists, and AgentSession appends that as the compaction. prepareCompaction
+// then reads the empty summary back as a DEFINED previousSummary "", so
+// `previousSummary ?? "No prior history."` keeps "" while
+// `previousSummary ? UPDATE : INITIAL` picks the initial prompt; the
+// *-previous-summary-empty scenarios pin both.
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -79,7 +87,14 @@ const turnWithTools = () => [
 	assistant("tests fixed"),
 ];
 
-const scenarios: Array<{ name: string; messages: any[]; historyCount: number; prefixCount: number; previousSummary?: string }> = [
+const scenarios: Array<{
+	name: string;
+	messages: any[];
+	historyCount: number;
+	prefixCount: number;
+	previousSummary?: string;
+	replies?: string[];
+}> = [
 	{
 		// agent-session-compaction.test.ts seedCompactableSession under keepRecentTokens 1.
 		name: "split-turn-prefix-only",
@@ -117,6 +132,49 @@ const scenarios: Array<{ name: string; messages: any[]; historyCount: number; pr
 		prefixCount: 0,
 		previousSummary: "## Goal\nearlier work",
 	},
+	{
+		name: "history-only-empty-reply",
+		messages: [user("first question"), assistant("first answer"), user("second question")],
+		historyCount: 2,
+		prefixCount: 0,
+		replies: [""],
+	},
+	{
+		name: "history-only-empty-reply-with-file-ops",
+		messages: [
+			user("please read the parser"),
+			assistant("reading it", [["r1", "read", { path: "/a/parser.go" }]], "toolUse"),
+			toolResult("r1", "read", "package parser"),
+			assistant("read it"),
+			user("next question"),
+		],
+		historyCount: 4,
+		prefixCount: 0,
+		replies: [""],
+	},
+	{ name: "split-turn-empty-replies", messages: turnWithTools(), historyCount: 4, prefixCount: 3, replies: ["", ""] },
+	{
+		// The turn after an empty compaction: its summary is the previous one.
+		name: "split-turn-previous-summary-empty",
+		messages: [user("Summarize this."), assistant("kept")],
+		historyCount: 0,
+		prefixCount: 1,
+		previousSummary: "",
+	},
+	{
+		name: "split-turn-with-history-and-previous-summary-empty",
+		messages: turnWithTools(),
+		historyCount: 4,
+		prefixCount: 3,
+		previousSummary: "",
+	},
+	{
+		name: "history-only-previous-summary-empty",
+		messages: [user("first question"), assistant("first answer"), user("second question")],
+		historyCount: 2,
+		prefixCount: 0,
+		previousSummary: "",
+	},
 ];
 
 const textOf = (content: unknown): string =>
@@ -128,21 +186,22 @@ const textOf = (content: unknown): string =>
 				.join("");
 
 const out = { version, reserveTokens, modelMaxTokens: model.maxTokens, scenarios: [] as unknown[] };
-for (const { name, messages, historyCount, prefixCount, previousSummary } of scenarios) {
+for (const { name, messages, historyCount, prefixCount, previousSummary, replies } of scenarios) {
 	const messagesToSummarize = messages.slice(0, historyCount);
 	const turnPrefixMessages = messages.slice(historyCount, historyCount + prefixCount);
 	const fileOps = createFileOps();
 	for (const message of [...messagesToSummarize, ...turnPrefixMessages]) extractFileOpsFromMessage(message, fileOps);
 
-	const requests: Array<{ systemPrompt: string; text: string; maxTokens: number }> = [];
+	const requests: Array<{ systemPrompt: string; text: string; maxTokens: number; reply: string }> = [];
 	const streamFn = (_model: unknown, context: { messages: Array<{ role: string; content: unknown }> }, options: { maxTokens: number }) => {
 		const system = context.messages.filter((message) => message.role === "system");
 		const users = context.messages.filter((message) => message.role === "user");
 		if (system.length !== 1 || users.length !== 1 || context.messages.length !== 2) {
 			throw new Error(`${name}: unexpected request shape ${JSON.stringify(context.messages.map((message) => message.role))}`);
 		}
-		requests.push({ systemPrompt: textOf(system[0].content), text: textOf(users[0].content), maxTokens: options.maxTokens });
-		const response = { ...assistant(`SUMMARY ${requests.length}`), timestamp: 0 };
+		const reply = replies?.[requests.length] ?? `SUMMARY ${requests.length + 1}`;
+		requests.push({ systemPrompt: textOf(system[0].content), text: textOf(users[0].content), maxTokens: options.maxTokens, reply });
+		const response = { ...assistant(reply), timestamp: 0 };
 		return { result: async () => response };
 	};
 
