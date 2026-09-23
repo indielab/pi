@@ -29,12 +29,19 @@ stopped.
   so it is not the thing under triage or review either. Pass this rule to every
   triage/review subagent you spawn; the 2026-08-11 cycle is on record because a
   reviewer nearly filed a phantom finding from it.
-- Read the pin from `docs/UPSTREAM.md`. Delta = first-parent main-line
-  changes `pin..origin/main` (a merged PR = one unit). If empty: record the
+- Read the pin from `docs/UPSTREAM.md`. Delta = the **union** range
+  `pin..origin/main` (`git log`, not `--first-parent`); report the first-parent
+  count beside it. Merged side branches carry real mainline commits: on
+  2026-09-23 the first-parent line ran along upstream's `durable` branch, and
+  both the pin and two ported commits were reachable only through merge second
+  parents. Judge a merge by diffing it against EACH parent. If empty: record the
   check date in UPSTREAM.md and stop.
 - If the delta contains a release tag: refresh the npm reference build
   (`npm i @earendil-works/pi-ai@<ver> @earendil-works/pi-coding-agent@<ver>`
   in the scratch dir) so parity review compares against what now ships.
+- Re-capture `coding/testdata/defaultmodels` at EVERY re-pin (npm build at a
+  release, `capture.mjs --src <sha>` between releases): it pins the whole
+  `defaultModelPerProvider` table, which has caused a miss twice.
 
 ## 1. Triage (skill: pi-triage)
 Run pi-triage over the whole delta (subagent). Append all rows to the ledger
@@ -70,6 +77,8 @@ but no Go home yet" is a Scope queue row, not a `decide`.
   never reached the scenarios** — a run that aborts in the pi capture or the Go
   build prints no scenario tally and is not a result. Exit 3 = a stale baseline
   entry to retire. See pi-parity-review §3.
+- `GOOS=linux GOARCH=386 go build ./...` — a constant that overflows a 32-bit `int`
+  fails to compile only there (`chord/delta` did until 2026-09-23).
 - `GOOS=windows go build ./... && GOOS=windows go vet ./...`. Unconditional, not
   gated on a `//go:build windows` file changing: the two constrained files are
   called from unconstrained code, so an ordinary `coding/` rename breaks the
