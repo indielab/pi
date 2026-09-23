@@ -23,7 +23,7 @@ func TestShouldCompactThreshold(t *testing.T) {
 	}
 }
 
-// TestFindCutPointSnapsForward pins pi's cutPoints algorithm (compaction.ts:380-448):
+// TestFindCutPointSnapsForward pins pi's findCutPoint (compaction.ts):
 // when the keep-budget crossing lands on a tool result, the cut snaps FORWARD to
 // the first valid cut point at or after it, so the boundary tool-result goes INTO
 // the summarized portion. (The previous Go implementation snapped backward,
@@ -439,10 +439,10 @@ func TestCompactionStaysCompactedDuringToolLoop(t *testing.T) {
 	}
 }
 
-// TestCompactionSplitTurnSummaries locks the TURN_PREFIX flow (pi compaction
-// ts:725-800): a cut landing mid-turn produces a history summary (0.8*reserve
-// budget) and a turn-prefix summary (TURN_PREFIX prompt, 0.5*reserve budget)
-// merged with pi's exact separator.
+// TestCompactionSplitTurnSummaries locks the TURN_PREFIX flow (pi compact): a
+// cut landing mid-turn produces a history summary (0.8*reserve budget) and a
+// turn-prefix summary (TURN_PREFIX prompt, 0.5*reserve budget) merged with pi's
+// exact separator.
 func TestCompactionSplitTurnSummaries(t *testing.T) {
 	sess, reg := newCompactionTestSession(t)
 
@@ -489,7 +489,7 @@ func TestCompactionSplitTurnSummaries(t *testing.T) {
 		t.Fatalf("turn-prefix maxTokens = %d, want 100", calls[1].maxTokens)
 	}
 
-	// Merged summary format (compaction.ts:800).
+	// Merged summary format (pi compact).
 	if !strings.Contains(checkpointText(t, out[0]), "HIST\n\n---\n\n**Turn Context (split turn):**\n\nPREFIX") {
 		t.Fatalf("merged split-turn summary missing:\n%s", checkpointText(t, out[0]))
 	}
@@ -537,7 +537,8 @@ func TestCompactionRoutingSessionIDForwarded(t *testing.T) {
 }
 
 // TestSummaryTextBlocksJoinedWithNewline locks I3: assistant text blocks of the
-// summarization response join with "\n" (pi compaction.js join("\n")).
+// summarization response join with "\n" (pi-ai contentText, as pi compact
+// reads the response).
 func TestSummaryTextBlocksJoinedWithNewline(t *testing.T) {
 	sess, reg := newCompactionTestSession(t)
 	reg.SetResponses([]providers.FauxResponseStep{
@@ -553,7 +554,7 @@ func TestSummaryTextBlocksJoinedWithNewline(t *testing.T) {
 }
 
 // TestUsageEstimateSkipsAbortedAndError locks I4: aborted/error assistant
-// messages are skipped when picking the usage anchor (pi compaction.ts:143-151).
+// messages are skipped when picking the usage anchor (pi getAssistantUsage).
 func TestUsageEstimateSkipsAbortedAndError(t *testing.T) {
 	valid := ai.AssistantMessage{
 		Content:    ai.ContentList{ai.TextContent{Text: "ok"}},
@@ -618,7 +619,7 @@ func TestUsageEstimateSkipsAllZeroUsage(t *testing.T) {
 
 // TestSummarizationPassesReasoningAndHeaders locks I7: the summarization request
 // carries the session's headers and — for reasoning models with a non-off
-// thinking level — the thinking level (pi compaction.ts:526-539).
+// thinking level — the thinking level (pi createSummarizationOptions).
 func TestSummarizationPassesReasoningAndHeaders(t *testing.T) {
 	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{
 		Models: []providers.FauxModelDefinition{{ID: "faux-r", Reasoning: true, ContextWindow: 200000}},

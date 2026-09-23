@@ -33,15 +33,15 @@ var DefaultCompactionSettings = CompactionSettings{
 	KeepRecentTokens: 20000,
 }
 
-// estimatedImageChars mirrors pi's ESTIMATED_IMAGE_CHARS (compaction.ts:228):
+// estimatedImageChars mirrors pi's ESTIMATED_IMAGE_CHARS (compaction.ts):
 // the per-image char estimate used by the token heuristic.
 const estimatedImageChars = 4800
 
-// toolResultMaxChars mirrors pi's TOOL_RESULT_MAX_CHARS (utils.ts:89): tool
+// toolResultMaxChars mirrors pi's TOOL_RESULT_MAX_CHARS (utils.ts): tool
 // results are truncated to this many characters when serialized for summarization.
 const toolResultMaxChars = 2000
 
-// summarizationSystemPrompt is pi's SUMMARIZATION_SYSTEM_PROMPT (utils.ts:156),
+// summarizationSystemPrompt is pi's SUMMARIZATION_SYSTEM_PROMPT (utils.ts),
 // the dedicated system prompt for the summarization request. Byte-for-byte; it
 // names a neutral "AI assistant" so non-coding agents summarize correctly too
 // (pi #5401, upstream 72fd91135).
@@ -82,7 +82,7 @@ Use this EXACT format:
 
 Keep each section concise. Preserve exact file paths, function names, and error messages.`
 
-// updateSummarizationPrompt is pi's UPDATE_SUMMARIZATION_PROMPT (compaction.ts:487),
+// updateSummarizationPrompt is pi's UPDATE_SUMMARIZATION_PROMPT (compaction.ts),
 // used when a previous compaction summary exists. Byte-for-byte from the npm build.
 const updateSummarizationPrompt = `The messages above are NEW conversation messages to incorporate into the existing summary provided in <previous-summary> tags.
 
@@ -124,7 +124,7 @@ Use this EXACT format:
 Keep each section concise. Preserve exact file paths, function names, and error messages.`
 
 // turnPrefixSummarizationPrompt is pi's TURN_PREFIX_SUMMARIZATION_PROMPT
-// (compaction.ts:964), used for the prefix of a split turn. Byte-for-byte.
+// (compaction.ts), used for the prefix of a split turn. Byte-for-byte.
 // Its continuation wording, with the Markdown boundary generateTurnPrefixSummary
 // puts around the conversation, avoids the reasoning-extraction false positive
 // that made Claude Fable 5.1 refuse split-turn summaries (pi #9652, upstream
@@ -240,10 +240,10 @@ func estimateContextTokensUsageAware(messages []agent.AgentMessage) int {
 		if !ok {
 			continue
 		}
-		// pi's getAssistantUsage (compaction.ts:143-151) returns the last valid
-		// usage: it skips aborted, error, AND all-zero-usage messages (upstream
-		// cd95c274 added the calculateContextTokens(usage) > 0 guard so a malformed
-		// all-zero usage response is not trusted as the anchor).
+		// pi's getAssistantUsage returns the last valid usage: it skips aborted,
+		// error, AND all-zero-usage messages (upstream cd95c274 added the
+		// calculateContextTokens(usage) > 0 guard so a malformed all-zero usage
+		// response is not trusted as the anchor).
 		if am.StopReason == ai.StopAborted || am.StopReason == ai.StopError {
 			continue
 		}
@@ -277,7 +277,7 @@ func shouldCompact(contextTokens, contextWindow int, s CompactionSettings) bool 
 	return contextTokens > contextWindow-s.ReserveTokens
 }
 
-// cutPointResult mirrors pi's CutPointResult (compaction.ts:361-368).
+// cutPointResult mirrors pi's CutPointResult (compaction.ts).
 type cutPointResult struct {
 	// firstKeptIndex is the index of the first message to keep.
 	firstKeptIndex int
@@ -346,7 +346,7 @@ func findCutPoint(messages []agent.AgentMessage, startIndex, endIndex, keepRecen
 		}
 	}
 
-	// Determine if this is a split turn (pi compaction.ts:438-447): a cut not on
+	// Determine if this is a split turn (pi findCutPoint): a cut not on
 	// a user message splits the turn started by the nearest preceding user message.
 	isUser := messages[cutIndex].MessageRole() == ai.RoleUser
 	turnStart := -1
@@ -437,7 +437,7 @@ type compactionState struct {
 	systemMessage *ai.SystemMessage
 	summary       string // cached summary text (includes the file-ops appendix, like pi)
 	// readFiles/modifiedFiles persist the previous compaction's file lists so the
-	// next compaction can merge them (pi extractFileOperations, compaction.ts:41-69).
+	// next compaction can merge them (pi extractFileOperations).
 	readFiles     []string
 	modifiedFiles []string
 }
@@ -540,8 +540,7 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 	}
 	history, turnPrefix := preparation.messagesToSummarize, preparation.turnPrefixMessages
 
-	// Generate summaries (pi compact, compaction.ts:747-815). Sequential, as
-	// upstream is since f58c1156.
+	// Generate summaries (pi compact). Sequential, as upstream is since f58c1156.
 	// generateSummary takes previous.summary as is: pi picks the update prompt on
 	// `previousSummary ? ... : ...`, and an empty summary is falsy like an
 	// absent one.
@@ -625,7 +624,7 @@ func (s *Session) compact(ctx context.Context, state *compactionState, messages 
 
 // summarize asks the model to produce a structured checkpoint of older messages
 // with no previous summary, appending the read/modified file lists computed from
-// those messages (pi compact, compaction.ts:803-819 for the non-split path).
+// those messages (the non-split path of pi compact).
 // Branch-summary-style callers carry no routing session ID (pi generateSummary's
 // optional sessionId stays undefined for them), so each request gets a fresh one.
 func (s *Session) summarize(ctx context.Context, older []agent.AgentMessage, reserveTokens int) string {
@@ -637,9 +636,8 @@ func (s *Session) summarize(ctx context.Context, older []agent.AgentMessage, res
 	return text + formatFileOperations(readFiles, modifiedFiles)
 }
 
-// generateSummary ports pi's generateSummaryWithUsage (compaction.ts:718-788):
-// the conversation is serialized to text, wrapped in
-// <conversation>...</conversation> (followed by
+// generateSummary ports pi's generateSummaryWithUsage: the conversation is
+// serialized to text, wrapped in <conversation>...</conversation> (followed by
 // <previous-summary>...</previous-summary> and the update prompt variant when a
 // previous summary is non-empty), and sent with the dedicated
 // SUMMARIZATION_SYSTEM_PROMPT and a capped maxTokens. Only this history request
@@ -661,12 +659,11 @@ func (s *Session) generateSummary(ctx context.Context, older []agent.AgentMessag
 	return s.completeSummarization(ctx, promptText, s.summaryMaxTokens(0.8, reserveTokens), sessionID)
 }
 
-// generateTurnPrefixSummary ports pi's generateTurnPrefixSummary
-// (compaction.ts:1098-1141): the prefix of a split turn is summarized with the
-// dedicated turn-prefix prompt and a smaller (0.5 * reserve) token budget. The
-// serialized prefix goes under a "# Conversation" heading and the prompt under
-// "# Instructions" — not the history request's <conversation> tags (pi #9652,
-// upstream d192bd6dc).
+// generateTurnPrefixSummary ports pi's generateTurnPrefixSummary: the prefix of
+// a split turn is summarized with the dedicated turn-prefix prompt and a smaller
+// (0.5 * reserve) token budget. The serialized prefix goes under a
+// "# Conversation" heading and the prompt under "# Instructions" — not the
+// history request's <conversation> tags (pi #9652, upstream d192bd6dc).
 func (s *Session) generateTurnPrefixSummary(ctx context.Context, messages []agent.AgentMessage, reserveTokens int, sessionID string) (string, bool) {
 	conversationText := serializeConversation(messagesAsLlm(messages))
 	promptText := "# Conversation\n" + conversationText + "\n\n# Instructions\n" + turnPrefixSummarizationPrompt
@@ -745,12 +742,12 @@ func summarizationFailed(reason ai.StopReason) bool {
 }
 
 // completeSummarization sends one summarization request (pi completeSummarization
-// + createSummarizationOptions, compaction.ts:526-552): the session's API key,
-// headers, and — when the model supports reasoning and the session's thinking
-// level is set and not off — the thinking level are passed through. Returns
-// ok=false where pi fails the summarization (see summarizationFailed); aborted
-// responses return the text blocks produced so far, joined with "\n" (pi
-// .map(c => c.text).join("\n")).
+// + createSummarizationOptions): the session's API key, headers, and — when the
+// model supports reasoning and the session's thinking level is set and not off —
+// the thinking level are passed through. Returns ok=false where pi fails the
+// summarization (see summarizationFailed); otherwise the response's text blocks
+// joined with "\n" (pi-ai contentText), which for an aborted response is the
+// text produced so far.
 func (s *Session) completeSummarization(ctx context.Context, promptText string, maxTokens int, sessionID string) (string, bool) {
 	summarizationMessages := []ai.Message{ai.NewUserText(promptText, nowMillisCoding())}
 

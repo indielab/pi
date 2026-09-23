@@ -7,7 +7,7 @@ import (
 )
 
 // TestEstimateImageChars verifies the per-image token estimate uses pi's
-// ESTIMATED_IMAGE_CHARS = 4800 (compaction.ts:228), exercised via contentChars
+// ESTIMATED_IMAGE_CHARS = 4800 (compaction.ts), exercised via contentChars
 // and EstimateMessageTokens.
 func TestEstimateImageChars(t *testing.T) {
 	if estimatedImageChars != 4800 {
