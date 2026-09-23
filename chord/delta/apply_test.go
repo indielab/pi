@@ -49,7 +49,8 @@ var pad = strings.Repeat("p", 400)
 
 // delta.test.ts "tracker: intent" → the apply halves of "records an append,
 // not a replacement" and "recovers truncate+append from a rolling window".
-// The ops are the ones upstream asserts its tracker flushes.
+// The ops are the ones upstream's tracker published at 64eeb82a4; the
+// immutable tracker's diff publishes the same (testdata "canonical strings").
 func TestApplyAppendAndRollingWindow(t *testing.T) {
 	got := applied(t, `{"s": "", "pad": "`+pad+`"}`, ops(t, `[["a", ["s"], "abcd"]]`))
 	wantTree(t, got, `{"s": "abcd", "pad": "`+pad+`"}`)
@@ -180,7 +181,8 @@ func TestApplyAdoptsReplacePayload(t *testing.T) {
 // delta.test.ts "apply and fan-out" → "folds a whole stream without a
 // base-batch branch". Apply handles "r" by replacing and tolerates a zero
 // target, so a consumer needs no IsBase check and no clone of its own. The
-// batches are the ones upstream's tracker flushes for the same writes.
+// batches are the ones upstream's tracker published at 64eeb82a4 for the
+// same writes.
 func TestApplyFoldsStreamWithoutBaseBranch(t *testing.T) {
 	var replica any
 	var err error
@@ -248,6 +250,26 @@ func TestApplyRejectsConstructorWalk(t *testing.T) {
 	_, err = ApplyImmutable(target, []Op{Delete{Path: Path{Key("__proto__")}}})
 	if !errors.As(err, &unsafe) {
 		t.Fatalf("immutable: got %v, want *UnsafePathError", err)
+	}
+}
+
+// delta.test.ts (upstream 9a139c62b) "validates immutable operations before
+// traversing the target": applyImmutable now runs assertValidOp before it
+// copies a single container, as Apply always did. pi at 9a139c62b, under node:
+// applyImmutable({}, [["s", ["missing", "__proto__"], 1]]) throws
+// UnsafePathError for "__proto__" — not the PathError that walking "missing"
+// would raise first — and [["s", ["__proto__", "w"], 1]] throws it too.
+func TestApplyImmutableValidatesBeforeWalking(t *testing.T) {
+	for _, path := range []Path{{Key("missing"), Key("__proto__")}, {Key("__proto__"), Key("w")}} {
+		target := map[string]any{}
+		_, err := ApplyImmutable(target, []Op{Set{Path: path, Value: 1.0}})
+		var unsafe *UnsafePathError
+		if !errors.As(err, &unsafe) || unsafe.Segment != Key("__proto__") {
+			t.Errorf("ApplyImmutable(%s): got %v, want *UnsafePathError for __proto__", path, err)
+		}
+		if len(target) != 0 {
+			t.Errorf("target written: %v", target)
+		}
 	}
 }
 

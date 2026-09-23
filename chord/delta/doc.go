@@ -1,15 +1,13 @@
 // Package delta synchronizes JSON values from an authoritative producer to an
 // ordered replica. It mirrors @earendil-works/chord/delta
-// (packages/chord/src/delta at 64eeb82a4) and depends on nothing else in the
+// (packages/chord/src/delta at 9a139c62b) and depends on nothing else in the
 // port: session storage, the runtime and the facet host consume it, and the
 // arrows point that way.
 //
 // A change is an Op: a JSON tuple for replacing, setting, deleting, updating a
-// string, splicing an array, or permuting an array. Producers use a tracker;
-// replicas apply the batches it flushes. The first flush is one Replace
-// carrying the complete value; each later flush is the ops that transform the
-// previously published value into the current one, or nothing when it has not
-// changed.
+// string, splicing an array, or permuting an array. A producer keeps its value
+// in a Tracker as immutable revisions and publishes the ops between one
+// revision and the next; a replica applies them.
 //
 // # Operation vocabulary
 //
@@ -53,78 +51,112 @@
 //
 // # Producing changes
 //
-// Read and mutate the tracked value through a State cursor: Set, Delete and
-// the array methods. Each mutation records an op, and ops are coalesced within
-// a flush window where that is cheap and safe — three writes to one property
-// publish as one set.
+// A Tracker holds one committed revision. A change is a transaction against
+// it:
 //
-// The op sequence is not canonical. Equivalent changes may use different
-// verbs, and mutations that cancel out can still produce a nonempty batch: a
-// flush guarantees convergence, not a minimal diff. Depend on the resulting
-// value, never on the exact tuples or their minimality. Any nonempty batch
-// advances a replicated-state sequence number and notifies subscribers, even
-// when applying it leaves the value deeply equal to the previous revision.
+//	change, err := tracker.BeginChange()
+//	state := change.State()                      // the root draft
+//	err = state.Set("status", "running")
+//	err = state.At("rows").Push(row)
+//	prepared, err := change.Prepare()            // or change.Abort()
+//	err = tracker.Adopt(prepared)                // commit
+//	publish(prepared.Ops())
 //
-// Replacing a whole object or array is valid and cheap: the outgoing value is
-// diffed against the incoming one at assignment time, so unchanged members
-// produce no ops and changed nested strings and arrays still ship as append,
-// truncate and splice. Do not assign large intermediate values repeatedly
-// before one flush — each assignment is diffed immediately.
+// Nothing is recorded while the draft is mutated. Prepare diffs the draft's
+// result against the committed revision (DiffRevisions), so the batch depends
+// only on the two revisions, never on the order or number of writes: three
+// writes to one property publish as one set, and writes that cancel out
+// publish nothing and leave the committed revision's identity intact. Adopt
+// commits exactly what was prepared, so a runtime can persist the batch before
+// it adopts, or drop it. PrepareReplace prepares a whole new value the same
+// way.
 //
-// Sorting, reversing, Fill and CopyWithin have no op of their own and publish
-// a snapshot of the array they permuted; cancelling one still publishes.
-// Front or middle insertion and removal are recorded directly, and edits
-// before and after an index-changing op stay ordered against the array
-// generation they addressed. A sufficiently long mutation window collapses to
-// a complete base batch automatically, which bounds accumulated log metadata
-// — not payload bytes or peak allocation — and trades one full snapshot for
-// an additional recovery point.
+// A tracker has at most one open change. Adopt refuses a prepared change from
+// another tracker, one already adopted or aborted, and one prepared against a
+// revision that is no longer committed.
 //
-// # State ownership
+// Strings publish as appends and front-truncations where they can; arrays as
+// splices and permutations anchored on the elements the two revisions share by
+// identity, then by value; objects as sets and deletes of the members that
+// differ. A batch of more than 4,096 ops, or a large one costing more than the
+// value itself, is published as one Replace. The op sequence is not canonical:
+// depend on the resulting value, never on the exact tuples.
 //
-// The value handed to Track is tracker-owned, as is anything later assigned
-// into it or inserted into one of its arrays. Mutating such a value outside a
-// cursor bypasses tracking and silently diverges from the replica.
+// # Drafts
 //
-// A cursor retained from tracked state stays correct across operations that
-// renumber it, and across the removal of the element it points at:
+// Upstream's draft is a Proxy: plain JavaScript reads, writes and array method
+// calls on a copy-on-write view. Go has no Proxy, so a *Draft is the handler
+// the Proxy would call, and each trap is a method:
 //
-//	held := tracker.State().At("items").At(2)
-//	tracker.State().At("items").Unshift(other)
-//	held.Set("name", "edited") // publishes items[3].name
+//	draft.key                        d.Get(key)  (value, present); a member object or array is a *Draft
+//	draft.key (an object or array)   d.At(key)   the member's draft, or nil
+//	draft.key = value                d.Set(key, value)
+//	delete draft.key                 d.Delete(key)
+//	key in draft                     d.Has(key)
+//	Object.keys(draft)               d.Keys()
+//	draft.length                     d.Len(); on an array, Get("length") too
+//	draft.length = n                 d.SetLen(n); on an array, Set("length", n) too
+//	draft.push(...items)             d.Push(items...)
+//	draft.pop() / draft.shift()      d.Pop() / d.Shift()   (value, present, err)
+//	draft.unshift(...items)          d.Unshift(items...)
+//	draft.splice(start, n, ...items) d.Splice(start, n, items...)
+//	draft.sort(compare)              d.Sort(compare); nil is JavaScript's default string order
+//	draft.reverse()                  d.Reverse()
+//	draft.fill(v, start, end)        d.Fill(v, start, end)
+//	draft.copyWithin(t, start, end)  d.CopyWithin(t, start, end)
 //
-//	tracker.State().At("items").Splice(3, 1)
-//	held.Set("name", "gone") // no longer in the tree: mutated, nothing published
+// A draft belongs to a container, not a position: reading a member twice
+// yields the same *Draft, and a held draft follows its container through
+// sorting, reversal and insertion — or out of the tree, after which writes
+// through it are dropped. Every value written is checked and deep-copied at
+// once; assigning a *Draft copies what that draft holds now. A draft is valid
+// until its change is prepared or aborted: after that a write returns
+// ErrDraftRevoked, and a read — which has no error to return — panics with it.
 //
-// One object may occupy several positions, and each live position is
-// published — but only positions the tracker has seen, which means a cursor
-// was taken at one of them before the other was assigned:
+// Where upstream throws a TypeError from a trap, the Go method returns an
+// error carrying upstream's text: deleting an array element, assigning a
+// value with no JSON form, or a cycle. An array grown with SetLen or written
+// past its end holds holes until they are filled, and Prepare fails if any
+// remain, as upstream's does; so does a named (non-index) property set on an
+// array, which JavaScript lets a draft array hold and never lets it drop.
 //
-//	first := tracker.State().At("items").At(0)
-//	tracker.State().Set("a", first.Value())
-//	first.Set("k", 1) // publishes both a.k and items[0].k
+// # Revisions
 //
-// Object identity is itself not replicated: a replica holds a distinct value
-// at each path, and a write to a MEMBER of an object at several positions is
-// published at the first of them only. Do not compare or hash replicas by
-// serialized key order either — object key insertion order is not replicated.
+// Every committed revision — Tracker.Value, and the Base and Value of each
+// Prepared — is immutable and shares its unchanged subtrees with the revisions
+// around it; the ops' payloads share them too. Upstream freezes them; in Go
+// they are immutable by contract, so never modify one. Track and PrepareReplace
+// import a deep copy of what they are handed: every number becomes a float64
+// (JavaScript's one number type), a nil map or slice an empty one, and an
+// object or array reachable twice becomes two independent values.
+//
+// Object identity is not replicated: a replica holds a distinct value at each
+// path. Nor is object key order. JavaScript enumerates an object's keys in
+// insertion order, a Go map in none, so the port diffs and marshals an object's
+// members in the order of an object whose keys were inserted sorted —
+// integer-like keys ascending, then the rest by UTF-16 code unit — and a batch
+// can list an object's member ops in a different order than pi would for the
+// same change. The replica is the same either way.
 //
 // # Paths and safety
 //
 // Path segments are Key and Index. Three keys are reserved as segments —
 // ReservedSegments — because a replica in pi applies parent[key] = value, and
 // a path is data: a Go producer emitting ["s", ["__proto__", "isAdmin"], true]
-// hands a TypeScript replica a prototype-pollution primitive. Producers, wire
-// validators and appliers all refuse them. As VALUE keys they are fine; a
-// value is written whole and never walked.
+// hands a TypeScript replica a prototype-pollution primitive. The diff never
+// emits one — an object holding a reserved key is published whole, by its
+// parent's path — and wire validators and appliers refuse them. As VALUE keys
+// they are fine; a value is written whole and never walked.
 //
 // # Streams
 //
 // An encoder and decoder are stateful. Use one pair per ordered stream: the
 // encoder assigns ids to paths used across batches, the decoder remembers the
 // definitions, and a Replace resets both dictionaries so replay can begin at
-// that batch with a fresh decoder. A decode or apply error terminates the
-// stream; discard its decoder and replica and recover from a later base batch.
+// that batch with a fresh decoder. A producer starts a stream — or starts it
+// over — with a base batch: []Op{Replace{Value: tracker.Value()}}. A decode or
+// apply error terminates the stream; discard its decoder and replica and
+// recover from a later base batch.
 //
 // # JSON in Go
 //
@@ -133,4 +165,7 @@
 // tuple's shape and the path. Every op marshals to its tuple; ParseOp and
 // ParseWireOp classify an any-tree, and UnmarshalOp and UnmarshalWireOp do the
 // same from bytes.
+//
+// A Tracker, its Changes and their drafts, an Encoder and a Decoder each
+// belong to one goroutine at a time; none is safe for concurrent use.
 package delta

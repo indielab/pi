@@ -241,8 +241,10 @@ func shallow(node any) any {
 // existing element or append exactly one past the end. Not an arbitrary cap:
 // a sparse array does not survive a JSON round trip, so a gap already produces
 // state a replica cannot match, and one op could otherwise allocate a
-// 4.29-billion-entry array. Growth stays possible and stays proportional: the
-// tracker emits it as a splice of explicit nulls whose size grows with the gap.
+// 4.29-billion-entry array. Growth stays possible and stays proportional: a
+// draft refuses to prepare an array with holes, so a producer grows one by
+// writing every new element, and the splice that publishes them grows with the
+// gap.
 func write(parent any, key Seg, path Path, fn func(current any) (any, error)) (any, error) {
 	switch p := parent.(type) {
 	case map[string]any:

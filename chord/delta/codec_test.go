@@ -115,20 +115,23 @@ func replayBoth(t *testing.T, initial string, batches, decoded [][]Op, want any)
 // One pair per stream. The table spans a whole subscription or file, so a
 // second consumer joining later needs its own encoder.
 
-// delta.test.ts "codec" → "round-trips a stream exactly", plus the wire pi
-// emits for that stream: inline on first use, define-then-reference on the
-// second, bare ids from then on.
+// delta.test.ts (upstream 64eeb82a4) "codec" → "round-trips a stream
+// exactly", plus the wire pi emits for that stream: inline on first use,
+// define-then-reference on the second, bare ids from then on. The batches are
+// the tracker's; testdata/upstream_delta.json's "codec-stream" scenario pins
+// them against pi at 9a139c62b.
 func TestCodecRoundTripsAStreamExactly(t *testing.T) {
 	initial := `{"a": {"deep": ""}, "b": {"deep": ""}}`
-	tr := tracked(t, initial)
+	tr := mustTrack(t, initial)
 	var batches [][]Op
 	for i := range 6 {
-		concat(tr.State().At("a"), "deep", "x"+string(rune('0'+i)))
-		concat(tr.State().At("b"), "deep", "y"+string(rune('0'+i)))
-		batches = append(batches, tr.Flush())
+		batches = append(batches, commit(t, tr, func(d *Draft) {
+			concat(t, d.At("a"), "deep", "x"+string(rune('0'+i)))
+			concat(t, d.At("b"), "deep", "y"+string(rune('0'+i)))
+		}))
 	}
 	decoded := roundTrip(t, batches)
-	replayBoth(t, initial, batches, decoded, tr.Target())
+	replayBoth(t, initial, batches, decoded, tr.Value())
 
 	// pi: the same six batches through one encoder.
 	var enc Encoder
@@ -375,20 +378,25 @@ func TestCodecEmptyBatches(t *testing.T) {
 	wantOps(t, decode(t, &dec, wireOps(t, `[["s", 0, 1]]`)), `[["s", ["a"], 1]]`)
 }
 
-// delta.test.ts "codec" → "survives recovery from the last base batch": the
-// wire pi writes for the stream, rebased at i == 5, and the replica a fresh
-// decoder rebuilds from that base batch on.
+// delta.test.ts (upstream 64eeb82a4) "codec" → "survives recovery from the
+// last base batch": the wire pi writes for the stream, rebased at i == 5, and
+// the replica a fresh decoder rebuilds from that base batch on. The immutable
+// tracker has no rebase; a producer publishes a base batch by sending the
+// committed revision as one Replace, as pico3's legacy tracker does
+// (upstream 9a139c62b).
 func TestCodecSurvivesRecoveryFromTheLastBaseBatch(t *testing.T) {
 	var enc Encoder
-	tr := tracked(t, `{"a": {"deep": ""}, "b": {"deep": ""}}`)
+	tr := mustTrack(t, `{"a": {"deep": ""}, "b": {"deep": ""}}`)
 	var wire [][]WireOp
 	for i := range 8 {
-		concat(tr.State().At("a"), "deep", "x"+string(rune('0'+i)))
-		concat(tr.State().At("b"), "deep", "y"+string(rune('0'+i)))
+		batch := commit(t, tr, func(d *Draft) {
+			concat(t, d.At("a"), "deep", "x"+string(rune('0'+i)))
+			concat(t, d.At("b"), "deep", "y"+string(rune('0'+i)))
+		})
 		if i == 5 {
-			tr.Rebase()
+			batch = []Op{Replace{Value: tr.Value()}}
 		}
-		wire = append(wire, enc.Encode(tr.Flush()))
+		wire = append(wire, enc.Encode(batch))
 	}
 	for i, want := range []string{
 		`[["a",["a","deep"],"x0"],["a",["b","deep"],"y0"]]`,
@@ -420,40 +428,46 @@ func TestCodecSurvivesRecoveryFromTheLastBaseBatch(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	wantJSON(t, replica, tr.Target())
+	wantJSON(t, replica, tr.Value())
 	wantJSON(t, replica, tree(t, `{"a": {"deep": "x0x1x2x3x4x5x6x7"}, "b": {"deep": "y0y1y2y3y4y5y6y7"}}`))
 }
 
-// delta.test.ts "codec" → "round-trips random streams", with the apply half
-// of the property on top: the replica built from the decoded batches is the
-// producer's value.
+// delta.test.ts (upstream 64eeb82a4) "codec" → "round-trips random streams",
+// with the apply half of the property on top: the replica built from the
+// decoded batches is the producer's value. A rebase is a base batch of the
+// committed revision, as above.
 func TestCodecRoundTripsRandomStreams(t *testing.T) {
 	rng := rand.New(rand.NewSource(0x5eed11))
 	initial := `{"a": {"p": "", "q": ""}, "b": [], "c": 0}`
 	for round := range 300 {
-		tr := tracked(t, initial)
+		tr := mustTrack(t, initial)
 		var batches [][]Op
 		for i := range 8 {
-			switch r := rng.Float64(); {
-			case r < 0.3:
-				concat(tr.State().At("a"), "p", "x")
-			case r < 0.5:
-				concat(tr.State().At("a"), "q", "y")
-			case r < 0.65:
-				tr.State().At("b").Push(float64(i))
-			case r < 0.8:
-				tr.State().Set("c", float64(i))
-			case r < 0.9:
-				tr.State().Delete("c")
-			default:
-				tr.Rebase()
+			r := rng.Float64()
+			ops := commit(t, tr, func(d *Draft) {
+				switch {
+				case r < 0.3:
+					concat(t, d.At("a"), "p", "x")
+				case r < 0.5:
+					concat(t, d.At("a"), "q", "y")
+				case r < 0.65:
+					_, err := d.At("b").Push(float64(i))
+					must(t, err)
+				case r < 0.8:
+					must(t, d.Set("c", float64(i)))
+				case r < 0.9:
+					must(t, d.Delete("c"))
+				}
+			})
+			if r >= 0.9 {
+				ops = []Op{Replace{Value: tr.Value()}}
 			}
-			if ops := tr.Flush(); len(ops) > 0 {
+			if len(ops) > 0 {
 				batches = append(batches, ops)
 			}
 		}
 		decoded := roundTrip(t, batches)
-		replayBoth(t, initial, batches, decoded, tr.Target())
+		replayBoth(t, initial, batches, decoded, tr.Value())
 		if t.Failed() {
 			t.Fatalf("round %d", round)
 		}
@@ -590,7 +604,7 @@ func TestCodecDecodeErrorReturnsNoOps(t *testing.T) {
 
 // The encoder does not validate: a reserved segment or a negative count
 // passes through as-is, and the decoder on the other side is what refuses
-// it. Encoding is a producer-side operation on a batch Flush already made.
+// it. Encoding is a producer-side operation on a batch a tracker prepared.
 func TestCodecEncoderDoesNotValidate(t *testing.T) {
 	var enc Encoder
 	wire := enc.Encode([]Op{Set{Path: Path{Key("__proto__")}, Value: 1}, Truncate{Path: Path{Key("s")}, Count: -1}})

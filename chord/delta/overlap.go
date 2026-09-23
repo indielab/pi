@@ -7,7 +7,7 @@ import (
 )
 
 // Upstream's defaults for overlap's probe and maxCandidates parameters. Its one
-// caller, the tracker, never passes either, so here they are constants.
+// caller, the revision diff, never passes either, so here they are constants.
 const (
 	// overlapProbe is the length, in UTF-16 code units, of the head of b
 	// tried first. A probe of length h can only find overlaps of at least h —
@@ -29,7 +29,7 @@ const (
 //
 // Always correct: the returned n satisfies a[len(a)-n:] == b[:n] in UTF-16
 // code units. It is not always maximal — the candidate budget can give up on
-// a repetitive tail — and the tracker turns 0 into a whole-value set.
+// a repetitive tail — and the diff turns 0 into a whole-value set.
 //
 // Every count is in UTF-16 code units: scan, the probe length and the result,
 // because that is the unit the "t" op carries and the unit pi's own overlap

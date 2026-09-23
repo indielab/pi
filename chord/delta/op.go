@@ -19,7 +19,7 @@ type tuple interface {
 	Validate() error
 }
 
-// Op is one decoded operation — the form track().flush() returns and apply()
+// Op is one decoded operation — the form a Prepared change carries and Apply
 // accepts. Tuples are the form on the wire and on disk; in memory each verb is
 // its own type:
 //
@@ -33,9 +33,9 @@ type tuple interface {
 //
 // Replace is the ONLY op that replaces a whole value. Set, Delete, Append and
 // Truncate cannot target the root: Validate forbids the empty path. Splice and
-// Permute may, and only because a tracked value can itself be an array — a
-// Splice that replaces its entire target is normalised to Replace or Set at
-// flush time, so a root Splice is always a partial modification.
+// Permute may, because a tracked value can itself be an array. Operation shape
+// is not canonical: an array may be emptied by either a replacement or a root
+// splice.
 //
 // Op knows nothing about the path dictionary. Interning, id references and
 // omitted paths live in WireOp and exist only between encode and decode.
@@ -327,8 +327,8 @@ func IsReplace[O tuple](op O) bool {
 	return false
 }
 
-// IsBase reports whether a batch begins with a replacement. Flush guarantees a
-// Replace is at index 0 or absent, so this is exact rather than a heuristic.
+// IsBase reports whether a batch begins with a replacement. DiffRevisions puts
+// a Replace at index 0 or nowhere, so this is exact rather than a heuristic.
 // It accepts either vocabulary because Replace encodes to itself.
 func IsBase[O tuple](ops []O) bool {
 	return len(ops) > 0 && IsReplace(ops[0])

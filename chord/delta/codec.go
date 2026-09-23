@@ -25,8 +25,9 @@ type Encoder struct {
 	next PathID
 }
 
-// Encode returns the wire form of one batch. It does not validate: a batch
-// from Flush is already well-formed, and a decoder checks what it receives.
+// Encode returns the wire form of one batch. It does not validate: a batch a
+// tracker prepared is already well-formed, and a decoder checks what it
+// receives.
 // A nil op is a programming error and panics.
 func (e *Encoder) Encode(ops []Op) []WireOp {
 	// Arity omission is scoped to a batch. Letting it span batches would make

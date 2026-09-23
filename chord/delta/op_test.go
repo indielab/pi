@@ -395,8 +395,8 @@ func TestReservedNameAllowedAsValueKey(t *testing.T) {
 	}
 }
 
-// isBase is exact rather than heuristic: flush guarantees r is at index 0 or
-// absent. It works unchanged on either vocabulary because r encodes to itself.
+// isBase is exact rather than heuristic: the diff puts r at index 0 or
+// nowhere. It works unchanged on either vocabulary because r encodes to itself.
 func TestIsBase(t *testing.T) {
 	if !IsBase([]Op{Replace{Value: 1}, Set{Path: Path{Key("a")}, Value: 2}}) {
 		t.Error("batch opening with r is not base")
@@ -472,7 +472,7 @@ func TestOpJSONRoundTrip(t *testing.T) {
 		Replace{Value: map[string]any{"a": []any{float64(1), "x", nil, true}}},
 		Set{Path: Path{Key("a"), Index(3)}, Value: float64(1.5)},
 		Delete{Path: Path{Key("a\x00b")}},
-		Append{Path: Path{Key("s")}, Text: "  tail"},
+		Append{Path: Path{Key("s")}, Text: "\u2028 tail"},
 		Truncate{Path: Path{Key("s")}, Count: 3},
 		Splice{Path: Path{}, Index: 1, Remove: 2, Items: []any{map[string]any{"k": "v"}}},
 	}
