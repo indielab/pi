@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1030,6 +1031,67 @@ func TestResponsesServiceTierPricing(t *testing.T) {
 				t.Fatalf("cost total %v want %v", final.Usage.Cost.Total, c.want)
 			}
 		})
+	}
+}
+
+// serviceTierCaptureFile is written by testdata/service-tier/capture.mjs, which
+// streams the published pi-ai build's openai-responses adapter.
+const serviceTierCaptureFile = "testdata/service-tier/service-tier-0.87.1.json"
+
+// TestResponsesServiceTierPricingMatchesPi replays each captured stream at the
+// captured rates and requires pi's exact usage.cost doubles, not a tolerance:
+// the cost is persisted in sessions and sent over the protocol. The gpt-5.5
+// priority rows (x2.5) are usages where a fused multiply-add in the re-added
+// total (one rounding where V8 rounds twice) moves the last bit, on a target
+// the compiler fuses on (arm64; amd64 at GOAMD64=v3).
+func TestResponsesServiceTierPricingMatchesPi(t *testing.T) {
+	data, err := os.ReadFile(serviceTierCaptureFile)
+	if err != nil {
+		t.Fatalf("read %s: %v (regenerate it with testdata/service-tier/capture.mjs)", serviceTierCaptureFile, err)
+	}
+	var capture struct {
+		Rows []struct {
+			Model       string           `json:"model"`
+			Rates       ai.ModelCost     `json:"rates"`
+			ServiceTier string           `json:"serviceTier"`
+			SSE         string           `json:"sse"`
+			Cost        ai.CostBreakdown `json:"cost"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatalf("decode %s: %v", serviceTierCaptureFile, err)
+	}
+	if len(capture.Rows) == 0 {
+		t.Fatalf("%s has no rows", serviceTierCaptureFile)
+	}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	for i, row := range capture.Rows {
+		provider, id, _ := strings.Cut(row.Model, "/")
+		base := ai.GetModel(provider, id)
+		if base == nil {
+			t.Fatalf("row %d: catalog has no %s", i, row.Model)
+		}
+		model := *base
+		model.Cost = row.Rates
+		final := runResponsesSSEOpts(t, &model, req, row.SSE, &OpenAIResponsesOptions{ServiceTier: row.ServiceTier})
+		if final.StopReason != ai.StopStop {
+			t.Fatalf("row %d: stop %s (%s)", i, final.StopReason, final.ErrorMessage)
+		}
+		got := final.Usage.Cost
+		for _, f := range []struct {
+			name      string
+			got, want float64
+		}{
+			{"input", got.Input, row.Cost.Input},
+			{"output", got.Output, row.Cost.Output},
+			{"cacheRead", got.CacheRead, row.Cost.CacheRead},
+			{"cacheWrite", got.CacheWrite, row.Cost.CacheWrite},
+			{"total", got.Total, row.Cost.Total},
+		} {
+			if math.Float64bits(f.got) != math.Float64bits(f.want) {
+				t.Errorf("row %d %s serviceTier %q: cost.%s = %v, pi %v", i, row.Model, row.ServiceTier, f.name, f.got, f.want)
+			}
+		}
 	}
 }
 

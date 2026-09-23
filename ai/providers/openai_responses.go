@@ -1393,10 +1393,13 @@ func applyResponsesServiceTierPricing(usage *ai.Usage, serviceTier string, model
 	if multiplier == 1 {
 		return
 	}
-	usage.Cost.Input *= multiplier
-	usage.Cost.Output *= multiplier
-	usage.Cost.CacheRead *= multiplier
-	usage.Cost.CacheWrite *= multiplier
+	// Explicit conversions keep the compiler from fusing each product into the
+	// total's adds (an FMA rounds once where V8 rounds twice); see
+	// ai.CalculateCost.
+	usage.Cost.Input = float64(usage.Cost.Input * multiplier)
+	usage.Cost.Output = float64(usage.Cost.Output * multiplier)
+	usage.Cost.CacheRead = float64(usage.Cost.CacheRead * multiplier)
+	usage.Cost.CacheWrite = float64(usage.Cost.CacheWrite * multiplier)
 	usage.Cost.Total = usage.Cost.Input + usage.Cost.Output + usage.Cost.CacheRead + usage.Cost.CacheWrite
 }
 
