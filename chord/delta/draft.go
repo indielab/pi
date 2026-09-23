@@ -69,6 +69,47 @@ func isHole(v any) bool {
 	return ok
 }
 
+// undefinedSlot is an array slot holding JavaScript's undefined: what
+// upstream's spliceArray leaves where it moves a hole, which it does when
+// Unshift or Splice inserts more than maxNativeInsert items. It reads as
+// missing, as a hole does, but it is an own key (Keys and Has see it), the
+// default sort puts it between the values and the holes, and finishing a
+// change whose array still has one fails with the dense check's second text.
+type undefinedValue struct{}
+
+var undefinedSlot any = undefinedValue{}
+
+// isEmptySlot reports whether an array slot holds no value: a hole or an
+// undefined slot.
+func isEmptySlot(v any) bool {
+	switch v.(type) {
+	case holeValue, undefinedValue:
+		return true
+	}
+	return false
+}
+
+// maxNativeInsert is upstream's MAX_NATIVE_ARRAY_INSERT_ITEMS: up to this many
+// inserted items, Unshift and Splice run the native method, which moves a
+// hole as a hole; past it they run spliceArray, which moves it into an
+// undefined slot.
+const maxNativeInsert = 10_000
+
+// definedMoves is spliceArray's move for the slots it shifts: every one is
+// defined afresh, so a hole becomes an undefined slot. The native methods move
+// slots as they are, and so does a splice that inserts as many items as it
+// removes, since nothing moves.
+func definedMoves(moved []any, inserted, removed int) {
+	if inserted <= maxNativeInsert || inserted == removed {
+		return
+	}
+	for i, v := range moved {
+		if isHole(v) {
+			moved[i] = undefinedSlot
+		}
+	}
+}
+
 func newTransaction(base any) *transaction {
 	tx := &transaction{active: true, states: map[identity]*draftState{}, fresh: map[identity]bool{}}
 	tx.root = tx.stateFor(base)
@@ -275,18 +316,22 @@ func (s *draftState) checkDense(rules cloneRules) error {
 // must number exactly its length plus one, or it is not "dense and contain
 // only indexed entries"; then no index may be empty, or it does not "contain
 // enumerable indexed data properties with defined values". The second text
-// needs as many named properties as holes.
+// needs as many named properties as holes, or an undefined slot, which is an
+// own key without a defined value.
 func denseError(xs []any, named map[string]any, rules cloneRules) error {
-	holes := 0
+	holes, undefineds := 0, 0
 	for _, v := range xs {
-		if isHole(v) {
+		switch v.(type) {
+		case holeValue:
 			holes++
+		case undefinedValue:
+			undefineds++
 		}
 	}
 	switch {
 	case len(named) != holes:
 		return &ValueError{Message: rules.dense}
-	case holes > 0:
+	case holes+undefineds > 0:
 		return &ValueError{Message: rules.defined}
 	}
 	return nil
@@ -314,7 +359,7 @@ func shallowEqual(left, right any) bool {
 			return false
 		}
 		for i, v := range l {
-			if isHole(r[i]) || !objectIs(v, r[i]) {
+			if isEmptySlot(v) || isEmptySlot(r[i]) || !objectIs(v, r[i]) {
 				return false
 			}
 		}
@@ -409,7 +454,7 @@ func (d *Draft) Len() int {
 }
 
 // Keys is Object.keys: an object's keys, integer-like first; or an array's
-// indices that hold a value, as strings.
+// indices that are not holes (an undefined slot is one), as strings.
 func (d *Draft) Keys() []string {
 	s := d.read()
 	if s == nil {
@@ -431,8 +476,18 @@ func (d *Draft) Keys() []string {
 }
 
 // Has reports whether the member exists: an own property, or an array index
-// that holds a value ("length" included, as JavaScript's `in` has it).
+// that is not a hole ("length" included, as JavaScript's `in` has it). An
+// undefined slot exists, though Get reads nothing there.
 func (d *Draft) Has(key any) bool {
+	if s := d.read(); s != nil {
+		if c, ok := s.current().([]any); ok {
+			if seg, err := parseSeg(key); err == nil {
+				if i, ok := arrayIndexOf(seg); ok {
+					return i < len(c) && !isHole(c[i])
+				}
+			}
+		}
+	}
 	_, ok := d.Get(key)
 	return ok
 }
@@ -467,7 +522,7 @@ func (d *Draft) Get(key any) (any, bool) {
 			}
 			return s.txn.draftValue(v), true
 		}
-		if i >= len(c) || isHole(c[i]) {
+		if i >= len(c) || isEmptySlot(c[i]) {
 			return nil, false
 		}
 		return s.txn.draftValue(c[i]), true
@@ -568,7 +623,7 @@ func (d *Draft) Set(key any, value any) error {
 			s.named[k] = stored
 			return nil
 		}
-		if i < len(c) && !isHole(c[i]) && objectIs(c[i], stored) {
+		if i < len(c) && !isEmptySlot(c[i]) && objectIs(c[i], stored) {
 			return nil
 		}
 		xs := s.ensureCopy().([]any)
@@ -701,7 +756,7 @@ func (d *Draft) Pop() (value any, ok bool, err error) {
 	last := xs[len(xs)-1]
 	xs[len(xs)-1] = nil
 	s.own = xs[:len(xs)-1]
-	if isHole(last) {
+	if isEmptySlot(last) {
 		return nil, false, nil
 	}
 	return s.txn.draftValue(last), true, nil
@@ -716,7 +771,7 @@ func (d *Draft) Shift() (value any, ok bool, err error) {
 	}
 	first := xs[0]
 	s.own = slices.Delete(xs, 0, 1)
-	if isHole(first) {
+	if isEmptySlot(first) {
 		return nil, false, nil
 	}
 	return s.txn.draftValue(first), true, nil
@@ -732,6 +787,7 @@ func (d *Draft) Unshift(items ...any) (int, error) {
 	if err != nil {
 		return 0, err
 	}
+	definedMoves(xs, len(stored), 0)
 	s.own = slices.Insert(xs, 0, stored...)
 	return len(xs) + len(stored), nil
 }
@@ -753,10 +809,11 @@ func (d *Draft) Splice(start, deleteCount int, items ...any) ([]any, error) {
 	}
 	removed := make([]any, remove)
 	for i, v := range xs[start : start+remove] {
-		if !isHole(v) {
+		if !isEmptySlot(v) {
 			removed[i] = s.txn.draftValue(v)
 		}
 	}
+	definedMoves(xs[start+remove:], len(stored), remove)
 	s.own = splice(xs, start, remove, stored)
 	return removed, nil
 }
@@ -774,14 +831,21 @@ func relativeIndex(i, length int) int {
 // returns them — containers as drafts, which it may read and even write. A nil
 // cmp is JavaScript's default order: by each element's String(), in UTF-16
 // code units; it fails, leaving the array as it was, when an element has no
-// string form (an object with a "toString" member — see jsString). Holes sort
-// last.
+// string form (an object with a "toString" member — see jsString). As in
+// JavaScript, undefined slots follow the values and holes come last; neither
+// reaches cmp.
 func (d *Draft) Sort(cmp func(a, b any) int) error {
 	s, xs, err := d.array("Sort")
 	if err != nil {
 		return err
 	}
-	present := slices.DeleteFunc(slices.Clone(xs), isHole)
+	present := slices.DeleteFunc(slices.Clone(xs), isEmptySlot)
+	undefineds := 0
+	for _, v := range xs {
+		if _, ok := v.(undefinedValue); ok {
+			undefineds++
+		}
+	}
 	if cmp == nil {
 		if err := s.txn.sortByString(present); err != nil {
 			return err
@@ -793,7 +857,11 @@ func (d *Draft) Sort(cmp func(a, b any) int) error {
 	}
 	n := copy(xs, present)
 	for i := n; i < len(xs); i++ {
-		xs[i] = hole
+		if i < n+undefineds {
+			xs[i] = undefinedSlot
+		} else {
+			xs[i] = hole
+		}
 	}
 	return nil
 }
@@ -883,7 +951,7 @@ func containerString(c any, named map[string]any, through *transaction) (string,
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			if item == nil || isHole(item) {
+			if item == nil || isEmptySlot(item) {
 				continue
 			}
 			s, err := jsString(item, through)
@@ -1074,7 +1142,7 @@ func (d *Draft) CopyWithin(target, start, end int) error {
 	source := slices.Clone(xs[from : from+count])
 	c := s.txn.cloner()
 	for offset, item := range source {
-		if isHole(item) {
+		if isEmptySlot(item) {
 			return &ValueError{Message: undefinedMessage}
 		}
 		stored, err := c.clone(item, s.txn)

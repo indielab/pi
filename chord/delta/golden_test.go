@@ -28,6 +28,7 @@ type goldenFile struct {
 	Diffs        []goldenBatch    `json:"diffs"`
 	Scenarios    []goldenScript   `json:"scenarios"`
 	Generated    []goldenBatch    `json:"generated"`
+	Probes       []goldenProbe    `json:"probes"`
 	Fuzz         []goldenFuzzSeed `json:"fuzz"`
 	Differential []goldenScript   `json:"differential"`
 }
@@ -89,9 +90,9 @@ func golden(t *testing.T) *goldenFile {
 		t.Fatalf("testdata/upstream_delta.json: %v (regenerate it with testdata/capture.mts)", err)
 	}
 	// A table that can become empty is not a test.
-	if len(g.Diffs) == 0 || len(g.Scenarios) == 0 || len(g.Generated) == 0 || len(g.Fuzz) == 0 || len(g.Differential) == 0 {
-		t.Fatalf("testdata/upstream_delta.json has an empty section: %d diffs, %d scenarios, %d generated, %d fuzz, %d differential",
-			len(g.Diffs), len(g.Scenarios), len(g.Generated), len(g.Fuzz), len(g.Differential))
+	if len(g.Diffs) == 0 || len(g.Scenarios) == 0 || len(g.Generated) == 0 || len(g.Probes) == 0 || len(g.Fuzz) == 0 || len(g.Differential) == 0 {
+		t.Fatalf("testdata/upstream_delta.json has an empty section: %d diffs, %d scenarios, %d generated, %d probes, %d fuzz, %d differential",
+			len(g.Diffs), len(g.Scenarios), len(g.Generated), len(g.Probes), len(g.Fuzz), len(g.Differential))
 	}
 	return g
 }

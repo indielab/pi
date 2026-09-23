@@ -119,6 +119,10 @@
 // past its end holds holes until they are filled, and Prepare fails if any
 // remain, as upstream's does; so does a named (non-index) property set on an
 // array, which JavaScript lets a draft array hold and never lets it drop.
+// Unshift or Splice inserting more than 10,000 items turns the holes it moves
+// into slots holding JavaScript's undefined, as upstream's fallback does: Get
+// reads nothing there, but Has and Keys see them, and Prepare fails on them
+// too.
 //
 // # Revisions
 //

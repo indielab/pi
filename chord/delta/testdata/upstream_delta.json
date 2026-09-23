@@ -1041,6 +1041,101 @@
 		{"name":"draft-unshift-100000","opsHash":"3bc8bb66222afff336e7a64e941e75b275e67cd208b355689023b057e8a27fce","opsBytes":588913,"opsHead":"[[\"r\",{\"values\":[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37","valueHash":"5e0d747b73a4d89a931989532589dc181df4cc7ab0937983a00cb95d6c8458a0"},
 		{"name":"draft-splice-100000","opsHash":"5eba014a8adc369e2cb45b930ab32562d50c82c610dbda022ee02ec824e442b8","opsBytes":588913,"opsHead":"[[\"r\",{\"values\":[-1,0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36","valueHash":"2899f5881c431bf0d0e3e0561692e92e3267a8e83d5b92298c9a1810dda61308"}
 	],
+	"probes": [
+		{
+			"name": "splice 10,001 items",
+			"stepError": null,
+			"length": 10004,
+			"keys": 10004,
+			"stringHash": "53559d0a9bff3cff4a93b593a73ceb4db10fb839a5a47b053757eb5824257041",
+			"slots": [{"index":10003,"has":true,"undefined":true},{"index":10002,"has":true,"undefined":true},{"index":10001,"has":true,"value":1},{"index":10000,"has":true,"value":10000}],
+			"prepareError": "Draft arrays must contain enumerable indexed data properties with defined values"
+		},
+		{
+			"name": "splice 10,000 items",
+			"stepError": null,
+			"length": 10003,
+			"keys": 10001,
+			"stringHash": "afa1e0889963adaf0b1d8fc9e4a01f40db9660c0ade36ec7f1f1ced1effd2f4c",
+			"slots": [{"index":10002,"has":false,"undefined":true},{"index":10001,"has":false,"undefined":true},{"index":10000,"has":true,"value":1},{"index":9999,"has":true,"value":9999}],
+			"prepareError": "Draft arrays must be dense and contain only indexed entries"
+		},
+		{
+			"name": "unshift 10,001 items",
+			"stepError": null,
+			"length": 10004,
+			"keys": 10004,
+			"stringHash": "53559d0a9bff3cff4a93b593a73ceb4db10fb839a5a47b053757eb5824257041",
+			"slots": [{"index":10003,"has":true,"undefined":true},{"index":10002,"has":true,"undefined":true},{"index":10001,"has":true,"value":1},{"index":10000,"has":true,"value":10000}],
+			"prepareError": "Draft arrays must contain enumerable indexed data properties with defined values"
+		},
+		{
+			"name": "unshift 10,000 items",
+			"stepError": null,
+			"length": 10003,
+			"keys": 10001,
+			"stringHash": "afa1e0889963adaf0b1d8fc9e4a01f40db9660c0ade36ec7f1f1ced1effd2f4c",
+			"slots": [{"index":10002,"has":false,"undefined":true},{"index":10001,"has":false,"undefined":true},{"index":10000,"has":true,"value":1},{"index":9999,"has":true,"value":9999}],
+			"prepareError": "Draft arrays must be dense and contain only indexed entries"
+		},
+		{
+			"name": "splice 10,001 items over a longer run",
+			"stepError": null,
+			"length": 15006,
+			"keys": 15006,
+			"stringHash": "f5108dbcc7a33040f823417ac593543a9ff7bc2f0440926c7cac1bb688627eb9",
+			"slots": [{"index":0,"has":true,"value":1},{"index":1,"has":true,"value":0},{"index":10000,"has":true,"value":9999},{"index":10001,"has":true,"value":10000},{"index":10002,"has":true,"undefined":true},{"index":15004,"has":true,"undefined":true},{"index":15005,"has":true,"value":2}],
+			"prepareError": "Draft arrays must contain enumerable indexed data properties with defined values"
+		},
+		{
+			"name": "splice 10,001 items replacing as many",
+			"stepError": null,
+			"length": 10005,
+			"keys": 10003,
+			"stringHash": "b6b0c8a4fa31f0c4faa0819afeab8b936a4a926153160ae3a262534a146d75a9",
+			"slots": [{"index":0,"has":true,"value":1},{"index":1,"has":true,"value":0},{"index":10002,"has":false,"undefined":true},{"index":10003,"has":false,"undefined":true},{"index":10004,"has":true,"value":2}],
+			"prepareError": "Draft arrays must be dense and contain only indexed entries"
+		},
+		{
+			"name": "default sort",
+			"stepError": null,
+			"length": 10006,
+			"keys": 10004,
+			"stringHash": "8bea0142e796d17deb09ca4cb16d87152f9f8a55af3a474444d4d4b7e284e8bf",
+			"slots": [{"index":0,"has":true,"value":-1},{"index":10000,"has":true,"value":9997},{"index":10001,"has":true,"value":9998},{"index":10002,"has":true,"value":9999},{"index":10003,"has":true,"undefined":true},{"index":10004,"has":false,"undefined":true},{"index":10005,"has":false,"undefined":true}],
+			"prepareError": "Draft arrays must be dense and contain only indexed entries"
+		},
+		{
+			"name": "comparator sort",
+			"stepError": null,
+			"length": 10006,
+			"keys": 10004,
+			"stringHash": "989ddcfaa36e8b20895f66e1dc0100f90607874540b816358615aac2eb2ec157",
+			"slots": [{"index":0,"has":true,"value":10000},{"index":10000,"has":true,"value":1},{"index":10001,"has":true,"value":0},{"index":10002,"has":true,"value":-1},{"index":10003,"has":true,"undefined":true},{"index":10004,"has":false,"undefined":true},{"index":10005,"has":false,"undefined":true}],
+			"prepareError": "Draft arrays must be dense and contain only indexed entries"
+		},
+		{
+			"name": "shift, pop and reverse",
+			"stepError": null,
+			"length": 10004,
+			"keys": 10003,
+			"stringHash": "ca098a1d6f374028ef130663d4ffa283c9edb59b74be38811fcc071585fd28d5",
+			"slots": [{"index":0,"has":true,"value":8},{"index":1,"has":false,"undefined":true},{"index":2,"has":true,"value":7},{"index":3,"has":true,"undefined":true},{"index":4,"has":true,"undefined":true},{"index":5,"has":true,"value":10000},{"index":10003,"has":true,"value":2}],
+			"prepareError": "Draft arrays must be dense and contain only indexed entries"
+		},
+		{
+			"name": "copyWithin",
+			"stepError": "Assigned values cannot be undefined",
+			"length": 10004,
+			"keys": 10004,
+			"stringHash": "53559d0a9bff3cff4a93b593a73ceb4db10fb839a5a47b053757eb5824257041",
+			"slots": [{"index":0,"has":true,"value":0},{"index":10002,"has":true,"undefined":true},{"index":10003,"has":true,"undefined":true}],
+			"prepareError": "Draft arrays must contain enumerable indexed data properties with defined values"
+		},
+		{"name":"fill and set","stepError":null,"length":10004,"keys":10004,"stringHash":"5e084c7d1fd12186b0174d2349f86321b9922a2ca91b2b2c8b88d791810825c8","slots":[{"index":10001,"has":true,"value":1},{"index":10002,"has":true,"value":5},{"index":10003,"has":true,"value":6}],"prepareError":null},
+		{"name":"pop of an undefined slot","stepError":null,"returned":{"undefined":true},"length":10003,"keys":10003,"stringHash":"882b61ed087a7e59d2afd2ae137cb49933bd36b0f367489ea3ccbde9d5639def","slots":[{"index":10001,"has":true,"value":1},{"index":10002,"has":true,"undefined":true}],"prepareError":"Draft arrays must contain enumerable indexed data properties with defined values"},
+		{"name":"shift of an undefined slot","stepError":null,"returned":{"undefined":true},"length":10003,"keys":10003,"stringHash":"c69dd02074d08ad3ba4ce2e1dfcc79d5bafb28144f07443c94abce48f13525b0","slots":[{"index":0,"has":true,"undefined":true},{"index":1,"has":true,"value":1}],"prepareError":"Draft arrays must contain enumerable indexed data properties with defined values"}
+	],
 	"fuzz": [
 		{"seed":1,"hash":"4dd487be44486f6f465101f2e051dc4c744d205be4f428f921c011e395a97a3f","orderDiffers":12},
 		{"seed":2,"hash":"ad9afe01565ec1ae2375cb21590fb556254b3bfaaabcd3eadb9f2d250704babd","orderDiffers":12},

@@ -463,7 +463,7 @@ func (c *cloner) container(v any, tx *transaction) (any, error) {
 			c.fresh[id] = true
 		}
 		for i, item := range x {
-			if isHole(item) {
+			if isEmptySlot(item) {
 				return nil, &ValueError{Message: c.rules.dense}
 			}
 			clone, err := c.clone(item, tx)

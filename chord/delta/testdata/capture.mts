@@ -30,6 +30,8 @@
 //     values, or the error message — is recorded.
 //   - "fuzz": state-fuzz.test.ts's randomized revisions, seed by seed, as a
 //     hash of every step's ops and value.
+//   - "probes": draft arrays too large to record after pi's spliceArray has
+//     moved holes into undefined slots, recorded as a summary each.
 //   - "differential": random scripts over a richer document and every draft
 //     operation, generated here against pi's live draft and recorded whole, so
 //     Go replays exactly what pi ran.
@@ -1334,6 +1336,131 @@ const generated: unknown[] = [];
 		const prepared = change.prepare();
 		generated.push({ name: `draft-${method}-100000`, ...batch(prepared.ops), valueHash: hash(canon(prepared.value)) });
 	}
+
+}
+
+// ─── Probes: undefined slots ─────────────────────────────────────────────────
+//
+// Past MAX_NATIVE_ARRAY_INSERT_ITEMS (10,000) inserted items, unshift and
+// splice move the array's elements with spliceArray, which defines every moved
+// slot: a hole it moves becomes an own property holding undefined. Such a slot
+// reads as undefined like a hole, but `in` and Object.keys see it, String()
+// joins it as "", the default sort puts it after the values and before the
+// holes (and never hands it to a comparator), copyWithin refuses to copy it,
+// native shift, splice, unshift and reverse move it as it is, and the dense
+// check fails on it with its second text. At 10,000 items the native method
+// runs, and holes stay holes. The inputs are too large to record, so each probe
+// records the draft array afterwards: its length, how many keys it has, `in`
+// and the value at some indices (negative ones count from the end), a hash of
+// its String(), what the steps threw (and returned, for the steps that return
+// {returned}), and what preparing it throws.
+const probes: unknown[] = [];
+{
+	const insertItems = (n: number) => Array.from({ length: n }, (_, value) => value);
+	const spliceArgs = (start: number, remove: number, n: number) => [start, remove, ...insertItems(n)];
+	const probe = (name: string, build: (v: any) => void | { returned: unknown }, at: number[]) => {
+		const t = track({ v: [1] });
+		const change = t.beginChange();
+		const v = change.state.v;
+		const out: Record<string, unknown> = { name };
+		try {
+			const result = build(v);
+			out.stepError = null;
+			if (result !== undefined) {
+				out.returned = result.returned === undefined ? { undefined: true } : { value: result.returned };
+			}
+		} catch (error) {
+			out.stepError = (error as Error).message;
+		}
+		out.length = v.length;
+		out.keys = Object.keys(v).length;
+		out.stringHash = hash(String(v));
+		out.slots = at.map((position) => {
+			const index = position < 0 ? v.length + position : position;
+			const value = v[index];
+			return { index, has: index in v, ...(value === undefined ? { undefined: true } : { value }) };
+		});
+		try {
+			change.prepare();
+			out.prepareError = null;
+		} catch (error) {
+			out.prepareError = (error as Error).message;
+		}
+		probes.push(out);
+	};
+	probe("splice 10,001 items", (v) => {
+		v.length = 3;
+		Reflect.apply(v.splice, v, spliceArgs(0, 0, 10_001));
+	}, [-1, -2, -3, -4]);
+	probe("splice 10,000 items", (v) => {
+		v.length = 3;
+		Reflect.apply(v.splice, v, spliceArgs(0, 0, 10_000));
+	}, [-1, -2, -3, -4]);
+	probe("unshift 10,001 items", (v) => {
+		v.length = 3;
+		Reflect.apply(v.unshift, v, insertItems(10_001));
+	}, [-1, -2, -3, -4]);
+	probe("unshift 10,000 items", (v) => {
+		v.length = 3;
+		Reflect.apply(v.unshift, v, insertItems(10_000));
+	}, [-1, -2, -3, -4]);
+	probe("splice 10,001 items over a longer run", (v) => {
+		v.length = 20_005;
+		v[20_004] = 2;
+		Reflect.apply(v.splice, v, spliceArgs(1, 15_000, 10_001));
+	}, [0, 1, 10_000, 10_001, 10_002, -2, -1]);
+	probe("splice 10,001 items replacing as many", (v) => {
+		v.length = 10_005;
+		v[10_004] = 2;
+		Reflect.apply(v.splice, v, spliceArgs(1, 10_001, 10_001));
+	}, [0, 1, -3, -2, -1]);
+	probe("default sort", (v) => {
+		v.length = 3;
+		v[2] = -1;
+		Reflect.apply(v.unshift, v, insertItems(10_001));
+		v.length += 2;
+		v.sort();
+	}, [0, -6, -5, -4, -3, -2, -1]);
+	probe("comparator sort", (v) => {
+		v.length = 3;
+		v[2] = -1;
+		Reflect.apply(v.unshift, v, insertItems(10_001));
+		v.length += 2;
+		v.sort((a: number, b: number) => b - a);
+	}, [0, -6, -5, -4, -3, -2, -1]);
+	probe("shift, pop and reverse", (v) => {
+		v.length = 3;
+		Reflect.apply(v.unshift, v, insertItems(10_001));
+		v.push(7);
+		v.length += 1;
+		v.shift();
+		v.reverse();
+		v.pop();
+		v.splice(4, 1);
+		v.unshift(8);
+	}, [0, 1, 2, 3, 4, 5, -1]);
+	probe("copyWithin", (v) => {
+		v.length = 3;
+		Reflect.apply(v.unshift, v, insertItems(10_001));
+		v.copyWithin(0, 10_002, 10_003);
+	}, [0, -2, -1]);
+	probe("fill and set", (v) => {
+		v.length = 3;
+		Reflect.apply(v.unshift, v, insertItems(10_001));
+		v.fill(5, 10_002, 10_003);
+		v[10_003] = 6;
+	}, [-3, -2, -1]);
+	probe("pop of an undefined slot", (v) => {
+		v.length = 3;
+		Reflect.apply(v.unshift, v, insertItems(10_001));
+		return { returned: v.pop() };
+	}, [-2, -1]);
+	probe("shift of an undefined slot", (v) => {
+		v.length = 3;
+		Reflect.apply(v.unshift, v, insertItems(10_001));
+		v.reverse();
+		return { returned: v.shift() };
+	}, [0, 1]);
 }
 
 // ─── Fuzz: state-fuzz.test.ts ────────────────────────────────────────────────
@@ -1587,6 +1714,6 @@ const differential: unknown[] = [];
 	}
 }
 
-const out = { sha, diffs, scenarios, generated, fuzz, differential };
+const out = { sha, diffs, scenarios, generated, probes, fuzz, differential };
 fs.writeFileSync(outFile, `${write(out)}\n`);
-console.log(`wrote ${outFile}: ${diffs.length} diffs, ${scenarios.length} scenarios, ${generated.length} generated, ${fuzz.length} fuzz seeds, ${differential.length} differential scripts`);
+console.log(`wrote ${outFile}: ${diffs.length} diffs, ${scenarios.length} scenarios, ${generated.length} generated, ${probes.length} probes, ${fuzz.length} fuzz seeds, ${differential.length} differential scripts`);
