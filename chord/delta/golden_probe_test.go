@@ -11,21 +11,31 @@ import (
 type goldenProbe struct {
 	Name      string  `json:"name"`
 	StepError *string `json:"stepError"`
-	// Returned is what the last step returned, for the probes that record it.
+	// Returned is what the last step returned, for the probes that record it:
+	// undefined, a value, or an array as each index's `in` and value plus its
+	// JSON.stringify.
 	Returned *struct {
 		Undefined bool            `json:"undefined"`
 		Value     json.RawMessage `json:"value"`
+		Array     []probeSlot     `json:"array"`
+		JSON      string          `json:"json"`
 	} `json:"returned"`
 	Length     int    `json:"length"`
 	Keys       int    `json:"keys"`
 	StringHash string `json:"stringHash"`
 	Slots      []struct {
-		Index     int             `json:"index"`
-		Has       bool            `json:"has"`
-		Undefined bool            `json:"undefined"`
-		Value     json.RawMessage `json:"value"`
+		Index int `json:"index"`
+		probeSlot
 	} `json:"slots"`
 	PrepareError *string `json:"prepareError"`
+}
+
+// probeSlot is one index of a probed array: whether `in` finds it, and its
+// value, or undefined.
+type probeSlot struct {
+	Has       bool            `json:"has"`
+	Undefined bool            `json:"undefined"`
+	Value     json.RawMessage `json:"value"`
 }
 
 // probeSteps are the probes' steps as capture.mts runs them, on the draft of
@@ -85,6 +95,9 @@ var probeSteps = map[string]func(v *Draft) error{
 	"fill and set": func(v *Draft) error {
 		return firstError(v.SetLen(3), lengthErr(v.Unshift(insertItems(10_001)...)), v.Fill(5, 10_002, 10_003), v.Set(10_003, 6))
 	},
+	"splice 10,001 items after a hole": func(v *Draft) error {
+		return firstError(v.SetLen(3), spliceErr(v.Splice(2, 0, insertItems(10_001)...)))
+	},
 }
 
 // probeReturns are the probes whose last step returns a value, which pi
@@ -101,6 +114,13 @@ var probeReturns = map[string]func(v *Draft) (any, bool, error){
 			return nil, false, err
 		}
 		return v.Shift()
+	},
+	"splice of an undefined slot": func(v *Draft) (any, bool, error) {
+		if err := firstError(v.SetLen(3), lengthErr(v.Unshift(insertItems(10_001)...))); err != nil {
+			return nil, false, err
+		}
+		removed, err := v.Splice(10_002, 1)
+		return removed, true, err
 	},
 }
 
@@ -144,14 +164,7 @@ func TestGoldenProbes(t *testing.T) {
 				var returned any
 				var present bool
 				returned, present, err = steps(v)
-				switch {
-				case want.Returned == nil:
-					t.Fatalf("pi recorded no return value for %q", want.Name)
-				case present == want.Returned.Undefined:
-					t.Errorf("returned %v, %v; pi returned %s (undefined %v)", returned, present, want.Returned.Value, want.Returned.Undefined)
-				case present && jsonText(t, returned) != string(want.Returned.Value):
-					t.Errorf("returned %s, pi %s", jsonText(t, returned), want.Returned.Value)
-				}
+				checkProbeReturn(t, want, returned, present)
 			} else {
 				t.Fatalf("no steps for probe %q: add them to probeSteps or probeReturns as capture.mts runs them", want.Name)
 			}
@@ -191,5 +204,38 @@ func TestGoldenProbes(t *testing.T) {
 				t.Errorf("Prepare: %v, pi threw %q", err, *want.PrepareError)
 			}
 		})
+	}
+}
+
+// checkProbeReturn compares what a probe's last step returned with what pi's
+// returned. A hole or an undefined slot in a returned array comes back as nil,
+// which JSON writes as null, as JSON.stringify writes pi's.
+func checkProbeReturn(t *testing.T, want goldenProbe, returned any, present bool) {
+	t.Helper()
+	r := want.Returned
+	switch {
+	case r == nil:
+		t.Fatalf("pi recorded no return value for %q", want.Name)
+	case r.Array != nil:
+		items, ok := returned.([]any)
+		if !ok || len(items) != len(r.Array) {
+			t.Errorf("returned %v; pi returned %d elements", returned, len(r.Array))
+			return
+		}
+		for i, slot := range r.Array {
+			switch {
+			case slot.Undefined && items[i] != nil:
+				t.Errorf("element %d is %v; pi's is undefined (in: %v)", i, items[i], slot.Has)
+			case !slot.Undefined && jsonText(t, items[i]) != string(slot.Value):
+				t.Errorf("element %d is %s, pi %s", i, jsonText(t, items[i]), slot.Value)
+			}
+		}
+		if got := jsonText(t, returned); got != r.JSON {
+			t.Errorf("returned %s as JSON, pi %s", got, r.JSON)
+		}
+	case present == r.Undefined:
+		t.Errorf("returned %v, %v; pi returned %s (undefined %v)", returned, present, r.Value, r.Undefined)
+	case present && jsonText(t, returned) != string(r.Value):
+		t.Errorf("returned %s, pi %s", jsonText(t, returned), r.Value)
 	}
 }

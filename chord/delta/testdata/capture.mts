@@ -1353,7 +1353,8 @@ const generated: unknown[] = [];
 // records the draft array afterwards: its length, how many keys it has, `in`
 // and the value at some indices (negative ones count from the end), a hash of
 // its String(), what the steps threw (and returned, for the steps that return
-// {returned}), and what preparing it throws.
+// {returned}; an array as `in` and the value at each index, plus its
+// JSON.stringify), and what preparing it throws.
 const probes: unknown[] = [];
 {
 	const insertItems = (n: number) => Array.from({ length: n }, (_, value) => value);
@@ -1367,7 +1368,18 @@ const probes: unknown[] = [];
 			const result = build(v);
 			out.stepError = null;
 			if (result !== undefined) {
-				out.returned = result.returned === undefined ? { undefined: true } : { value: result.returned };
+				const r = result.returned;
+				out.returned =
+					r === undefined
+						? { undefined: true }
+						: Array.isArray(r)
+							? {
+									array: Array.from({ length: r.length }, (_, i) =>
+										r[i] === undefined ? { has: i in r, undefined: true } : { has: true, value: r[i] },
+									),
+									json: JSON.stringify(r),
+								}
+							: { value: r };
 			}
 		} catch (error) {
 			out.stepError = (error as Error).message;
@@ -1461,6 +1473,19 @@ const probes: unknown[] = [];
 		v.reverse();
 		return { returned: v.shift() };
 	}, [0, 1]);
+	// The fallback defines only the slots it moves: a hole before start stays a
+	// hole.
+	probe("splice 10,001 items after a hole", (v) => {
+		v.length = 3;
+		Reflect.apply(v.splice, v, spliceArgs(2, 0, 10_001));
+	}, [0, 1, 2, 10_002, 10_003]);
+	// splice returns what it removed: an undefined slot comes back as an own
+	// undefined element, which JSON.stringify writes as null.
+	probe("splice of an undefined slot", (v) => {
+		v.length = 3;
+		Reflect.apply(v.unshift, v, insertItems(10_001));
+		return { returned: v.splice(10_002, 1) };
+	}, [-2, -1]);
 }
 
 // ─── Fuzz: state-fuzz.test.ts ────────────────────────────────────────────────

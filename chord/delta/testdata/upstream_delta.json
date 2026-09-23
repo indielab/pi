@@ -1134,7 +1134,26 @@
 		},
 		{"name":"fill and set","stepError":null,"length":10004,"keys":10004,"stringHash":"5e084c7d1fd12186b0174d2349f86321b9922a2ca91b2b2c8b88d791810825c8","slots":[{"index":10001,"has":true,"value":1},{"index":10002,"has":true,"value":5},{"index":10003,"has":true,"value":6}],"prepareError":null},
 		{"name":"pop of an undefined slot","stepError":null,"returned":{"undefined":true},"length":10003,"keys":10003,"stringHash":"882b61ed087a7e59d2afd2ae137cb49933bd36b0f367489ea3ccbde9d5639def","slots":[{"index":10001,"has":true,"value":1},{"index":10002,"has":true,"undefined":true}],"prepareError":"Draft arrays must contain enumerable indexed data properties with defined values"},
-		{"name":"shift of an undefined slot","stepError":null,"returned":{"undefined":true},"length":10003,"keys":10003,"stringHash":"c69dd02074d08ad3ba4ce2e1dfcc79d5bafb28144f07443c94abce48f13525b0","slots":[{"index":0,"has":true,"undefined":true},{"index":1,"has":true,"value":1}],"prepareError":"Draft arrays must contain enumerable indexed data properties with defined values"}
+		{"name":"shift of an undefined slot","stepError":null,"returned":{"undefined":true},"length":10003,"keys":10003,"stringHash":"c69dd02074d08ad3ba4ce2e1dfcc79d5bafb28144f07443c94abce48f13525b0","slots":[{"index":0,"has":true,"undefined":true},{"index":1,"has":true,"value":1}],"prepareError":"Draft arrays must contain enumerable indexed data properties with defined values"},
+		{
+			"name": "splice 10,001 items after a hole",
+			"stepError": null,
+			"length": 10004,
+			"keys": 10003,
+			"stringHash": "6f6f16a8d7fe5757bc30e90542d8c3574e2f1db2df082664f922d40da8ab6c1c",
+			"slots": [{"index":0,"has":true,"value":1},{"index":1,"has":false,"undefined":true},{"index":2,"has":true,"value":0},{"index":10002,"has":true,"value":10000},{"index":10003,"has":true,"undefined":true}],
+			"prepareError": "Draft arrays must be dense and contain only indexed entries"
+		},
+		{
+			"name": "splice of an undefined slot",
+			"stepError": null,
+			"returned": {"array":[{"has":true,"undefined":true}],"json":"[null]"},
+			"length": 10003,
+			"keys": 10003,
+			"stringHash": "882b61ed087a7e59d2afd2ae137cb49933bd36b0f367489ea3ccbde9d5639def",
+			"slots": [{"index":10001,"has":true,"value":1},{"index":10002,"has":true,"undefined":true}],
+			"prepareError": "Draft arrays must contain enumerable indexed data properties with defined values"
+		}
 	],
 	"fuzz": [
 		{"seed":1,"hash":"4dd487be44486f6f465101f2e051dc4c744d205be4f428f921c011e395a97a3f","orderDiffers":12},
