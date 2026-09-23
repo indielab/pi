@@ -455,8 +455,8 @@ func (d *Draft) Len() int {
 	return 0
 }
 
-// Keys is Object.keys: an object's keys, integer-like first; or an array's
-// indices that are not holes (an undefined slot is one), as strings.
+// Keys is Object.keys: an object's keys, integer-like first; or, as strings,
+// an array's indices that hold a value or an undefined slot (not its holes).
 func (d *Draft) Keys() []string {
 	s := d.read()
 	if s == nil {
@@ -796,8 +796,10 @@ func (d *Draft) Unshift(items ...any) (int, error) {
 
 // Splice is Array.prototype.splice(start, deleteCount, ...items): it removes
 // deleteCount elements at start and inserts items there, returning the
-// removed elements (containers as drafts, detached from the tree). A negative
-// start counts from the end; both bounds are clamped to the array.
+// removed elements (containers as drafts, detached from the tree); a hole or
+// an undefined slot comes back as nil, JSON null, as JSON.stringify writes
+// pi's. A negative start counts from the end; both bounds are clamped to the
+// array.
 func (d *Draft) Splice(start, deleteCount int, items ...any) ([]any, error) {
 	s, xs, err := d.array("Splice")
 	if err != nil {

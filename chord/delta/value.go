@@ -299,16 +299,17 @@ var (
 	}
 )
 
-// undefinedMessage is upstream's text for a hole copied as a value.
+// undefinedMessage is upstream's text for a hole or an undefined slot copied
+// as a value (CopyWithin).
 const undefinedMessage = "Assigned values cannot be undefined"
 
 // ValueError reports a value the tracker cannot hold: a cycle, a number that
-// is not finite, a Go type with no JSON form, or a draft array with a hole.
-// Message is upstream's TypeError text.
+// is not finite, a Go type with no JSON form, or a draft array with a hole or
+// an undefined slot. Message is upstream's TypeError text.
 type ValueError struct {
 	Message string
 	// Value is the offending Go value, for a type or number error; nil for a
-	// cycle or a hole.
+	// cycle, a hole or an undefined slot.
 	Value any
 }
 
@@ -317,9 +318,9 @@ func (e *ValueError) Error() string {
 	case importRules.cycle, assignRules.cycle:
 		return "delta: " + e.Message + " (a container reaches itself; break the cycle before handing the value over)"
 	case importRules.dense, assignRules.dense, importRules.defined, assignRules.defined:
-		return "delta: " + e.Message + " (a JSON array holds values at indices 0..n-1 and nothing else: fill every slot SetLen or a write past the end left empty, and address array elements by index)"
+		return "delta: " + e.Message + " (a JSON array holds values at indices 0..n-1 and nothing else: fill every slot SetLen or a write past the end left empty, and every undefined slot an Unshift or Splice of more than 10,000 items left where it moved one, and address array elements by index)"
 	case undefinedMessage:
-		return "delta: " + e.Message + " (the source range holds a slot SetLen or a write past the end left empty; fill it first)"
+		return "delta: " + e.Message + " (the source range holds a slot SetLen or a write past the end left empty, or the undefined slot an Unshift or Splice of more than 10,000 items left where it moved one; fill it first)"
 	}
 	var got string
 	if f, ok := number(e.Value); ok {
