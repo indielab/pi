@@ -27,3 +27,21 @@ func TestCompareUTF16(t *testing.T) {
 		t.Errorf("equal strings compare %d", c)
 	}
 }
+
+// Invalid bytes all decode to U+FFFD, so strings that differ only there fall
+// back to byte order: distinct strings never compare equal, and a sort by
+// CompareUTF16 has one outcome whatever order its input came in.
+func TestCompareUTF16InvalidUTF8IsTotal(t *testing.T) {
+	for _, tc := range []struct{ less, more string }{
+		{"\xfe", "\xff"},
+		{"a\xef\xbf\xbd", "a\xff"}, // U+FFFD itself, then an invalid byte
+		{"/a/\xfe.go", "/a/\xff.go"},
+	} {
+		if c := CompareUTF16(tc.less, tc.more); c >= 0 {
+			t.Errorf("CompareUTF16(%q, %q) = %d, want < 0", tc.less, tc.more, c)
+		}
+		if c := CompareUTF16(tc.more, tc.less); c <= 0 {
+			t.Errorf("CompareUTF16(%q, %q) = %d, want > 0", tc.more, tc.less, c)
+		}
+	}
+}
