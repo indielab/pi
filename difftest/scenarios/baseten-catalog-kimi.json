@@ -1,7 +1,8 @@
 {
   "name": "baseten-catalog-kimi",
-  "note": "Catalog-backed counterpart to baseten-thinking, which uses a synthetic model. This model object is a VERBATIM copy of baseten/moonshotai/Kimi-K2.5 from the pi-ai catalog -- refreshed at the 0.86.1 regen, which added sendSessionAffinityHeaders (upstream 6671c6047) to every baseten model. It pins the chatTemplateArgs + supportsUsageInStreaming shape that real shipped models actually carry -- {\"enable_thinking\":{\"$var\":\"thinking.enabled\"}} -- rather than the richer synthetic shape. Backend is dist: unlike baseten-thinking (src, unreleased at the time), this data IS released so the published build arbitrates it. Refresh this model object whenever the catalog is regenerated.",
+  "note": "Catalog-backed counterpart to baseten-thinking, which uses a synthetic model. This model object is a VERBATIM copy of baseten/moonshotai/Kimi-K2.5 from the pi-ai catalog (catalogModel), refreshed at the 0.87.1 re-pin: the 0.87.0 regen had added inputLimits (the image resize profile), which this text-only request never reads, so the stale copy kept passing through two regens. The 0.86.1 regen added sendSessionAffinityHeaders (upstream 6671c6047) to every baseten model. capture.mjs now refuses the scenario when this copy differs from the pinned build's entry, and prints the entry to paste. It pins the chatTemplateArgs + supportsUsageInStreaming shape that real shipped models actually carry -- {\"enable_thinking\":{\"$var\":\"thinking.enabled\"}} -- rather than the richer synthetic shape. Backend is dist: unlike baseten-thinking (src, unreleased at the time), this data IS released so the published build arbitrates it.",
   "backend": "dist",
+  "catalogModel": "baseten/moonshotai/Kimi-K2.5",
   "api": "openai-completions",
   "entry": "streamSimple",
   "orderSensitivePaths": [
@@ -34,12 +35,12 @@
       "cacheWrite": 0
     },
     "compat": {
+      "supportsStrictMode": true,
       "supportsStore": false,
       "supportsDeveloperRole": false,
       "supportsReasoningEffort": false,
       "supportsUsageInStreaming": true,
       "maxTokensField": "max_tokens",
-      "supportsStrictMode": true,
       "sendSessionAffinityHeaders": true,
       "supportsLongCacheRetention": false,
       "thinkingFormat": "baseten",
@@ -50,7 +51,17 @@
       }
     },
     "contextWindow": 262000,
-    "maxTokens": 262000
+    "maxTokens": 262000,
+    "inputLimits": {
+      "images": {
+        "resize": {
+          "maxWidth": 2000,
+          "maxHeight": 2000,
+          "maxBytes": 4718592,
+          "jpegQuality": 80
+        }
+      }
+    }
   },
   "context": {
     "systemPrompt": "sys",

@@ -55,6 +55,37 @@ async function adapterContext(scenario) {
 	return normalizeContext(scenario.context);
 }
 
+/**
+ * A scenario that sets `catalogModel: "<provider>/<id>"` claims its `model` is a
+ * verbatim copy of that entry in the published catalog. Hold it to that against
+ * the build under test. A regen can move fields the scenario's request never
+ * reads, and then the stale copy still passes: baseten-catalog-kimi missed the
+ * 0.87.0 regen's inputLimits that way, through two regens.
+ */
+async function checkCatalogCopy(scenario) {
+	const key = scenario.catalogModel;
+	if (key === undefined) return;
+	if (scenario.backend !== "dist") {
+		throw new Error(`catalogModel is checked against the published catalog, so the scenario's backend must be "dist"`);
+	}
+	const slash = key.indexOf("/");
+	const [provider, id] = [key.slice(0, slash), key.slice(slash + 1)];
+	const generated = path.join(NPM_DIR, "node_modules/@earendil-works/pi-ai/dist/models.generated.js");
+	const { MODELS } = await import(pathToFileURL(generated).href);
+	const entry = slash > 0 ? MODELS[provider]?.[id] : undefined;
+	if (entry === undefined) {
+		throw new Error(`catalogModel ${JSON.stringify(key)} is not in ${generated}; name a "<provider>/<id>" the catalog has, or drop catalogModel`);
+	}
+	const want = JSON.stringify(entry);
+	if (JSON.stringify(scenario.model) !== want) {
+		throw new Error(
+			`model is a stale copy of catalog ${key}. Replace it with this build's entry, ` +
+				`JSON.stringify(MODELS[${JSON.stringify(provider)}][${JSON.stringify(id)}]) from ${generated} ` +
+				`(key order included), and update the note's "refreshed at" version:\n${want}`,
+		);
+	}
+}
+
 /** Map scenario options (pi-shaped, camelCase) onto the pi options object. */
 function buildOptions(scenario, capture) {
 	const o = { ...(scenario.options ?? {}) };
@@ -65,6 +96,7 @@ function buildOptions(scenario, capture) {
 }
 
 async function captureScenario(scenario) {
+	await checkCatalogCopy(scenario);
 	const modPath = moduleFor(scenario.backend, scenario.api);
 	if (!existsSync(modPath)) {
 		throw new Error(

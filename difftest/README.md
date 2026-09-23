@@ -312,6 +312,11 @@ calling the adapter — `capture.mjs` whenever the backend has `utils/transcript
      `ai.Model` / `ai.UnmarshalMessage`, so they must be valid pi JSON.
    - `options` — pi-shaped camelCase.
    - optional `orderSensitivePaths`, `comparePaths`.
+   - optional `catalogModel` — `"<provider>/<id>"` when `model` is a verbatim
+     copy of that catalog entry (`dist` only). `pi/capture.mjs` refuses the
+     scenario unless `JSON.stringify(model)` equals the pinned build's entry,
+     key order included, and prints the entry to paste. A regen can move
+     fields the request never reads, so without the check a stale copy passes.
 2. `./run.sh --only <name>`.
 
 If an option key is not yet mapped, the Go side fails loudly (it decodes with
@@ -333,6 +338,9 @@ Edit `config.env`:
 
 When a release finally ships a change that a `"src"` scenario covers, flip that
 scenario to `"backend": "dist"` — the published build is the better reference.
+
+A `PI_NPM_VERSION` bump re-checks every `catalogModel` scenario against the new
+build's catalog; refresh each one the pi side refuses.
 
 ## Layout
 
