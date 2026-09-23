@@ -137,11 +137,12 @@
 //
 // Object identity is not replicated: a replica holds a distinct value at each
 // path. Nor is object key order. JavaScript enumerates an object's keys in
-// insertion order, a Go map in none, so the port diffs and marshals an object's
-// members in the order of an object whose keys were inserted sorted —
-// integer-like keys ascending, then the rest by UTF-16 code unit — and a batch
-// can list an object's member ops in a different order than pi would for the
-// same change. The replica is the same either way.
+// insertion order, a Go map in none, so the port diffs an object's members, and
+// Draft.Keys lists them, in the order of an object whose keys were inserted
+// sorted — integer-like keys ascending, then the rest by UTF-16 code unit — and
+// a batch can list an object's member ops in a different order than pi would
+// for the same change. encoding/json marshals a payload's members in byte
+// order instead. The replica is the same either way.
 //
 // # Paths and safety
 //
