@@ -414,22 +414,20 @@ func TestRetryMaxRetryDelayDoesNotCapBackoff(t *testing.T) {
 	}
 }
 
-// TestUnwrappedProviderDoesNotFailFast: pi wraps only the providers whose
-// requests go through retryProviderRequest (anthropic-messages,
-// openai-completions, openai-responses). Its Google provider streams via
-// @google/genai and was untouched by 7af8533c, so an oversized server delay
-// there must NOT abort the request — it falls back to the computed backoff,
-// exactly as every provider did before this change. b9d360a2c later wrapped
-// Google as well, but its ApiError carries no headers, so no server delay ever
-// reaches the check and the nil renderer still describes it.
-func TestUnwrappedProviderDoesNotFailFast(t *testing.T) {
+// TestGoogleOversizedServerDelayDoesNotFailFast: pi wraps google in
+// retryProviderRequest too (retryGoogleRequest, since b9d360a2c), but
+// @google/genai's ApiError carries no headers, so no server delay ever reaches
+// pi's oversized-delay check and pi never fails fast there. The port's google
+// branch (the nil providerError) keeps that: an oversized delay falls back to
+// the computed backoff.
+func TestGoogleOversizedServerDelayDoesNotFailFast(t *testing.T) {
 	resp := &http.Response{StatusCode: 429, Header: http.Header{}}
 	resp.Header.Set("Retry-After", "3600") // 1h, far above the 60s limit
 
 	cfg := retryConfig{maxRetryDelayMs: defaultMaxRetryDelayMs} // providerError nil
 	d, err := retryDelay(resp, 0, cfg, "")
 	if err != nil {
-		t.Fatalf("an unwrapped provider must not fail fast, got %v", err)
+		t.Fatalf("google must not fail fast on an oversized server delay, got %v", err)
 	}
 	// Falls through to backoff: 0.5s with up to 25% downward jitter.
 	if d < 375*time.Millisecond || d > 500*time.Millisecond {

@@ -334,8 +334,12 @@ func retryDelay(resp *http.Response, attempt int, cfg retryConfig, providerMsg s
 		}
 		return serverDelayDuration(ms), nil
 	} else if ok {
-		// pi does not wrap this provider, so an oversized delay is not fatal;
-		// honor what fits and otherwise fall through to the backoff.
+		// Google's branch, the one caller without a providerError. pi wraps
+		// google in retryProviderRequest too (retryGoogleRequest), but
+		// @google/genai's ApiError carries no headers, so pi never reads the
+		// server's delay and never fails on an oversized one. The port has the
+		// headers and honors what fits, falling through to the backoff
+		// otherwise (ledger D8).
 		if ms >= 0 && (cfg.maxRetryDelayMs <= 0 || ms <= float64(cfg.maxRetryDelayMs)) {
 			return serverDelayDuration(ms), nil
 		}
