@@ -289,6 +289,8 @@ type piMessagesConverter struct {
 	// named holds the blocks pi stores under a contentIndex that is no array
 	// index: ordinary properties of its content array, which are not content.
 	named map[string]ai.Content
+	// holes counts the unset slots in the content (see start).
+	holes int
 	// toolJSON is pi's toolJson Map of each tool call's streamed arguments.
 	toolJSON map[piMessagesMapKey]string
 	// events counts the converted events, which gives an object or array key
@@ -344,17 +346,45 @@ func (c *piMessagesConverter) get(r piMessagesBlockRef) ai.Content {
 	return c.partial.Content[r.slot]
 }
 
-// set stores block where r addresses it. A slot past the end of the array
-// grows it, as JS array assignment does, leaving holes (nil) between.
+// set replaces the block r addresses, which get found: a property, or a slot
+// within the array.
 func (c *piMessagesConverter) set(r piMessagesBlockRef, block ai.Content) {
 	if !r.isSlot {
 		c.named[r.name] = block
 		return
 	}
-	for len(c.partial.Content) <= r.slot {
-		c.partial.Content = append(c.partial.Content, nil)
-	}
 	c.partial.Content[r.slot] = block
+}
+
+// piMessagesMaxContentHoles is how many unset slots (holes) a message's
+// content may hold at once. pi's content is a sparse JavaScript array, so a
+// block started far past the end costs it nothing; the port's content is a
+// slice every pushed event copies, so each hole costs memory on every event,
+// and a single frame naming slot 2^32-2 would ask for tens of gigabytes. A
+// backend numbers its blocks from 0 without gaps, so no real stream comes
+// near the bound.
+const piMessagesMaxContentHoles = 1024
+
+// start stores a new block where r addresses it: pi's `partial.content[i] =
+// block`. A slot past the end of the array grows it, as JS array assignment
+// does, leaving holes (nil) between — up to piMessagesMaxContentHoles in all.
+// Its error fails the stream where more would be needed.
+func (c *piMessagesConverter) start(r piMessagesBlockRef, block ai.Content) error {
+	if r.isSlot {
+		switch n := len(c.partial.Content); {
+		case r.slot >= n:
+			holes := r.slot - n
+			if holes > piMessagesMaxContentHoles-c.holes {
+				return fmt.Errorf("pi-messages backend started a block at contentIndex %d, past the %d blocks the message holds; that would leave %d of its content slots unset, and the port holds at most %d (pi's sparse array holds any number). Check that the backend numbers content blocks from 0 without gaps", r.slot, n, c.holes+holes, piMessagesMaxContentHoles)
+			}
+			c.holes += holes
+			c.partial.Content = append(c.partial.Content, make(ai.ContentList, holes+1)...)
+		case c.partial.Content[r.slot] == nil:
+			c.holes--
+		}
+	}
+	c.set(r, block)
+	return nil
 }
 
 // pushedIndex is the contentIndex of the event the port pushes: the slot, or
@@ -500,7 +530,9 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) (ai.AssistantMessageEv
 		if ev.Type == "thinking_start" {
 			pushed, block = ai.EventThinkingStart, ai.ThinkingContent{Thinking: ""}
 		}
-		c.set(r, block)
+		if err := c.start(r, block); err != nil {
+			return ai.AssistantMessageEvent{}, err
+		}
 		return ai.AssistantMessageEvent{Type: pushed, ContentIndex: r.pushedIndex(), Partial: c.partial.Clone()}, nil
 	case "text_delta", "thinking_delta":
 		// pi: `(partial.content[i] as {text}).text += event.delta` (thinking
@@ -567,7 +599,9 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) (ai.AssistantMessageEv
 		if err != nil {
 			return ai.AssistantMessageEvent{}, err
 		}
-		c.set(r, ai.ToolCall{ID: ev.ID, Name: ev.ToolName, Arguments: map[string]any{}})
+		if err := c.start(r, ai.ToolCall{ID: ev.ID, Name: ev.ToolName, Arguments: map[string]any{}}); err != nil {
+			return ai.AssistantMessageEvent{}, err
+		}
 		c.toolJSON[c.mapKey(ev.contentIndex)] = ""
 		return ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: r.pushedIndex(), Partial: c.partial.Clone()}, nil
 	case "toolcall_delta":
