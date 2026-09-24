@@ -84,7 +84,8 @@ func marshalOrderedValue(buf *bytes.Buffer, v any) error {
 
 // UnmarshalJSON reads a JSON object as DecodeOrderedValue does, so an object
 // read back from JSON keeps the key order JSON.parse's object lists, at every
-// depth. null leaves o as it is, as encoding/json's own decode of null does.
+// depth. null leaves o as it is, as the json.Unmarshaler convention asks
+// (encoding/json's own decode of null would set the slice to nil).
 func (o *OrderedObject) UnmarshalJSON(data []byte) error {
 	if string(bytes.TrimSpace(data)) == "null" {
 		return nil

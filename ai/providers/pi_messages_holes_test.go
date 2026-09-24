@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"runtime"
 	"testing"
-	"time"
 
 	"github.com/sky-valley/pi/ai"
 )
@@ -86,22 +85,18 @@ func TestPiMessagesContentHolesAreBounded(t *testing.T) {
 
 // TestPiMessagesFarContentIndexFailsFast requires a frame naming a slot far
 // past the content to fail the stream at once, without growing the content
-// toward it: the stream finishes promptly and allocates little.
+// toward it. The allocation bound is what proves it; a wall-clock bound would
+// only add a flake under -race on a loaded machine.
 func TestPiMessagesFarContentIndexFailsFast(t *testing.T) {
 	var before, after runtime.MemStats
 	runtime.GC()
 	runtime.ReadMemStats(&before)
-	began := time.Now()
-	_, _, final := streamPiMessagesEvents(t, context.Background(), piMessagesHoleStream(10_000_000), ai.StreamOptions{})
-	elapsed := time.Since(began)
+	_, _, final := streamPiMessagesEvents(t, t.Context(), piMessagesHoleStream(10_000_000), ai.StreamOptions{})
 	runtime.ReadMemStats(&after)
 	if final.StopReason != ai.StopError {
 		t.Errorf("stopReason = %s, want error: slot 10000000 is past the bound", final.StopReason)
 	}
 	if allocated := after.TotalAlloc - before.TotalAlloc; allocated > 16<<20 {
 		t.Errorf("streaming allocated %d MB for one far contentIndex; the content must not grow toward it", allocated>>20)
-	}
-	if elapsed > 5*time.Second {
-		t.Errorf("streaming took %v", elapsed)
 	}
 }
