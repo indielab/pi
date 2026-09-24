@@ -40,6 +40,28 @@ func TestContentListDiscriminatedJSON(t *testing.T) {
 // the discriminator first, then the block's fields in declaration order
 // (`{type: "text", text}`, `{type: "toolCall", id, name, arguments}`), which is
 // also the document order a pi session file carries.
+// A hole in the content array (a nil block) is written null, as
+// JSON.stringify writes one, and a null element reads back as a hole, as
+// JSON.parse keeps it. want is node's JSON.stringify of `a[1] = {type:"text",
+// text:"a"}` on an empty array.
+func TestContentListHoleIsNull(t *testing.T) {
+	const want = `[null,{"type":"text","text":"a"}]`
+	raw, err := json.Marshal(ContentList{nil, TextContent{Text: "a"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(raw) != want {
+		t.Fatalf("marshal = %s, want %s", raw, want)
+	}
+	var back ContentList
+	if err := json.Unmarshal([]byte(want), &back); err != nil {
+		t.Fatal(err)
+	}
+	if len(back) != 2 || back[0] != nil || back[1] != (TextContent{Text: "a"}) {
+		t.Fatalf("unmarshal = %#v, want a hole then the text block", back)
+	}
+}
+
 func TestContentBlocksSerializeTypeFirst(t *testing.T) {
 	cl := ContentList{
 		TextContent{Text: "a", TextSignature: "sig"},

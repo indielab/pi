@@ -260,6 +260,17 @@ const cases: Case[] = [
 			frame('{"type":"thinking_end","contentIndex":1,"content":"u"}') +
 			framed(done),
 	},
+	// A block started past the end of the content array leaves a hole before
+	// it, which the finished message holds as it is: JSON.stringify writes it
+	// null.
+	{
+		name: "holeBeforeABlockIsKept",
+		sse:
+			framed(start) +
+			frame('{"type":"text_start","contentIndex":1}') +
+			frame('{"type":"text_delta","contentIndex":1,"delta":"a"}') +
+			framed(done),
+	},
 	// An event for a block that was never started reads a property of
 	// undefined, and V8's TypeError fails the stream: a delta reads the
 	// block's text or thinking, a toolcall_delta sets its arguments, and an end

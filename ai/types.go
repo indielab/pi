@@ -356,7 +356,13 @@ func (t *ToolCall) UnmarshalJSON(data []byte) error {
 // first and the block's own fields after it in declaration order — pi's literal
 // shape (`{type: "text", text}`), and so the key order a pi session file
 // carries. The block types hold no "type" field of their own.
+//
+// A nil block is a hole in the content array (a pi-messages backend that
+// starts a block past the end of it), which JSON.stringify writes null.
 func marshalContent(c Content) ([]byte, error) {
+	if c == nil {
+		return []byte("null"), nil
+	}
 	raw, err := json.Marshal(c)
 	if err != nil {
 		return nil, err
@@ -378,7 +384,12 @@ func marshalContent(c Content) ([]byte, error) {
 }
 
 // unmarshalContent decodes a content block based on its "type" discriminator.
+// A null is the hole marshalContent writes, which JSON.parse reads back as a
+// null element; it decodes to a nil block.
 func unmarshalContent(data []byte) (Content, error) {
+	if string(bytes.TrimSpace(data)) == "null" {
+		return nil, nil
+	}
 	var head struct {
 		Type string `json:"type"`
 	}
