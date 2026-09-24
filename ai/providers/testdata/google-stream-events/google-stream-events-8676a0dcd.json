@@ -48,7 +48,15 @@
 					"output": 1,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 3
+					"reasoning": 0,
+					"totalTokens": 3,
+					"cost": {
+						"input": 6e-7,
+						"output": 0.0000025,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0.0000031
+					}
 				}
 			}
 		},
@@ -112,7 +120,15 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 5
+					"reasoning": 0,
+					"totalTokens": 5,
+					"cost": {
+						"input": 6e-7,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 6e-7
+					}
 				}
 			}
 		},
@@ -170,7 +186,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -226,7 +249,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -286,7 +316,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -337,7 +374,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -424,7 +468,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -484,7 +535,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -555,7 +613,15 @@
 					"output": 7,
 					"cacheRead": 1,
 					"cacheWrite": 0,
-					"totalTokens": 18
+					"reasoning": 2,
+					"totalTokens": 18,
+					"cost": {
+						"input": 0.0000027,
+						"output": 0.000017500000000000002,
+						"cacheRead": 3e-8,
+						"cacheWrite": 0,
+						"total": 0.000020230000000000005
+					}
 				}
 			}
 		},
@@ -604,7 +670,15 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 3
+					"reasoning": 0,
+					"totalTokens": 3,
+					"cost": {
+						"input": 6e-7,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 6e-7
+					}
 				}
 			}
 		},
@@ -665,7 +739,15 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"reasoning": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 6e-7,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 6e-7
+					}
 				}
 			}
 		},
@@ -724,7 +806,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -784,7 +873,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -846,7 +942,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -904,7 +1007,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -962,7 +1072,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1021,7 +1138,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1083,7 +1207,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1140,7 +1271,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1180,7 +1318,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1237,7 +1382,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1279,7 +1431,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1327,7 +1486,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1379,7 +1545,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1431,13 +1604,23 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
 		{
 			"name": "divergence: connection close on a close-delimited body",
 			"divergence": "net/http deletes a Connection header carrying close, and a close-delimited body closes either way, so the port cannot tell the header was there: pi's record has connection: close, the port's does not",
+			"divergentFields": [
+				"events"
+			],
 			"framing": "close",
 			"headers": [
 				[
@@ -1484,13 +1667,23 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
 		{
 			"name": "divergence: a trailer named in lowercase",
 			"divergence": "net/http moves the Trailer header into Response.Trailer under canonical names, so the port's record has trailer: X-T where pi's keeps the text sent, x-t",
+			"divergentFields": [
+				"events"
+			],
 			"framing": "chunked",
 			"headers": [
 				[
@@ -1537,13 +1730,26 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
 		{
 			"name": "divergence: a brotli body the caller asked for",
 			"divergence": "undici undoes br (and zstd); Go's standard library has no brotli or zstd decoder, so the port fails the stream where pi reads it",
+			"divergentFields": [
+				"stream",
+				"events",
+				"stop",
+				"content"
+			],
 			"framing": "close",
 			"requestHeaders": {
 				"Accept-Encoding": "br"
@@ -1599,7 +1805,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1646,7 +1859,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1693,13 +1913,23 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
 		{
 			"name": "divergence: HTTP chunks that arrive in one read",
 			"divergence": "undici hands the SDK one HTTP chunk per body read even when several arrive in one TCP segment, so pi checks the bare-JSON chunk alone and throws ApiError; Go's chunked reader returns every buffered chunk in one Read, so the port checks the event and the error together, finds no JSON and ends with \"Incomplete JSON segment at the end\"",
+			"divergentFields": [
+				"stop"
+			],
 			"framing": "chunked",
 			"oneWrite": true,
 			"headers": [
@@ -1742,7 +1972,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1780,7 +2017,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1828,7 +2072,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1875,7 +2126,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1922,7 +2180,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -1970,7 +2235,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2017,7 +2289,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2065,7 +2344,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2112,7 +2398,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2159,7 +2452,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2206,7 +2506,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2253,7 +2560,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2300,7 +2614,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2347,7 +2668,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2394,7 +2722,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2441,7 +2776,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2489,7 +2831,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2536,7 +2885,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2583,7 +2939,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2632,7 +2995,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2671,7 +3041,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2719,7 +3096,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2766,7 +3150,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2803,7 +3194,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2841,7 +3239,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2878,7 +3283,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2924,7 +3336,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2961,7 +3380,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -2998,7 +3424,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3053,7 +3486,15 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"reasoning": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 6e-7,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 6e-7
+					}
 				}
 			}
 		},
@@ -3103,7 +3544,15 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"reasoning": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3152,7 +3601,15 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 4
+					"reasoning": 0,
+					"totalTokens": 4,
+					"cost": {
+						"input": 0.0000012,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0.0000012
+					}
 				}
 			}
 		},
@@ -3208,7 +3665,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3257,7 +3721,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3310,7 +3781,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3357,7 +3835,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3404,7 +3889,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3447,7 +3939,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3501,7 +4000,95 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "a later part without a signature keeps the block's signature",
+			"note": "retainThoughtSignature keeps the last non-empty string: for thinking as for text",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\",\"thought\":true,\"thoughtSignature\":\"c2ln\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"b\",\"thought\":true},{\"text\":\"c\",\"thought\":true,\"thoughtSignature\":\"\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\",\"thoughtSignature\":\"dHh0\"},{\"text\":\"y\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":3,\"thoughtsTokenCount\":2,\"cachedContentTokenCount\":4,\"totalTokenCount\":12}}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\",\"thought\":true,\"thoughtSignature\":\"c2ln\"}]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"b\",\"thought\":true},{\"text\":\"c\",\"thought\":true,\"thoughtSignature\":\"\"}]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\",\"thoughtSignature\":\"dHh0\"},{\"text\":\"y\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":7,\"candidatesTokenCount\":3,\"thoughtsTokenCount\":2,\"cachedContentTokenCount\":4,\"totalTokenCount\":12},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "thinking_start"
+					},
+					{
+						"type": "thinking_delta",
+						"delta": "a"
+					},
+					{
+						"type": "thinking_delta",
+						"delta": "b"
+					},
+					{
+						"type": "thinking_delta",
+						"delta": "c"
+					},
+					{
+						"type": "thinking_end"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "text_delta",
+						"delta": "y"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"thinking\",\"thinking\":\"abc\",\"thinkingSignature\":\"c2ln\"},{\"type\":\"text\",\"text\":\"xy\",\"textSignature\":\"dHh0\"}]",
+				"usage": {
+					"input": 3,
+					"output": 5,
+					"cacheRead": 4,
+					"cacheWrite": 0,
+					"reasoning": 2,
+					"totalTokens": 12,
+					"cost": {
+						"input": 9e-7,
+						"output": 0.0000125,
+						"cacheRead": 1.2e-7,
+						"cacheWrite": 0,
+						"total": 0.000013520000000000001
+					}
 				}
 			}
 		},
@@ -3547,7 +4134,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3594,7 +4188,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
@@ -3640,13 +4241,25 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
 		{
 			"name": "divergence: token counts pi keeps as strings",
-			"divergence": "pi's usage keeps output \"21\" (\"2\" + 1), cacheRead \"1\" and totalTokens \"8\" as strings; an ai.Usage count is an int, holding 21, 1 and 8",
+			"divergence": "pi's usage keeps output \"21\" (\"2\" + 1), cacheRead \"1\" and totalTokens \"8\" as strings; an ai.Usage count is an int, holding 21, 1 and 8 (the costs pi computes from those strings are numbers, and match)",
+			"divergentFields": [
+				"usage.output",
+				"usage.cacheRead",
+				"usage.totalTokens"
+			],
 			"framing": "close",
 			"headers": [
 				[
@@ -3689,13 +4302,27 @@
 					"output": "21",
 					"cacheRead": "1",
 					"cacheWrite": 0,
-					"totalTokens": "8"
+					"reasoning": 1,
+					"totalTokens": "8",
+					"cost": {
+						"input": 0.0000012,
+						"output": 0.0000525,
+						"cacheRead": 3e-8,
+						"cacheWrite": 0,
+						"total": 0.00005373
+					}
 				}
 			}
 		},
 		{
 			"name": "divergence: fractional and infinite token counts",
-			"divergence": "pi's usage keeps input Infinity (JSON null) and totalTokens 3.7; an ai.Usage count is an int, holding 0 and 3",
+			"divergence": "pi's usage keeps input Infinity (JSON null) and totalTokens 3.7, so its cost.input and cost.total are Infinity too; an ai.Usage count is an int, holding 0 and 3, and the port's costs are finite",
+			"divergentFields": [
+				"usage.input",
+				"usage.totalTokens",
+				"usage.cost.input",
+				"usage.cost.total"
+			],
 			"framing": "close",
 			"headers": [
 				[
@@ -3738,13 +4365,24 @@
 					"output": 1,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 3.7
+					"reasoning": 0,
+					"totalTokens": 3.7,
+					"cost": {
+						"input": null,
+						"output": 0.0000025,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": null
+					}
 				}
 			}
 		},
 		{
 			"name": "divergence: a numeric response id",
 			"divergence": "pi's responseId is the number 5; the port's ResponseID string holds \"5\"",
+			"divergentFields": [
+				"responseId"
+			],
 			"framing": "close",
 			"headers": [
 				[
@@ -3793,13 +4431,23 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
 		{
 			"name": "divergence: text deltas that are not strings",
 			"divergence": "pi's text_delta carries part.text as it came (null, 5, an array); the port's Delta string holds the text appended (\"null\", \"5\", \"1,2,,[object Object]\"), which the content matches",
+			"divergentFields": [
+				"stream"
+			],
 			"framing": "close",
 			"headers": [
 				[
@@ -3862,13 +4510,23 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		},
 		{
 			"name": "divergence: tool-call fields of other types",
 			"divergence": "pi's tool call keeps id 7, name 5, thoughtSignature 7 and arguments [1,{\"b\":2}] / \"s\" as they came; the port's strings hold \"7\", \"5\" and \"7\" and its Arguments map is {} (the toolcall_delta text matches)",
+			"divergentFields": [
+				"content"
+			],
 			"framing": "close",
 			"headers": [
 				[
@@ -3931,7 +4589,14 @@
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,
-					"totalTokens": 0
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
 				}
 			}
 		}

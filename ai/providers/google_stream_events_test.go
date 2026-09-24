@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -33,7 +34,11 @@ type googleStreamCapture struct {
 type googleStreamScenario struct {
 	Name       string `json:"name"`
 	Divergence string `json:"divergence"`
-	Framing    string `json:"framing"` // "close" or "chunked"
+	// DivergentFields names the parts of the outcome, as replayGoogleScenario
+	// keys them, where a divergence scenario differs from pi. Every other part
+	// must still be pi's.
+	DivergentFields []string `json:"divergentFields"`
+	Framing         string   `json:"framing"` // "close" or "chunked"
 	// Headers is the response head, one [name, value] per line.
 	Headers [][2]string `json:"headers"`
 	// Segments are the body, each written as its own body read.
@@ -58,7 +63,8 @@ type googleStreamScenario struct {
 	ReadBoundariesMatter bool `json:"readBoundariesMatter"`
 	// Pi is pi's outcome. A mistyped wire field can leave pi holding a value
 	// no Go field can (a numeric delta or response id, a string token
-	// count), so those are kept as JSON and compared by value.
+	// count), so those are kept as JSON and compared by value. Usage holds
+	// the token counts and the cost calculateCost left.
 	Pi struct {
 		// AcceptEncoding is the accept-encoding header the server received.
 		AcceptEncoding string   `json:"acceptEncoding"`
@@ -93,16 +99,42 @@ func piStreamEvent(typ string, delta json.RawMessage) string {
 	return typ + " <non-string delta " + compact.String() + ">"
 }
 
-// sameGoogleUsage reports whether the Go usage's token counts are pi's:
-// numbers equal to the ints, where pi can also hold a string, a fraction or
-// null (NaN, Infinity).
-func sameGoogleUsage(u ai.Usage, pi map[string]any) bool {
-	for key, got := range map[string]int{"input": u.Input, "output": u.Output, "cacheRead": u.CacheRead, "cacheWrite": u.CacheWrite, "totalTokens": u.TotalTokens} {
-		if want, ok := pi[key].(float64); !ok || want != float64(got) {
-			return false
+// googleUsageDiffs describes each figure of the Go usage that is not pi's,
+// keyed "usage.<field>" and "usage.cost.<field>". A token count must be a
+// number equal to the int, where pi can also hold a string, a fraction or null
+// (NaN, Infinity); pi's reasoning is absent until a chunk carries usage, which
+// is Go's 0. pi's calculateCost leaves every cost a number even from a string
+// count, so the costs compare exactly.
+func googleUsageDiffs(u ai.Usage, pi map[string]any) map[string]string {
+	cost, _ := pi["cost"].(map[string]any)
+	reasoning, reported := pi["reasoning"]
+	if !reported {
+		reasoning = 0.0
+	}
+	figures := []struct {
+		key  string
+		got  float64
+		want any
+	}{
+		{"usage.input", float64(u.Input), pi["input"]},
+		{"usage.output", float64(u.Output), pi["output"]},
+		{"usage.cacheRead", float64(u.CacheRead), pi["cacheRead"]},
+		{"usage.cacheWrite", float64(u.CacheWrite), pi["cacheWrite"]},
+		{"usage.reasoning", float64(u.Reasoning), reasoning},
+		{"usage.totalTokens", float64(u.TotalTokens), pi["totalTokens"]},
+		{"usage.cost.input", u.Cost.Input, cost["input"]},
+		{"usage.cost.output", u.Cost.Output, cost["output"]},
+		{"usage.cost.cacheRead", u.Cost.CacheRead, cost["cacheRead"]},
+		{"usage.cost.cacheWrite", u.Cost.CacheWrite, cost["cacheWrite"]},
+		{"usage.cost.total", u.Cost.Total, cost["total"]},
+	}
+	diffs := map[string]string{}
+	for _, f := range figures {
+		if want, ok := f.want.(float64); !ok || want != f.got {
+			diffs[f.key] = fmt.Sprintf("%s %v, pi %#v", f.key, f.got, f.want)
 		}
 	}
-	return true
+	return diffs
 }
 
 // sameGoogleResponseID reports whether the Go response id is pi's: pi's
@@ -346,13 +378,15 @@ func googleCaptureModel(baseURL string) *ai.Model {
 
 // replayGoogleScenario streams the scenario over a real connection, with an
 // OnProviderStreamEvent that records what it receives (and throws where the
-// scenario says), and returns every way the outcome differs from pi's: each
-// value the callback received, as JSON.stringify writes it (key order
-// included), always with the model the stream was called with; the
-// assistant stream event by event (with deltas); the stop reason, error
-// message, response id, content JSON and usage tokens. No differences means
-// the port reproduces pi.
-func replayGoogleScenario(t *testing.T, sc googleStreamScenario) []string {
+// scenario says), and describes every way the outcome differs from pi's,
+// keyed by the part that differs: "events", each value the callback
+// received, as JSON.stringify writes it (key order included); "sameModel",
+// whether each call got the model the stream was called with; "stream", the
+// assistant stream event by event (with deltas); "stop", the stop reason and
+// error message; "responseId"; "content", as JSON; each usage figure
+// (googleUsageDiffs); and "acceptEncoding", what the request asked for. No
+// differences means the port reproduces pi.
+func replayGoogleScenario(t *testing.T, sc googleStreamScenario) map[string]string {
 	t.Helper()
 	baseURL, acceptEncoding := serveGoogleScenario(t, sc)
 	model := googleCaptureModel(baseURL)
@@ -381,7 +415,8 @@ func replayGoogleScenario(t *testing.T, sc googleStreamScenario) []string {
 			return err
 		},
 	}})
-	var got, want, diffs []string
+	var got, want []string
+	diffs := map[string]string{}
 	for ev := range stream.Events() {
 		switch ev.Type {
 		case ai.EventTextDelta, ai.EventThinkingDelta, ai.EventToolCallDelta:
@@ -394,29 +429,27 @@ func replayGoogleScenario(t *testing.T, sc googleStreamScenario) []string {
 		want = append(want, piStreamEvent(ev.Type, ev.Delta))
 	}
 	if !slices.Equal(got, want) {
-		diffs = append(diffs, fmt.Sprintf("stream %q\npi:     %q", got, want))
+		diffs["stream"] = fmt.Sprintf("stream %q\npi:     %q", got, want)
 	}
 	final := stream.Result()
 	if !slices.Equal(events, sc.Pi.Events) {
-		diffs = append(diffs, fmt.Sprintf("observed %q\npi:       %q", events, sc.Pi.Events))
+		diffs["events"] = fmt.Sprintf("observed %q\npi:       %q", events, sc.Pi.Events)
 	}
 	if !sameModel || !sc.Pi.SameModel {
-		diffs = append(diffs, fmt.Sprintf("observer's model: same %v, pi same %v", sameModel, sc.Pi.SameModel))
+		diffs["sameModel"] = fmt.Sprintf("observer's model: same %v, pi same %v", sameModel, sc.Pi.SameModel)
 	}
 	if string(final.StopReason) != sc.Pi.StopReason || final.ErrorMessage != sc.Pi.ErrorMessage {
-		diffs = append(diffs, fmt.Sprintf("stop %s %q, pi %s %q", final.StopReason, final.ErrorMessage, sc.Pi.StopReason, sc.Pi.ErrorMessage))
+		diffs["stop"] = fmt.Sprintf("stop %s %q, pi %s %q", final.StopReason, final.ErrorMessage, sc.Pi.StopReason, sc.Pi.ErrorMessage)
 	}
 	if !sameGoogleResponseID(final.ResponseID, sc.Pi.ResponseID) {
-		diffs = append(diffs, fmt.Sprintf("responseId %q, pi %#v", final.ResponseID, sc.Pi.ResponseID))
+		diffs["responseId"] = fmt.Sprintf("responseId %q, pi %#v", final.ResponseID, sc.Pi.ResponseID)
 	}
 	if content, _ := jstext.Stringify(final.Content); content != sc.Pi.Content {
-		diffs = append(diffs, fmt.Sprintf("content %s\npi:      %s", content, sc.Pi.Content))
+		diffs["content"] = fmt.Sprintf("content %s\npi:      %s", content, sc.Pi.Content)
 	}
-	if !sameGoogleUsage(final.Usage, sc.Pi.Usage) {
-		diffs = append(diffs, fmt.Sprintf("usage %+v, pi %v", final.Usage, sc.Pi.Usage))
-	}
+	maps.Copy(diffs, googleUsageDiffs(final.Usage, sc.Pi.Usage))
 	if got := acceptEncoding(); got != sc.Pi.AcceptEncoding {
-		diffs = append(diffs, fmt.Sprintf("request accept-encoding %q, pi %q", got, sc.Pi.AcceptEncoding))
+		diffs["acceptEncoding"] = fmt.Sprintf("request accept-encoding %q, pi %q", got, sc.Pi.AcceptEncoding)
 	}
 	return diffs
 }
@@ -432,8 +465,9 @@ func TestGoogleStreamEventsMatchPi(t *testing.T) {
 		}
 		ran++
 		t.Run(sc.Name, func(t *testing.T) {
-			for _, d := range replayGoogleScenario(t, sc) {
-				t.Error(d)
+			diffs := replayGoogleScenario(t, sc)
+			for _, part := range slices.Sorted(maps.Keys(diffs)) {
+				t.Error(diffs[part])
 			}
 		})
 	}
@@ -445,20 +479,38 @@ func TestGoogleStreamEventsMatchPi(t *testing.T) {
 // TestGoogleDivergencesStillDiffer is the tripwire for the captured
 // scenarios tagged `divergence`: measured differences the port carries and
 // the ledger records. Each is replayed the way TestGoogleStreamEventsMatchPi
-// replays the rest, and must still differ from pi somewhere; one that has
-// come to match pi fails here until its tag and its ledger row are retired.
-// It asserts only that the port is not pi's, never what the port does
-// instead.
+// replays the rest. It must differ from pi in exactly the parts its
+// divergentFields name and match pi everywhere else: a named part that has
+// come to match pi fails here until it is dropped from the list (and, with
+// the last one, the tag and its ledger row are retired), and a part that
+// differs without being named is a regression. It asserts only that the
+// named parts are not pi's, never what the port does instead.
 func TestGoogleDivergencesStillDiffer(t *testing.T) {
+	ran := 0
 	for _, sc := range loadGoogleStreamCapture(t).Scenarios {
 		if sc.Divergence == "" {
 			continue
 		}
+		ran++
 		t.Run(sc.Name, func(t *testing.T) {
-			if len(replayGoogleScenario(t, sc)) == 0 {
-				t.Errorf("FIXED: the port now reproduces pi here — drop the scenario's divergence tag and its ledger row (%s)", sc.Divergence)
+			if len(sc.DivergentFields) == 0 {
+				t.Fatalf("the scenario names no divergentFields; list the parts where the port differs from pi (%s)", sc.Divergence)
+			}
+			diffs := replayGoogleScenario(t, sc)
+			for _, part := range sc.DivergentFields {
+				if _, differs := diffs[part]; !differs {
+					t.Errorf("FIXED: %s now matches pi; drop it from the scenario's divergentFields, and with the last one its divergence tag and ledger row (%s)", part, sc.Divergence)
+				}
+			}
+			for _, part := range slices.Sorted(maps.Keys(diffs)) {
+				if !slices.Contains(sc.DivergentFields, part) {
+					t.Errorf("differs from pi outside its recorded divergence: %s", diffs[part])
+				}
 			}
 		})
+	}
+	if ran == 0 {
+		t.Fatal("no divergence scenarios in the capture")
 	}
 }
 
@@ -530,42 +582,6 @@ func TestGoogleAbortDuringReadIsAbortError(t *testing.T) {
 	if err == nil || err.Error() != "This operation was aborted" {
 		t.Fatalf("error %v, want This operation was aborted", err)
 	}
-}
-
-// TestGoogleDivergencesMatchPiWhereTheyCan: two tagged scenarios differ from
-// pi only in values a Go field cannot hold, and the rest of their outcome
-// must still be pi's. With part.text null, 5 and an array, pi's deltas are
-// those values (the divergence) but the text it appends is their String()
-// form, which the content carries; with tool-call fields of other types,
-// pi's ids and arguments are those values (the divergence) but each
-// toolcall_delta is JSON.stringify of the arguments.
-func TestGoogleDivergencesMatchPiWhereTheyCan(t *testing.T) {
-	t.Run("text content", func(t *testing.T) {
-		sc := googleCaptureScenario(t, "divergence: text deltas that are not strings")
-		stream := googleServe(t, "gemini-2.5-flash", strings.Join(sc.Segments, ""))
-		final := stream.Result()
-		if content, _ := jstext.Stringify(final.Content); content != sc.Pi.Content || string(final.StopReason) != sc.Pi.StopReason {
-			t.Fatalf("content %s %s\npi:      %s %s", content, final.StopReason, sc.Pi.Content, sc.Pi.StopReason)
-		}
-	})
-	t.Run("toolcall deltas", func(t *testing.T) {
-		sc := googleCaptureScenario(t, "divergence: tool-call fields of other types")
-		stream := googleServe(t, "gemini-2.5-flash", strings.Join(sc.Segments, ""))
-		var deltas, piDeltas []string
-		for ev := range stream.Events() {
-			if ev.Type == ai.EventToolCallDelta {
-				deltas = append(deltas, ev.Delta)
-			}
-		}
-		for _, ev := range sc.Pi.Stream {
-			if ev.Type == "toolcall_delta" {
-				piDeltas = append(piDeltas, strings.TrimPrefix(piStreamEvent(ev.Type, ev.Delta), ev.Type+" "))
-			}
-		}
-		if !slices.Equal(deltas, piDeltas) || len(deltas) != 3 {
-			t.Fatalf("toolcall_delta %q\npi:            %q", deltas, piDeltas)
-		}
-	})
 }
 
 // TestGoogleEachChunkGetsItsOwnHeaderRecord: @google/genai builds the

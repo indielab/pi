@@ -43,10 +43,15 @@
 // received (key order is part of the contract); `sameModel`, whether every
 // call got the model object pi was called with; `stream`, the assistant
 // stream's events as type and delta; and the final message's stopReason,
-// errorMessage, responseId, content (as JSON text) and usage token counts.
+// errorMessage, responseId, content (as JSON text), and usage: the token
+// counts, reasoning, and the cost calculateCost left.
 //
-// A scenario with a `divergence` is a measured difference the port carries:
-// recorded for the ledger, not replayed.
+// A scenario with a `divergence` is a measured difference the port carries,
+// recorded for the ledger. Its `divergentFields` name the parts of the
+// outcome where the port differs (the Go replay's keys: stream, events,
+// sameModel, stop, responseId, content, usage.<field>, usage.cost.<field>,
+// acceptEncoding); TestGoogleDivergencesStillDiffer requires exactly those to
+// differ and every other part to be pi's.
 import fs from "node:fs";
 import zlib from "node:zlib";
 import net from "node:net";
@@ -93,6 +98,7 @@ type Scenario = {
 	abruptEnd?: boolean;
 	requestHeaders?: Record<string, string>;
 	divergence?: string;
+	divergentFields?: string[];
 	// Throw Error(throwMessage) from the callback on its Nth call (0-based).
 	throwOn?: number;
 	throwMessage?: string;
@@ -382,6 +388,7 @@ const scenarios: Scenario[] = [
 	{
 		name: "divergence: connection close on a close-delimited body",
 		divergence: "net/http deletes a Connection header carrying close, and a close-delimited body closes either way, so the port cannot tell the header was there: pi's record has connection: close, the port's does not",
+		divergentFields: ["events"],
 		framing: "close",
 		headers: [...eventStream, ["Connection", "close"]],
 		segments: [sse(stop)],
@@ -389,6 +396,7 @@ const scenarios: Scenario[] = [
 	{
 		name: "divergence: a trailer named in lowercase",
 		divergence: "net/http moves the Trailer header into Response.Trailer under canonical names, so the port's record has trailer: X-T where pi's keeps the text sent, x-t",
+		divergentFields: ["events"],
 		framing: "chunked",
 		headers: [...eventStream, ["Trailer", "x-t"]],
 		segments: [sse(stop)],
@@ -396,6 +404,7 @@ const scenarios: Scenario[] = [
 	{
 		name: "divergence: a brotli body the caller asked for",
 		divergence: "undici undoes br (and zstd); Go's standard library has no brotli or zstd decoder, so the port fails the stream where pi reads it",
+		divergentFields: ["stream", "events", "stop", "content"],
 		framing: "close",
 		encode: (b) => zlib.brotliCompressSync(b),
 		requestHeaders: { "Accept-Encoding": "br" },
@@ -421,6 +430,7 @@ const scenarios: Scenario[] = [
 	{
 		name: "divergence: HTTP chunks that arrive in one read",
 		divergence: "undici hands the SDK one HTTP chunk per body read even when several arrive in one TCP segment, so pi checks the bare-JSON chunk alone and throws ApiError; Go's chunked reader returns every buffered chunk in one Read, so the port checks the event and the error together, finds no JSON and ends with \"Incomplete JSON segment at the end\"",
+		divergentFields: ["stop"],
 		framing: "chunked",
 		oneWrite: true,
 		headers: eventStream,
@@ -685,6 +695,19 @@ const scenarios: Scenario[] = [
 		segments: [sse('{"candidates":[{"content":{"parts":[{"text":"a","thought":"true","thoughtSignature":5}]}}]}', stop)],
 	},
 	{
+		name: "a later part without a signature keeps the block's signature",
+		note: "retainThoughtSignature keeps the last non-empty string: for thinking as for text",
+		framing: "close",
+		headers: eventStream,
+		segments: [
+			sse(
+				'{"candidates":[{"content":{"parts":[{"text":"a","thought":true,"thoughtSignature":"c2ln"}]}}]}',
+				'{"candidates":[{"content":{"parts":[{"text":"b","thought":true},{"text":"c","thought":true,"thoughtSignature":""}]}}]}',
+				'{"candidates":[{"content":{"parts":[{"text":"x","thoughtSignature":"dHh0"},{"text":"y"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":7,"candidatesTokenCount":3,"thoughtsTokenCount":2,"cachedContentTokenCount":4,"totalTokenCount":12}}',
+			),
+		],
+	},
+	{
 		name: "a finish reason that is a number",
 		framing: "close",
 		headers: eventStream,
@@ -705,14 +728,16 @@ const scenarios: Scenario[] = [
 	},
 	{
 		name: "divergence: token counts pi keeps as strings",
-		divergence: "pi's usage keeps output \"21\" (\"2\" + 1), cacheRead \"1\" and totalTokens \"8\" as strings; an ai.Usage count is an int, holding 21, 1 and 8",
+		divergence: "pi's usage keeps output \"21\" (\"2\" + 1), cacheRead \"1\" and totalTokens \"8\" as strings; an ai.Usage count is an int, holding 21, 1 and 8 (the costs pi computes from those strings are numbers, and match)",
+		divergentFields: ["usage.output", "usage.cacheRead", "usage.totalTokens"],
 		framing: "close",
 		headers: eventStream,
 		segments: [sse('{"candidates":[{"content":{"parts":[{"text":"t"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":5,"cachedContentTokenCount":"1","candidatesTokenCount":"2","thoughtsTokenCount":1,"totalTokenCount":"8"}}')],
 	},
 	{
 		name: "divergence: fractional and infinite token counts",
-		divergence: "pi's usage keeps input Infinity (JSON null) and totalTokens 3.7; an ai.Usage count is an int, holding 0 and 3",
+		divergence: "pi's usage keeps input Infinity (JSON null) and totalTokens 3.7, so its cost.input and cost.total are Infinity too; an ai.Usage count is an int, holding 0 and 3, and the port's costs are finite",
+		divergentFields: ["usage.input", "usage.totalTokens", "usage.cost.input", "usage.cost.total"],
 		framing: "close",
 		headers: eventStream,
 		segments: [sse('{"candidates":[{"content":{"parts":[{"text":"t"}]},"finishReason":"STOP"}],"usageMetadata":{"promptTokenCount":1e400,"candidatesTokenCount":1,"totalTokenCount":3.7}}')],
@@ -720,6 +745,7 @@ const scenarios: Scenario[] = [
 	{
 		name: "divergence: a numeric response id",
 		divergence: "pi's responseId is the number 5; the port's ResponseID string holds \"5\"",
+		divergentFields: ["responseId"],
 		framing: "close",
 		headers: eventStream,
 		segments: [sse('{"responseId":5,"candidates":[{"content":{"parts":[{"text":"t"}]}}]}', '{"responseId":"later","candidates":[{"content":{"parts":[{"text":"!"}]},"finishReason":"STOP"}]}')],
@@ -727,6 +753,7 @@ const scenarios: Scenario[] = [
 	{
 		name: "divergence: text deltas that are not strings",
 		divergence: "pi's text_delta carries part.text as it came (null, 5, an array); the port's Delta string holds the text appended (\"null\", \"5\", \"1,2,,[object Object]\"), which the content matches",
+		divergentFields: ["stream"],
 		framing: "close",
 		headers: eventStream,
 		segments: [sse('{"candidates":[{"content":{"parts":[{"text":null},{"text":5},{"text":[1,[2,null],{}]}]}}]}', stop)],
@@ -734,6 +761,7 @@ const scenarios: Scenario[] = [
 	{
 		name: "divergence: tool-call fields of other types",
 		divergence: "pi's tool call keeps id 7, name 5, thoughtSignature 7 and arguments [1,{\"b\":2}] / \"s\" as they came; the port's strings hold \"7\", \"5\" and \"7\" and its Arguments map is {} (the toolcall_delta text matches)",
+		divergentFields: ["content"],
 		framing: "close",
 		headers: eventStream,
 		segments: [
@@ -845,7 +873,9 @@ async function run(s: Scenario, segments: string[], encoded: Buffer | undefined)
 			output: msg.usage.output,
 			cacheRead: msg.usage.cacheRead,
 			cacheWrite: msg.usage.cacheWrite,
+			reasoning: msg.usage.reasoning,
 			totalTokens: msg.usage.totalTokens,
+			cost: msg.usage.cost,
 		},
 	};
 }
