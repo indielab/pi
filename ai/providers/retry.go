@@ -150,19 +150,6 @@ func shouldRetryResponse(resp *http.Response) bool {
 	return resp.StatusCode >= 500
 }
 
-// isomorphicDecode reads a header value the way fetch's Headers does: each byte
-// is one code unit (latin1). getRetryDelayMs parses that string, so a UTF-8
-// no-break space arrives as "\u00c2\u00a0" — not whitespace to parseFloat —
-// while a bare 0xA0 byte is.
-func isomorphicDecode(v string) string {
-	var b strings.Builder
-	b.Grow(len(v))
-	for i := 0; i < len(v); i++ {
-		b.WriteRune(rune(v[i]))
-	}
-	return b.String()
-}
-
 // parseFloatPrefix mirrors JavaScript's Number.parseFloat, which pi uses to read
 // the Retry-After headers: leading whitespace is skipped, the longest valid
 // numeric prefix is consumed, and trailing junk is ignored (so "3600s" parses as
@@ -234,12 +221,12 @@ func serverRetryDelayMs(resp *http.Response) (float64, bool) {
 		return 0, false
 	}
 	if v := resp.Header.Get("retry-after-ms"); v != "" {
-		if ms, ok := parseFloatPrefix(isomorphicDecode(v)); ok {
+		if ms, ok := parseFloatPrefix(jstext.IsomorphicDecode(v)); ok {
 			return ms, true
 		}
 	}
 	if ra := resp.Header.Get("Retry-After"); ra != "" {
-		if secs, ok := parseFloatPrefix(isomorphicDecode(ra)); ok {
+		if secs, ok := parseFloatPrefix(jstext.IsomorphicDecode(ra)); ok {
 			return secs * 1000, true
 		}
 		if t, err := http.ParseTime(ra); err == nil {

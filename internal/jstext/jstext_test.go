@@ -76,3 +76,26 @@ func TestTrimsMatchNode(t *testing.T) {
 		}
 	}
 }
+
+// TestIsomorphicDecode: every byte becomes the one character with its value,
+// whatever it is part of, as the Infra Standard's isomorphic decode reads
+// header bytes.
+func TestIsomorphicDecode(t *testing.T) {
+	for b := 0; b < 256; b++ {
+		got := []rune(IsomorphicDecode("a" + string([]byte{byte(b)}) + "z"))
+		if len(got) != 3 || got[1] != rune(b) {
+			t.Errorf("byte %#x decodes to %q, want a, U+%04X, z", b, string(got), b)
+		}
+	}
+	for in, want := range map[string]string{
+		"":             "",
+		"gzip":         "gzip",
+		"caf\xc3\xa9":  "caf\u00c3\u00a9",
+		"\xc2\xa0":     "\u00c2\u00a0",
+		"\xff\xfe\x00": "\u00ff\u00fe\x00",
+	} {
+		if got := IsomorphicDecode(in); got != want {
+			t.Errorf("IsomorphicDecode(%+q) = %+q, want %+q", in, got, want)
+		}
+	}
+}

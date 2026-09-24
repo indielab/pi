@@ -2,11 +2,15 @@
 // wherever pi relies on them: the string trims and their whitespace set, the
 // text JSON.stringify writes (Stringify), the UTF-16 code-unit order of <
 // and Array.prototype.sort (CompareUTF16), how a value JSON.parse returns
-// converts (Parse, Number, NumberToString, ToString, Truthy), and the text a
-// TextDecoder makes of bytes that are not UTF-8 (DecodeUTF8).
+// converts (Parse, Number, NumberToString, ToString, Truthy), the text a
+// TextDecoder makes of bytes that are not UTF-8 (DecodeUTF8), and how fetch
+// reads header bytes (IsomorphicDecode).
 package jstext
 
-import "strings"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // IsWhitespace reports whether r is removed by String.prototype.trim: TAB, VT,
 // FF, SP, NBSP, ZWNBSP (U+FEFF) and the other Space_Separator code points, plus
@@ -39,3 +43,22 @@ func TrimStart(s string) string { return strings.TrimLeftFunc(s, IsWhitespace) }
 
 // TrimEnd is String.prototype.trimEnd.
 func TrimEnd(s string) string { return strings.TrimRightFunc(s, IsWhitespace) }
+
+// IsomorphicDecode reads each byte of s as the character with that code point
+// (the Infra Standard's isomorphic decode), the way fetch's Headers read a
+// header value: a UTF-8 no-break space arrives as "\u00c2\u00a0", two
+// characters neither of which String.prototype.trim removes, while a bare 0xA0
+// byte is one it does.
+func IsomorphicDecode(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			var b strings.Builder
+			b.Grow(len(s) * 2)
+			for j := 0; j < len(s); j++ {
+				b.WriteRune(rune(s[j]))
+			}
+			return b.String()
+		}
+	}
+	return s
+}

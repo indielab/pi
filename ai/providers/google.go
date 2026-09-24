@@ -20,7 +20,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-	"unicode/utf8"
 
 	"github.com/sky-valley/pi/ai"
 	"github.com/sky-valley/pi/internal/jstext"
@@ -1578,8 +1577,8 @@ func googleSDKResponseHeaders(resp *http.Response) ai.OrderedObject {
 	delete(values, "__proto__")
 	names := slices.Sorted(maps.Keys(values))
 	slices.SortStableFunc(names, func(a, b string) int {
-		x, aIndex := jsArrayIndexKey(a)
-		y, bIndex := jsArrayIndexKey(b)
+		x, aIndex := jstext.ArrayIndexKey(a)
+		y, bIndex := jstext.ArrayIndexKey(b)
 		switch {
 		case aIndex && bIndex:
 			return cmp.Compare(x, y)
@@ -1597,7 +1596,7 @@ func googleSDKResponseHeaders(resp *http.Response) ai.OrderedObject {
 		if name == "set-cookie" {
 			value = vs[len(vs)-1]
 		}
-		out = append(out, ai.OrderedField{Key: name, Value: latin1(value)})
+		out = append(out, ai.OrderedField{Key: name, Value: jstext.IsomorphicDecode(value)})
 	}
 	return out
 }
@@ -1844,22 +1843,6 @@ func (d *codedBody) fail(n int, err error) (int, error) {
 	}
 	d.err = err
 	return 0, err
-}
-
-// latin1 reads each byte of s as the character with that code point, the way
-// undici decodes header bytes.
-func latin1(s string) string {
-	for i := 0; i < len(s); i++ {
-		if s[i] >= utf8.RuneSelf {
-			var b strings.Builder
-			b.Grow(len(s) * 2)
-			for j := 0; j < len(s); j++ {
-				b.WriteRune(rune(s[j]))
-			}
-			return b.String()
-		}
-	}
-	return s
 }
 
 // RegisterGoogle registers the google-generative-ai api provider.
