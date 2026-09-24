@@ -31,7 +31,10 @@ type openaiStreamOutcome struct {
 	StopReason      string   `json:"stopReason"`
 	ErrorMessage    string   `json:"errorMessage"`
 	Text            string   `json:"text"`
-	ResponseID      string   `json:"responseId"`
+	// ResponseID and RawStopReason are String() of pi's values, "" for null
+	// and undefined: pi assigns whatever the provider sent.
+	ResponseID    string `json:"responseId"`
+	RawStopReason string `json:"rawStopReason"`
 }
 
 type openaiStreamThrown struct {
@@ -70,7 +73,13 @@ type openaiStreamCapture struct {
 	Dispatch    map[string]openaiStreamRow `json:"dispatch"`
 	Completions map[string]openaiStreamRow `json:"completions"`
 	Responses   map[string]openaiStreamRow `json:"responses"`
-	Hooks       map[string]struct {
+	Pricing     map[string]struct {
+		SSE         string  `json:"sse"`
+		ServiceTier string  `json:"serviceTier"`
+		StopReason  string  `json:"stopReason"`
+		CostTotal   float64 `json:"costTotal"`
+	} `json:"pricing"`
+	Hooks map[string]struct {
 		Adapter string `json:"adapter"`
 		SSE     string `json:"sse"`
 		Status  int    `json:"status"`
@@ -209,6 +218,7 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 		ErrorMessage:    final.ErrorMessage,
 		Text:            jstrimText(final),
 		ResponseID:      final.ResponseID,
+		RawStopReason:   final.RawStopReason,
 	}
 }
 
@@ -223,6 +233,38 @@ func compareOpenAIStreamEnding(t *testing.T, got, want openaiStreamOutcome) {
 	}
 	if got.ResponseID != want.ResponseID {
 		t.Errorf("responseId = %q, pi = %q", got.ResponseID, want.ResponseID)
+	}
+	if got.RawStopReason != want.RawStopReason {
+		t.Errorf("rawStopReason = %q, pi = %q", got.RawStopReason, want.RawStopReason)
+	}
+}
+
+// A completed response's service_tier prices it unless it is null or absent
+// (pi: `response?.service_tier ?? options.serviceTier`); one that is not a
+// tier pi knows — "", a number — prices at ×1 rather than falling back to the
+// requested tier.
+func TestOpenAIResponsesServiceTierPricingLikePi(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	if len(c.Pricing) == 0 {
+		t.Fatalf("%s has no pricing rows; rerun capture.mts", openaiStreamCaptureFile)
+	}
+	for name, row := range c.Pricing {
+		t.Run(name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				_, _ = io.WriteString(w, row.SSE)
+			}))
+			t.Cleanup(server.Close)
+			model := openaiStreamModel("responses", server.URL+"/v1")
+			model.Cost = ai.ModelCost{Input: 1} // capture.mts's pricedModel
+			opts := &OpenAIResponsesOptions{ServiceTier: row.ServiceTier}
+			opts.APIKey = "k"
+			req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+			final := StreamOpenAIResponses(context.Background(), model, req, opts).Result()
+			if string(final.StopReason) != row.StopReason || final.Usage.Cost.Total != row.CostTotal {
+				t.Errorf("ended %s costing %v, pi %s costing %v (%s)", final.StopReason, final.Usage.Cost.Total, row.StopReason, row.CostTotal, final.ErrorMessage)
+			}
+		})
 	}
 }
 

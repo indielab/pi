@@ -775,12 +775,14 @@ func TestResponsesRawStopReason(t *testing.T) {
 			wantErr:  "server_error: boom",
 		},
 		{
-			// pi reads `response?.status`, so a terminal event without a response
-			// leaves rawStopReason unset.
+			// pi's finalizeResponse opens with `response.output` (upstream
+			// 1f0dbc00), so a terminal event without a response throws before
+			// rawStopReason is assigned.
 			name:     "completed without a response object",
 			event:    `data: {"type":"response.completed"}`,
-			wantStop: ai.StopStop,
+			wantStop: ai.StopError,
 			wantRaw:  "",
+			wantErr:  "Cannot read properties of undefined (reading 'output')",
 		},
 		{
 			// pi assigns `event.response?.status` unconditionally on
@@ -1660,8 +1662,12 @@ data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
 	}
 }
 
-// D7f: response.completed with a null response still maps the stop reason and
-// promotes toolUse (pi shared :518-521 runs outside the response null-check).
+// D7f, revised: pi's finalizeResponse opens with
+// backfillReasoningSignatures(response.output ?? []) since upstream 1f0dbc00,
+// which reads off the response unguarded. A response.completed without a
+// response therefore fails the stream with V8's TypeError, even after a tool
+// call, rather than promoting toolUse (measured: pi at 002fc8385 ends error
+// "Cannot read properties of undefined (reading 'output')" on this body).
 func TestResponsesCompletedNullResponse(t *testing.T) {
 	sse := `data: {"type":"response.created","response":{"id":"r"}}
 
@@ -1675,8 +1681,8 @@ data: {"type":"response.completed"}
 
 `
 	final := runResponsesSSE(t, reasoningModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, sse)
-	if final.StopReason != ai.StopToolUse {
-		t.Fatalf("null response.completed should still promote toolUse, got %s (%s)", final.StopReason, final.ErrorMessage)
+	if final.StopReason != ai.StopError || final.ErrorMessage != "Cannot read properties of undefined (reading 'output')" {
+		t.Fatalf("response.completed without a response ended %s %q, pi error \"Cannot read properties of undefined (reading 'output')\"", final.StopReason, final.ErrorMessage)
 	}
 }
 

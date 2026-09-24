@@ -42,7 +42,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "xy",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -55,7 +56,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"multi-line-data": {
@@ -94,7 +96,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "joined",
-				"responseId": "m"
+				"responseId": "m",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -106,7 +109,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"unterminated-trailing-event": {
@@ -141,7 +145,8 @@
 				"stopReason": "error",
 				"errorMessage": "Stream ended without finish_reason",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -152,7 +157,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"unterminated-no-newline": {
@@ -187,7 +193,8 @@
 				"stopReason": "error",
 				"errorMessage": "Stream ended without finish_reason",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -198,7 +205,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"done-prefix": {
@@ -237,7 +245,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -249,7 +258,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"done-exact-first": {
@@ -276,7 +286,8 @@
 				"stopReason": "error",
 				"errorMessage": "Stream ended without finish_reason",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [],
@@ -285,7 +296,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"done-mid-line": {
@@ -326,7 +338,8 @@
 				"stopReason": "error",
 				"errorMessage": "Unexpected token 'D', \"[DONE\" is not valid JSON",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -337,7 +350,8 @@
 				"stopReason": "error",
 				"errorMessage": "Unexpected token 'D', \"[DONE\" is not valid JSON",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"crlf": {
@@ -380,7 +394,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "xy",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -393,7 +408,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"lone-cr": {
@@ -434,7 +450,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "xy",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -447,7 +464,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"mixed-line-endings": {
@@ -488,7 +506,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "xy",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -501,7 +520,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"crlf-multi-line-data": {
@@ -540,7 +560,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "joined",
-				"responseId": "m"
+				"responseId": "m",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -552,7 +573,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"crlf-thread-event": {
@@ -595,7 +617,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -608,7 +631,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"comments-and-other-fields": {
@@ -647,7 +671,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -659,7 +684,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"field-value-spacing": {
@@ -698,7 +724,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -710,7 +737,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"data-field-without-colon": {
@@ -749,7 +777,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -761,7 +790,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"bom-at-line-start": {
@@ -804,7 +834,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "xy",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -817,7 +848,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"event-named-error": {
@@ -856,7 +888,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -868,7 +901,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"event-name-empty": {
@@ -907,7 +941,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -919,7 +954,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"thread-event": {
@@ -962,7 +998,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -975,7 +1012,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"scalars": {
@@ -1038,7 +1076,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -1056,7 +1095,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"null-event": {
@@ -1099,7 +1139,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -1111,7 +1152,8 @@
 				"stopReason": "error",
 				"errorMessage": "Cannot read properties of null (reading 'type')",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"no-choices-chunks": {
@@ -1158,7 +1200,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -1172,7 +1215,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"key-order": {
@@ -1211,7 +1255,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "<&>",
-				"responseId": "k"
+				"responseId": "k",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -1223,7 +1268,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"numbers-past-float64": {
@@ -1270,7 +1316,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -1284,7 +1331,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"index-keys": {
@@ -1323,7 +1371,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "i",
-				"responseId": "k"
+				"responseId": "k",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -1335,7 +1384,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-openrouter": {
@@ -1379,7 +1429,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom\nupstream exploded",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1390,7 +1441,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-raw-contained": {
@@ -1434,7 +1486,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom: upstream exploded",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1445,7 +1498,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom: upstream exploded",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-raw-number": {
@@ -1489,7 +1543,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom\n5",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1500,7 +1555,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-raw-object": {
@@ -1544,7 +1600,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom\n[object Object]",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1555,7 +1612,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-raw-array": {
@@ -1599,7 +1657,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom\n1,2,,x",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1610,7 +1669,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-raw-true": {
@@ -1654,7 +1714,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom\ntrue",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1665,7 +1726,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-raw-falsy": {
@@ -1709,7 +1771,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1720,7 +1783,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-metadata-string": {
@@ -1764,7 +1828,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1775,7 +1840,8 @@
 				"stopReason": "error",
 				"errorMessage": "boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-no-message": {
@@ -1819,7 +1885,8 @@
 				"stopReason": "error",
 				"errorMessage": "{\"code\":\"x\",\"type\":\"y\"}",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1830,7 +1897,8 @@
 				"stopReason": "error",
 				"errorMessage": "{\"code\":\"x\",\"type\":\"y\"}",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-message-object": {
@@ -1874,7 +1942,8 @@
 				"stopReason": "error",
 				"errorMessage": "{\"b\":1,\"a\":2}",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1885,7 +1954,8 @@
 				"stopReason": "error",
 				"errorMessage": "{\"b\":1,\"a\":2}",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-message-number": {
@@ -1929,7 +1999,8 @@
 				"stopReason": "error",
 				"errorMessage": "42",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1940,7 +2011,8 @@
 				"stopReason": "error",
 				"errorMessage": "42",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-message-empty": {
@@ -1984,7 +2056,8 @@
 				"stopReason": "error",
 				"errorMessage": "{\"message\":\"\",\"code\":1}",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -1995,7 +2068,8 @@
 				"stopReason": "error",
 				"errorMessage": "{\"message\":\"\",\"code\":1}",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-message-escapes": {
@@ -2039,7 +2113,8 @@
 				"stopReason": "error",
 				"errorMessage": "café </script> \"q\"",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -2050,7 +2125,8 @@
 				"stopReason": "error",
 				"errorMessage": "café </script> \"q\"",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-string": {
@@ -2094,7 +2170,8 @@
 				"stopReason": "error",
 				"errorMessage": "\"boom\"",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -2105,7 +2182,8 @@
 				"stopReason": "error",
 				"errorMessage": "\"boom\"",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-number": {
@@ -2149,7 +2227,8 @@
 				"stopReason": "error",
 				"errorMessage": "7",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -2160,7 +2239,8 @@
 				"stopReason": "error",
 				"errorMessage": "7",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-true": {
@@ -2204,7 +2284,8 @@
 				"stopReason": "error",
 				"errorMessage": "true",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -2215,7 +2296,8 @@
 				"stopReason": "error",
 				"errorMessage": "true",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-empty-object": {
@@ -2259,7 +2341,8 @@
 				"stopReason": "error",
 				"errorMessage": "{}",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -2270,7 +2353,8 @@
 				"stopReason": "error",
 				"errorMessage": "{}",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-empty-array": {
@@ -2314,7 +2398,8 @@
 				"stopReason": "error",
 				"errorMessage": "[]",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -2325,7 +2410,8 @@
 				"stopReason": "error",
 				"errorMessage": "[]",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-chunk-integer-keys": {
@@ -2369,7 +2455,8 @@
 				"stopReason": "error",
 				"errorMessage": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -2380,7 +2467,8 @@
 				"stopReason": "error",
 				"errorMessage": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-values-falsy": {
@@ -2435,7 +2523,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "n"
+				"responseId": "n",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -2451,7 +2540,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-key-case": {
@@ -2494,7 +2584,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -2507,7 +2598,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"error-after-done": {
@@ -2546,7 +2638,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -2558,7 +2651,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"unparseable-data": {
@@ -2599,7 +2693,8 @@
 				"stopReason": "error",
 				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -2610,7 +2705,8 @@
 				"stopReason": "error",
 				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"event-without-data": {
@@ -2651,7 +2747,8 @@
 				"stopReason": "error",
 				"errorMessage": "Unexpected end of JSON input",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			},
 			"responses": {
 				"observed": [
@@ -2662,7 +2759,8 @@
 				"stopReason": "error",
 				"errorMessage": "Unexpected end of JSON input",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"utf8-truncated-3": {
@@ -2701,7 +2799,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x�y",
-				"responseId": "u"
+				"responseId": "u",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -2713,7 +2812,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"utf8-truncated-4": {
@@ -2752,7 +2852,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x�y",
-				"responseId": "u"
+				"responseId": "u",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -2764,7 +2865,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"utf8-overlong": {
@@ -2803,7 +2905,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x��y",
-				"responseId": "u"
+				"responseId": "u",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -2815,7 +2918,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"utf8-surrogate": {
@@ -2854,7 +2958,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x���y",
-				"responseId": "u"
+				"responseId": "u",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -2866,7 +2971,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"utf8-above-max": {
@@ -2905,7 +3011,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x����y",
-				"responseId": "u"
+				"responseId": "u",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -2917,7 +3024,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"utf8-lone-continuation": {
@@ -2956,7 +3064,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x��y",
-				"responseId": "u"
+				"responseId": "u",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -2968,7 +3077,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"utf8-invalid-lead": {
@@ -3007,7 +3117,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x���y",
-				"responseId": "u"
+				"responseId": "u",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -3019,7 +3130,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"utf8-truncated-then-valid": {
@@ -3058,7 +3170,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x�€y",
-				"responseId": "u"
+				"responseId": "u",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -3070,7 +3183,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"utf8-in-event-name": {
@@ -3113,7 +3227,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			},
 			"responses": {
 				"observed": [
@@ -3126,7 +3241,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		}
 	},
@@ -3143,7 +3259,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "hello",
-				"responseId": "chatcmpl-1"
+				"responseId": "chatcmpl-1",
+				"rawStopReason": "stop"
 			}
 		}
 	},
@@ -3161,7 +3278,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
-				"responseId": "resp_wrapper_early_eof"
+				"responseId": "resp_wrapper_early_eof",
+				"rawStopReason": ""
 			}
 		},
 		"completed": {
@@ -3180,7 +3298,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "hi",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
 			}
 		},
 		"null-mid-stream": {
@@ -3195,7 +3314,8 @@
 				"stopReason": "error",
 				"errorMessage": "Cannot read properties of null (reading 'type')",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"scalar-events": {
@@ -3220,7 +3340,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "hi",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
 			}
 		},
 		"unknown-event-types": {
@@ -3241,7 +3362,8 @@
 				"stopReason": "stop",
 				"errorMessage": "",
 				"text": "hi",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
 			}
 		},
 		"error-event": {
@@ -3256,7 +3378,8 @@
 				"stopReason": "error",
 				"errorMessage": "Error Code rate_limit_exceeded: slow down",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"error-event-no-code": {
@@ -3271,7 +3394,8 @@
 				"stopReason": "error",
 				"errorMessage": "Error Code undefined: slow down",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"error-event-null-code": {
@@ -3286,7 +3410,8 @@
 				"stopReason": "error",
 				"errorMessage": "Error Code null: slow down",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"error-event-number-code": {
@@ -3301,7 +3426,8 @@
 				"stopReason": "error",
 				"errorMessage": "Error Code 500: slow down",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"error-event-no-message": {
@@ -3316,7 +3442,8 @@
 				"stopReason": "error",
 				"errorMessage": "Error Code x: undefined",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"error-event-object-message": {
@@ -3331,7 +3458,8 @@
 				"stopReason": "error",
 				"errorMessage": "Error Code x: [object Object]",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"error-event-array-code": {
@@ -3346,7 +3474,8 @@
 				"stopReason": "error",
 				"errorMessage": "Error Code 1,2,: m",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"error-event-uncoercible-code": {
@@ -3361,7 +3490,8 @@
 				"stopReason": "error",
 				"errorMessage": "Cannot convert object to primitive value",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"error-event-code-past-float64": {
@@ -3376,7 +3506,8 @@
 				"stopReason": "error",
 				"errorMessage": "Error Code Infinity: m",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"response-failed": {
@@ -3391,7 +3522,8 @@
 				"stopReason": "error",
 				"errorMessage": "server_error: bad",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-number-code": {
@@ -3406,7 +3538,8 @@
 				"stopReason": "error",
 				"errorMessage": "500: bad",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-true-code": {
@@ -3421,7 +3554,8 @@
 				"stopReason": "error",
 				"errorMessage": "true: bad",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-falsy-members": {
@@ -3436,7 +3570,8 @@
 				"stopReason": "error",
 				"errorMessage": "unknown: no message",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-object-message": {
@@ -3451,7 +3586,8 @@
 				"stopReason": "error",
 				"errorMessage": "x: [object Object]",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-uncoercible-message": {
@@ -3466,7 +3602,8 @@
 				"stopReason": "error",
 				"errorMessage": "Cannot convert object to primitive value",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-string-error": {
@@ -3481,7 +3618,8 @@
 				"stopReason": "error",
 				"errorMessage": "unknown: no message",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-empty-error": {
@@ -3496,7 +3634,8 @@
 				"stopReason": "error",
 				"errorMessage": "unknown: no message",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-false-error": {
@@ -3511,7 +3650,8 @@
 				"stopReason": "error",
 				"errorMessage": "incomplete: max_output_tokens",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-number-reason": {
@@ -3526,7 +3666,8 @@
 				"stopReason": "error",
 				"errorMessage": "incomplete: 5",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-empty-reason": {
@@ -3541,7 +3682,8 @@
 				"stopReason": "error",
 				"errorMessage": "Unknown error (no error details in response)",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"response-failed-no-details": {
@@ -3556,7 +3698,8 @@
 				"stopReason": "error",
 				"errorMessage": "Unknown error (no error details in response)",
 				"text": "",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
 			}
 		},
 		"incomplete-number-reason": {
@@ -3575,7 +3718,642 @@
 				"stopReason": "error",
 				"errorMessage": "Response incomplete without a provider reason",
 				"text": "hi",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "incomplete"
+			}
+		},
+		"error-event-code-key-case": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"error\",\"CODE\":\"x\",\"message\":\"m\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"error\",\"CODE\":\"x\",\"message\":\"m\"}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error Code undefined: m",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"error-event-code-duplicate-case": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"error\",\"code\":\"a\",\"Code\":\"b\",\"message\":\"m\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"error\",\"code\":\"a\",\"Code\":\"b\",\"message\":\"m\"}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error Code a: m",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"type-key-case": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"TYPE\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"TYPE\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"type-duplicate-case": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"Type\":\"x\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"Type\":\"x\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
+			}
+		},
+		"response-key-case": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.failed\",\"Response\":{\"error\":{\"code\":\"c\",\"message\":\"m\"}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.failed\",\"Response\":{\"error\":{\"code\":\"c\",\"message\":\"m\"}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Unknown error (no error details in response)",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"response-failed-error-key-case": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"ERROR\":{\"code\":\"c\",\"message\":\"m\"}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"ERROR\":{\"code\":\"c\",\"message\":\"m\"}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Unknown error (no error details in response)",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
+			}
+		},
+		"response-failed-number-response": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.failed\",\"response\":5}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.failed\",\"response\":5}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Unknown error (no error details in response)",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"response-failed-null-response": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.failed\",\"response\":null}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.failed\",\"response\":null}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Unknown error (no error details in response)",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"response-failed-number-status": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":5,\"error\":{\"code\":\"c\",\"message\":\"m\"}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":5,\"error\":{\"code\":\"c\",\"message\":\"m\"}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "c: m",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": "5"
+			}
+		},
+		"response-failed-number-id": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":5,\"status\":\"failed\",\"error\":{\"code\":\"c\",\"message\":\"m\"}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.failed\",\"response\":{\"id\":5,\"status\":\"failed\",\"error\":{\"code\":\"c\",\"message\":\"m\"}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "c: m",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": "failed"
+			}
+		},
+		"created-null-response": {
+			"sse": "data: {\"type\":\"response.created\",\"response\":null}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"response\":null}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot read properties of null (reading 'id')",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
+		"created-no-response": {
+			"sse": "data: {\"type\":\"response.created\"}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\"}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot read properties of undefined (reading 'id')",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
+		"created-number-response": {
+			"sse": "data: {\"type\":\"response.created\",\"response\":5}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"response\":5}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "",
+				"rawStopReason": "completed"
+			}
+		},
+		"completed-null-response": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":null}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":null}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot read properties of null (reading 'output')",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"completed-no-response": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\"}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\"}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot read properties of undefined (reading 'output')",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"completed-string-response": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":\"x\"}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":\"x\"}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"completed-number-id": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":5,\"status\":\"completed\"}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"id\":5,\"status\":\"completed\"}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "5",
+				"rawStopReason": "completed"
+			}
+		},
+		"completed-false-id": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":false,\"status\":\"completed\"}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"id\":false,\"status\":\"completed\"}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
+			}
+		},
+		"completed-number-status": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":5}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":5}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Unhandled stop reason: 5",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "5"
+			}
+		},
+		"completed-false-status": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":false}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":false}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "false"
+			}
+		},
+		"completed-object-status-with-reason": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":{\"a\":1},\"incomplete_details\":{\"reason\":\"r\"}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":{\"a\":1},\"incomplete_details\":{\"reason\":\"r\"}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Unhandled stop reason: [object Object]",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "[object Object].r"
+			}
+		},
+		"completed-no-status-with-reason": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "undefined.max_output_tokens"
+			}
+		},
+		"completed-null-status-with-reason": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":null,\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":null,\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "null.max_output_tokens"
+			}
+		},
+		"completed-uncoercible-status-with-reason": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":{\"toString\":1},\"incomplete_details\":{\"reason\":\"r\"}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":{\"toString\":1},\"incomplete_details\":{\"reason\":\"r\"}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot convert object to primitive value",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"completed-number-output": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":5}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":5}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "responseOutput is not iterable",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"completed-object-output": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":{}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":{}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "responseOutput is not iterable",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"completed-string-output": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":\"ab\"}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":\"ab\"}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
+			}
+		},
+		"completed-null-output-item": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[null]}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[null]}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot read properties of null (reading 'type')",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"completed-scalar-output-items": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[5,\"x\",true,[]]}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[5,\"x\",true,[]]}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
+			}
+		},
+		"completed-string-usage-member": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":\"5\",\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":\"5\",\"output_tokens\":1,\"total_tokens\":6}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
+			}
+		},
+		"completed-fractional-usage-member": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1.5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"usage\":{\"input_tokens\":1.5,\"output_tokens\":1,\"total_tokens\":6}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
+			}
+		},
+		"completed-mistyped-other-member": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"output_index\":\"x\",\"item\":5,\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"output_index\":\"x\",\"item\":5,\"response\":{\"id\":\"resp_1\",\"status\":\"completed\"}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
+			}
+		},
+		"error-event-mistyped-other-member": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"error\",\"code\":\"c\",\"message\":\"m\",\"delta\":5,\"part\":\"p\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"error\",\"code\":\"c\",\"message\":\"m\",\"delta\":5,\"part\":\"p\"}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error Code c: m",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": ""
+			}
+		},
+		"completed-number-service-tier": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"service_tier\":5}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"service_tier\":5}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
 			}
 		}
 	},
@@ -3595,7 +4373,8 @@
 				"stopReason": "error",
 				"errorMessage": "observer boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"completions/callback-aborts": {
@@ -3613,7 +4392,8 @@
 				"stopReason": "aborted",
 				"errorMessage": "observer boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"completions/on-response-throws": {
@@ -3629,7 +4409,8 @@
 				"stopReason": "error",
 				"errorMessage": "response veto",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"completions/http-400": {
@@ -3645,7 +4426,8 @@
 				"stopReason": "error",
 				"errorMessage": "400: {\"message\":\"bad request\"}",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"completions/http-400-on-response-throws": {
@@ -3661,7 +4443,8 @@
 				"stopReason": "error",
 				"errorMessage": "400: {\"message\":\"bad request\"}",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"completions/abort-held": {
@@ -3679,7 +4462,8 @@
 				"stopReason": "aborted",
 				"errorMessage": "Request was aborted",
 				"text": "x",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": ""
 			}
 		},
 		"completions/abort-held-after-finish": {
@@ -3699,7 +4483,8 @@
 				"stopReason": "aborted",
 				"errorMessage": "Request was aborted",
 				"text": "xy",
-				"responseId": "a"
+				"responseId": "a",
+				"rawStopReason": "stop"
 			}
 		},
 		"responses/callback-throws": {
@@ -3717,7 +4502,8 @@
 				"stopReason": "error",
 				"errorMessage": "observer boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"responses/callback-aborts": {
@@ -3735,7 +4521,8 @@
 				"stopReason": "aborted",
 				"errorMessage": "observer boom",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"responses/on-response-throws": {
@@ -3751,7 +4538,8 @@
 				"stopReason": "error",
 				"errorMessage": "response veto",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"responses/http-400": {
@@ -3767,7 +4555,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI API error (400): {\"message\":\"bad request\"}",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"responses/http-400-on-response-throws": {
@@ -3783,7 +4572,8 @@
 				"stopReason": "error",
 				"errorMessage": "OpenAI API error (400): {\"message\":\"bad request\"}",
 				"text": "",
-				"responseId": ""
+				"responseId": "",
+				"rawStopReason": ""
 			}
 		},
 		"responses/abort-held": {
@@ -3805,7 +4595,8 @@
 				"stopReason": "aborted",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "hi",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": ""
 			}
 		},
 		"responses/abort-held-after-terminal": {
@@ -3828,8 +4619,47 @@
 				"stopReason": "aborted",
 				"errorMessage": "Request was aborted",
 				"text": "hi",
-				"responseId": "resp_1"
+				"responseId": "resp_1",
+				"rawStopReason": "completed"
 			}
+		}
+	},
+	"pricing": {
+		"tier-absent": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1000000,\"output_tokens\":0,\"total_tokens\":1000000}}}\n\n",
+			"serviceTier": "priority",
+			"stopReason": "stop",
+			"costTotal": 2
+		},
+		"tier-null": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1000000,\"output_tokens\":0,\"total_tokens\":1000000},\"service_tier\":null}}\n\n",
+			"serviceTier": "priority",
+			"stopReason": "stop",
+			"costTotal": 2
+		},
+		"tier-empty": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1000000,\"output_tokens\":0,\"total_tokens\":1000000},\"service_tier\":\"\"}}\n\n",
+			"serviceTier": "priority",
+			"stopReason": "stop",
+			"costTotal": 1
+		},
+		"tier-number": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1000000,\"output_tokens\":0,\"total_tokens\":1000000},\"service_tier\":5}}\n\n",
+			"serviceTier": "priority",
+			"stopReason": "stop",
+			"costTotal": 1
+		},
+		"tier-flex": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1000000,\"output_tokens\":0,\"total_tokens\":1000000},\"service_tier\":\"flex\"}}\n\n",
+			"serviceTier": "priority",
+			"stopReason": "stop",
+			"costTotal": 0.5
+		},
+		"tier-default": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":1000000,\"output_tokens\":0,\"total_tokens\":1000000},\"service_tier\":\"default\"}}\n\n",
+			"serviceTier": "priority",
+			"stopReason": "stop",
+			"costTotal": 1
 		}
 	}
 }

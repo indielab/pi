@@ -28,6 +28,8 @@
 //             adapter-specific bodies, with the same record as above.
 //   hooks     the callback and onResponse failing, a non-2xx response, and
 //             a request aborted while the server holds the connection open.
+//   pricing   responses' service-tier pricing: which tier a completed
+//             response's service_tier leaves in force.
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -215,7 +217,10 @@ type Outcome = {
 	stopReason: string;
 	errorMessage: string;
 	text: string;
+	// responseId and rawStopReason are String() of pi's values, which need not
+	// be strings: pi assigns what the provider sent. null and undefined are "".
 	responseId: string;
+	rawStopReason: string;
 };
 
 type Hooks = {
@@ -259,7 +264,8 @@ async function piRun(api: any, baseModel: Record<string, unknown>, baseUrl: stri
 			.filter((b: { type: string }) => b.type === "text")
 			.map((b: { text: string }) => b.text)
 			.join(""),
-		responseId: final.responseId ?? "",
+		responseId: final.responseId == null ? "" : String(final.responseId),
+		rawStopReason: final.rawStopReason == null ? "" : String(final.rawStopReason),
 	};
 }
 
@@ -447,7 +453,103 @@ const responsesBodies: Record<string, string> = {
 			type: "response.incomplete",
 			response: { id: "resp_1", status: "incomplete", incomplete_details: { reason: 5 } },
 		}),
+	// pi reads each member it uses off the parsed event with JS semantics: the
+	// key is exact (a JS property read), a member of any type is read as
+	// whatever it is, and reading off a null or absent response throws.
+	"error-event-code-key-case": errorEvent({ CODE: "x", message: "m" }),
+	"error-event-code-duplicate-case": `${created}data: {"type":"error","code":"a","Code":"b","message":"m"}\n\n${completed}`,
+	"type-key-case": `${created}${textEvents}data: {"TYPE":"response.completed","response":{"id":"resp_1","status":"completed"}}\n\n`,
+	"type-duplicate-case": `${created}${textEvents}data: {"type":"response.completed","Type":"x","response":{"id":"resp_1","status":"completed"}}\n\n`,
+	"response-key-case": `${created}data: {"type":"response.failed","Response":{"error":{"code":"c","message":"m"}}}\n\n`,
+	"response-failed-error-key-case": failed({ ERROR: { code: "c", message: "m" } }),
+	"response-failed-number-response": created + R({ type: "response.failed", response: 5 }),
+	"response-failed-null-response": created + R({ type: "response.failed", response: null }),
+	"response-failed-number-status": failed({ status: 5, error: { code: "c", message: "m" } }),
+	"response-failed-number-id": failed({ id: 5, error: { code: "c", message: "m" } }),
+	"created-null-response": R({ type: "response.created", response: null }) + textEvents + completed,
+	"created-no-response": R({ type: "response.created" }) + textEvents + completed,
+	"created-number-response":
+		R({ type: "response.created", response: 5 }) +
+		textEvents +
+		R({ type: "response.completed", response: { status: "completed" } }),
+	"completed-null-response": created + textEvents + R({ type: "response.completed", response: null }),
+	"completed-no-response": created + textEvents + R({ type: "response.completed" }),
+	"completed-string-response": created + textEvents + R({ type: "response.completed", response: "x" }),
+	"completed-number-id": created + textEvents + R({ type: "response.completed", response: { id: 5, status: "completed" } }),
+	"completed-false-id": created + textEvents + R({ type: "response.completed", response: { id: false, status: "completed" } }),
+	"completed-number-status": created + textEvents + R({ type: "response.incomplete", response: { id: "resp_1", status: 5 } }),
+	"completed-false-status": created + textEvents + R({ type: "response.completed", response: { id: "resp_1", status: false } }),
+	"completed-object-status-with-reason":
+		created +
+		textEvents +
+		R({ type: "response.completed", response: { status: { a: 1 }, incomplete_details: { reason: "r" } } }),
+	"completed-no-status-with-reason":
+		created + textEvents + R({ type: "response.incomplete", response: { id: "resp_1", incomplete_details: { reason: "max_output_tokens" } } }),
+	"completed-null-status-with-reason":
+		created +
+		textEvents +
+		R({ type: "response.incomplete", response: { id: "resp_1", status: null, incomplete_details: { reason: "max_output_tokens" } } }),
+	"completed-uncoercible-status-with-reason":
+		created +
+		textEvents +
+		R({ type: "response.completed", response: { status: { toString: 1 }, incomplete_details: { reason: "r" } } }),
+	"completed-number-output": created + textEvents + R({ type: "response.completed", response: { status: "completed", output: 5 } }),
+	"completed-object-output": created + textEvents + R({ type: "response.completed", response: { status: "completed", output: {} } }),
+	"completed-string-output": created + textEvents + R({ type: "response.completed", response: { status: "completed", output: "ab" } }),
+	"completed-null-output-item": created + textEvents + R({ type: "response.completed", response: { status: "completed", output: [null] } }),
+	"completed-scalar-output-items":
+		created + textEvents + R({ type: "response.completed", response: { status: "completed", output: [5, "x", true, []] } }),
+	"completed-string-usage-member":
+		created +
+		textEvents +
+		R({ type: "response.completed", response: { status: "completed", usage: { input_tokens: "5", output_tokens: 1, total_tokens: 6 } } }),
+	"completed-fractional-usage-member":
+		created +
+		textEvents +
+		R({ type: "response.completed", response: { status: "completed", usage: { input_tokens: 1.5, output_tokens: 1, total_tokens: 6 } } }),
+	// Members the typed events carry, mistyped on an event that ends the
+	// stream, which pi never reads there.
+	"completed-mistyped-other-member":
+		created + textEvents + R({ type: "response.completed", output_index: "x", item: 5, response: { id: "resp_1", status: "completed" } }),
+	"error-event-mistyped-other-member": errorEvent({ code: "c", message: "m", delta: 5, part: "p" }),
+	"completed-number-service-tier":
+		created + textEvents + R({ type: "response.completed", response: { status: "completed", service_tier: 5 } }),
 };
+
+// ---- pricing ---------------------------------------------------------------------
+
+// Pricing bodies end in response.completed with a million input tokens, read
+// through responses.stream with the serviceTier option on a model priced at
+// 1 per million input tokens: the recorded cost is the tier's multiplier.
+// The response's service_tier wins over the option unless it is null or
+// absent (`response?.service_tier ?? options.serviceTier`).
+const pricedModel = { ...responsesModel, cost: { input: 1, output: 0, cacheRead: 0, cacheWrite: 0 } };
+const pricedBody = (serviceTier: Record<string, unknown>) =>
+	created +
+	R({
+		type: "response.completed",
+		response: {
+			id: "resp_1",
+			status: "completed",
+			usage: { input_tokens: 1000000, output_tokens: 0, total_tokens: 1000000 },
+			...serviceTier,
+		},
+	});
+const pricingBodies: Record<string, [string, string]> = {
+	"tier-absent": [pricedBody({}), "priority"],
+	"tier-null": [pricedBody({ service_tier: null }), "priority"],
+	"tier-empty": [pricedBody({ service_tier: "" }), "priority"],
+	"tier-number": [pricedBody({ service_tier: 5 }), "priority"],
+	"tier-flex": [pricedBody({ service_tier: "flex" }), "priority"],
+	"tier-default": [pricedBody({ service_tier: "default" }), "priority"],
+};
+
+async function piPricing(body: string, serviceTier: string) {
+	const final = await responses
+		.stream({ ...pricedModel, baseUrl: sse(body) }, context, { apiKey: "k", serviceTier })
+		.result();
+	return { stopReason: final.stopReason, costTotal: final.usage.cost.total };
+}
 
 // ---- capture ---------------------------------------------------------------------
 
@@ -465,7 +567,8 @@ const out: {
 		string,
 		{ adapter: string; sse: string; status: number; hold: boolean; abortOnEvent: number; outcome: Outcome }
 	>;
-} = { sha, openai: openaiVersion, dispatch: {}, completions: {}, responses: {}, hooks: {} };
+	pricing: Record<string, { sse: string; serviceTier: string; stopReason: string; costTotal: number }>;
+} = { sha, openai: openaiVersion, dispatch: {}, completions: {}, responses: {}, hooks: {}, pricing: {} };
 
 for (const [name, body] of Object.entries(dispatch)) {
 	out.dispatch[name] = {
@@ -531,6 +634,10 @@ for (const [adapter, [api, model]] of Object.entries(adapters)) {
 			outcome: await piRun(api, model, route(reply), hooks),
 		};
 	}
+}
+
+for (const [name, [body, serviceTier]] of Object.entries(pricingBodies)) {
+	out.pricing[name] = { sse: body, serviceTier, ...(await piPricing(body, serviceTier)) };
 }
 
 for (const res of held) res.destroy();

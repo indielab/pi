@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"strings"
 	"unicode/utf16"
@@ -558,89 +559,111 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		// (response.completed | response.incomplete | response.failed) arrived
 		// before the stream ended (port of upstream cd95c274).
 		sawTerminalResponseEvent := false
-		// finalizeResponse runs the usage/stop-reason block for a terminal
-		// response payload. pi runs it even when response is null (shared
-		// :493-521): cost calc, service-tier pricing, mapStopReason(undefined),
-		// and toolUse promotion all apply. response.completed and
-		// response.incomplete both finalize identically.
 		// backfillReasoningSignatures re-derives a reasoning block's persisted
 		// signature from the terminal response's output when the earlier
 		// output_item.done omitted encrypted_content (port of upstream 1f0dbc00).
-		// The signature is stored as the raw reasoning item JSON; on replay it is
-		// re-parsed (see the ThinkingContent case in the request builder), so only
-		// the presence of encrypted_content matters, not the key order.
-		backfillReasoningSignatures := func(responseOutput []responsesItem) {
-			for _, item := range responseOutput {
-				if item.Type != "reasoning" || item.EncryptedContent == "" {
+		// It reads `response.output ?? []` as pi does: a for-of over it, so an
+		// output that is neither nullish, an array nor a string throws V8's
+		// TypeError, as does a null item (item.type). The signature is stored as
+		// the raw reasoning item JSON; on replay it is re-parsed (see the
+		// ThinkingContent case in the request builder), so only the presence of
+		// encrypted_content matters, not the key order.
+		backfillReasoningSignatures := func(responseOutput any) error {
+			var items []any
+			switch v := responseOutput.(type) {
+			case nil, string:
+				return nil // `?? []`; a string's characters are no reasoning items
+			case []any:
+				items = v
+			default:
+				return errors.New("responseOutput is not iterable")
+			}
+			for _, item := range items {
+				if item == nil {
+					return jsReadError(true, "type")
+				}
+				encrypted := jsGet(item, "encrypted_content")
+				if jsGet(item, "type") != "reasoning" || !jstext.Truthy(encrypted) {
 					continue
 				}
-				block := reasoningBlocksByID[item.ID]
+				id, _ := jsGet(item, "id").(string) // the blocks are keyed by string ids
+				block := reasoningBlocksByID[id]
 				if block == nil || block.thinkingSig == "" {
 					continue
 				}
-				var stored map[string]any
-				if err := json.Unmarshal([]byte(block.thinkingSig), &stored); err != nil {
+				stored, _ := jstext.Parse([]byte(block.thinkingSig)) // written by json.Marshal
+				storedItem, _ := stored.(map[string]any)
+				if storedItem == nil || jstext.Truthy(storedItem["encrypted_content"]) {
 					continue
 				}
-				// pi skips when storedItem.encrypted_content is already truthy.
-				if ec, ok := stored["encrypted_content"].(string); ok && ec != "" {
-					continue
-				}
-				stored["encrypted_content"] = item.EncryptedContent
-				rebuilt, err := json.Marshal(stored)
+				storedItem["encrypted_content"] = encrypted
+				rebuilt, err := json.Marshal(storedItem)
 				if err != nil {
 					continue
 				}
 				block.thinkingSig = string(rebuilt)
 			}
+			return nil
 		}
-		finalizeResponse := func(r *responsesPayload) error {
+		// finalizeResponse runs pi's finalizeResponse for response.completed
+		// and response.incomplete, reading event.response with JS semantics:
+		// every member exact-key and of whatever type it holds. Its first read,
+		// `response.output`, throws on a null or absent response.
+		finalizeResponse := func(event map[string]any) error {
 			sawTerminalResponseEvent = true
-			if r != nil {
-				backfillReasoningSignatures(r.Output)
+			response, present := event["response"]
+			if response == nil {
+				return jsReadError(present, "output")
 			}
-			if r != nil {
-				if r.ID != "" {
-					output.ResponseID = r.ID
-				}
-				if r.Usage != nil {
-					cached := r.Usage.InputTokensDetails.CachedTokens
-					cacheWrite := r.Usage.InputTokensDetails.CacheWriteTokens
-					output.Usage = ai.Usage{
-						// OpenAI includes cached and cache-write tokens in input_tokens,
-						// so subtract both (clamped at 0) to get non-cached input.
-						Input:      max(0, r.Usage.InputTokens-cached-cacheWrite),
-						Output:     r.Usage.OutputTokens,
-						CacheRead:  cached,
-						CacheWrite: cacheWrite,
-						// pi: `reasoning: output_tokens_details?.reasoning_tokens || 0`.
-						Reasoning:   r.Usage.OutputTokensDetails.ReasoningTokens,
-						TotalTokens: r.Usage.TotalTokens,
-					}
+			if err := backfillReasoningSignatures(jsGet(response, "output")); err != nil {
+				return err
+			}
+			if id := jsGet(response, "id"); jstext.Truthy(id) {
+				output.ResponseID = jsStringField(id)
+			}
+			if usage := jsGet(response, "usage"); jstext.Truthy(usage) {
+				details := jsGet(usage, "input_tokens_details")
+				cached := jsTokenCount(jsGet(details, "cached_tokens"))
+				cacheWrite := jsTokenCount(jsGet(details, "cache_write_tokens"))
+				output.Usage = ai.Usage{
+					// OpenAI includes cached and cache-write tokens in input_tokens,
+					// so subtract both (clamped at 0) to get non-cached input.
+					Input:      max(0, jsTokenCount(jsGet(usage, "input_tokens"))-cached-cacheWrite),
+					Output:     jsTokenCount(jsGet(usage, "output_tokens")),
+					CacheRead:  cached,
+					CacheWrite: cacheWrite,
+					// pi: `reasoning: output_tokens_details?.reasoning_tokens || 0`.
+					Reasoning:   jsTokenCount(jsGet(jsGet(usage, "output_tokens_details"), "reasoning_tokens")),
+					TotalTokens: jsTokenCount(jsGet(usage, "total_tokens")),
 				}
 			}
 			ai.CalculateCost(model, &output.Usage)
-			// Service-tier pricing: the response-reported tier wins over the
-			// requested one (shared :511-516 `response?.service_tier ?? options.serviceTier`).
+			// Service-tier pricing: `response?.service_tier ?? options.serviceTier`,
+			// so the response's tier wins unless it is null or absent. One that is
+			// not a string ("" included) matches no tier and prices at ×1.
 			serviceTier := opts.ServiceTier
-			if r != nil && r.ServiceTier != "" {
-				serviceTier = r.ServiceTier
+			if tier := jsGet(response, "service_tier"); tier != nil {
+				serviceTier, _ = tier.(string)
 			}
 			applyResponsesServiceTierPricing(&output.Usage, serviceTier, model)
 			// Upstream 32850ef7: the provider's incomplete_details.reason is
 			// retained so max-output truncation and content filtering stay
 			// distinct — it qualifies rawStopReason as "<status>.<reason>" and
-			// decides whether "incomplete" is a length stop or an error.
-			status, incompleteReason := "", ""
-			if r != nil {
-				status = r.Status
-				incompleteReason = incompleteDetailsReason(r.IncompleteDetails)
-			}
-			output.RawStopReason = status
+			// decides whether "incomplete" is a length stop or an error. pi
+			// assigns rawStopReason before mapping the status, and a template
+			// literal that throws leaves it unassigned.
+			status, statusPresent := jsLookup(response, "status")
+			incompleteReason, _ := jsGet(jsGet(response, "incomplete_details"), "reason").(string)
 			if incompleteReason != "" {
-				output.RawStopReason = status + "." + incompleteReason
+				statusText, ok := jsTemplate(status, statusPresent)
+				if !ok {
+					return errNoPrimitiveValue
+				}
+				output.RawStopReason = statusText + "." + incompleteReason
+			} else {
+				output.RawStopReason = jsStringField(status)
 			}
-			reason, errorMessage, statusErr := mapResponsesStatus(status, incompleteReason)
+			reason, errorMessage, statusErr := mapResponsesStatusValue(status, incompleteReason)
 			if statusErr != nil {
 				return statusErr
 			}
@@ -661,9 +684,13 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		err = iterateOpenAISSE2(resp.Body, ctx, onEvent, func(ev responsesEvent) error {
 			switch ev.Type {
 			case "response.created":
-				if ev.Response != nil {
-					output.ResponseID = ev.Response.ID
+				// pi: `output.responseId = event.response.id`, which throws on a
+				// null or absent response and assigns whatever id holds.
+				response, present := ev.JS["response"]
+				if response == nil {
+					return jsReadError(present, "id")
 				}
+				output.ResponseID = jsStringField(jsGet(response, "id"))
 			case "response.output_item.added":
 				if ev.Item == nil {
 					return nil
@@ -835,22 +862,20 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			case "response.completed", "response.incomplete":
 				// Upstream cd95c274: response.incomplete finalizes usage/cost/
 				// stopReason identically to response.completed.
-				if finalizeErr := finalizeResponse(ev.Response); finalizeErr != nil {
+				if finalizeErr := finalizeResponse(ev.JS); finalizeErr != nil {
 					return finalizeErr
 				}
 			case "error":
-				return errorEventMessage(ev)
+				return errorEventMessage(ev.JS)
 			case "response.failed":
 				// Upstream cd95c274: response.failed is a terminal event too,
 				// recorded before its error is thrown.
 				sawTerminalResponseEvent = true
 				// pi assigns `event.response?.status` unconditionally, so an event
 				// without a response clears any earlier raw stop reason.
-				output.RawStopReason = ""
-				if ev.Response != nil {
-					output.RawStopReason = ev.Response.Status
-				}
-				return responsesFailedMessage(ev)
+				response := ev.JS["response"]
+				output.RawStopReason = jsStringField(jsGet(response, "status"))
+				return responsesFailedMessage(response)
 			}
 			return nil
 		})
@@ -1493,25 +1518,24 @@ var errNoPrimitiveValue = errors.New("Cannot convert object to primitive value")
 // value — "undefined" for an absent member, "null", a number as JS formats it,
 // an array joined with ",", "[object Object]" — and throws V8's TypeError on
 // an object it cannot convert to a primitive, which pi's catch block surfaces.
-func errorEventMessage(ev responsesEvent) error {
-	code, ok := jsTemplateValue(ev.Code)
+func errorEventMessage(event map[string]any) error {
+	code, ok := jsTemplate(jsLookup(event, "code"))
 	if !ok {
 		return errNoPrimitiveValue
 	}
-	message, ok := jsTemplateValue(ev.Message)
+	message, ok := jsTemplate(jsLookup(event, "message"))
 	if !ok {
 		return errNoPrimitiveValue
 	}
 	return errors.New("Error Code " + code + ": " + message)
 }
 
-// jsTemplateValue is what `${value}` writes for a member of a parsed event,
-// given as its JSON (nil when absent). ok is false where the conversion throws.
-func jsTemplateValue(raw json.RawMessage) (string, bool) {
-	if raw == nil {
+// jsTemplate is what `${value}` writes for a member read off a parsed event,
+// given as jsLookup returns it. ok is false where the conversion throws.
+func jsTemplate(value any, present bool) (string, bool) {
+	if !present {
 		return "undefined", true
 	}
-	value, _ := jstext.Parse(raw) // a member of an event that decoded, so it parses
 	return jstext.ToString(value)
 }
 
@@ -1522,32 +1546,30 @@ func jsTemplateValue(raw json.RawMessage) (string, bool) {
 //	  : "Unknown error (no error details in response)"
 //
 // over event.response's error and incomplete_details, with JS truthiness and
-// template-literal writing throughout (jstext.ToString): an error that is not
-// an object reads its members as undefined, and a member no template literal
-// can write throws V8's TypeError, which pi's catch block surfaces.
-func responsesFailedMessage(ev responsesEvent) error {
-	var errorValue, details json.RawMessage
-	if ev.Response != nil {
-		errorValue, details = ev.Response.Error, ev.Response.IncompleteDetails
-	}
+// template-literal writing throughout (jstext.ToString): a response or an
+// error that is not an object reads its members as undefined, and a member no
+// template literal can write throws V8's TypeError, which pi's catch block
+// surfaces.
+func responsesFailedMessage(response any) error {
+	errorValue, details := jsGet(response, "error"), jsGet(response, "incomplete_details")
 	orDefault := func(value any, fallback string) (string, bool) {
 		if !jstext.Truthy(value) {
 			return fallback, true
 		}
 		return jstext.ToString(value)
 	}
-	if rawTruthy(errorValue) {
-		code, ok := orDefault(jsMember(errorValue, "code"), "unknown")
+	if jstext.Truthy(errorValue) {
+		code, ok := orDefault(jsGet(errorValue, "code"), "unknown")
 		if !ok {
 			return errNoPrimitiveValue
 		}
-		message, ok := orDefault(jsMember(errorValue, "message"), "no message")
+		message, ok := orDefault(jsGet(errorValue, "message"), "no message")
 		if !ok {
 			return errNoPrimitiveValue
 		}
 		return errors.New(code + ": " + message)
 	}
-	if reason := jsMember(details, "reason"); jstext.Truthy(reason) {
+	if reason := jsGet(details, "reason"); jstext.Truthy(reason) {
 		text, ok := jstext.ToString(reason)
 		if !ok {
 			return errNoPrimitiveValue
@@ -1555,6 +1577,23 @@ func responsesFailedMessage(ev responsesEvent) error {
 		return errors.New("incomplete: " + text)
 	}
 	return errors.New("Unknown error (no error details in response)")
+}
+
+// mapResponsesStatusValue is pi's mapStopReason over a status of any type:
+// `!status` is a stop, a string maps as mapResponsesStatus does, and any
+// other value matches no case and throws `Unhandled stop reason: ${status}`.
+func mapResponsesStatusValue(status any, incompleteReason string) (ai.StopReason, string, error) {
+	if !jstext.Truthy(status) {
+		return ai.StopStop, "", nil
+	}
+	if text, isString := status.(string); isString {
+		return mapResponsesStatus(text, incompleteReason)
+	}
+	text, ok := jstext.ToString(status)
+	if !ok {
+		return ai.StopStop, "", errNoPrimitiveValue
+	}
+	return ai.StopStop, "", errors.New("Unhandled stop reason: " + text)
 }
 
 // ---- SSE event types ----
@@ -1566,20 +1605,25 @@ type responsesContentPart struct {
 }
 
 type responsesEvent struct {
-	Type      string `json:"type"`
+	// Type is the event's `type` when it is a string, read by exact key as
+	// JS reads event.type; "" matches no handler.
+	Type      string `json:"-"`
 	Delta     string `json:"delta"`
 	Arguments string `json:"arguments"`
 	// Input carries response.custom_tool_call_input.done's final raw input.
-	Input string `json:"input"`
-	// Code and Message stay raw: an `error` event's message writes whatever
-	// value each holds (errorEventMessage).
-	Code        json.RawMessage       `json:"code"`
-	Message     json.RawMessage       `json:"message"`
+	Input       string                `json:"input"`
 	OutputIndex int                   `json:"output_index"`
 	Part        *responsesContentPart `json:"part"`
 	Item        *responsesItem        `json:"item"`
 	RawItem     json.RawMessage       `json:"-"`
-	Response    *responsesPayload     `json:"response"`
+	// JS is the event as JSON.parse made it (jstext.Parse's shapes). The
+	// handlers for the events that end the stream — response.created's id,
+	// response.completed/incomplete/failed and error — read it with JS
+	// semantics, as pi does: exact keys, and a member of any type read as
+	// whatever it holds, so no member can make the port drop the event. The
+	// typed fields above stay encoding/json's (case-insensitive keys, and a
+	// mistyped member drops the event); only the other events use them.
+	JS map[string]any `json:"-"`
 }
 
 type responsesItem struct {
@@ -1600,48 +1644,63 @@ type responsesItem struct {
 	Content          []responsesContentPart `json:"content"`
 }
 
-type responsesPayload struct {
-	ID          string          `json:"id"`
-	Status      string          `json:"status"`
-	ServiceTier string          `json:"service_tier"`
-	Output      []responsesItem `json:"output"`
-	Usage       *struct {
-		InputTokens        int `json:"input_tokens"`
-		OutputTokens       int `json:"output_tokens"`
-		TotalTokens        int `json:"total_tokens"`
-		InputTokensDetails struct {
-			CachedTokens     int `json:"cached_tokens"`
-			CacheWriteTokens int `json:"cache_write_tokens"`
-		} `json:"input_tokens_details"`
-		OutputTokensDetails struct {
-			ReasoningTokens int `json:"reasoning_tokens"`
-		} `json:"output_tokens_details"`
-	} `json:"usage"`
-	// Error and IncompleteDetails stay raw: pi reads their members with JS
-	// coercions (responsesFailedMessage, incompleteDetailsReason), so a member
-	// of any JSON type must not fail the event's decode and drop the event.
-	Error             json.RawMessage `json:"error"`
-	IncompleteDetails json.RawMessage `json:"incomplete_details"`
-}
-
-// jsMember is `value?.[key]` on a parsed JSON value given as its text (nil
-// when absent): the member when value is an object holding key, else nil,
-// which stands for undefined as well as null — every read here treats the two
-// alike.
-func jsMember(raw json.RawMessage, key string) any {
-	if raw == nil {
-		return nil
-	}
-	value, _ := jstext.Parse(raw) // a member of an event that decoded, so it parses
+// jsLookup is `value?.[key]` on a value jstext.Parse returned, with whether
+// the member is there: present is false where JS reads undefined — value is
+// not an object, or holds no such key — and true for a member that is null.
+func jsLookup(value any, key string) (member any, present bool) {
 	object, _ := value.(map[string]any)
-	return object[key]
+	member, present = object[key]
+	return member, present
 }
 
-// incompleteDetailsReason is finalizeResponse's reason: incomplete_details.reason
-// when it is a string (pi: `typeof incompleteDetails?.reason === "string"`).
-func incompleteDetailsReason(details json.RawMessage) string {
-	reason, _ := jsMember(details, "reason").(string)
-	return reason
+// jsGet is jsLookup's member alone, for the reads that treat undefined and
+// null alike.
+func jsGet(value any, key string) any {
+	member, _ := jsLookup(value, key)
+	return member
+}
+
+// jsReadError is V8's TypeError for reading key off a value that is null
+// (present) or undefined, which pi's catch block surfaces as the message.
+func jsReadError(present bool, key string) error {
+	of := "undefined"
+	if present {
+		of = "null"
+	}
+	return fmt.Errorf("Cannot read properties of %s (reading '%s')", of, key)
+}
+
+// jsStringField is a value pi assigns to one of the message's string fields
+// (responseId, rawStopReason) as the port stores it: a string as is, null and
+// undefined as "", and anything else — which pi stores as the value itself —
+// as String() writes it ("" where String() would throw).
+func jsStringField(value any) string {
+	if value == nil {
+		return ""
+	}
+	text, _ := jstext.ToString(value)
+	return text
+}
+
+// jsTokenCount is a usage member as pi's `member || 0` and its arithmetic read
+// it, as ai.Usage holds it: a JSON number counts as its value, truncated to an
+// integer. Any other value counts 0 — where pi coerces a numeric string, which
+// no provider sends.
+func jsTokenCount(value any) int {
+	n, ok := value.(json.Number)
+	if !ok {
+		return 0
+	}
+	f := jstext.Number(n)
+	switch {
+	case math.IsNaN(f):
+		return 0
+	case f >= math.MaxInt:
+		return math.MaxInt
+	case f <= math.MinInt:
+		return math.MinInt
+	}
+	return int(f)
 }
 
 // iterateOpenAISSE2 reads a /responses stream the way pi iterates the openai
@@ -1657,12 +1716,21 @@ func iterateOpenAISSE2(body io.Reader, ctx context.Context, onEvent func(any) er
 		// The SDK yields `data: null` as null, and pi's processResponsesStream
 		// reads event.type off every event it iterates, so that read throws and
 		// the stream fails with V8's TypeError text (openai-responses-shared.ts).
-		// A scalar or an array reads as undefined and matches no branch, which
-		// the typed decode's failure below mirrors.
+		// A scalar or an array reads as undefined and matches no branch.
 		if isJSONNull(item) {
-			return errors.New("Cannot read properties of null (reading 'type')")
+			return jsReadError(true, "type")
 		}
-		var ev responsesEvent
+		value, _ := jstext.Parse(item) // item passed JSON.parse's acceptance
+		js, isObject := value.(map[string]any)
+		if !isObject {
+			return nil
+		}
+		ev := responsesEvent{JS: js}
+		ev.Type, _ = js["type"].(string)
+		switch ev.Type {
+		case "response.created", "response.completed", "response.incomplete", "response.failed", "error":
+			return handle(ev) // these read ev.JS alone
+		}
 		if json.Unmarshal(item, &ev) != nil {
 			return nil
 		}
