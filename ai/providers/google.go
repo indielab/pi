@@ -434,9 +434,8 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			return
 		}
 		defer resp.Body.Close()
-		if opts.OnResponse != nil {
-			_ = opts.OnResponse(ai.ProviderResponse{Status: resp.StatusCode, Headers: flattenHeaders(resp.Header)}, model)
-		}
+		// No OnResponse: pi hands the request to the @google/genai client,
+		// which owns the fetch, and its google adapter never calls onResponse.
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			data, _ := io.ReadAll(resp.Body)
 			// Upstream 6fbeba51's google change is a no-op for the on-the-wire

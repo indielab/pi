@@ -982,6 +982,48 @@ func TestGoogleOnPayloadErrorFailsStream(t *testing.T) {
 	}
 }
 
+// TestGoogleNeverCallsOnResponse: pi's google-generative-ai adapter hands the
+// request to the @google/genai client and never calls onResponse (no call in
+// google-generative-ai.ts at 8676a0dcd), so a hook that would fail the stream
+// is never reached, on success or on an HTTP error.
+func TestGoogleNeverCallsOnResponse(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		status int
+		body   string
+		want   ai.StopReason
+	}{
+		{"success", http.StatusOK, googleSSE, ai.StopToolUse},
+		{"http error", http.StatusBadRequest, `{"error":{"code":400,"message":"bad","status":"INVALID_ARGUMENT"}}`, ai.StopError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				w.WriteHeader(tc.status)
+				io.WriteString(w, tc.body)
+			}))
+			defer server.Close()
+			model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
+			calls := 0
+			opts := &GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "k",
+				OnResponse: func(ai.ProviderResponse, *ai.Model) error {
+					calls++
+					return errors.New("response veto")
+				},
+			}}}
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+			final := StreamGoogle(context.Background(), model, ai.NormalizeContext(req), opts).Result()
+			if calls != 0 {
+				t.Fatalf("OnResponse called %d times; pi's google adapter never calls it", calls)
+			}
+			if final.StopReason != tc.want {
+				t.Fatalf("stop reason %s (%s), want %s", final.StopReason, final.ErrorMessage, tc.want)
+			}
+		})
+	}
+}
+
 // mustBuildGoogleParams builds a generateContent request body, failing the test
 // on the errors constrained sampling can raise.
 func mustBuildGoogleParams(t *testing.T, model *ai.Model, req ai.Context, opts *GoogleOptions) map[string]any {
