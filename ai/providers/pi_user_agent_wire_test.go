@@ -538,55 +538,41 @@ func TestOptionsHeadersWinAcrossSpellingsOnGoogle(t *testing.T) {
 	wantUserAgent(t, h, "opts-agent")
 }
 
-// An empty or whitespace-only user agent is a DIVERGENCE (docs/UPSTREAM.md
-// D11), pinned so it cannot drift silently. net/http omits the User-Agent
-// header entirely when its value is empty (net/http.Request.write and the
-// HTTP/2 encoder special-case exactly this one header), and a whitespace-only
-// value is empty by the time it gets there, because setHeader normalizes every
-// value as fetch's Headers does. So the port sends no user agent at all. pi
-// sends it present and empty: upstream 8676a0dcd's adapters under node v26.4.0
-// (@anthropic-ai/sdk 0.124.0, @google/genai 2.21.0, the versions its
-// package-lock.json locks) put `User-Agent: ` on the wire for "", " ", "\t" and
-// "  \t " alike, on all five adapters. Not fixable through http.Header: over
-// HTTP/1.1 a raw " " would reach the wire present and empty, but over HTTP/2,
-// which every TLS provider endpoint negotiates, it is sent verbatim, a value
-// RFC 9113 forbids.
+// An empty-string user agent is a DIVERGENCE (docs/UPSTREAM.md D11), pinned
+// under that row's name so it cannot drift silently. net/http omits the
+// User-Agent header entirely when its value is empty (net/http.Request.write
+// and the HTTP/2 encoder special-case exactly this one header), so the port
+// sends no user agent at all. pi sends it present and empty: upstream
+// 8676a0dcd's adapters under node v26.4.0 (@anthropic-ai/sdk 0.124.0,
+// @google/genai 2.21.0, the versions its package-lock.json locks) put
+// `User-Agent: ` on the wire. Not fixable through http.Header.
 //
-// The rows cover the SDK defaultHeaders path (anthropic) and both record paths
-// (google, pi-messages).
+// A whitespace-only value normalizes to "" first, as fetch's Headers
+// normalizes it (TestHeaderValuesAreTrimmedLikeFetch, "all whitespace"), and
+// then meets the same drop. That is not pinned here: over HTTP/1.1, which these
+// captures use, sending the raw value would put pi's bytes on the wire, and a
+// row asserting the header absent would fail exactly then.
 func TestEmptyUserAgentIsDroppedEntirely(t *testing.T) {
-	for _, tc := range []struct{ name, value string }{
-		{"empty", ""},
-		{"space", " "},
-		{"tab", "\t"},
-	} {
-		t.Run("anthropic/"+tc.name, func(t *testing.T) {
-			h := captureAnthropicHeaders(t, anthropicUAModel(), anthropicUAOptions(ai.ProviderRequestOptions{
-				APIKey:  "k",
-				Headers: ai.ProviderHeaders{"User-Agent": strPtr(tc.value)},
-			}))
-			if values, present := h["User-Agent"]; present {
-				t.Fatalf("User-Agent = %q, want the header absent — net/http drops an empty one", values)
-			}
+	t.Run("anthropic", func(t *testing.T) {
+		h := captureAnthropicHeaders(t, anthropicUAModel(), anthropicUAOptions(ai.ProviderRequestOptions{
+			APIKey:  "k",
+			Headers: ai.ProviderHeaders{"User-Agent": strPtr("")},
+		}))
+		if values, present := h["User-Agent"]; present {
+			t.Fatalf("User-Agent = %q, want the header absent — net/http drops an empty one", values)
+		}
+	})
+	t.Run("google", func(t *testing.T) {
+		model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google",
+			Input: []string{"text"}, MaxTokens: 4096,
+			Headers: ai.ProviderHeaders{"User-Agent": strPtr("")}}
+		h := captureGoogleHeaders(t, model, ai.StreamOptions{
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key"},
 		})
-		t.Run("google/"+tc.name, func(t *testing.T) {
-			model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google",
-				Input: []string{"text"}, MaxTokens: 4096,
-				Headers: ai.ProviderHeaders{"User-Agent": strPtr(tc.value)}}
-			h := captureGoogleHeaders(t, model, ai.StreamOptions{
-				ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key"},
-			})
-			if values, present := h["User-Agent"]; present {
-				t.Fatalf("User-Agent = %q, want the header absent — net/http drops an empty one", values)
-			}
-		})
-		t.Run("pi-messages/"+tc.name, func(t *testing.T) {
-			h := capturePiMessagesHeaders(t, ai.ProviderHeaders{"User-Agent": strPtr(tc.value)})
-			if values, present := h["User-Agent"]; present {
-				t.Fatalf("User-Agent = %q, want the header absent — net/http drops an empty one", values)
-			}
-		})
-	}
+		if values, present := h["User-Agent"]; present {
+			t.Fatalf("User-Agent = %q, want the header absent — net/http drops an empty one", values)
+		}
+	})
 	// Any other header keeps an empty value, so the drop is the transport's
 	// User-Agent special case and not this package losing empty strings.
 	t.Run("other headers keep an empty value", func(t *testing.T) {
