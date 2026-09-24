@@ -656,7 +656,11 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			return nil
 		}
 
-		err = iterateOpenAISSE2(resp.Body, ctx, func(ev responsesEvent) error {
+		var onEvent func(any) error
+		if opts.OnProviderStreamEvent != nil {
+			onEvent = func(data any) error { return opts.OnProviderStreamEvent(data, model) }
+		}
+		err = iterateOpenAISSE2(resp.Body, ctx, onEvent, func(ev responsesEvent) error {
 			switch ev.Type {
 			case "response.created":
 				if ev.Response != nil {
@@ -1598,10 +1602,15 @@ type responsesPayload struct {
 }
 
 // iterateOpenAISSE2 reads a /responses stream the way pi iterates the openai
-// SDK's Stream (iterateOpenAIStream), handing handle each event. This loop
-// never repaired its JSON, so neither does its parse.
-func iterateOpenAISSE2(body io.Reader, ctx context.Context, handle func(responsesEvent) error) error {
+// SDK's Stream (iterateOpenAIStream). Each item goes to onEvent (when set)
+// first, as processResponsesStream's loop opens with onProviderStreamEvent,
+// so an event the loop ignores or fails on is observed too; then it is handed
+// to handle. This loop never repaired its JSON, so neither does its parse.
+func iterateOpenAISSE2(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(responsesEvent) error) error {
 	return iterateOpenAIStream(body, ctx, openaiStreamJSON, func(item []byte) error {
+		if err := observeOpenAIStreamItem(onEvent, item); err != nil {
+			return err
+		}
 		// The SDK yields `data: null` as null, and pi's processResponsesStream
 		// reads event.type off every event it iterates, so that read throws and
 		// the stream fails with V8's TypeError text (openai-responses-shared.ts).

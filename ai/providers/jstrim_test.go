@@ -279,7 +279,7 @@ func TestJSTrimStreamDecoding(t *testing.T) {
 	yieldsPaddedEvent := map[string]func(sse string) bool{
 		"completions": func(sse string) bool {
 			found := false
-			_ = iterateOpenAISSE(strings.NewReader(sse), nil, func(chunk openAIChunk) error {
+			_ = iterateOpenAISSE(strings.NewReader(sse), nil, nil, func(chunk openAIChunk) error {
 				for _, choice := range chunk.Choices {
 					found = found || choice.Delta.Content == "hi"
 				}
@@ -289,7 +289,7 @@ func TestJSTrimStreamDecoding(t *testing.T) {
 		},
 		"responses": func(sse string) bool {
 			found := false
-			_ = iterateOpenAISSE2(strings.NewReader(sse), nil, func(ev responsesEvent) error {
+			_ = iterateOpenAISSE2(strings.NewReader(sse), nil, nil, func(ev responsesEvent) error {
 				found = found || ev.Type == "response.output_item.added"
 				return nil
 			})

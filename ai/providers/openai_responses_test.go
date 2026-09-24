@@ -1903,6 +1903,56 @@ data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1",
 	}
 }
 
+// Upstream openai-responses-terminal-event.test.ts (002fc8385), "forwards
+// parsed provider stream events in order": each event reaches the observer
+// with the stream's model, in stream order — response.reasoning_text.delta
+// included, and before the missing terminal event fails the stream.
+func TestResponsesForwardsProviderStreamEventsInOrder(t *testing.T) {
+	sse := `data: {"type":"response.created","sequence_number":0,"response":{"id":"resp_wrapper_early_eof"}}
+
+data: {"type":"response.output_item.added","sequence_number":1,"output_index":0,"item":{"type":"reasoning","id":"rs_wrapper_early_eof","summary":[]}}
+
+data: {"type":"response.reasoning_text.delta","sequence_number":2,"output_index":0,"content_index":0,"item_id":"rs_wrapper_early_eof","delta":"partial reasoning before the wrapper stream ends"}
+
+`
+	model := &ai.Model{
+		ID: "gpt-5-mini", Name: "GPT-5 Mini", Api: ai.APIOpenAIResponses, Provider: "openai",
+		Reasoning: true, Input: []string{"text"}, ContextWindow: 400000, MaxTokens: 128000,
+	}
+	var types []string
+	var models []*ai.Model
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+	model.BaseURL = server.URL
+	final := StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 0)}}),
+		&OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test"},
+			OnProviderStreamEvent: func(event any, eventModel *ai.Model) error {
+				object, _ := event.(ai.OrderedObject)
+				eventType, _ := object.Plain()["type"].(string)
+				types = append(types, eventType)
+				models = append(models, eventModel)
+				return nil
+			},
+		}}).Result()
+
+	want := []string{"response.created", "response.output_item.added", "response.reasoning_text.delta"}
+	if strings.Join(types, ",") != strings.Join(want, ",") {
+		t.Fatalf("event types = %q, want %q", types, want)
+	}
+	for i, m := range models {
+		if m != model {
+			t.Fatalf("event %d observed with model %p, want the stream's %p", i, m, model)
+		}
+	}
+	if final.ErrorMessage != "OpenAI Responses stream ended before a terminal response event" {
+		t.Fatalf("stream ended %s %q", final.StopReason, final.ErrorMessage)
+	}
+}
+
 // C5 (responses half): prompt_cache_retention is independent of sessionId;
 // prompt_cache_key still requires one.
 func TestResponsesCacheRetentionWithoutSessionID(t *testing.T) {

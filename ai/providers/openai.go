@@ -365,7 +365,11 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 		}
 
 		hasFinishReason := false
-		err = iterateOpenAISSE(resp.Body, ctx, func(chunk openAIChunk) error {
+		var onEvent func(any) error
+		if opts.OnProviderStreamEvent != nil {
+			onEvent = func(data any) error { return opts.OnProviderStreamEvent(data, model) }
+		}
+		err = iterateOpenAISSE(resp.Body, ctx, onEvent, func(chunk openAIChunk) error {
 			// OpenAI documents ChatCompletionChunk.id as the unique chat completion
 			// identifier shared by every chunk in a streamed completion.
 			if output.ResponseID == "" && chunk.ID != "" {
@@ -1609,12 +1613,17 @@ type openAIChunk struct {
 }
 
 // iterateOpenAISSE reads a /chat/completions stream the way pi iterates the
-// openai SDK's Stream (iterateOpenAIStream), handing handle each chunk. An
-// item that does not decode as a chunk — null, a scalar, an array — is
-// skipped, which is where pi's `!chunk || typeof chunk !== "object"` check and
-// its reads of absent fields leave it too.
-func iterateOpenAISSE(body io.Reader, ctx context.Context, handle func(openAIChunk) error) error {
+// openai SDK's Stream (iterateOpenAIStream). Each item goes to onEvent (when
+// set) first, as pi's loop opens with onProviderStreamEvent — whatever the
+// item is — and then, as a chunk, to handle. An item that does not decode as a
+// chunk — null, a scalar, an array — is not handled, which is where pi's
+// `!chunk || typeof chunk !== "object"` check and its reads of absent fields
+// leave it too.
+func iterateOpenAISSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(openAIChunk) error) error {
 	return iterateOpenAIStream(body, ctx, openaiStreamJSONWithRepair, func(item []byte) error {
+		if err := observeOpenAIStreamItem(onEvent, item); err != nil {
+			return err
+		}
 		var chunk openAIChunk
 		if json.Unmarshal(item, &chunk) != nil {
 			return nil

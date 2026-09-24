@@ -7,10 +7,12 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 const openAISSE = `data: {"choices":[{"delta":{"role":"assistant","content":"Hel"}}]}
@@ -1992,4 +1994,55 @@ func TestOpenAIReplayedArgumentsAreJSONStringify(t *testing.T) {
 		}
 	}
 	t.Fatalf("no replayed tool call in %v", body["messages"])
+}
+
+// Upstream openai-completions-provider-stream-event.test.ts (002fc8385),
+// "exposes provider chunks including OpenRouter metadata" (pi #9784):
+// completeSimple on an OpenRouter model hands the observer each chunk as
+// parsed, with the fields pi's normalization drops (usage.cost, is_byok,
+// openrouter_metadata), and never the [DONE] sentinel. pi deep-equals the
+// objects; the port's are compared as JSON.stringify writes them, which also
+// holds them to the wire's key order.
+func TestOpenAICompletionsProviderStreamEventsIncludeOpenRouterMetadata(t *testing.T) {
+	firstChunk := `{"id":"chatcmpl-1","model":"anthropic/claude-sonnet-4.6","choices":[{"index":0,"delta":{"content":"hello"}}]}`
+	finalChunk := `{"id":"chatcmpl-1","model":"anthropic/claude-sonnet-4.6","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],` +
+		`"usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12,"cost":0.0012,"is_byok":false},` +
+		`"openrouter_metadata":{"strategy":"direct","region":"iad"}}`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		w.Header().Set("x-request-id", "req-1")
+		_, _ = io.WriteString(w, "data: "+firstChunk+"\n\ndata: "+finalChunk+"\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	model := &ai.Model{
+		ID: "openrouter/auto", Name: "OpenRouter Auto", Api: ai.APIOpenAICompletions, Provider: "openrouter",
+		BaseURL: server.URL, Input: []string{"text"}, ContextWindow: 200_000, MaxTokens: 8192,
+	}
+	var events []any
+	opts := &ai.SimpleStreamOptions{}
+	opts.APIKey = "test"
+	opts.OnProviderStreamEvent = func(data any, _ *ai.Model) error {
+		events = append(events, data)
+		return nil
+	}
+
+	message := ai.CompleteSimple(context.Background(), model, ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, opts)
+
+	if len(message.Content) != 1 || message.Content[0] != (ai.TextContent{Text: "hello"}) {
+		t.Fatalf("content = %#v (%s %q), want [{text hello}]", message.Content, message.StopReason, message.ErrorMessage)
+	}
+	var got []string
+	for _, event := range events {
+		if _, ok := event.(ai.OrderedObject); !ok {
+			t.Fatalf("event is %T, want an ai.OrderedObject", event)
+		}
+		text, err := jstext.Stringify(event)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, text)
+	}
+	if want := []string{firstChunk, finalChunk}; !slices.Equal(got, want) {
+		t.Fatalf("events:\n got %q\nwant %q", got, want)
+	}
 }

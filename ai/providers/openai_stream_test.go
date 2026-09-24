@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // openaiStreamCaptureFile is what testdata/openai-stream/capture.mts recorded
@@ -94,6 +95,9 @@ func openaiStreamModel(adapter, baseURL string) *ai.Model {
 // openaiStreamHooks are capture.mts's Hooks: which of the stream's hooks fail.
 type openaiStreamHooks struct {
 	failOnResponse bool
+	// failOnEvent is "throw" (the provider stream event observer fails) or
+	// "abort-then-throw" (it cancels the request first).
+	failOnEvent string
 }
 
 // runOpenAIStreamAdapter streams body, served with status, through the Go
@@ -112,8 +116,27 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 	t.Cleanup(server.Close)
 	model := openaiStreamModel(adapter, server.URL+"/v1")
 	req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	opts := &ai.SimpleStreamOptions{}
 	opts.APIKey = "k"
+	var observed []string
+	sameModel := true
+	opts.OnProviderStreamEvent = func(data any, eventModel *ai.Model) error {
+		text, err := jstext.Stringify(data)
+		if err != nil {
+			t.Errorf("observed %#v, which has no JSON form: %v", data, err)
+		}
+		observed = append(observed, text)
+		sameModel = sameModel && eventModel == model
+		if hooks.failOnEvent == "abort-then-throw" {
+			cancel()
+		}
+		if hooks.failOnEvent != "" {
+			return errors.New("observer boom")
+		}
+		return nil
+	}
 	onResponseCalls := 0
 	opts.OnResponse = func(ai.ProviderResponse, *ai.Model) error {
 		onResponseCalls++
@@ -124,11 +147,13 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 	}
 	var final *ai.AssistantMessage
 	if adapter == "completions" {
-		final = StreamSimpleOpenAICompletions(context.Background(), model, req, opts).Result()
+		final = StreamSimpleOpenAICompletions(ctx, model, req, opts).Result()
 	} else {
-		final = StreamSimpleOpenAIResponses(context.Background(), model, req, opts).Result()
+		final = StreamSimpleOpenAIResponses(ctx, model, req, opts).Result()
 	}
 	return openaiStreamOutcome{
+		Observed:        observed,
+		SameModel:       sameModel,
 		OnResponseCalls: onResponseCalls,
 		StopReason:      string(final.StopReason),
 		ErrorMessage:    final.ErrorMessage,
@@ -254,6 +279,148 @@ func TestOpenAIStreamOnResponseLikePi(t *testing.T) {
 					want.ErrorMessage = got.ErrorMessage
 				}
 				compareOpenAIStreamEnding(t, got, want)
+			})
+		}
+	}
+}
+
+// compareOpenAIStreamObserved checks the provider stream events against pi's:
+// every item pi's loop iterated, in order, as JSON.stringify writes it — key
+// order included — each with the stream's own model.
+func compareOpenAIStreamObserved(t *testing.T, got, want openaiStreamOutcome) {
+	t.Helper()
+	if !slices.Equal(got.Observed, want.Observed) {
+		t.Errorf("observed:\n got %q\n pi %q", got.Observed, want.Observed)
+	}
+	if !got.SameModel || !want.SameModel {
+		t.Errorf("observer's model is the stream's: got %v, pi %v", got.SameModel, want.SameModel)
+	}
+}
+
+// Both adapters hand OnProviderStreamEvent every item pi's onProviderStreamEvent
+// receives (upstream 002fc8385), before normalizing it: chunks with no choices,
+// null, scalars and arrays, events the loop ignores, the event it fails on —
+// and nothing the SDK does not yield (an error item, anything after [DONE]).
+func TestOpenAIStreamObservesLikePi(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	type run struct {
+		adapter string
+		sse     string
+		want    *openaiStreamOutcome
+	}
+	runs := map[string]run{}
+	for name, row := range c.Dispatch {
+		if row.SDK.Threw != nil && row.SDK.Threw.Name == "SyntaxError" {
+			continue // pi fails with V8's SyntaxError text; the port skips the event
+		}
+		runs["dispatch/"+name+"/completions"] = run{"completions", row.SSE, row.Completions}
+		runs["dispatch/"+name+"/responses"] = run{"responses", row.SSE, row.Responses}
+	}
+	for name, row := range c.Completions {
+		runs["completions/"+name] = run{"completions", row.SSE, row.Completions}
+	}
+	for name, row := range c.Responses {
+		runs["responses/"+name] = run{"responses", row.SSE, row.Responses}
+	}
+	for name, r := range runs {
+		t.Run(name, func(t *testing.T) {
+			got := runOpenAIStreamAdapter(t, r.adapter, http.StatusOK, r.sse, openaiStreamHooks{})
+			compareOpenAIStreamObserved(t, got, *r.want)
+			compareOpenAIStreamEnding(t, got, *r.want)
+		})
+	}
+}
+
+// An observer's error fails the stream with its own message, before the event
+// it rejected is normalized; when the request was cancelled first, the stream
+// ends aborted (pi: stopReason from signal.aborted, errorMessage the throw's).
+func TestOpenAIStreamObserverErrorLikePi(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	for _, adapter := range []string{"completions", "responses"} {
+		for hook, failOnEvent := range map[string]string{"callback-throws": "throw", "callback-aborts": "abort-then-throw"} {
+			t.Run(adapter+"/"+hook, func(t *testing.T) {
+				row, ok := c.Hooks[adapter+"/"+hook]
+				if !ok {
+					t.Fatalf("%s has no hooks row %s/%s; rerun capture.mts", openaiStreamCaptureFile, adapter, hook)
+				}
+				got := runOpenAIStreamAdapter(t, adapter, row.Status, row.SSE, openaiStreamHooks{failOnEvent: failOnEvent})
+				compareOpenAIStreamObserved(t, got, row.Outcome)
+				compareOpenAIStreamEnding(t, got, row.Outcome)
+			})
+		}
+	}
+}
+
+// Go-only: the observer's error surfaces as the terminal error event with its
+// message verbatim, and the event it rejected is never normalized — the text
+// it carried produces no text_delta.
+func TestOpenAIProviderStreamEventErrorFailsStream(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	cases := []struct {
+		adapter string
+		sse     string
+		// rejectAt is the observed event carrying the stream's text.
+		rejectAt int
+	}{
+		{"completions", c.Dispatch["blank-line-dispatch"].SSE, 0},
+		{"responses", c.Responses["completed"].SSE, 3},
+	}
+	for _, tc := range cases {
+		for _, cancelFirst := range []bool{false, true} {
+			name := tc.adapter
+			want := ai.StopError
+			if cancelFirst {
+				name += "/cancelled"
+				want = ai.StopAborted
+			}
+			t.Run(name, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("content-type", "text/event-stream")
+					_, _ = io.WriteString(w, tc.sse)
+				}))
+				t.Cleanup(server.Close)
+				model := openaiStreamModel(tc.adapter, server.URL+"/v1")
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				seen := 0
+				opts := &ai.SimpleStreamOptions{}
+				opts.APIKey = "k"
+				opts.OnProviderStreamEvent = func(any, *ai.Model) error {
+					seen++
+					if seen <= tc.rejectAt {
+						return nil
+					}
+					if cancelFirst {
+						cancel()
+					}
+					return errors.New("observer boom")
+				}
+				req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+				var stream *ai.AssistantMessageEventStream
+				if tc.adapter == "completions" {
+					stream = StreamSimpleOpenAICompletions(ctx, model, req, opts)
+				} else {
+					stream = StreamSimpleOpenAIResponses(ctx, model, req, opts)
+				}
+				var events []ai.AssistantMessageEvent
+				for ev := range stream.Events() {
+					events = append(events, ev)
+				}
+				for _, ev := range events {
+					if ev.Type == ai.EventTextDelta {
+						t.Fatalf("text_delta %q pushed for the event the observer rejected", ev.Delta)
+					}
+				}
+				last := events[len(events)-1]
+				if last.Type != ai.EventError || last.Error == nil {
+					t.Fatalf("stream ended with %s, want an error event", last.Type)
+				}
+				if last.Reason != want || last.Error.StopReason != want || last.Error.ErrorMessage != "observer boom" {
+					t.Fatalf("ended %s/%s %q, want %s \"observer boom\"", last.Reason, last.Error.StopReason, last.Error.ErrorMessage, want)
+				}
+				if seen != tc.rejectAt+1 {
+					t.Fatalf("observer ran %d times, want %d: the stream must stop at its error", seen, tc.rejectAt+1)
+				}
 			})
 		}
 	}
