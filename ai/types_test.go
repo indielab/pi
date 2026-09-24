@@ -36,14 +36,10 @@ func TestContentListDiscriminatedJSON(t *testing.T) {
 	}
 }
 
-// TestContentBlocksSerializeTypeFirst pins content blocks to pi's literal shape:
-// the discriminator first, then the block's fields in declaration order
-// (`{type: "text", text}`, `{type: "toolCall", id, name, arguments}`), which is
-// also the document order a pi session file carries.
-// A hole in the content array (a nil block) is written null, as
-// JSON.stringify writes one, and a null element reads back as a hole, as
-// JSON.parse keeps it. want is node's JSON.stringify of `a[1] = {type:"text",
-// text:"a"}` on an empty array.
+// TestContentListHoleIsNull pins a hole in the content array (a nil block):
+// it is written null, as JSON.stringify writes one, and a null element reads
+// back as a hole, as JSON.parse keeps it. want is node's JSON.stringify of
+// `a[1] = {type:"text", text:"a"}` on an empty array.
 func TestContentListHoleIsNull(t *testing.T) {
 	const want = `[null,{"type":"text","text":"a"}]`
 	raw, err := json.Marshal(ContentList{nil, TextContent{Text: "a"}})
@@ -62,6 +58,10 @@ func TestContentListHoleIsNull(t *testing.T) {
 	}
 }
 
+// TestContentBlocksSerializeTypeFirst pins content blocks to pi's literal shape:
+// the discriminator first, then the block's fields in declaration order
+// (`{type: "text", text}`, `{type: "toolCall", id, name, arguments}`), which is
+// also the document order a pi session file carries.
 func TestContentBlocksSerializeTypeFirst(t *testing.T) {
 	cl := ContentList{
 		TextContent{Text: "a", TextSignature: "sig"},
