@@ -13,6 +13,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/sky-valley/pi/ai"
 )
@@ -27,6 +28,8 @@ type piMessagesEventsRow struct {
 	// Status, when set, is the response's status, and SSE its JSON body.
 	Status int    `json:"status"`
 	SSE    string `json:"sse"`
+	// SSEBase64 is the body instead when it is not valid UTF-8.
+	SSEBase64 []byte `json:"sseBase64"`
 	// V8Error is the frame data whose JSON.parse failure is pi's errorMessage.
 	V8Error    string   `json:"v8Error"`
 	ThrowAt    *int     `json:"throwAt"`
@@ -76,21 +79,40 @@ func loadPiMessagesEventsCapture(t *testing.T) []piMessagesEventsRow {
 	return capture.Rows
 }
 
+// body is the row's exact body.
+func (r piMessagesEventsRow) body() string {
+	if r.SSEBase64 != nil {
+		return string(r.SSEBase64)
+	}
+	return r.SSE
+}
+
 // piMessagesCaptureBaseURL is the capture model's baseUrl.
 const piMessagesCaptureBaseURL = "http://pi-messages.invalid/v1"
 
-// cannedDoer answers every request with status and body, as a fetch stub does.
+// cannedDoer answers every request with status and body, as a fetch stub
+// does: a 200 as an event stream, any other status as JSON. oneByte serves the
+// body one byte per read.
 type cannedDoer struct {
-	status int
-	body   string
+	status  int
+	body    string
+	oneByte bool
 }
 
 func (d cannedDoer) Do(req *http.Request) (*http.Response, error) {
+	contentType := "application/json"
+	if d.status == http.StatusOK {
+		contentType = "text/event-stream"
+	}
+	var body io.Reader = strings.NewReader(d.body)
+	if d.oneByte {
+		body = iotest.OneByteReader(body)
+	}
 	return &http.Response{
 		StatusCode: d.status,
 		Status:     fmt.Sprintf("%d %s", d.status, http.StatusText(d.status)),
-		Header:     http.Header{"Content-Type": {"application/json"}},
-		Body:       io.NopCloser(strings.NewReader(d.body)),
+		Header:     http.Header{"Content-Type": {contentType}},
+		Body:       io.NopCloser(body),
 		Request:    req,
 	}, nil
 }
@@ -102,11 +124,17 @@ func (d cannedDoer) Do(req *http.Request) (*http.Response, error) {
 func streamPiMessagesRow(t *testing.T, ctx context.Context, row piMessagesEventsRow, opts ai.StreamOptions) (*ai.Model, []ai.AssistantMessageEvent, *ai.AssistantMessage) {
 	t.Helper()
 	if row.Status == 0 {
-		return streamPiMessagesEvents(t, ctx, row.SSE, opts)
+		return streamPiMessagesEvents(t, ctx, row.body(), opts)
 	}
+	return streamPiMessagesCanned(ctx, cannedDoer{status: row.Status, body: row.body()}, opts)
+}
+
+// streamPiMessagesCanned streams what doer serves from the capture model's
+// baseUrl.
+func streamPiMessagesCanned(ctx context.Context, doer cannedDoer, opts ai.StreamOptions) (*ai.Model, []ai.AssistantMessageEvent, *ai.AssistantMessage) {
 	model := piMessagesTestModel(piMessagesCaptureBaseURL)
 	opts.APIKey = "test-key"
-	opts.HTTPClient = cannedDoer{status: row.Status, body: row.SSE}
+	opts.HTTPClient = doer
 	stream := StreamSimplePiMessages(ctx, model, ai.NormalizeContext(piMessagesTestContext()), &ai.SimpleStreamOptions{StreamOptions: opts})
 	var pushed []ai.AssistantMessageEvent
 	for ev := range stream.Events() {
@@ -279,7 +307,7 @@ func assertPiMessagesDiagnosticsMatchPi(t *testing.T, row piMessagesEventsRow, d
 // fail with a JSON syntax error, as pi's JSON.parse throws a SyntaxError.
 func assertPiMessagesFrameSyntaxError(t *testing.T, row piMessagesEventsRow) {
 	t.Helper()
-	err := readPiMessagesEvents(strings.NewReader(row.SSE), nil, nil, func(piMessagesEvent) (bool, error) { return true, nil })
+	err := readPiMessagesEvents(strings.NewReader(row.body()), nil, nil, func(piMessagesEvent) (bool, error) { return true, nil })
 	var syntaxErr *json.SyntaxError
 	if !errors.As(err, &syntaxErr) {
 		t.Errorf("reading the body returned %v, want the JSON syntax error of frame data %q", err, row.V8Error)
@@ -298,6 +326,9 @@ func assertPiMessagesFrameSyntaxError(t *testing.T, row piMessagesEventsRow) {
 // A row whose observer does not throw is replayed with no observer too: pi's
 // pushed events and message do not depend on observing, and without an
 // observer the port decodes each frame once, never into the observer's value.
+// It is replayed one byte per read as well: what a body yields does not depend
+// on how it arrives (a byte-order mark, a CRLF or a multi-byte character split
+// across reads included).
 func TestPiMessagesEventsMatchPi(t *testing.T) {
 	for _, row := range loadPiMessagesEventsCapture(t) {
 		t.Run(row.Name, func(t *testing.T) {
@@ -317,6 +348,15 @@ func TestPiMessagesEventsMatchPi(t *testing.T) {
 			if row.ThrowAt == nil {
 				_, pushed, final := streamPiMessagesRow(t, context.Background(), row, ai.StreamOptions{})
 				t.Run("withoutObserver", func(t *testing.T) {
+					assertPiMessagesPushedMatchesPi(t, row, pushed)
+					assertPiMessagesMessageMatchesPi(t, row, final)
+				})
+				status := row.Status
+				if status == 0 {
+					status = http.StatusOK
+				}
+				_, pushed, final = streamPiMessagesCanned(context.Background(), cannedDoer{status: status, body: row.body(), oneByte: true}, ai.StreamOptions{})
+				t.Run("oneByteReads", func(t *testing.T) {
 					assertPiMessagesPushedMatchesPi(t, row, pushed)
 					assertPiMessagesMessageMatchesPi(t, row, final)
 				})

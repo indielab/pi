@@ -23,6 +23,7 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"github.com/sky-valley/pi/ai"
 	"github.com/sky-valley/pi/internal/jstext"
@@ -699,6 +700,10 @@ func decodePiMessagesEvent(data string) (ev piMessagesEvent, yielded bool, err e
 
 // readPiMessagesEvents consumes the SSE body: frames are separated by "\n\n",
 // CRLF is normalized to "\n", and a trailing non-terminal buffer is flushed.
+// The body is text as pi's TextDecoder makes it: one byte-order mark at the
+// very start is dropped, and invalid UTF-8 becomes U+FFFD per maximal subpart
+// (jstext.DecodeUTF8); a frame ends at a line break, which never belongs to a
+// multi-byte sequence, so decoding each frame is decoding the body.
 // handle returns false to stop early (a terminal event was seen), and its
 // error ends the read. A frame that is not JSON fails the read, as pi's
 // JSON.parse throw does. Port of readPiMessagesEvents.
@@ -712,6 +717,9 @@ func decodePiMessagesEvent(data string) (ev piMessagesEvent, yielded bool, err e
 func readPiMessagesEvents(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(piMessagesEvent) (bool, error)) error {
 	// emit handles one frame and reports whether to keep reading.
 	emit := func(frame string) (bool, error) {
+		if !utf8.ValidString(frame) {
+			frame = jstext.DecodeUTF8([]byte(frame))
+		}
 		data, ok := piMessagesFrameData(frame)
 		if !ok {
 			return true, nil
@@ -736,16 +744,31 @@ func readPiMessagesEvents(body io.Reader, ctx context.Context, onEvent func(any)
 	}
 	buf := make([]byte, 32*1024)
 	var pending string
+	// atStart is whether pending still holds the body's first bytes, which
+	// may be the byte-order mark the decoder drops.
+	atStart := true
 	for {
 		if ctx != nil && ctx.Err() != nil {
 			return fmt.Errorf("Request was aborted")
 		}
 		n, readErr := body.Read(buf)
-		if n > 0 {
+		chunk := string(buf[:n])
+		if atStart {
+			switch head := pending + chunk; {
+			case strings.HasPrefix(head, piMessagesBOM):
+				pending, chunk, atStart = "", head[len(piMessagesBOM):], false
+			case readErr != nil || !strings.HasPrefix(piMessagesBOM, head):
+				pending, chunk, atStart = "", head, false
+			default:
+				pending = head
+				continue // too few bytes yet to tell
+			}
+		}
+		if chunk != "" {
 			// Normalize the whole accumulated buffer (pi: buffer.replace(/\r\n/g,
 			// "\n") each read), so a "\r\n" split across two reads still collapses.
 			// pending holds only an unframed remainder, so the re-scan stays cheap.
-			pending = strings.ReplaceAll(pending+string(buf[:n]), "\r\n", "\n")
+			pending = strings.ReplaceAll(pending+chunk, "\r\n", "\n")
 			for {
 				split := strings.Index(pending, "\n\n")
 				if split == -1 {
@@ -769,13 +792,17 @@ func readPiMessagesEvents(body io.Reader, ctx context.Context, onEvent func(any)
 			return readErr
 		}
 	}
-	if jstext.Trim(pending) != "" {
+	if jstext.Trim(jstext.DecodeUTF8([]byte(pending))) != "" {
 		if _, err := emit(pending); err != nil {
 			return err
 		}
 	}
 	return nil
 }
+
+// piMessagesBOM is the UTF-8 byte-order mark a TextDecoder drops from the start
+// of what it decodes.
+const piMessagesBOM = "\xEF\xBB\xBF"
 
 // createPiMessagesErrorEvent builds the terminal error event for a thrown
 // failure, attaching the response-failure diagnostic for non-aborted
@@ -943,8 +970,11 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			// pi's response.text(): the body decoded as UTF-8, a leading
+			// byte-order mark dropped and invalid bytes U+FFFD per maximal
+			// subpart.
 			data, _ := io.ReadAll(resp.Body)
-			fail(createPiMessagesResponseError(model, url, resp.StatusCode, string(data)))
+			fail(createPiMessagesResponseError(model, url, resp.StatusCode, jstext.DecodeUTF8(stripBOM(data))))
 			return
 		}
 

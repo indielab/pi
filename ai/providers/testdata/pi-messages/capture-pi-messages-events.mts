@@ -15,7 +15,8 @@
 // The model is the upstream suite's createModel (pi-messages.test.ts), and the
 // body is served through options.fetch, so no network is needed. Each row
 // records:
-//   sse        the exact body, which the Go test replays byte for byte;
+//   sse        the exact body, which the Go test replays byte for byte (a
+//              body that is not valid UTF-8 is sseBase64 instead);
 //   observed   each value onProviderStreamEvent received, as JSON.stringify
 //              text, so key order is part of the expectation;
 //   pushed     the type of every event the stream pushed (null: no type);
@@ -82,10 +83,14 @@ const [start, textStart, textDelta, textEnd, done] = wireEvents;
 // Text JSON.stringify writes as itself where encoding/json escapes it: <, > and
 // &, and U+2028 and U+2029 (spelled so no tool decodes an escape).
 const markup = `<b>&x> ${String.fromCharCode(0x2028)} ${String.fromCharCode(0x2029)} end`;
+// The UTF-8 byte-order mark, and a body's bytes from text and byte runs.
+const BOM = String.fromCharCode(0xfeff);
+const bytesOf = (...parts: Array<string | number[]>) =>
+	new Uint8Array(Buffer.concat(parts.map((p) => (typeof p === "string" ? Buffer.from(p, "utf8") : Buffer.from(p)))));
 
 type Case = {
 	name: string;
-	sse: string;
+	sse: string | Uint8Array;
 	v8Error?: string;
 	throwAt?: number;
 	abortFirst?: boolean;
@@ -364,6 +369,48 @@ const cases: Case[] = [
 		statusText: "Internal Server Error",
 		sse: '{"error":[1]}',
 	},
+	// The body is decoded by a TextDecoder: a byte-order mark at the very start
+	// is dropped, so the first frame still reads...
+	{ name: "leadingBOMIsDropped", sse: BOM + framed(...wireEvents) },
+	// ...while one anywhere else is text: here it leads a frame's line, which is
+	// then no `data:` line, so the frame is passed over and the delta after it
+	// finds no block.
+	{ name: "bomAfterTheStartIsText", sse: framed(start) + BOM + framed(textStart, textDelta, textEnd, done) },
+	// Invalid UTF-8 becomes one U+FFFD per maximal subpart: a truncated
+	// sequence is one, an encoded surrogate, an overlong form and a stray byte
+	// one per byte.
+	{
+		name: "invalidUTF8DecodesPerMaximalSubpart",
+		sse: bytesOf(
+			framed(start, textStart),
+			'data: {"type":"text_delta","contentIndex":0,"delta":"a',
+			[0xe2, 0x82],
+			"Z",
+			[0xf0, 0x9f],
+			"b",
+			[0xed, 0xa0, 0x80],
+			"c",
+			[0xc0, 0xaf],
+			"d",
+			[0xff],
+			'e"}\n\n',
+			framed(done),
+		),
+	},
+	// An error response's body is response.text(): its byte-order mark
+	// dropped, so the body still parses, and invalid UTF-8 decoded.
+	{
+		name: "responseFailureBodyIsDecodedText",
+		status: 500,
+		statusText: "Internal Server Error",
+		sse: bytesOf(BOM + '{"error":{"message":"a', [0xe2, 0x82], 'Z"}}'),
+	},
+	{
+		name: "responseFailureUnparsedBodyIsDecodedText",
+		status: 502,
+		statusText: "Bad Gateway",
+		sse: bytesOf("bad ", [0xe2, 0x82], " gateway"),
+	},
 	// A throwing observer fails the stream with its message: on the first event,
 	{ name: "observerThrowsOnFirstEvent", sse: framed(...wireEvents), throwAt: 0 },
 	// on the terminal done event, which then never converts to done,
@@ -409,7 +456,7 @@ for (const c of cases) {
 	rows.push({
 		name: c.name,
 		...(c.status !== undefined ? { status: c.status } : {}),
-		sse: c.sse,
+		...(typeof c.sse === "string" ? { sse: c.sse } : { sseBase64: Buffer.from(c.sse).toString("base64") }),
 		...(c.v8Error !== undefined ? { v8Error: c.v8Error } : {}),
 		...(c.throwAt !== undefined ? { throwAt: c.throwAt } : {}),
 		...(c.abortFirst ? { abortFirst: true } : {}),

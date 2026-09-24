@@ -21,7 +21,8 @@
 // needs a key or the network — except an oauth row, which needs pi to create
 // its own client for an OAuth token: that client's fetch serves the body, and
 // the Go test streams with the same token. Each row records:
-//   sse        the exact body, which the Go test replays byte for byte;
+//   sse        the exact body, which the Go test replays byte for byte (a
+//              body that is not valid UTF-8 is sseBase64 instead);
 //   observed   each value onProviderStreamEvent received, as JSON.stringify
 //              text, so key order is part of the expectation;
 //   pushed     the type of every event the stream pushed (null: no type);
@@ -56,7 +57,7 @@ const { MODELS } = await import(pathToFileURL(path.join(pkg, "dist/models.genera
 const model = MODELS.anthropic["claude-haiku-4-5"];
 if (!model) throw new Error("catalog has no anthropic/claude-haiku-4-5");
 
-function createFakeAnthropicClient(body: string): any {
+function createFakeAnthropicClient(body: string | Uint8Array): any {
 	const response = new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 	return { beta: { messages: { create: () => ({ asResponse: async () => response }) } } };
 }
@@ -109,7 +110,7 @@ const deltaTransforming = (transformations: string, stopReason = "end_turn") =>
 
 type Case = {
 	name: string;
-	sse: string;
+	sse: string | Uint8Array;
 	v8Cause?: boolean;
 	throwAt?: number;
 	abortFirst?: boolean;
@@ -121,6 +122,10 @@ const B = String.fromCharCode(92); // a backslash, spelled so no tool decodes an
 // both literally, as it does <, > and &.
 const LS = String.fromCharCode(0x2028);
 const PS = String.fromCharCode(0x2029);
+// The UTF-8 byte-order mark, and a body's bytes from text and byte runs.
+const BOM = String.fromCharCode(0xfeff);
+const bytesOf = (...parts: Array<string | number[]>) =>
+	new Uint8Array(Buffer.concat(parts.map((p) => (typeof p === "string" ? Buffer.from(p, "utf8") : Buffer.from(p)))));
 const cases: Case[] = [
 	// 'forwards parsed provider stream events in order'.
 	{ name: "forwardsInOrder", sse: frames(...minimal) },
@@ -449,6 +454,36 @@ const cases: Case[] = [
 			messageStop,
 		),
 	},
+	// The body is decoded by a TextDecoder: a byte-order mark at the very start
+	// is dropped, so the first event still reads...
+	{ name: "leadingBOMIsDropped", sse: BOM + frames(...minimal) },
+	// ...while one anywhere else is text: here it leads a field name, which is
+	// then no field pi knows, so that event is never named and never read.
+	{
+		name: "bomAfterTheStartIsText",
+		sse: frames(messageStart, BOM + blockStart, textDelta("Hello"), blockStop, messageDelta, messageStop),
+	},
+	// Invalid UTF-8 becomes one U+FFFD per maximal subpart: a truncated
+	// sequence is one, an encoded surrogate, an overlong form and a stray byte
+	// one per byte.
+	{
+		name: "invalidUTF8DecodesPerMaximalSubpart",
+		sse: bytesOf(
+			frames(messageStart, blockStart),
+			'\nevent: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"a',
+			[0xe2, 0x82],
+			"Z",
+			[0xf0, 0x9f],
+			"b",
+			[0xed, 0xa0, 0x80],
+			"c",
+			[0xc0, 0xaf],
+			"d",
+			[0xff],
+			'e"}}\n\n',
+			frames(blockStop, messageDelta, messageStop),
+		),
+	},
 	// input_transformations: any array replaces the list (Array.isArray is the
 	// only guard), and on a turn that succeeds each entry becomes {type, path,
 	// reason}, each `?? undefined`. A null entry makes that `.type` read throw
@@ -566,7 +601,7 @@ for (const c of cases) {
 	}
 	rows.push({
 		name: c.name,
-		sse: c.sse,
+		...(typeof c.sse === "string" ? { sse: c.sse } : { sseBase64: Buffer.from(c.sse).toString("base64") }),
 		...(c.v8Cause ? { v8Cause: true } : {}),
 		...(c.throwAt !== undefined ? { throwAt: c.throwAt } : {}),
 		...(c.abortFirst ? { abortFirst: true } : {}),

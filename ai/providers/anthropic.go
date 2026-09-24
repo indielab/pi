@@ -2072,6 +2072,11 @@ func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error
 // iterateAnthropicSSE parses the SSE body and invokes handle for each known
 // event (pi iterateSseMessages + iterateAnthropicEvents).
 //
+// The body is text as pi's TextDecoder makes it: one byte-order mark at the
+// very start is dropped, and invalid UTF-8 becomes U+FFFD per maximal subpart
+// (jstext.DecodeUTF8). A line break never belongs to a multi-byte sequence,
+// so decoding each line is decoding the body.
+//
 // Only events named in anthropicMessageEvents reach handle, and only when
 // their data is a JSON object: any other JSON value has no `type` for pi's
 // loop to match, so pi carries on past it. A `null` fails the stream the way
@@ -2143,11 +2148,16 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 		return handle(ev)
 	}
 
+	first := true
 	for scanner.Scan() {
 		if ctx != nil && ctx.Err() != nil {
 			return fmt.Errorf("Request was aborted")
 		}
-		line := scanner.Text()
+		raw := scanner.Bytes()
+		if first {
+			raw, first = stripBOM(raw), false
+		}
+		line := jstext.DecodeUTF8(raw)
 		if line == "" {
 			if err := flush(); err != nil {
 				return err
