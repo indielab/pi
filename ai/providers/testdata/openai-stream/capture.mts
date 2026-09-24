@@ -30,6 +30,8 @@
 //             a request aborted while the server holds the connection open.
 //   pricing   responses' service-tier pricing: which tier a completed
 //             response's service_tier leaves in force.
+//   lines     the SDK's LineDecoder over a body cut into reads that split a
+//             line ending, as the port's line splitter can meet one.
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -50,6 +52,7 @@ const openaiDir = path.join(extraction, "node_modules/openai");
 const openaiVersion = JSON.parse(fs.readFileSync(path.join(openaiDir, "package.json"), "utf8")).version;
 const { default: OpenAI } = await import(pathToFileURL(path.join(openaiDir, "index.mjs")).href);
 const { Stream } = await import(pathToFileURL(path.join(openaiDir, "core/streaming.mjs")).href);
+const { LineDecoder } = await import(pathToFileURL(path.join(openaiDir, "internal/decoders/line.mjs")).href);
 
 // ---- the loopback server ---------------------------------------------------
 
@@ -313,12 +316,12 @@ const dispatch: Record<string, Body> = {
 	"null-event": `data: ${A}\n\ndata: null\n\ndata: ${FIN}\n\n`,
 	"no-choices-chunks": `data: ${A}\n\ndata: ${J({ id: "u", choices: [], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } })}\n\ndata: ${J({ id: "o", openrouter_metadata: { strategy: "direct" } })}\n\ndata: ${FIN}\n\n`,
 	"key-order": `data: ${J({ z: 1, id: "k", a: { y: [{ q: 1, b: 2 }], x: null }, choices: [{ index: 0, delta: { content: "<&>" } }] })}\n\ndata: ${FIN}\n\n`,
-	// Written out, not J(): a JS object literal would already list its
-	// array-index keys first, ascending, as JSON.parse's object does.
 	// JSON.parse reads a number past float64's range as ±Infinity, which
 	// JSON.stringify writes as null; written out, since J() would already
 	// have made it null.
 	"numbers-past-float64": `data: {"id":"a","x":1e400,"y":-1e400,"z":1e-400,"w":[1e400,{"v":-1e400}],"choices":[{"index":0,"delta":{"content":"x"}}]}\n\ndata: 1e400\n\ndata: -0\n\ndata: ${FIN}\n\n`,
+	// Written out, not J(): a JS object literal would already list its
+	// array-index keys first, ascending, as JSON.parse's object does.
 	"index-keys": `data: {"z":1,"id":"k","2":"x","1":"y","-1":0,"01":2,"4294967295":3,"4294967294":4,"choices":[{"index":0,"delta":{"content":"i"},"logprobs":{"2":1,"1":2}}]}\n\ndata: ${FIN}\n\n`,
 	"error-chunk-openrouter": errorChunk({ message: "boom", code: 502, metadata: { raw: "upstream exploded", provider_name: "p" } }),
 	"error-chunk-raw-contained": errorChunk({ message: "boom: upstream exploded", metadata: { raw: "upstream exploded" } }),
@@ -544,6 +547,33 @@ const pricingBodies: Record<string, [string, string]> = {
 	"tier-default": [pricedBody({ service_tier: "default" }), "priority"],
 };
 
+// ---- line splitting --------------------------------------------------------------
+
+// The SDK's LineDecoder gets a body in iterSSEChunks' pieces, each ending at
+// an event separator, so the dispatch bodies read one byte per read above
+// never reach it with a line ending cut in two. The port's line splitter does
+// meet one: its scanner's buffer can end inside a piece (an event of 64 KiB
+// or more). Each sequence here is decoded one chunk at a time and then
+// flushed, as the body's end flushes it.
+const lineChunks: Record<string, string[]> = {
+	"crlf-split": ["a\r", "\nb"],
+	"crlf-split-thrice": ["a", "\r", "\n", "b\r\n"],
+	"blank-crlf-split": ["\r", "\n\r", "\n"],
+	"crlf-then-crlf-split": ["a\r", "\n", "\r", "\n"],
+	"cr-then-text": ["a\r", "b\n"],
+	"cr-then-cr": ["a\r", "\r"],
+	"cr-cr-then-lf": ["a\r\r", "\nb"],
+	"cr-at-end": ["a\r"],
+	"cr-text-in-one": ["a\rb"],
+	"lf-then-cr": ["a\n", "\rb"],
+};
+
+function sdkLines(chunks: string[]): string[] {
+	const decoder = new LineDecoder();
+	const lines: string[] = chunks.flatMap((c) => decoder.decode(new TextEncoder().encode(c)));
+	return [...lines, ...decoder.flush()];
+}
+
 async function piPricing(body: string, serviceTier: string) {
 	const final = await responses
 		.stream({ ...pricedModel, baseUrl: sse(body) }, context, { apiKey: "k", serviceTier })
@@ -568,7 +598,8 @@ const out: {
 		{ adapter: string; sse: string; status: number; hold: boolean; abortOnEvent: number; outcome: Outcome }
 	>;
 	pricing: Record<string, { sse: string; serviceTier: string; stopReason: string; costTotal: number }>;
-} = { sha, openai: openaiVersion, dispatch: {}, completions: {}, responses: {}, hooks: {}, pricing: {} };
+	lines: Record<string, { chunks: string[]; lines: string[] }>;
+} = { sha, openai: openaiVersion, dispatch: {}, completions: {}, responses: {}, hooks: {}, pricing: {}, lines: {} };
 
 for (const [name, body] of Object.entries(dispatch)) {
 	out.dispatch[name] = {
@@ -638,6 +669,9 @@ for (const [adapter, [api, model]] of Object.entries(adapters)) {
 
 for (const [name, [body, serviceTier]] of Object.entries(pricingBodies)) {
 	out.pricing[name] = { sse: body, serviceTier, ...(await piPricing(body, serviceTier)) };
+}
+for (const [name, chunks] of Object.entries(lineChunks)) {
+	out.lines[name] = { chunks, lines: sdkLines(chunks) };
 }
 
 for (const res of held) res.destroy();

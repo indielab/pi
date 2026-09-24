@@ -4661,5 +4661,111 @@
 			"stopReason": "stop",
 			"costTotal": 1
 		}
+	},
+	"lines": {
+		"crlf-split": {
+			"chunks": [
+				"a\r",
+				"\nb"
+			],
+			"lines": [
+				"a",
+				"b"
+			]
+		},
+		"crlf-split-thrice": {
+			"chunks": [
+				"a",
+				"\r",
+				"\n",
+				"b\r\n"
+			],
+			"lines": [
+				"a",
+				"b"
+			]
+		},
+		"blank-crlf-split": {
+			"chunks": [
+				"\r",
+				"\n\r",
+				"\n"
+			],
+			"lines": [
+				"",
+				""
+			]
+		},
+		"crlf-then-crlf-split": {
+			"chunks": [
+				"a\r",
+				"\n",
+				"\r",
+				"\n"
+			],
+			"lines": [
+				"a",
+				""
+			]
+		},
+		"cr-then-text": {
+			"chunks": [
+				"a\r",
+				"b\n"
+			],
+			"lines": [
+				"a",
+				"b"
+			]
+		},
+		"cr-then-cr": {
+			"chunks": [
+				"a\r",
+				"\r"
+			],
+			"lines": [
+				"a",
+				""
+			]
+		},
+		"cr-cr-then-lf": {
+			"chunks": [
+				"a\r\r",
+				"\nb"
+			],
+			"lines": [
+				"a",
+				"",
+				"b"
+			]
+		},
+		"cr-at-end": {
+			"chunks": [
+				"a\r"
+			],
+			"lines": [
+				"a"
+			]
+		},
+		"cr-text-in-one": {
+			"chunks": [
+				"a\rb"
+			],
+			"lines": [
+				"a",
+				"b"
+			]
+		},
+		"lf-then-cr": {
+			"chunks": [
+				"a\n",
+				"\rb"
+			],
+			"lines": [
+				"a",
+				"",
+				"b"
+			]
+		}
 	}
 }

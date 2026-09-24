@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -89,6 +90,12 @@ type openaiStreamCapture struct {
 		AbortOnEvent int                 `json:"abortOnEvent"`
 		Outcome      openaiStreamOutcome `json:"outcome"`
 	} `json:"hooks"`
+	// Lines is the SDK's LineDecoder over chunk sequences that cut a line
+	// ending across reads: the lines it made of them, flushed at the end.
+	Lines map[string]struct {
+		Chunks []string `json:"chunks"`
+		Lines  []string `json:"lines"`
+	} `json:"lines"`
 }
 
 // body is the row's SSE body.
@@ -315,6 +322,51 @@ func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
 			}
 		}
 	}
+}
+
+// The line splitter ends lines where the SDK's LineDecoder does wherever the
+// reads cut a line ending: "\r\n" is one line ending even when a read ends
+// between its two bytes, so a "\r" at the end of what has been read waits for
+// the next one. The reads above never reach the splitter cut that way, since
+// readOpenAISSE hands it iterSSEChunks' pieces, which end at an event
+// separator; its scanner meets the cut where its buffer ends inside a piece,
+// in an event of 64 KiB or more. Here the splitter gets the capture's chunks
+// one per read, as the LineDecoder did.
+func TestOpenAISSELinesSplitLikeTheSDK(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	if len(c.Lines) == 0 {
+		t.Fatalf("%s has no lines rows; rerun capture.mts", openaiStreamCaptureFile)
+	}
+	for name, row := range c.Lines {
+		t.Run(name, func(t *testing.T) {
+			scanner := bufio.NewScanner(&openaiChunkedBody{chunks: slices.Clone(row.Chunks)})
+			scanner.Split(scanOpenAISSELines)
+			var got []string
+			for scanner.Scan() {
+				got = append(got, scanner.Text())
+			}
+			if err := scanner.Err(); err != nil {
+				t.Fatal(err)
+			}
+			if !slices.Equal(got, row.Lines) {
+				t.Errorf("lines of %q:\n got %q\nsdk %q", row.Chunks, got, row.Lines)
+			}
+		})
+	}
+}
+
+// openaiChunkedBody is a body that arrives in the given chunks, one per read.
+type openaiChunkedBody struct{ chunks []string }
+
+func (b *openaiChunkedBody) Read(p []byte) (int, error) {
+	if len(b.chunks) == 0 {
+		return 0, io.EOF
+	}
+	n := copy(p, b.chunks[0])
+	if b.chunks[0] = b.chunks[0][n:]; b.chunks[0] == "" {
+		b.chunks = b.chunks[1:]
+	}
+	return n, nil
 }
 
 // A cancelled request's failed body read ends the reading where the SDK's
