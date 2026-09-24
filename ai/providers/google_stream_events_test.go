@@ -58,8 +58,11 @@ type googleStreamScenario struct {
 	AbruptEnd bool `json:"abruptEnd"`
 	// RequestHeaders are the options.headers the caller passes.
 	RequestHeaders map[string]string `json:"requestHeaders"`
-	ThrowOn        *int              `json:"throwOn"`
-	ThrowMessage   string            `json:"throwMessage"`
+	// HeadLatin1 writes the head one byte per character (latin1) instead of
+	// as UTF-8, so a header can carry bytes that are not UTF-8.
+	HeadLatin1   bool   `json:"headLatin1"`
+	ThrowOn      *int   `json:"throwOn"`
+	ThrowMessage string `json:"throwMessage"`
 	// AbortOn is the callback call that aborts the request's signal.
 	AbortOn *int `json:"abortOn"`
 	// ReadBoundariesMatter reports whether pi's outcome changes when the
@@ -221,7 +224,17 @@ func googleScenarioHead(sc googleStreamScenario) string {
 		head.WriteString("Transfer-Encoding: chunked\r\n")
 	}
 	head.WriteString("\r\n")
-	return head.String()
+	if !sc.HeadLatin1 {
+		return head.String()
+	}
+	latin1 := make([]byte, 0, head.Len())
+	for _, r := range head.String() {
+		if r > 0xff {
+			panic(fmt.Sprintf("scenario %q: %q is not a latin1 character", sc.Name, r))
+		}
+		latin1 = append(latin1, byte(r))
+	}
+	return string(latin1)
 }
 
 // googleScenarioResponse is the *http.Response Go's client makes of the

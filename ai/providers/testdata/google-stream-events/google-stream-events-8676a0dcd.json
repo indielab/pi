@@ -1435,6 +1435,175 @@
 			}
 		},
 		{
+			"name": "a coding is read from the header's latin1 text",
+			"note": "undici reads the header bytes as latin1, then lowercases, splits and trims: a bare A0 byte is a no-break space, which trim removes",
+			"framing": "close",
+			"headLatin1": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzip "
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"latin1\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAE0tJLEm0UqhWSk7MS8lMSSxJLVayigZy8/NKUvNKlKyqlQoSi0oggiWpFUARpZzEksw8Q6XaWB2lovycVKBIbn5Kao5SbW1sLRdXCukGKmIxS0cpLTMvszgjKDWxOD8PKB4c4h+gBLYBAPBVuoWzAAAA",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"latin1\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip \",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip \",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "latin1"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"latin1!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "a UTF-8 no-break space after a coding leaves the body as sent",
+			"note": "as latin1 the bytes C2 A0 are two characters, and trim removes only the second",
+			"framing": "close",
+			"headLatin1": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzipÂ "
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"never\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAE0tJLEm0UqhWSk7MS8lMSSxJLVayigZy8/NKUvNKlKyqlQoSi0oggiWpFUARpbzUstQipdpYHaWi/JxUoEBufkpqjlJtbWwtF1cK6eYpYjFLRyktMy+zOCMoNbE4Pw8oHhziH6AEtgEAu+2tnbIAAAA=",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Incomplete JSON segment at the end",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "a UTF-8 dotted capital I in a coding leaves the body as sent",
+			"note": "as latin1 the bytes C4 B0 are two characters that lowercase to themselves, not the i that U+0130 lowercases to",
+			"framing": "close",
+			"headLatin1": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzÄ°p"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"never\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAE0tJLEm0UqhWSk7MS8lMSSxJLVayigZy8/NKUvNKlKyqlQoSi0oggiWpFUARpbzUstQipdpYHaWi/JxUoEBufkpqjlJtbWwtF1cK6eYpYjFLRyktMy+zOCMoNbE4Pw8oHhziH6AEtgEAu+2tnbIAAAA=",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Incomplete JSON segment at the end",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
 			"name": "five content codings are undone",
 			"note": "undici rejects only past five",
 			"framing": "close",

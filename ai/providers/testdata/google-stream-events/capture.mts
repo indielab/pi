@@ -31,7 +31,9 @@
 // `contentLengthExtra` that many bytes more, so the body ends short; `oneWrite` sends
 // every segment as its own HTTP chunk but all in one socket write;
 // `abruptEnd` destroys the socket after the segments instead of ending the
-// body. `requestHeaders` are the options.headers pi's caller passes, and
+// body; `headLatin1` writes the head one byte per character (latin1), so a
+// header can carry bytes that are not UTF-8. `requestHeaders` are the
+// options.headers pi's caller passes, and
 // `acceptEncoding` records the accept-encoding the server received.
 //
 // Every scenario runs twice: as separate reads, and with its segments joined
@@ -101,6 +103,8 @@ type Scenario = {
 	oneWrite?: boolean;
 	abruptEnd?: boolean;
 	requestHeaders?: Record<string, string>;
+	// Write the head as latin1, one byte per character, instead of UTF-8.
+	headLatin1?: boolean;
 	divergence?: string;
 	divergentFields?: string[];
 	// Throw Error(throwMessage) from the callback on its Nth call (0-based).
@@ -355,6 +359,42 @@ const scenarios: Scenario[] = [
 			["Content-Encoding", "identity"],
 		],
 		segments: [sse(text("plain"), stop)],
+	},
+	{
+		name: "a coding is read from the header's latin1 text",
+		note: "undici reads the header bytes as latin1, then lowercases, splits and trims: a bare A0 byte is a no-break space, which trim removes",
+		framing: "close",
+		headLatin1: true,
+		encode: (b) => zlib.gzipSync(b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip\u00a0"],
+		],
+		segments: [sse(text("latin1"), stop)],
+	},
+	{
+		name: "a UTF-8 no-break space after a coding leaves the body as sent",
+		note: "as latin1 the bytes C2 A0 are two characters, and trim removes only the second",
+		framing: "close",
+		headLatin1: true,
+		encode: (b) => zlib.gzipSync(b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip\u00c2\u00a0"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a UTF-8 dotted capital I in a coding leaves the body as sent",
+		note: "as latin1 the bytes C4 B0 are two characters that lowercase to themselves, not the i that U+0130 lowercases to",
+		framing: "close",
+		headLatin1: true,
+		encode: (b) => zlib.gzipSync(b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gz\u00c4\u00b0p"],
+		],
+		segments: [sse(text("never"), stop)],
 	},
 	{
 		name: "five content codings are undone",
@@ -1263,7 +1303,7 @@ function serve(
 				const head = [s.status ?? "HTTP/1.1 200 OK", ...s.headers.map(([k, v]) => `${k}: ${v}`)];
 				if (s.contentLength) head.push(`Content-Length: ${writes.reduce((n, w) => n + w.length, 0) + (s.contentLengthExtra ?? 0)}`);
 				if (s.framing === "chunked") head.push("Transfer-Encoding: chunked");
-				sock.write(`${head.join("\r\n")}\r\n\r\n`);
+				sock.write(`${head.join("\r\n")}\r\n\r\n`, s.headLatin1 ? "latin1" : "utf8");
 				const frame = (w: Buffer) =>
 					s.framing === "chunked" ? Buffer.concat([Buffer.from(`${w.length.toString(16)}\r\n`), w, Buffer.from("\r\n")]) : w;
 				for (const w of s.oneWrite ? [Buffer.concat(writes.map(frame))] : writes.map(frame)) {

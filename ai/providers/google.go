@@ -1602,14 +1602,19 @@ func googleSDKResponseHeaders(resp *http.Response) ai.OrderedObject {
 }
 
 // googleResponseBody is the body fetch (undici 8) hands @google/genai: undici
-// undoes the response's Content-Encoding itself. The codings, lowercased and
-// comma-split, are undone last first: gzip and x-gzip, deflate (zlib-wrapped
-// or raw, told apart by the first byte), br and zstd; the first coding it
-// does not know leaves the whole body as sent; more than five reject the
-// fetch ("fetch failed"). Go has no brotli or zstd decoder, so a body that
-// needs one fails here, where pi reads it.
+// undoes the response's Content-Encoding itself. The codings — the header's
+// bytes read as latin1, lowercased, comma-split and trimmed — are undone last
+// first: gzip and x-gzip, deflate (zlib-wrapped or raw, told apart by the
+// first byte), br and zstd; the first coding it does not know leaves the
+// whole body as sent; more than five reject the fetch ("fetch failed"). Go
+// has no brotli or zstd decoder, so a body that needs one fails here, where
+// pi reads it.
 func googleResponseBody(resp *http.Response) (io.Reader, error) {
-	value := strings.Join(resp.Header.Values("Content-Encoding"), ", ")
+	// Read as latin1, a byte past ASCII is one character, as it is to
+	// undici's toLowerCase and trim: a bare A0 is a no-break space trim
+	// removes, while UTF-8's C2 A0 is two characters and C4 B0 never
+	// lowercases to i.
+	value := jstext.IsomorphicDecode(strings.Join(resp.Header.Values("Content-Encoding"), ", "))
 	if value == "" {
 		return resp.Body, nil
 	}
