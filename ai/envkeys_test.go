@@ -215,6 +215,15 @@ func TestAnthropicAuthTokenSkippedByGetEnvApiKey(t *testing.T) {
 // auth: builtinProviderAuth wires EnvAPIKeyAuth for any provider this table
 // names, so a missing row leaves Meta with the generic ambient resolver and no
 // documented env var.
+func TestMetaEnvKey(t *testing.T) {
+	if vars := apiKeyEnvVars("meta"); len(vars) != 1 || vars[0] != "META_API_KEY" {
+		t.Fatalf("apiKeyEnvVars(\"meta\") = %v, want [META_API_KEY]", vars)
+	}
+	if got := GetEnvApiKey("meta", map[string]string{"META_API_KEY": "scoped"}); got != "scoped" {
+		t.Errorf("GetEnvApiKey(meta) = %q, want %q", got, "scoped")
+	}
+}
+
 // pi a328aa89a adds typesafe: "TYPESAFE_API_KEY" to getApiKeyEnvVars.
 func TestTypesafeEnvKey(t *testing.T) {
 	if vars := apiKeyEnvVars("typesafe"); len(vars) != 1 || vars[0] != "TYPESAFE_API_KEY" {
@@ -222,14 +231,5 @@ func TestTypesafeEnvKey(t *testing.T) {
 	}
 	if got := GetEnvApiKey("typesafe", map[string]string{"TYPESAFE_API_KEY": "scoped"}); got != "scoped" {
 		t.Errorf("GetEnvApiKey(typesafe) = %q, want %q", got, "scoped")
-	}
-}
-
-func TestMetaEnvKey(t *testing.T) {
-	if vars := apiKeyEnvVars("meta"); len(vars) != 1 || vars[0] != "META_API_KEY" {
-		t.Fatalf("apiKeyEnvVars(\"meta\") = %v, want [META_API_KEY]", vars)
-	}
-	if got := GetEnvApiKey("meta", map[string]string{"META_API_KEY": "scoped"}); got != "scoped" {
-		t.Errorf("GetEnvApiKey(meta) = %q, want %q", got, "scoped")
 	}
 }
