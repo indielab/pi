@@ -261,12 +261,80 @@ func googleCaptureModel(baseURL string) *ai.Model {
 	}
 }
 
+// replayGoogleScenario streams the scenario over a real connection, with an
+// OnProviderStreamEvent that records what it receives (and throws where the
+// scenario says), and returns every way the outcome differs from pi's: each
+// value the callback received, as JSON.stringify writes it (key order
+// included), always with the model the stream was called with; the
+// assistant stream event by event (with deltas); the stop reason, error
+// message, response id, content JSON and usage tokens. No differences means
+// the port reproduces pi.
+func replayGoogleScenario(t *testing.T, sc googleStreamScenario) []string {
+	t.Helper()
+	model := googleCaptureModel(serveGoogleScenario(t, sc))
+	req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+	events := []string{}
+	sameModel, calls := true, 0
+	stream := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key"},
+		OnProviderStreamEvent: func(data any, eventModel *ai.Model) error {
+			if eventModel != model {
+				sameModel = false
+			}
+			if sc.ThrowOn != nil && *sc.ThrowOn == calls {
+				return errors.New(sc.ThrowMessage)
+			}
+			calls++
+			text, err := jstext.Stringify(data)
+			events = append(events, text)
+			return err
+		},
+	}})
+	var got, want, diffs []string
+	for ev := range stream.Events() {
+		switch ev.Type {
+		case ai.EventTextDelta, ai.EventThinkingDelta, ai.EventToolCallDelta:
+			got = append(got, string(ev.Type)+" "+ev.Delta)
+		default:
+			got = append(got, string(ev.Type))
+		}
+	}
+	for _, ev := range sc.Pi.Stream {
+		if ev.Delta != nil {
+			want = append(want, ev.Type+" "+*ev.Delta)
+		} else {
+			want = append(want, ev.Type)
+		}
+	}
+	if !slices.Equal(got, want) {
+		diffs = append(diffs, fmt.Sprintf("stream %q\npi:     %q", got, want))
+	}
+	final := stream.Result()
+	if !slices.Equal(events, sc.Pi.Events) {
+		diffs = append(diffs, fmt.Sprintf("observed %q\npi:       %q", events, sc.Pi.Events))
+	}
+	if !sameModel || !sc.Pi.SameModel {
+		diffs = append(diffs, fmt.Sprintf("observer's model: same %v, pi same %v", sameModel, sc.Pi.SameModel))
+	}
+	if string(final.StopReason) != sc.Pi.StopReason || final.ErrorMessage != sc.Pi.ErrorMessage {
+		diffs = append(diffs, fmt.Sprintf("stop %s %q, pi %s %q", final.StopReason, final.ErrorMessage, sc.Pi.StopReason, sc.Pi.ErrorMessage))
+	}
+	if final.ResponseID != sc.Pi.ResponseID {
+		diffs = append(diffs, fmt.Sprintf("responseId %q, pi %q", final.ResponseID, sc.Pi.ResponseID))
+	}
+	if content, _ := jstext.Stringify(final.Content); content != sc.Pi.Content {
+		diffs = append(diffs, fmt.Sprintf("content %s\npi:      %s", content, sc.Pi.Content))
+	}
+	u, pu := final.Usage, sc.Pi.Usage
+	if u.Input != pu.Input || u.Output != pu.Output || u.CacheRead != pu.CacheRead || u.CacheWrite != pu.CacheWrite || u.TotalTokens != pu.TotalTokens {
+		diffs = append(diffs, fmt.Sprintf("usage %+v, pi %+v", u, pu))
+	}
+	return diffs
+}
+
 // TestGoogleStreamEventsMatchPi replays each captured scenario whose outcome
-// does not hang on where the reads fall, over a real connection, and requires
-// pi's result: every value OnProviderStreamEvent received, as JSON.stringify
-// writes it (key order included), always with the model the stream was
-// called with; the assistant stream event by event (with deltas); the stop
-// reason, error message, response id, content JSON and usage tokens.
+// does not hang on where the reads fall, over a real connection, and
+// requires pi's result (replayGoogleScenario).
 func TestGoogleStreamEventsMatchPi(t *testing.T) {
 	ran := 0
 	for _, sc := range loadGoogleStreamCapture(t).Scenarios {
@@ -275,68 +343,33 @@ func TestGoogleStreamEventsMatchPi(t *testing.T) {
 		}
 		ran++
 		t.Run(sc.Name, func(t *testing.T) {
-			model := googleCaptureModel(serveGoogleScenario(t, sc))
-			req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
-			events := []string{}
-			sameModel, calls := true, 0
-			stream := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{
-				ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key"},
-				OnProviderStreamEvent: func(data any, eventModel *ai.Model) error {
-					if eventModel != model {
-						sameModel = false
-					}
-					if sc.ThrowOn != nil && *sc.ThrowOn == calls {
-						return errors.New(sc.ThrowMessage)
-					}
-					calls++
-					text, err := jstext.Stringify(data)
-					events = append(events, text)
-					return err
-				},
-			}})
-			var got, want []string
-			for ev := range stream.Events() {
-				switch ev.Type {
-				case ai.EventTextDelta, ai.EventThinkingDelta, ai.EventToolCallDelta:
-					got = append(got, string(ev.Type)+" "+ev.Delta)
-				default:
-					got = append(got, string(ev.Type))
-				}
-			}
-			for _, ev := range sc.Pi.Stream {
-				if ev.Delta != nil {
-					want = append(want, ev.Type+" "+*ev.Delta)
-				} else {
-					want = append(want, ev.Type)
-				}
-			}
-			if !slices.Equal(got, want) {
-				t.Errorf("stream %q\npi:     %q", got, want)
-			}
-			final := stream.Result()
-			if !slices.Equal(events, sc.Pi.Events) {
-				t.Errorf("observed %q\npi:       %q", events, sc.Pi.Events)
-			}
-			if !sameModel || !sc.Pi.SameModel {
-				t.Errorf("observer's model: same %v, pi same %v", sameModel, sc.Pi.SameModel)
-			}
-			if string(final.StopReason) != sc.Pi.StopReason || final.ErrorMessage != sc.Pi.ErrorMessage {
-				t.Errorf("stop %s %q, pi %s %q", final.StopReason, final.ErrorMessage, sc.Pi.StopReason, sc.Pi.ErrorMessage)
-			}
-			if final.ResponseID != sc.Pi.ResponseID {
-				t.Errorf("responseId %q, pi %q", final.ResponseID, sc.Pi.ResponseID)
-			}
-			if content, _ := jstext.Stringify(final.Content); content != sc.Pi.Content {
-				t.Errorf("content %s\npi:      %s", content, sc.Pi.Content)
-			}
-			u, pu := final.Usage, sc.Pi.Usage
-			if u.Input != pu.Input || u.Output != pu.Output || u.CacheRead != pu.CacheRead || u.CacheWrite != pu.CacheWrite || u.TotalTokens != pu.TotalTokens {
-				t.Errorf("usage %+v, pi %+v", u, pu)
+			for _, d := range replayGoogleScenario(t, sc) {
+				t.Error(d)
 			}
 		})
 	}
 	if ran < 15 {
 		t.Fatalf("only %d replayable scenarios in the capture", ran)
+	}
+}
+
+// TestGoogleDivergencesStillDiffer is the tripwire for the captured
+// scenarios tagged `divergence`: measured differences the port carries and
+// the ledger records. Each is replayed the way TestGoogleStreamEventsMatchPi
+// replays the rest, and must still differ from pi somewhere; one that has
+// come to match pi fails here until its tag and its ledger row are retired.
+// It asserts only that the port is not pi's, never what the port does
+// instead.
+func TestGoogleDivergencesStillDiffer(t *testing.T) {
+	for _, sc := range loadGoogleStreamCapture(t).Scenarios {
+		if sc.Divergence == "" {
+			continue
+		}
+		t.Run(sc.Name, func(t *testing.T) {
+			if len(replayGoogleScenario(t, sc)) == 0 {
+				t.Errorf("FIXED: the port now reproduces pi here — drop the scenario's divergence tag and its ledger row (%s)", sc.Divergence)
+			}
+		})
 	}
 }
 
