@@ -3582,6 +3582,348 @@
 				"thinking": []
 			}
 		},
+		"error-chunk-fetch-canceled": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"error\":{\"message\":\"upstream: FetchRequestCanceledException\"}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Stream ended without finish_reason",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"error-chunk-fetch-canceled-string": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"error\":\"FetchRequestCanceledException\"}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Stream ended without finish_reason",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"error-chunk-fetch-canceled-object-message": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"error\":{\"message\":{\"cause\":\"FetchRequestCanceledException\"}}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Stream ended without finish_reason",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"error-chunk-fetch-canceled-then-finish": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: {\"error\":{\"message\":\"FetchRequestCanceledException\"}}\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"error-chunk-fetch-canceled-in-code": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"error\":{\"message\":\"boom\",\"code\":\"FetchRequestCanceledException\"}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "boom",
+					"error": "{\"message\":\"boom\",\"code\":\"FetchRequestCanceledException\"}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"code\":\"FetchRequestCanceledException\"}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"code\":\"FetchRequestCanceledException\"}"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "boom",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "boom",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
 		"error-values-falsy": {
 			"sse": "data: {\"id\":\"n\",\"error\":null}\n\ndata: {\"id\":\"e\",\"error\":\"\"}\n\ndata: {\"id\":\"z\",\"error\":0}\n\ndata: {\"id\":\"f\",\"error\":false}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
 			"sdk": {
@@ -8520,6 +8862,65 @@
 				"toolCalls": [
 					"{\"id\":\"call_1|fc_1\",\"name\":\"f\",\"arguments\":{\"path\":\"a.txt\",\"overwrite\":false}}"
 				],
+				"thinking": []
+			}
+		},
+		"fetch-canceled-after-completed": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\ndata: {\"error\":{\"message\":\"FetchRequestCanceledException\"}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "5",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "6"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"fetch-canceled-before-completed": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"error\":{\"message\":\"FetchRequestCanceledException\"}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
 				"thinking": []
 			}
 		},

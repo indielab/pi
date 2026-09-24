@@ -390,6 +390,14 @@ const dispatch: Record<string, Body> = {
 	"error-chunk-empty-object": errorChunk({}),
 	"error-chunk-empty-array": errorChunk([]),
 	"error-chunk-integer-keys": errorChunk({ b: 1, 2: "x", 1: "y", code: 1.5e21 }),
+	// The SDK's Stream swallows an error isAbortError matches, which includes
+	// any whose message names Expo fetch's FetchRequestCanceledException: the
+	// stream ends there, and pi's adapter runs its post-loop checks.
+	"error-chunk-fetch-canceled": errorChunk({ message: "upstream: FetchRequestCanceledException" }),
+	"error-chunk-fetch-canceled-string": errorChunk("FetchRequestCanceledException"),
+	"error-chunk-fetch-canceled-object-message": errorChunk({ message: { cause: "FetchRequestCanceledException" } }),
+	"error-chunk-fetch-canceled-then-finish": `data: ${A}\n\ndata: ${FIN}\n\ndata: ${J({ error: { message: "FetchRequestCanceledException" } })}\n\ndata: ${B}\n\n`,
+	"error-chunk-fetch-canceled-in-code": errorChunk({ message: "boom", code: "FetchRequestCanceledException" }),
 	"error-values-falsy": `data: ${J({ id: "n", error: null })}\n\ndata: ${J({ id: "e", error: "" })}\n\ndata: ${J({ id: "z", error: 0 })}\n\ndata: ${J({ id: "f", error: false })}\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	"error-key-case": `data: ${J({ Error: { message: "boom" } })}\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	"error-after-done": `data: ${A}\n\ndata: ${FIN}\n\ndata: [DONE]\n\ndata: ${J({ error: { message: "late" } })}\n\n`,
@@ -711,6 +719,8 @@ const responsesBodies: Record<string, string> = {
 		R({ type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "f", arguments: "" } }) +
 		R({ type: "response.function_call_arguments.delta", output_index: 0, delta: `{"path":"a.txt","overwrite":fal` }) +
 		R({ type: "response.incomplete", response: { id: "resp_1", status: "incomplete", incomplete_details: { reason: "max_output_tokens" } } }),
+	"fetch-canceled-after-completed": `${created}${textEvents}${completed}data: ${J({ error: { message: "FetchRequestCanceledException" } })}\n\n`,
+	"fetch-canceled-before-completed": `${created}${textEvents}data: ${J({ error: { message: "FetchRequestCanceledException" } })}\n\n${completed}`,
 	"completed-number-service-tier":
 		created + textEvents + R({ type: "response.completed", response: { status: "completed", service_tier: 5 } }),
 };

@@ -219,10 +219,15 @@ type openaiStreamItem struct {
 //     surface it; nothing is repaired, and the event is not yielded.
 //   - An event named "thread.*" is yielded as {"event": name, "data": value}.
 //   - Any other event whose value has a truthy `error` member throws the SDK's
-//     APIError, as *openaiStreamChunkError, instead of being yielded.
+//     APIError, as *openaiStreamChunkError, instead of being yielded — unless
+//     its message names FetchRequestCanceledException. The Stream's catch
+//     swallows every error isAbortError matches (`if (isAbortError(e))
+//     return;`), and that test also matches such a message (Expo fetch's
+//     cancellation), so the stream just ends there, unread past that event,
+//     and pi's adapter runs its post-loop checks.
 func iterateOpenAIStream(body io.Reader, ctx context.Context, yield func(openaiStreamItem) error) error {
 	done := false
-	return readOpenAISSE(body, ctx, func(sse openaiSSEEvent) error {
+	err := readOpenAISSE(body, ctx, func(sse openaiSSEEvent) error {
 		if done {
 			return nil
 		}
@@ -243,11 +248,23 @@ func iterateOpenAIStream(body io.Reader, ctx context.Context, yield func(openaiS
 			})
 		}
 		if errorValue := jsGet(value, "error"); jsTruthy(errorValue) {
-			return newOpenAIStreamChunkError(text, errorValue)
+			chunkErr := newOpenAIStreamChunkError(text, errorValue)
+			if strings.Contains(chunkErr.message, "FetchRequestCanceledException") {
+				return errOpenAIStreamSwallowed
+			}
+			return chunkErr
 		}
 		return yield(openaiStreamItem{value: value, text: text})
 	})
+	if errors.Is(err, errOpenAIStreamSwallowed) {
+		return nil
+	}
+	return err
 }
+
+// errOpenAIStreamSwallowed ends iterateOpenAIStream's reading where the SDK's
+// Stream swallows an error isAbortError matches.
+var errOpenAIStreamSwallowed = errors.New("the openai SDK's Stream swallowed an error it takes for an abort")
 
 // openaiStreamJSON is the SDK's `JSON.parse(sse.data)`: the value JSON.parse
 // returns (ai.DecodeOrderedValue), else the SyntaxError it throws.
