@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
@@ -1995,7 +1996,13 @@ func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error
 	return 0, nil, nil
 }
 
-// iterateAnthropicSSE parses the SSE body and invokes handle for each known event.
+// iterateAnthropicSSE parses the SSE body and invokes handle for each known
+// event (pi iterateSseMessages + iterateAnthropicEvents).
+//
+// Only events named in anthropicMessageEvents reach handle, and only when
+// their data is a JSON object: any other JSON value has no `type` for pi's
+// loop to match, so pi carries on past it. A `null` fails the stream the way
+// pi's `event.type` read does, inside the same try that wraps a parse failure.
 func iterateAnthropicSSE(body io.Reader, ctx context.Context, handle func(anthropicStreamEvent) error) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
@@ -2003,6 +2010,10 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, handle func(anthro
 
 	var eventName string
 	var dataLines []string
+	// rawLines is pi's state.raw: every non-empty line, comments included. It
+	// is cleared only when an event is flushed, so the lines of a block that
+	// carried neither an event name nor data lead the next event's raw.
+	var rawLines []string
 
 	flush := func() error {
 		if eventName == "" && len(dataLines) == 0 {
@@ -2010,8 +2021,10 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, handle func(anthro
 		}
 		name := eventName
 		data := strings.Join(dataLines, "\n")
+		raw := rawLines
 		eventName = ""
 		dataLines = nil
+		rawLines = nil
 
 		if name == "error" {
 			return fmt.Errorf("%s", data)
@@ -2019,9 +2032,26 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, handle func(anthro
 		if !anthropicMessageEvents[name] {
 			return nil
 		}
+		// pi: `Could not parse Anthropic SSE event ${sse.event}: ${message};
+		// data=${sse.data}; raw=${sse.raw.join("\\n")}` — the raw lines are
+		// joined with a literal backslash-n, not a newline.
+		parseFailure := func(cause error) error {
+			return fmt.Errorf("Could not parse Anthropic SSE event %s: %v; data=%s; raw=%s", name, cause, data, strings.Join(raw, `\n`))
+		}
+		text, err := jsonTextWithRepair(data)
+		if err != nil {
+			return parseFailure(err)
+		}
+		switch jsonValueKind(text) {
+		case '{':
+		case 'n':
+			return parseFailure(errors.New("Cannot read properties of null (reading 'type')"))
+		default:
+			return nil
+		}
 		var ev anthropicStreamEvent
-		if err := parseJSONWithRepair(data, &ev); err != nil {
-			return fmt.Errorf("Could not parse Anthropic SSE event %s: %v; data=%s", name, err, data)
+		if err := json.Unmarshal([]byte(text), &ev); err != nil {
+			return parseFailure(err)
 		}
 		return handle(ev)
 	}
@@ -2037,6 +2067,7 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, handle func(anthro
 			}
 			continue
 		}
+		rawLines = append(rawLines, line)
 		if strings.HasPrefix(line, ":") {
 			continue
 		}
