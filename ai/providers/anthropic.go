@@ -342,12 +342,13 @@ func isOAuthToken(apiKey string) bool { return strings.Contains(apiKey, "sk-ant-
 // adapters take two (clientAPIKey) and google takes none, so the three gates stay
 // separate.
 //
-// pi's hasHeader lowercases the name it compares and requires `value !== null &&
-// value.trim().length > 0`, so a deletion marker (nil here) and a blank value are
-// not credentials.
+// pi's hasHeader lowercases the name it compares — with JavaScript's
+// toLowerCase (jstext.ToLower), so "X-Ap\u0130-Key" does not match — and
+// requires `value !== null && value.trim().length > 0`, so a deletion marker
+// (nil here) and a blank value are not credentials.
 func hasAnthropicAuthHeader(headers ai.ProviderHeaders) bool {
 	for name, value := range headers {
-		switch strings.ToLower(name) {
+		switch jstext.ToLower(name) {
 		case "authorization", "x-api-key", "cf-aig-authorization":
 			if value != nil && jstext.Trim(*value) != "" {
 				return true

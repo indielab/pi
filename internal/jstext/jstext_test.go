@@ -5,6 +5,7 @@ import (
 	"os"
 	"slices"
 	"testing"
+	"unicode"
 )
 
 // whitespaceCapture is testdata/whitespace-node.json, written by
@@ -99,3 +100,85 @@ func TestIsomorphicDecode(t *testing.T) {
 		}
 	}
 }
+
+// lowerCapture is testdata/lower-node.json, written by testdata/capture-lower.mjs
+// under node.
+type lowerCapture struct {
+	Node    string `json:"node"`
+	Unicode string `json:"unicode"`
+	// Lower holds [code point, toLowerCase] for every scalar value that
+	// toLowerCase changes.
+	Lower   [][2]json.RawMessage `json:"lower"`
+	Strings []struct {
+		In    string `json:"in"`
+		Lower string `json:"lower"`
+	} `json:"strings"`
+}
+
+func loadLowerCapture(t *testing.T) lowerCapture {
+	t.Helper()
+	data, err := os.ReadFile("testdata/lower-node.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var c lowerCapture
+	if err := json.Unmarshal(data, &c); err != nil {
+		t.Fatalf("testdata/lower-node.json: %v; rerun capture-lower.mjs", err)
+	}
+	if len(c.Lower) == 0 {
+		t.Fatal("testdata/lower-node.json carries no mappings; rerun capture-lower.mjs")
+	}
+	return c
+}
+
+// Every Unicode scalar value lowers as node's toLowerCase lowers it. The one
+// allowance is a character Go's own Unicode tables do not assign yet: it is
+// newer than the tables x/text/cases selects for this toolchain, which lowers
+// it to itself (see ToLower).
+func TestToLowerMatchesNode(t *testing.T) {
+	c := loadLowerCapture(t)
+	want := make(map[rune]string, len(c.Lower))
+	for _, e := range c.Lower {
+		var r rune
+		var lower string
+		if json.Unmarshal(e[0], &r) != nil || json.Unmarshal(e[1], &lower) != nil {
+			t.Fatalf("testdata/lower-node.json: bad entry %s; rerun capture-lower.mjs", e)
+		}
+		want[r] = lower
+	}
+	newer := 0
+	for r := rune(0); r <= 0x10ffff; r++ {
+		if r >= 0xd800 && r <= 0xdfff {
+			continue
+		}
+		s := string(r)
+		w, ok := want[r]
+		if !ok {
+			w = s
+		}
+		got := ToLower(s)
+		if got == w {
+			continue
+		}
+		if got == s && !assigned(r) {
+			newer++
+			continue
+		}
+		t.Errorf("ToLower(%+q) = %+q, node %s says %+q", s, got, c.Node, w)
+	}
+	if newer > 0 {
+		t.Logf("%d characters newer than Unicode %s lower to themselves; node %s carries Unicode %s", newer, unicode.Version, c.Node, c.Unicode)
+	}
+}
+
+// Final_Sigma and the one-to-many mappings depend on the whole string.
+func TestToLowerStringsMatchNode(t *testing.T) {
+	for _, s := range loadLowerCapture(t).Strings {
+		if got := ToLower(s.In); got != s.Lower {
+			t.Errorf("ToLower(%+q) = %+q, node says %+q", s.In, got, s.Lower)
+		}
+	}
+}
+
+// assigned reports whether Go's Unicode tables assign r a character.
+func assigned(r rune) bool { return !unicode.Is(unicode.Cn, r) }

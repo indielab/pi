@@ -417,6 +417,21 @@ func TestHeaderObjectRecordMatchesPi(t *testing.T) {
 		{"marker then value",
 			[]ai.ProviderHeaders{{"X-A": nil}, {"x-a": strPtr("v")}},
 			[]recordEntry{{"x-a", "v"}}},
+		// The fold is JavaScript's toLowerCase: "X-\u0130D" lowers to
+		// "x-i\u0307d" and "X\u03a3" to "x\u03c2", so neither marker reaches
+		// the earlier name.
+		{"dotted capital I marker",
+			[]ai.ProviderHeaders{{"x-id": strPtr("v")}, {"X-" + dottedI + "D": nil}},
+			[]recordEntry{{"x-id", "v"}}},
+		{"final sigma marker",
+			[]ai.ProviderHeaders{{"x" + smallSig: strPtr("v")}, {"X" + capitalSig: nil}},
+			[]recordEntry{{"x" + smallSig, "v"}}},
+		{"dotted capital I within one source",
+			[]ai.ProviderHeaders{{"X-" + dottedI: strPtr("v"), "x-i": nil}},
+			[]recordEntry{{"X-" + dottedI, "v"}}},
+		{"final sigma within one source",
+			[]ai.ProviderHeaders{{"X" + capitalSig: strPtr("v"), "x" + smallSig: nil}},
+			[]recordEntry{{"X" + capitalSig, "v"}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			o := &headerObject{}

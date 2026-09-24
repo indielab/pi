@@ -1158,13 +1158,15 @@ func buildOpenAIParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIOp
 // (later overwritten by the real header) instead of failing. Absent both, the
 // stream fails with pi's exact message.
 // A deletion marker is not a credential: pi's hasHeader requires `value !==
-// null` before it counts a header as supplying auth.
+// null` before it counts a header as supplying auth. It matches the name by its
+// JavaScript toLowerCase (jstext.ToLower), so "Author\u0130zation" is not
+// "authorization" there, where strings.ToLower would make it one.
 func clientAPIKey(provider ai.ProviderId, apiKey string, headers ai.ProviderHeaders) (string, error) {
 	if apiKey != "" {
 		return apiKey, nil
 	}
 	for k, v := range headers {
-		lk := strings.ToLower(k)
+		lk := jstext.ToLower(k)
 		if (lk == "authorization" || lk == "cf-aig-authorization") && v != nil && jstext.Trim(*v) != "" {
 			return "unused", nil
 		}

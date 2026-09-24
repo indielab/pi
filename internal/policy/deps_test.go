@@ -20,7 +20,7 @@ import (
 // a recorded ruling rather than stand on its own.
 var allowedModules = map[string]string{
 	"golang.org/x/image": "BMP/WebP decoder registration (coding/imageresize.go)",
-	"golang.org/x/text":  "collation and Unicode normalization (coding/tools.go, coding/editmatch.go)",
+	"golang.org/x/text":  "collation and Unicode normalization (coding/tools.go, coding/editmatch.go), and JavaScript's toLowerCase (internal/jstext/lower.go)",
 }
 
 // ownModule is skipped by the allowlist check; its own packages are still

@@ -5,8 +5,9 @@ import (
 	"errors"
 	"slices"
 	"sort"
-	"strings"
 	"sync"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // Models runtime ported from pi packages/ai/src/models.ts (732bb161; facade
@@ -1657,7 +1658,9 @@ func HasApi(model *Model, api Api) bool {
 
 // mergeHeaders returns base overlaid with override, deleting base entries
 // whose names match an override key case-insensitively before setting it
-// (pi models.ts mergeHeaders). A deletion marker survives the merge like any
+// (pi models.ts mergeHeaders). Names match when their JavaScript toLowerCase
+// does (jstext.ToLower): pi keeps {"x-id": "v"} under an override
+// {"X-\u0130D": nil}, which strings.ToLower would fold onto it. A deletion marker survives the merge like any
 // other value: an override entry with a nil value replaces the base entry, so
 // the suppression it encodes reaches the provider. nil when both inputs are
 // nil. Override keys are applied in sorted order so case-colliding overrides
@@ -1678,9 +1681,9 @@ func mergeHeaders(base, override ProviderHeaders) ProviderHeaders {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		lower := strings.ToLower(name)
+		lower := jstext.ToLower(name)
 		for existing := range merged {
-			if strings.ToLower(existing) == lower {
+			if jstext.ToLower(existing) == lower {
 				delete(merged, existing)
 			}
 		}

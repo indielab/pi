@@ -10,6 +10,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // Header plumbing for ai.ProviderHeaders, whose nil values are deletion markers
@@ -191,13 +192,16 @@ type recordEntry struct{ name, value string }
 // removes every earlier spelling instead of merely being skipped, and a
 // re-stored name moves to the end, as a JS Map's delete-then-set does.
 //
-// A name that reaches the wire is a Latin-1 ByteString (see byteString), and on
-// those strings.ToLower agrees with JavaScript's toLowerCase.
+// The fold is JavaScript's toLowerCase (jstext.ToLower), and it runs on every
+// slot before any name is converted: on a marker's name, which never is, and on
+// a name that fails conversion later. So it decides which spellings survive to
+// be converted, and strings.ToLower would decide differently: {"X-\u0130":
+// "v", "x-i": nil} keeps "X-\u0130" in pi, which then fails the request.
 func (o *headerObject) record() []recordEntry {
 	var out []recordEntry
 	for _, name := range o.names {
-		folded := strings.ToLower(name)
-		out = slices.DeleteFunc(out, func(e recordEntry) bool { return strings.ToLower(e.name) == folded })
+		folded := jstext.ToLower(name)
+		out = slices.DeleteFunc(out, func(e recordEntry) bool { return jstext.ToLower(e.name) == folded })
 		if value := o.values[name]; value != nil {
 			out = append(out, recordEntry{name: name, value: *value})
 		}

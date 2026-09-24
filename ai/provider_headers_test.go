@@ -69,6 +69,30 @@ func TestMergeHeadersPreservesDeletionMarkers(t *testing.T) {
 	}
 }
 
+// mergeHeaders matches names by their JavaScript toLowerCase, as pi's does
+// (models.ts): "X-\u0130D" lowers to "x-i\u0307d" and "X\u03a3" to "x\u03c2",
+// so each override is a second key beside the base entry. Both wants are pi's
+// mergeHeaders (8676a0dcd, extracted with git show) run under node v26.4.0.
+func TestMergeHeadersFoldsNamesLikeJS(t *testing.T) {
+	for _, tc := range []struct {
+		name           string
+		base, override string
+	}{
+		{"dotted capital I", "x-id", "X-\u0130D"},
+		{"final sigma", "x\u03c3", "X\u03a3"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			merged := mergeHeaders(ProviderHeaders{tc.base: HeaderValue("v")}, ProviderHeaders{tc.override: nil})
+			if len(merged) != 2 || merged[tc.base] == nil || *merged[tc.base] != "v" {
+				t.Fatalf("merged = %v, want the base %q kept beside the override", merged, tc.base)
+			}
+			if marker, ok := merged[tc.override]; !ok || marker != nil {
+				t.Fatalf("merged = %v, want the %q marker", merged, tc.override)
+			}
+		})
+	}
+}
+
 // applyAuth threads markers from resolved auth and from the request options all
 // the way to the options the provider is dispatched with — the path upstream's
 // model-registry stopped stripping.
