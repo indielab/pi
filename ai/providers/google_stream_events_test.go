@@ -36,7 +36,7 @@ type googleStreamScenario struct {
 	Framing    string `json:"framing"` // "close" or "chunked"
 	// Headers is the response head, one [name, value] per line.
 	Headers [][2]string `json:"headers"`
-	// Segments are the body, each written as its own network read.
+	// Segments are the body, each written as its own body read.
 	Segments []string `json:"segments"`
 	// EncodedBody, when set, is the whole body as written instead (a gzip,
 	// deflate or brotli encoding of the joined segments, whole or damaged).
@@ -130,7 +130,7 @@ func loadGoogleStreamCapture(t *testing.T) googleStreamCapture {
 }
 
 // readsReader returns one of its reads per Read call, so a body arrives in
-// exactly the network reads a scenario prescribes.
+// exactly the body reads a scenario prescribes.
 type readsReader struct{ reads []string }
 
 func (r *readsReader) Read(p []byte) (int, error) {
@@ -199,9 +199,10 @@ func googleScenarioResponse(t *testing.T, sc googleStreamScenario) *http.Respons
 // scenario whose outcome the SDK's read loop decides — a bare JSON read that
 // throws ApiError, a tail left unconsumed, a read rejected by an abort — and
 // requires pi's error and the chunks pi observed before it. The SDK checks
-// each network read, before buffering it, for a bare JSON {"error":{...}}
+// each body read, before buffering it, for a bare JSON {"error":{...}}
 // payload (processStreamResponse), so where the reads fall is part of the
-// outcome.
+// outcome; here each captured segment is one read, as it was for pi (see
+// iterateGoogleSSE on where Go's reads fall instead).
 func TestGoogleSSEReadChunksMatchPi(t *testing.T) {
 	ran := 0
 	for _, sc := range loadGoogleStreamCapture(t).Scenarios {

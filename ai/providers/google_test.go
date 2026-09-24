@@ -819,7 +819,7 @@ func TestGoogleEmptyStringTextPartIsPresent(t *testing.T) {
 // --- F3: mid-stream error chunks + truncated streams ---
 
 // TestGoogleSSEErrorEventDoesNotFailStream: @google/genai 2.21.0 checks for an
-// {"error":...} payload only when a whole network read is bare JSON
+// {"error":...} payload only when a whole body read is bare JSON
 // (processStreamResponse); a data: event is parsed and converted by
 // generateContentResponseFromMldev, which keeps no "error" field, so pi sees an
 // empty chunk and reads on. Measured by testdata/google-stream-events

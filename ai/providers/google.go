@@ -1153,7 +1153,7 @@ func mapGoogleStopReason(reason string) (ai.StopReason, error) {
 	}
 }
 
-// googleBareJSONError is the check @google/genai 2.21.0 runs on every network
+// googleBareJSONError is the check @google/genai 2.21.0 runs on every body
 // read before buffering it (processStreamResponse): when the whole read
 // parses as JSON holding an "error" key, it reads status and code from
 // JSON.parse(JSON.stringify(chunkJson.error)), computes
@@ -1204,11 +1204,19 @@ func googleBareJSONError(read string) error {
 }
 
 // iterateGoogleSSE consumes the alt=sse stream the way the @google/genai SDK
-// does (processStreamResponse): each network read is first checked whole for
-// a bare JSON error payload (googleBareJSONError), then buffered; events are
+// does (processStreamResponse): each body read is first checked whole for a
+// bare JSON error payload (googleBareJSONError), then buffered; events are
 // split on \n\n, \r\r, or \r\n\r\n; only "data:"-prefixed events are decoded;
 // and a trailing unconsumed segment fails with the SDK's "Incomplete JSON
 // segment at the end".
+//
+// What one read holds is where the two differ. undici yields one HTTP/1.1
+// chunk per read, however many arrive together; Go's chunked reader (and its
+// HTTP/2 body, with DATA frames) returns everything buffered in one Read. So
+// a bare JSON error chunk that shares a TCP segment with earlier events is
+// checked alone in pi, which throws ApiError, and together with them here,
+// where it is not JSON. net/http does not expose chunk boundaries; the
+// capture's "divergence: HTTP chunks that arrive in one read" measures it.
 //
 // observe, when set, receives each data: payload's parsed value before handle
 // receives its own copy, and either one's error ends the stream.

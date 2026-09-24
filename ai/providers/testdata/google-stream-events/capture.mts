@@ -19,7 +19,7 @@
 //
 // Each scenario is served by a raw TCP server that writes the response head
 // and then each body segment as its own socket write, 50ms apart, so each
-// segment reaches the SDK as its own network read (its bare-JSON error check
+// segment reaches the SDK as its own body read (its bare-JSON error check
 // runs per read). Nothing else is added to the head — no Date, no
 // Connection — so the header record the SDK builds is fully determined by the
 // scenario. `framing` is "close" (the body runs to EOF) or "chunked" (each
@@ -417,6 +417,14 @@ const scenarios: Scenario[] = [
 		framing: "close",
 		headers: eventStream,
 		segments: [sse(text("x")) + '{"error":{"code":500,"message":"internal","status":"INTERNAL"}}'],
+	},
+	{
+		name: "divergence: HTTP chunks that arrive in one read",
+		divergence: "undici hands the SDK one HTTP chunk per body read even when several arrive in one TCP segment, so pi checks the bare-JSON chunk alone and throws ApiError; Go's chunked reader returns every buffered chunk in one Read, so the port checks the event and the error together, finds no JSON and ends with \"Incomplete JSON segment at the end\"",
+		framing: "chunked",
+		oneWrite: true,
+		headers: eventStream,
+		segments: [sse(text("x")), '{"error":{"code":500,"message":"internal","status":"INTERNAL"}}'],
 	},
 	{
 		name: "a bare JSON error is quoted re-serialized",

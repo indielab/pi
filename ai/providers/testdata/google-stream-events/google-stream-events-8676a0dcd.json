@@ -1698,6 +1698,55 @@
 			}
 		},
 		{
+			"name": "divergence: HTTP chunks that arrive in one read",
+			"divergence": "undici hands the SDK one HTTP chunk per body read even when several arrive in one TCP segment, so pi checks the bare-JSON chunk alone and throws ApiError; Go's chunked reader returns every buffered chunk in one Read, so the port checks the event and the error together, finds no JSON and ends with \"Incomplete JSON segment at the end\"",
+			"framing": "chunked",
+			"oneWrite": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n",
+				"{\"error\":{\"code\":500,\"message\":\"internal\",\"status\":\"INTERNAL\"}}"
+			],
+			"readBoundariesMatter": true,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "got status: INTERNAL. {\"error\":{\"code\":500,\"message\":\"internal\",\"status\":\"INTERNAL\"}}",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
 			"name": "a bare JSON error is quoted re-serialized",
 			"note": "the message carries JSON.stringify of the parsed read, not its text",
 			"framing": "close",
