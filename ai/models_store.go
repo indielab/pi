@@ -15,6 +15,9 @@ import (
 
 // ModelsStoreEntry is one provider's stored catalog (pi ModelsStoreEntry).
 type ModelsStoreEntry struct {
+	// Models holds persisted models of every type (pi AnyModel[], upstream
+	// a328aa89a). The Models runtime hands a provider its stored entry with the
+	// models of types this version does not know already dropped.
 	Models []*Model `json:"models"`
 	// LastModified is the Unix-millisecond timestamp from the remote catalog's
 	// Last-Modified header; 0 when unknown (pi lastModified?, upstream 54fad505).

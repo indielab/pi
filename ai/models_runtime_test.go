@@ -56,8 +56,8 @@ func TestCreateProviderDispatch(t *testing.T) {
 
 func TestModelsCollection(t *testing.T) {
 	m := CreateModels(nil)
-	pa := CreateProvider(CreateProviderOptions{ID: "a", Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("a", "A")}, Models: []*Model{{Provider: "a", ID: "m1"}}})
-	pb := CreateProvider(CreateProviderOptions{ID: "b", Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("b", "B")}, Models: []*Model{{Provider: "b", ID: "m2"}}})
+	pa := CreateProvider(CreateProviderOptions{ID: "a", Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("a", "A")}, Models: []*Model{{Provider: "a", ID: "m1"}}, API: stubAPI()})
+	pb := CreateProvider(CreateProviderOptions{ID: "b", Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("b", "B")}, Models: []*Model{{Provider: "b", ID: "m2"}}, API: stubAPI()})
 	m.SetProvider(pa)
 	m.SetProvider(pb)
 
@@ -168,6 +168,7 @@ func TestModelsGetAuthUnconfigured(t *testing.T) {
 		ID:     "p",
 		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("p", "DEFINITELY_UNSET_KEY_XYZ")},
 		Models: []*Model{{Provider: "p", ID: "m", Api: "api"}},
+		API:    stubAPI(),
 	}))
 	res, err := m.GetAuth(context.Background(), &Model{Provider: "p", ID: "m", Api: "api"}, nil)
 	if err != nil || res != nil {
@@ -206,6 +207,7 @@ func TestModelsRefreshDynamic(t *testing.T) {
 		FetchModels: func(_ context.Context, _ RefreshModelsContext) ([]*Model, error) {
 			return []*Model{{Provider: "dyn", ID: "fetched"}}, nil
 		},
+		API: stubAPI(),
 	}))
 	m.SetProvider(CreateProvider(CreateProviderOptions{
 		ID:   "boom",
@@ -213,6 +215,7 @@ func TestModelsRefreshDynamic(t *testing.T) {
 		FetchModels: func(_ context.Context, _ RefreshModelsContext) ([]*Model, error) {
 			return nil, errors.New("network")
 		},
+		API: stubAPI(),
 	}))
 
 	result := m.Refresh(context.Background(), nil)
@@ -257,6 +260,7 @@ func TestModelsRefreshProviderContextIsComposite(t *testing.T) {
 			fetchErr, fetchCause = ctx.Err(), context.Cause(ctx)
 			return nil, ctx.Err()
 		},
+		API: stubAPI(),
 	}))
 
 	m.Refresh(callerCtx, nil)
@@ -289,6 +293,7 @@ func TestModelsRefreshPersistsAndRestores(t *testing.T) {
 				*calls++
 				return fetched, nil
 			},
+			API: stubAPI(),
 		})
 	}
 
@@ -332,6 +337,7 @@ func TestModelsRefreshSkipsUnconfigured(t *testing.T) {
 			gotCredential = req.Credential
 			return nil, nil
 		},
+		API: stubAPI(),
 	}))
 	skipped := false
 	m.SetProvider(CreateProvider(CreateProviderOptions{
@@ -341,6 +347,7 @@ func TestModelsRefreshSkipsUnconfigured(t *testing.T) {
 			skipped = true
 			return nil, nil
 		},
+		API: stubAPI(),
 	}))
 
 	result := m.Refresh(context.Background(), nil)
@@ -381,6 +388,7 @@ func TestModelsRefreshOAuthBeforeModels(t *testing.T) {
 			}
 			return nil, nil
 		},
+		API: stubAPI(),
 	}))
 
 	if res := m.Refresh(context.Background(), nil); len(res.Errors) != 0 {
@@ -412,6 +420,7 @@ func TestModelsErrorKeepsCause(t *testing.T) {
 			},
 			ToAuth: func(c OAuthCredentials) (ModelAuth, error) { return ModelAuth{APIKey: c.Access}, nil },
 		}},
+		API: stubAPI(),
 	}))
 
 	_, err := m.GetAuth(context.Background(), &Model{Provider: "p1", ID: "m", Api: "api"}, nil)
@@ -466,6 +475,7 @@ func TestModelsRefreshAborted(t *testing.T) {
 			cancel()
 			return nil, fctx.Err()
 		},
+		API: stubAPI(),
 	}))
 
 	result := m.Refresh(ctx, nil)
@@ -521,16 +531,19 @@ func TestModelsCheckAuthAndGetAvailable(t *testing.T) {
 			}
 			return out
 		},
+		API: stubAPI(),
 	}))
 	m.SetProvider(CreateProvider(CreateProviderOptions{
 		ID:     "unconfigured",
 		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("unconfigured", "UNSET_KEY")},
 		Models: []*Model{{Provider: "unconfigured", ID: "hidden"}},
+		API:    stubAPI(),
 	}))
 	m.SetProvider(CreateProvider(CreateProviderOptions{
 		ID:     "keyed",
 		Auth:   ProviderAuth{APIKey: EnvAPIKeyAuth("keyed", "K")},
 		Models: []*Model{{Provider: "keyed", ID: "visible"}},
+		API:    stubAPI(),
 	}))
 
 	check, err := m.CheckAuth(context.Background(), "oauthp")
@@ -581,6 +594,7 @@ func TestModelsCheckAuthUsesCheckHook(t *testing.T) {
 				return &AuthResult{Auth: ModelAuth{APIKey: "side-effect"}}, nil
 			},
 		}},
+		API: stubAPI(),
 	}))
 
 	check, err := m.CheckAuth(context.Background(), "cmd")
@@ -599,6 +613,7 @@ func TestModelsCheckAuthUsesCheckHook(t *testing.T) {
 				return nil, errors.New("exec failed")
 			},
 		}},
+		API: stubAPI(),
 	}))
 	_, err = m.CheckAuth(context.Background(), "bad")
 	var me *ModelsError
@@ -621,6 +636,7 @@ func TestModelsLoginLogout(t *testing.T) {
 	m.SetProvider(CreateProvider(CreateProviderOptions{
 		ID:   "p",
 		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("p", "P_KEY")},
+		API:  stubAPI(),
 	}))
 
 	credential, err := m.Login(context.Background(), "p", CredentialAPIKey, fakeInteraction{answer: "typed-key"})
@@ -733,6 +749,7 @@ func TestCreateProviderDynamicOverlay(t *testing.T) {
 		FetchModels: func(_ context.Context, _ RefreshModelsContext) ([]*Model, error) {
 			return fetched, nil
 		},
+		API: stubAPI(),
 	})
 	if !p.DynamicModels() {
 		t.Fatal("provider with FetchModels must report DynamicModels")
@@ -767,6 +784,7 @@ func TestCreateProviderDynamicOverlay(t *testing.T) {
 		FetchModels: func(_ context.Context, _ RefreshModelsContext) ([]*Model, error) {
 			return nil, errors.New("offline")
 		},
+		API: stubAPI(),
 	})
 	m2 := modelsWithEnv(map[string]string{"K": "key"}, &CreateModelsOptions{ModelsStore: store})
 	m2.SetProvider(p2)
@@ -799,6 +817,7 @@ func TestModelsRefreshForce(t *testing.T) {
 			forces = append(forces, req.Force)
 			return nil, nil
 		},
+		API: stubAPI(),
 	}))
 
 	m.Refresh(context.Background(), &ModelsRefreshOptions{Force: true})
@@ -822,6 +841,7 @@ func TestModelsRefreshForce(t *testing.T) {
 			restoreForces = append(restoreForces, req.Force)
 			return nil, nil
 		},
+		API: stubAPI(),
 	}))
 	res := m.Refresh(context.Background(), &ModelsRefreshOptions{Force: true})
 	if res.Errors["boom"] == nil {
@@ -914,6 +934,7 @@ func recordingRefreshProvider(id string, mu *sync.Mutex, calls *[]string) *refre
 			ID:          id,
 			Auth:        ProviderAuth{APIKey: EnvAPIKeyAuth(id, "K")},
 			FetchModels: func(context.Context, RefreshModelsContext) ([]*Model, error) { return nil, nil },
+			API:         stubAPI(),
 		}),
 		id:    id,
 		mu:    mu,
@@ -976,6 +997,7 @@ func TestModelsRefreshRestoresCacheBeforeAuth(t *testing.T) {
 			fetched = true
 			return nil, errors.New("must not fetch")
 		},
+		API: stubAPI(),
 	}))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1018,6 +1040,7 @@ func TestModelsPublishPersistenceChoices(t *testing.T) {
 			ID:          "dynamic",
 			Auth:        ProviderAuth{APIKey: EnvAPIKeyAuth("dynamic")},
 			FetchModels: func(context.Context, RefreshModelsContext) ([]*Model, error) { return nil, nil },
+			API:         stubAPI(),
 		}),
 		refresh: func(_ context.Context, req RefreshModelsContext) error {
 			if req.Stored == nil || len(req.Stored.Models) != 1 || req.Stored.Models[0].ID != "stored" {
@@ -1119,6 +1142,7 @@ func TestModelsRefreshStopsWaitingOnCancel(t *testing.T) {
 			<-release
 			return nil, errors.New("late provider failure")
 		},
+		API: stubAPI(),
 	}))
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -1172,6 +1196,7 @@ func TestModelsRefreshSupersedesInFlightRefresh(t *testing.T) {
 			}
 			return []*Model{{Provider: "dynamic", ID: fmt.Sprintf("generation-%d", current)}}, nil
 		},
+		API: stubAPI(),
 	})
 	m.SetProvider(provider)
 
@@ -1229,6 +1254,7 @@ func TestModelsSetProviderSupersedesRefresh(t *testing.T) {
 			cancelled <- err
 			return nil, ctx.Err()
 		},
+		API: stubAPI(),
 	}))
 
 	go m.Refresh(context.Background(), nil)
@@ -1236,6 +1262,7 @@ func TestModelsSetProviderSupersedesRefresh(t *testing.T) {
 	m.SetProvider(CreateProvider(CreateProviderOptions{
 		ID:   "dynamic",
 		Auth: ProviderAuth{APIKey: EnvAPIKeyAuth("dynamic", "K")},
+		API:  stubAPI(),
 	}))
 	close(release)
 
@@ -1276,6 +1303,7 @@ func TestModelsAuthCallbacksSeeCallerContext(t *testing.T) {
 				return &AuthResult{Auth: ModelAuth{APIKey: "resolved"}}, nil
 			},
 		}},
+		API: stubAPI(),
 	}))
 
 	ctx := context.WithValue(context.Background(), ctxMarkerKey{}, "caller")
@@ -1333,6 +1361,7 @@ func TestModelsGetAuthCancelledOAuthRefreshPreservesCredential(t *testing.T) {
 			},
 			ToAuth: func(c OAuthCredentials) (ModelAuth, error) { return ModelAuth{APIKey: c.Access}, nil },
 		}},
+		API: stubAPI(),
 	}))
 
 	ctx, cancel := context.WithCancelCause(context.WithValue(context.Background(), ctxMarkerKey{}, "caller"))
@@ -1628,5 +1657,22 @@ func TestModelsStreamDeferred(t *testing.T) {
 	res = m.StreamDeferred(context.Background(), &Model{Provider: "nope", ID: "m"}, handle, nil).Result()
 	if !strings.Contains(res.ErrorMessage, "Unknown provider") {
 		t.Fatalf("unknown provider should say so, got %q", res.ErrorMessage)
+	}
+}
+
+// stubAPI is a chat implementation for test providers that never stream:
+// CreateProvider requires at least one implementation (pi a328aa89a).
+// Streaming through it fails, as streaming a provider with none used to.
+func stubAPI() *ProviderStreams {
+	fail := func(model *Model) *AssistantMessageEventStream {
+		return ErrorStream(model, errors.New("stub test api: this provider does not stream"))
+	}
+	return &ProviderStreams{
+		Stream: func(_ context.Context, model *Model, _ TranscriptContext, _ *StreamOptions) *AssistantMessageEventStream {
+			return fail(model)
+		},
+		StreamSimple: func(_ context.Context, model *Model, _ TranscriptContext, _ *SimpleStreamOptions) *AssistantMessageEventStream {
+			return fail(model)
+		},
 	}
 }

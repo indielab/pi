@@ -25,19 +25,26 @@ func BuiltinModels() MutableModels {
 
 	for _, providerID := range providerIDs {
 		models := GetModels(providerID)
+		// Every api the provider's models use gets an entry, so the provider
+		// always has the implementation CreateProvider requires. An api with no
+		// registered ApiProvider — this host did not import ai/providers, or
+		// the adapter is not ported — gets an empty one, which streams the
+		// same "has no API implementation" error as a missing entry.
 		apiMap := map[Api]ProviderStreams{}
 		for _, mod := range models {
 			if _, seen := apiMap[mod.Api]; seen {
 				continue
 			}
+			var streams ProviderStreams
 			if ap, ok := GetApiProvider(mod.Api); ok {
-				apiMap[mod.Api] = ProviderStreams{
+				streams = ProviderStreams{
 					Stream:         ap.Stream,
 					StreamSimple:   ap.StreamSimple,
 					FetchDeferred:  ap.FetchDeferred,
 					CancelDeferred: ap.CancelDeferred,
 				}
 			}
+			apiMap[mod.Api] = streams
 		}
 		m.SetProvider(CreateProvider(CreateProviderOptions{
 			ID:           providerID,

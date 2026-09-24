@@ -3,6 +3,7 @@ package ai
 import (
 	"context"
 	"errors"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -82,7 +83,8 @@ func (c RefreshModelsContext) publish(publication ModelsPublication) (bool, erro
 }
 
 // Provider is the concrete runtime unit (pi Provider). It owns id/name/base
-// metadata, auth, model listing, and stream behavior.
+// metadata, auth, model listing, and the operations its models support.
+// Listing every model type is the optional AllModelsLister capability.
 type Provider interface {
 	ID() string
 	Name() string
@@ -93,8 +95,8 @@ type Provider interface {
 	// APIKey/OAuth is set, even for ambient/keyless providers.
 	Auth() ProviderAuth
 
-	// GetModels returns the current known models: the static baseline plus the
-	// last-known dynamic overlay. Must not panic.
+	// GetModels returns the current known chat models: the static baseline
+	// plus the last-known dynamic overlay. Must not panic.
 	GetModels() []*Model
 
 	// DynamicModels reports whether the provider has a dynamic model source
@@ -109,9 +111,9 @@ type Provider interface {
 	// ctx for blocking work.
 	RefreshModels(ctx context.Context, req RefreshModelsContext) error
 
-	// FilterModels applies provider policy for credential-specific model
+	// FilterModels applies provider policy for credential-specific chat model
 	// availability (pi Provider.filterModels; identity when the provider has
-	// none). GetModels remains the complete synchronous catalog;
+	// none). GetModels remains the complete synchronous chat catalog;
 	// Models.GetAvailable applies this filter after confirming that provider
 	// auth is configured.
 	FilterModels(models []*Model, credential *Credential) []*Model
@@ -144,27 +146,68 @@ type DeferredCanceller interface {
 	CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *DeferredCancelOptions) error
 }
 
+// AllModelsLister is the optional Provider capability of listing models of
+// every type (pi's optional Provider.getAllModels, upstream a328aa89a), with
+// GetModels' contract. A provider with only chat models may leave it out;
+// Models then reads GetModels in its place. Model ids are unique within each
+// type; one upstream model may have separate entries for different operations.
+type AllModelsLister interface {
+	GetAllModels() []*Model
+}
+
+// AllModelsFilterer is the optional credential-specific availability policy
+// across every model type (pi's optional Provider.filterAllModels). Without it,
+// Models.GetAllAvailable filters the chat models through FilterModels and keeps
+// every other model.
+//
+// That fallback differs from pi's in one case. pi filters chat models only
+// when the provider HAS a filterModels and otherwise keeps getAllModels()
+// whole; every Go Provider has FilterModels, so the Go fallback always
+// filters. Take a handwritten provider without this interface whose
+// FilterModels is the identity — the Go stand-in for pi's absent filterModels
+// — and whose GetAllModels lists a chat model its GetModels does not: pi keeps
+// that model and Go drops it. A CreateProvider provider is unaffected: it
+// implements this interface with pi's own fallback.
+type AllModelsFilterer interface {
+	FilterAllModels(models []*Model, credential *Credential) []*Model
+}
+
 // CreateProviderOptions are the parts createProvider assembles into a Provider.
-// Exactly one of API / APIByApi is used: API streams all models; APIByApi
-// dispatches on model.Api (a model whose api has no entry produces a stream
-// error). FetchModels is nil for static providers.
+// API streams all chat models; otherwise APIByApi dispatches on model.Api (a
+// model whose api has no entry produces a stream error). CreateProvider
+// requires at least one implementation. FetchModels is nil for static
+// providers.
 type CreateProviderOptions struct {
 	ID      string
 	Name    string
 	BaseURL string
 	Headers ProviderHeaders
 	Auth    ProviderAuth
-	// Models is the static baseline model list (empty for purely dynamic
-	// providers).
+	// Models is the static baseline model list, of every type (empty for
+	// purely dynamic providers). A model without a Type is a chat model.
 	Models []*Model
-	// FetchModels fetches a dynamic model overlay (pi fetchModels).
-	// CreateProvider restores it from the snapshot and publishes the fetched
-	// list transactionally.
+	// FetchModels fetches a dynamic model overlay of every type (pi
+	// fetchModels). CreateProvider restores it from the snapshot, drops models
+	// of types this version does not know, and publishes the fetched list
+	// transactionally.
 	FetchModels func(ctx context.Context, req RefreshModelsContext) ([]*Model, error)
-	// FilterModels is the optional credential-specific availability policy.
+	// FilterModels is the optional credential-specific chat model availability
+	// policy (see Provider.FilterModels).
 	FilterModels func(models []*Model, credential *Credential) []*Model
-	API          *ProviderStreams
-	APIByApi     map[Api]ProviderStreams
+	// FilterAllModels is the optional credential-specific availability policy
+	// across every model type (see AllModelsFilterer).
+	FilterAllModels func(models []*Model, credential *Credential) []*Model
+	// API is the single chat implementation for all chat models. One whose
+	// functions are all nil is no implementation, as pi's `api: {}` is none.
+	API *ProviderStreams
+	// APIByApi holds chat implementations keyed by model.Api, for mixed-API
+	// providers. Every entry counts as an implementation.
+	APIByApi map[Api]ProviderStreams
+}
+
+// empty reports whether no stream function is set.
+func (s *ProviderStreams) empty() bool {
+	return s.Stream == nil && s.StreamSimple == nil && s.FetchDeferred == nil && s.CancelDeferred == nil
 }
 
 type providerImpl struct {
@@ -175,6 +218,7 @@ type providerImpl struct {
 	byAPI             map[Api]ProviderStreams
 	fetchFn           func(ctx context.Context, req RefreshModelsContext) ([]*Model, error)
 	filterFn          func(models []*Model, credential *Credential) []*Model
+	filterAllFn       func(models []*Model, credential *Credential) []*Model
 
 	mu       sync.Mutex
 	baseline []*Model
@@ -183,22 +227,37 @@ type providerImpl struct {
 
 // CreateProvider builds a Provider from parts (pi createProvider). Built-in
 // factories and custom-model providers both go through this.
+//
+// It panics, with pi's message, when the input has no implementation at all:
+// no API with a function set and no APIByApi entry. pi throws there (upstream
+// a328aa89a), and a provider that can serve none of its models is a
+// programming error, as a mismatched api is to RegisterApiProvider. pi's
+// message also names the "images" and "classifiers" options, which arrive with
+// the non-chat model operations.
 func CreateProvider(input CreateProviderOptions) Provider {
+	single := input.API
+	if single != nil && single.empty() {
+		single = nil
+	}
+	if single == nil && len(input.APIByApi) == 0 {
+		panic("Provider " + input.ID + `: at least one of "api", "images", or "classifiers" is required.`)
+	}
 	name := input.Name
 	if name == "" {
 		name = input.ID
 	}
 	p := &providerImpl{
-		id:       input.ID,
-		name:     name,
-		baseURL:  input.BaseURL,
-		headers:  input.Headers,
-		auth:     input.Auth,
-		single:   input.API,
-		byAPI:    input.APIByApi,
-		fetchFn:  input.FetchModels,
-		filterFn: input.FilterModels,
-		baseline: input.Models,
+		id:          input.ID,
+		name:        name,
+		baseURL:     input.BaseURL,
+		headers:     input.Headers,
+		auth:        input.Auth,
+		single:      single,
+		byAPI:       input.APIByApi,
+		fetchFn:     input.FetchModels,
+		filterFn:    input.FilterModels,
+		filterAllFn: input.FilterAllModels,
+		baseline:    input.Models,
 	}
 
 	// The deferred capabilities are announced only when some underlying api
@@ -252,38 +311,80 @@ func (p *providerImpl) Headers() ProviderHeaders { return p.headers }
 func (p *providerImpl) Auth() ProviderAuth       { return p.auth }
 func (p *providerImpl) DynamicModels() bool      { return p.fetchFn != nil }
 
-// GetModels merges the static baseline with the dynamic overlay: a dynamic
-// model replaces the baseline entry with its id, otherwise it is appended
-// (pi createProvider currentModels).
-func (p *providerImpl) GetModels() []*Model {
+// allModels merges the static baseline with the dynamic overlay, as a new
+// slice: a dynamic model replaces the baseline entry of the same type and id,
+// otherwise it is appended (pi createProvider currentModels). Matching on the
+// type too keeps a chat model and an image model that share an id apart.
+func (p *providerImpl) allModels() []*Model {
 	p.mu.Lock()
 	defer p.mu.Unlock()
-	if len(p.dynamic) == 0 {
-		return p.baseline
-	}
 	merged := make([]*Model, len(p.baseline), len(p.baseline)+len(p.dynamic))
 	copy(merged, p.baseline)
 	for _, model := range p.dynamic {
-		replaced := false
-		for i, entry := range merged {
-			if entry.ID == model.ID {
-				merged[i] = model
-				replaced = true
-				break
-			}
-		}
-		if !replaced {
+		i := slices.IndexFunc(merged, func(entry *Model) bool {
+			return GetModelType(entry) == GetModelType(model) && entry.ID == model.ID
+		})
+		if i >= 0 {
+			merged[i] = model
+		} else {
 			merged = append(merged, model)
 		}
 	}
 	return merged
 }
 
+// GetModels returns the chat models of the merged catalog (pi createProvider
+// getModels).
+func (p *providerImpl) GetModels() []*Model {
+	all := p.allModels()
+	chat := make([]*Model, 0, len(all))
+	for _, model := range all {
+		if IsModelType(model, ModelTypeChat) {
+			chat = append(chat, model)
+		}
+	}
+	return chat
+}
+
+// GetAllModels returns the merged catalog, every type included (pi
+// createProvider getAllModels).
+func (p *providerImpl) GetAllModels() []*Model { return p.allModels() }
+
 func (p *providerImpl) FilterModels(models []*Model, credential *Credential) []*Model {
 	if p.filterFn == nil {
 		return models
 	}
 	return p.filterFn(models, credential)
+}
+
+// FilterAllModels applies the provider's all-type availability policy. Without
+// one it is pi's Models.getAllAvailable fallback, which inside createProvider
+// is exactly this: no chat filter keeps every model; a chat filter keeps every
+// non-chat model plus the chat models the filter keeps from GetModels.
+func (p *providerImpl) FilterAllModels(models []*Model, credential *Credential) []*Model {
+	if p.filterAllFn != nil {
+		return p.filterAllFn(models, credential)
+	}
+	if p.filterFn == nil {
+		return models
+	}
+	return keepAvailableChatModels(models, p.filterFn(p.GetModels(), credential))
+}
+
+// keepAvailableChatModels keeps every non-chat model, and the chat models whose
+// id is among availableChat (pi getAllAvailable's availableChatIds).
+func keepAvailableChatModels(models, availableChat []*Model) []*Model {
+	ids := make(map[string]bool, len(availableChat))
+	for _, model := range availableChat {
+		ids[model.ID] = true
+	}
+	out := make([]*Model, 0, len(models))
+	for _, model := range models {
+		if !IsModelType(model, ModelTypeChat) || ids[model.ID] {
+			out = append(out, model)
+		}
+	}
+	return out
 }
 
 // setDynamic replaces the dynamic overlay.
@@ -325,13 +426,16 @@ func (p *providerImpl) RefreshModels(ctx context.Context, req RefreshModelsConte
 	if !req.AllowNetwork || ctx.Err() != nil {
 		return nil
 	}
-	refreshed, err := p.fetchFn(ctx, req)
+	fetched, err := p.fetchFn(ctx, req)
 	if err != nil {
 		return err
 	}
 	if ctx.Err() != nil {
 		return nil
 	}
+	// A fetched model of a type this version does not know is dropped rather
+	// than failing the refresh, before it is persisted or published.
+	refreshed := knownTypeModels(fetched)
 	_, err = req.publish(ModelsPublication{
 		Persist: &ModelsStoreEntry{Models: refreshed, CheckedAt: nowMillis()},
 		Update:  func() { p.setDynamic(refreshed) },
@@ -472,10 +576,22 @@ type Models interface {
 	GetProviders() []Provider
 	GetProvider(id string) Provider
 
-	// GetModels returns last-known models for one provider, or for all when
-	// provider is "" (pi getModels(provider?)). Best-effort.
+	// GetModels returns last-known chat models for one provider, or for all
+	// when provider is "" (pi getModels(provider?)). Best-effort. It reads
+	// each provider's GetModels and never its GetAllModels.
 	GetModels(provider string) []*Model
+	// GetModel looks up a chat model by id (pi getModel).
 	GetModel(provider, id string) *Model
+
+	// GetModelsOfType returns last-known models of one type for one provider,
+	// or for all when provider is "" (pi getModelsOfType).
+	GetModelsOfType(t ModelType, provider string) []*Model
+	// GetModelOfType looks up a model of one type by id (pi getModelOfType).
+	GetModelOfType(t ModelType, provider, id string) *Model
+	// GetAllModels returns last-known models of every type for one provider,
+	// or for all when provider is "" (pi getAllModels). A provider that does
+	// not implement AllModelsLister is read through GetModels.
+	GetAllModels(provider string) []*Model
 
 	// Refresh refreshes the selected configured dynamic providers concurrently,
 	// or every one when Providers is unset (pi refresh(options?)). Provider
@@ -488,10 +604,20 @@ type Models interface {
 	// unknown or unconfigured.
 	CheckAuth(ctx context.Context, providerID string) (*AuthCheck, error)
 
-	// GetAvailable returns models whose providers have complete auth
+	// GetAvailable returns chat models whose providers have complete auth
 	// configuration, for one provider or all when providerID is "" (pi
 	// getAvailable(providerId?)).
 	GetAvailable(ctx context.Context, providerID string) ([]*Model, error)
+
+	// GetAvailableOfType returns models of one type whose providers have
+	// complete auth configuration (pi getAvailableOfType).
+	GetAvailableOfType(ctx context.Context, t ModelType, providerID string) ([]*Model, error)
+
+	// GetAllAvailable returns models of every type whose providers have
+	// complete auth configuration (pi getAllAvailable). Each provider's
+	// AllModelsFilterer decides; without one, FilterModels decides the chat
+	// models and every other model is kept.
+	GetAllAvailable(ctx context.Context, providerID string) ([]*Model, error)
 
 	// GetAuth resolves request auth for a model: provider auth plus the
 	// model's static headers (pi getAuth(model, overrides?)). Returns
@@ -767,6 +893,52 @@ func (m *modelsImpl) GetModel(provider, id string) *Model {
 	return nil
 }
 
+// allModelsOf reads a provider's models of every type: GetAllModels when it
+// implements AllModelsLister — whose answer stands even when it lists nothing,
+// as pi's `??` falls back only on an absent method — and GetModels otherwise.
+func allModelsOf(p Provider) []*Model {
+	if lister, ok := p.(AllModelsLister); ok {
+		return lister.GetAllModels()
+	}
+	return p.GetModels()
+}
+
+func (m *modelsImpl) GetAllModels(provider string) []*Model {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if provider != "" {
+		p := m.providers[provider]
+		if p == nil {
+			return nil
+		}
+		return allModelsOf(p)
+	}
+	var out []*Model
+	for _, id := range m.order {
+		out = append(out, allModelsOf(m.providers[id])...)
+	}
+	return out
+}
+
+func (m *modelsImpl) GetModelsOfType(t ModelType, provider string) []*Model {
+	var out []*Model
+	for _, model := range m.GetAllModels(provider) {
+		if IsModelType(model, t) {
+			out = append(out, model)
+		}
+	}
+	return out
+}
+
+func (m *modelsImpl) GetModelOfType(t ModelType, provider, id string) *Model {
+	for _, model := range m.GetModelsOfType(t, provider) {
+		if model.ID == id {
+			return model
+		}
+	}
+	return nil
+}
+
 // publishProviderModels performs one generation-checked publication (pi
 // publishProviderModels). Publications for a provider are serialized; a
 // publication whose refresh has been superseded reports false and mutates
@@ -830,7 +1002,9 @@ func (m *modelsImpl) runProviderRefreshPhase(
 	}
 	return p.RefreshModels(ctx, RefreshModelsContext{
 		Credential: credential,
-		Stored:     stored.clone(),
+		// Stored models of types this version does not know are dropped from
+		// the snapshot the provider restores; the store itself is left as is.
+		Stored: withKnownModelTypes(stored.clone()),
 		Publish: func(pub ModelsPublication) (bool, error) {
 			return m.publishProviderModels(ctx, p.ID(), generation, pub)
 		},
@@ -1087,58 +1261,117 @@ func (m *modelsImpl) CheckAuth(ctx context.Context, providerID string) (*AuthChe
 	})
 }
 
+// authenticatedProvider is a provider whose auth configuration is complete,
+// with the credential its availability policy sees.
+type authenticatedProvider struct {
+	provider   Provider
+	credential *Credential
+}
+
+// authenticatedProviders checks auth for one provider, or for all when
+// providerID is "", and returns the configured ones in provider order (pi
+// getAuthenticatedProviders).
+//
+// pi runs the per-provider checks under Promise.all, so every provider is
+// invoked even when one fails; a sequential loop stopped at the first error and
+// never asked the rest. Results are collected by index, so the reported error
+// is the first in provider order — Promise.all reports the first to reject in
+// time, which is not reproducible.
+func (m *modelsImpl) authenticatedProviders(ctx context.Context, providerID string) ([]authenticatedProvider, error) {
+	var providers []Provider
+	if providerID != "" {
+		if p := m.GetProvider(providerID); p != nil {
+			providers = []Provider{p}
+		}
+	} else {
+		providers = m.GetProviders()
+	}
+
+	type providerCheck struct {
+		credential *Credential
+		auth       *AuthCheck
+		err        error
+	}
+	checks := make([]providerCheck, len(providers))
+	var wg sync.WaitGroup
+	for i, p := range providers {
+		wg.Add(1)
+		go func(i int, p Provider) {
+			defer wg.Done()
+			var c providerCheck
+			if c.credential, c.err = readCredential(ctx, m.credentials, p.ID()); c.err == nil {
+				c.auth, c.err = m.checkProviderAuth(ctx, p, c.credential)
+			}
+			checks[i] = c
+		}(i, p)
+	}
+	wg.Wait()
+
+	var out []authenticatedProvider
+	for i, c := range checks {
+		if c.err != nil {
+			return nil, c.err
+		}
+		if c.auth != nil {
+			out = append(out, authenticatedProvider{provider: providers[i], credential: c.credential})
+		}
+	}
+	return out, nil
+}
+
 func (m *modelsImpl) GetAvailable(ctx context.Context, providerID string) ([]*Model, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	return raceContext(ctx, func() ([]*Model, error) {
-		var providers []Provider
-		if providerID != "" {
-			if p := m.GetProvider(providerID); p != nil {
-				providers = []Provider{p}
-			}
-		} else {
-			providers = m.GetProviders()
+		providers, err := m.authenticatedProviders(ctx, providerID)
+		if err != nil {
+			return nil, err
 		}
-
-		// pi runs the per-provider checks under Promise.all, so every provider is
-		// invoked even when one fails; a sequential loop stopped at the first
-		// error and never asked the rest. Results are collected by index, so the
-		// reported error is the first in provider order — Promise.all reports the
-		// first to reject in time, which is not reproducible.
-		type providerCheck struct {
-			credential *Credential
-			auth       *AuthCheck
-			err        error
-		}
-		checks := make([]providerCheck, len(providers))
-		var wg sync.WaitGroup
-		for i, p := range providers {
-			wg.Add(1)
-			go func(i int, p Provider) {
-				defer wg.Done()
-				var c providerCheck
-				if c.credential, c.err = readCredential(ctx, m.credentials, p.ID()); c.err == nil {
-					c.auth, c.err = m.checkProviderAuth(ctx, p, c.credential)
-				}
-				checks[i] = c
-			}(i, p)
-		}
-		wg.Wait()
-
 		var out []*Model
-		for i, c := range checks {
-			if c.err != nil {
-				return nil, c.err
-			}
-			if c.auth == nil {
-				continue
-			}
-			p := providers[i]
-			out = append(out, p.FilterModels(p.GetModels(), c.credential)...)
+		for _, a := range providers {
+			out = append(out, a.provider.FilterModels(a.provider.GetModels(), a.credential)...)
 		}
 		return out, nil
 	})
+}
+
+func (m *modelsImpl) GetAllAvailable(ctx context.Context, providerID string) ([]*Model, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	return raceContext(ctx, func() ([]*Model, error) {
+		providers, err := m.authenticatedProviders(ctx, providerID)
+		if err != nil {
+			return nil, err
+		}
+		var out []*Model
+		for _, a := range providers {
+			models := allModelsOf(a.provider)
+			if filterer, ok := a.provider.(AllModelsFilterer); ok {
+				out = append(out, filterer.FilterAllModels(models, a.credential)...)
+				continue
+			}
+			// See AllModelsFilterer for where this differs from pi's fallback.
+			available := a.provider.FilterModels(a.provider.GetModels(), a.credential)
+			out = append(out, keepAvailableChatModels(models, available)...)
+		}
+		return out, nil
+	})
+}
+
+func (m *modelsImpl) GetAvailableOfType(ctx context.Context, t ModelType, providerID string) ([]*Model, error) {
+	all, err := m.GetAllAvailable(ctx, providerID)
+	if err != nil {
+		return nil, err
+	}
+	var out []*Model
+	for _, model := range all {
+		if IsModelType(model, t) {
+			out = append(out, model)
+		}
+	}
+	return out, nil
 }
 
 func (m *modelsImpl) GetProviderAuth(ctx context.Context, providerID string, overrides *AuthResolutionOverrides) (*AuthResult, error) {
@@ -1277,8 +1510,16 @@ func (m *modelsImpl) applyAuth(
 	return requestModel, &ro, nil
 }
 
+// Every chat entry point asserts the model is a chat model before anything
+// else, the provider lookup included (pi requireChatProvider, upstream
+// a328aa89a): a model of another type fails the same way whether or not its
+// provider is known, and never reaches a provider.
+
 func (m *modelsImpl) Stream(ctx context.Context, model *Model, req Context, opts *ModelsStreamOptions) *AssistantMessageEventStream {
 	transcript := NormalizeContext(req)
+	if err := AssertChatModel(model); err != nil {
+		return ErrorStream(model, err)
+	}
 	p := m.GetProvider(model.Provider)
 	if p == nil {
 		return ErrorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
@@ -1307,6 +1548,9 @@ func (m *modelsImpl) Complete(ctx context.Context, model *Model, req Context, op
 
 func (m *modelsImpl) StreamSimple(ctx context.Context, model *Model, req Context, opts *ModelsSimpleStreamOptions) *AssistantMessageEventStream {
 	transcript := NormalizeContext(req)
+	if err := AssertChatModel(model); err != nil {
+		return ErrorStream(model, err)
+	}
 	p := m.GetProvider(model.Provider)
 	if p == nil {
 		return ErrorStream(model, newModelsError(ErrProvider, "Unknown provider: "+model.Provider, nil))
@@ -1334,6 +1578,9 @@ func (m *modelsImpl) CompleteSimple(ctx context.Context, model *Model, req Conte
 }
 
 func (m *modelsImpl) StreamDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredFetchOptions) *AssistantMessageEventStream {
+	if err := AssertChatModel(model); err != nil {
+		return ErrorStream(model, err)
+	}
 	p := m.GetProvider(model.Provider)
 	fetcher, ok := p.(DeferredFetcher)
 	if !ok {
@@ -1366,6 +1613,9 @@ func (m *modelsImpl) FetchDeferred(ctx context.Context, model *Model, handle Def
 }
 
 func (m *modelsImpl) CancelDeferred(ctx context.Context, model *Model, handle DeferredHandle, opts *ModelsDeferredCancelOptions) error {
+	if err := AssertChatModel(model); err != nil {
+		return err
+	}
 	p := m.GetProvider(model.Provider)
 	canceller, ok := p.(DeferredCanceller)
 	if !ok {
@@ -1395,9 +1645,11 @@ func deferredUnsupported(p Provider, providerID string) error {
 		"Provider "+providerID+" does not support deferred responses"+deferredUnsupportedHint, nil)
 }
 
-// HasApi reports whether a model uses the given api (pi hasApi narrowing).
+// HasApi reports whether a chat model uses the given api (pi hasApi
+// narrowing). A model of another type never matches, even when its api id
+// equals api.
 func HasApi(model *Model, api Api) bool {
-	return model.Api == api
+	return IsModelType(model, ModelTypeChat) && model.Api == api
 }
 
 // mergeHeaders returns base overlaid with override, deleting base entries

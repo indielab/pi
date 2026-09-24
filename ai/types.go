@@ -1168,8 +1168,18 @@ type ModelInputLimits struct {
 	Images          *ModelImageInputLimits `json:"images,omitempty"`
 }
 
-// Model describes a concrete model in the unified model system.
+// Model describes a concrete model in the unified model system. One struct
+// stands in for pi's AnyModel: Type says which operation the model serves.
 type Model struct {
+	// Type is the model's type (pi `type`, upstream a328aa89a). Empty and
+	// "chat" both mean a chat model — GetModelType reads them alike, as pi's
+	// `model.type ?? "chat"` does for an absent or null type. One input tells
+	// them apart in pi and not here: an explicit JSON "type": "" is an unknown
+	// type there (not a chat model, and dropped from stored and fetched
+	// catalogs) but reads as chat here, because a string field cannot tell ""
+	// from absent. pi's own catalog generator and model-data validation never
+	// emit it.
+	Type             ModelType        `json:"type,omitempty"`
 	ID               string           `json:"id"`
 	Name             string           `json:"name"`
 	Api              Api              `json:"api"`
@@ -1221,8 +1231,8 @@ type HTTPDoer interface {
 // context.Context each entry point takes.
 //
 // pi parameterises the model type its callbacks see (ProviderRequestOptions
-// <TModel>) so image requests can hand back an ImagesModel. The port has no
-// images half, so the callbacks name *Model directly.
+// <TModel>) so image requests can hand back an ImageModel. One Model struct
+// serves every model type here, so the callbacks name *Model directly.
 type ProviderRequestOptions struct {
 	// TelemetryContext is the explicit parent context for telemetry produced
 	// by this logical request (pi telemetryContext, upstream 04d6447f7).

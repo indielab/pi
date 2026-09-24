@@ -31,6 +31,7 @@ func uncooperativeProvider(id string, entered chan<- struct{}, release <-chan st
 			},
 		}},
 		Models: []*Model{{Provider: id, ID: "m"}},
+		API:    stubAPI(),
 	})
 }
 
@@ -105,6 +106,7 @@ func TestLoginReleasesAbortedCaller(t *testing.T) {
 			},
 		}},
 		Models: []*Model{{Provider: "stubborn", ID: "m"}},
+		API:    stubAPI(),
 	})
 	m := CreateModels(nil)
 	m.SetProvider(p)
@@ -141,6 +143,7 @@ func TestGetAvailableChecksEveryProvider(t *testing.T) {
 			},
 		}},
 		Models: []*Model{{Provider: "a-failing", ID: "m"}},
+		API:    stubAPI(),
 	})
 
 	var laterChecked atomic.Bool
@@ -154,6 +157,7 @@ func TestGetAvailableChecksEveryProvider(t *testing.T) {
 			},
 		}},
 		Models: []*Model{{Provider: "b-later", ID: "m"}},
+		API:    stubAPI(),
 	})
 
 	m := CreateModels(nil)

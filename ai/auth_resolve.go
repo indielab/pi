@@ -94,8 +94,8 @@ type AuthResolutionOverrides struct {
 // resolution entry point already takes, so no override field is needed — the
 // caller's context is the signal.
 
-// resolveProviderAuth is the auth resolution shared by the Models and
-// ImagesModels collections (pi resolve.ts resolveProviderAuth). A stored
+// resolveProviderAuth is the auth resolution shared by all operations in a
+// Models collection (pi resolve.ts resolveProviderAuth). A stored
 // credential owns the provider: ambient/env is consulted only when nothing is
 // stored. No silent env fallback after a failed refresh or for a credential
 // type without a matching handler. Returns (nil, nil) when unconfigured.

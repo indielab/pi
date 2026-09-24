@@ -85,6 +85,7 @@ func TestApplyAuthPreservesDeletionMarkers(t *testing.T) {
 				}}}, nil
 			},
 		}},
+		API: stubAPI(),
 	}))
 	model := &Model{ID: "m", Provider: "cf", Api: APIOpenAICompletions,
 		Headers: ProviderHeaders{"x-api-key": nil, "X-Model": HeaderValue("")}}

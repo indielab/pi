@@ -152,10 +152,13 @@ func ClampThinkingLevel(model *Model, level ModelThinkingLevel) ModelThinkingLev
 	return "off"
 }
 
-// ModelsAreEqual reports whether two models share id and provider.
+// ModelsAreEqual reports whether two models share type, id and provider (pi
+// modelsAreEqual; the type joined the comparison in upstream a328aa89a, so a
+// chat model and an image model with one provider and id are different
+// models). A model without a type compares as a chat model.
 func ModelsAreEqual(a, b *Model) bool {
 	if a == nil || b == nil {
 		return false
 	}
-	return a.ID == b.ID && a.Provider == b.Provider
+	return GetModelType(a) == GetModelType(b) && a.ID == b.ID && a.Provider == b.Provider
 }
