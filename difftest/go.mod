@@ -4,6 +4,8 @@ go 1.26
 
 require github.com/sky-valley/pi v0.0.0
 
+require golang.org/x/text v0.37.0 // indirect
+
 // difftest is its OWN module, and that is load-bearing rather than incidental:
 // a subdirectory containing a go.mod is excluded from the parent module, so the
 // published, public, MIT github.com/sky-valley/pi ships not one byte of this
