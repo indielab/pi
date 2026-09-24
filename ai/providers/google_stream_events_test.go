@@ -5,8 +5,12 @@ import (
 	"encoding/json"
 	"io"
 	"os"
+	"slices"
 	"strings"
 	"testing"
+
+	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // googleStreamCapture is testdata/google-stream-events/google-stream-events-*.json:
@@ -105,5 +109,48 @@ func TestGoogleSSEReadChunksMatchPi(t *testing.T) {
 	}
 	if ran < 10 {
 		t.Fatalf("only %d read-loop scenarios in the capture", ran)
+	}
+}
+
+// googleCaptureScenario returns the named scenario of the capture.
+func googleCaptureScenario(t *testing.T, name string) googleStreamScenario {
+	t.Helper()
+	for _, sc := range loadGoogleStreamCapture(t).Scenarios {
+		if sc.Name == name {
+			return sc
+		}
+	}
+	t.Fatalf("no scenario %q in the capture", name)
+	return googleStreamScenario{}
+}
+
+// TestGoogleToolCallArgumentsKeepModelOrder: pi's tool-call arguments are the
+// parsed functionCall.args object, so JSON.stringify of them (the
+// toolcall_delta) and every later replay keep the model's key order, nested
+// objects included.
+func TestGoogleToolCallArgumentsKeepModelOrder(t *testing.T) {
+	sc := googleCaptureScenario(t, "thinking, text and a function call")
+	stream := googleServe(t, "gemini-2.5-flash", strings.Join(sc.Segments, ""))
+	var deltas []string
+	for ev := range stream.Events() {
+		if ev.Type == ai.EventToolCallDelta {
+			deltas = append(deltas, ev.Delta)
+		}
+	}
+	var piDeltas []string
+	for _, ev := range sc.Pi.Stream {
+		if ev.Type == "toolcall_delta" {
+			piDeltas = append(piDeltas, *ev.Delta)
+		}
+	}
+	if !slices.Equal(deltas, piDeltas) {
+		t.Fatalf("toolcall_delta %q\npi:            %q", deltas, piDeltas)
+	}
+	content, err := jstext.Stringify(stream.Result().Content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if content != sc.Pi.Content {
+		t.Fatalf("content %s\npi:      %s", content, sc.Pi.Content)
 	}
 }

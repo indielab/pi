@@ -559,11 +559,13 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 						if needsNewID {
 							id = nextGoogleToolCallID(part.FunctionCall.Name)
 						}
-						args := part.FunctionCall.Args
+						// pi: `arguments: part.functionCall.args ?? {}`, the parsed object
+						// itself, so the model's key order rides along.
+						args, order := part.FunctionCall.Args.values, part.FunctionCall.Args.order
 						if args == nil {
 							args = map[string]any{}
 						}
-						b := &blockBuilder{kind: "toolCall", toolID: id, toolName: part.FunctionCall.Name, args: args}
+						b := &blockBuilder{kind: "toolCall", toolID: id, toolName: part.FunctionCall.Name, args: args, argsOrder: order}
 						builders = append(builders, b)
 						idx := len(builders) - 1
 						// pi sets thoughtSignature on the ToolCall object BEFORE pushing
@@ -573,9 +575,9 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 						}
 						materialize()
 						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: idx, Partial: output.Clone()})
-						argsJSON, _ := jstext.Stringify(args)
-						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: argsJSON, Partial: output.Clone()})
 						tc := b.toContent().(ai.ToolCall)
+						argsJSON, _ := jstext.Stringify(tc.OrderedArguments())
+						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: argsJSON, Partial: output.Clone()})
 						if part.ThoughtSignature != "" {
 							tc.ThoughtSignature = part.ThoughtSignature
 						}
@@ -1096,10 +1098,32 @@ type googlePart struct {
 	Thought          bool    `json:"thought"`
 	ThoughtSignature string  `json:"thoughtSignature"`
 	FunctionCall     *struct {
-		ID   string         `json:"id"`
-		Name string         `json:"name"`
-		Args map[string]any `json:"args"`
+		ID   string             `json:"id"`
+		Name string             `json:"name"`
+		Args googleFunctionArgs `json:"args"`
 	} `json:"functionCall"`
+}
+
+// googleFunctionArgs is a functionCall's args with the model's key order kept:
+// pi's tool-call arguments are the parsed object itself, which JSON.stringify
+// (the toolcall_delta) and every later replay write in that order. A value
+// that is not an object fails the chunk's decode, as a map field did.
+type googleFunctionArgs struct {
+	values map[string]any
+	order  ai.OrderedObject
+}
+
+func (a *googleFunctionArgs) UnmarshalJSON(data []byte) error {
+	if string(data) == "null" {
+		*a = googleFunctionArgs{}
+		return nil
+	}
+	values, order, err := ai.DecodeOrderedObject(data)
+	if err != nil {
+		return err
+	}
+	*a = googleFunctionArgs{values: values, order: order}
+	return nil
 }
 
 // googleBareJSONError is the check @google/genai 2.21.0 runs on every network
