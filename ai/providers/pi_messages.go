@@ -17,8 +17,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
+	"unicode/utf16"
 
 	"github.com/sky-valley/pi/ai"
 	"github.com/sky-valley/pi/internal/jstext"
@@ -37,40 +40,134 @@ type PiMessagesOptions struct {
 	Debug bool
 }
 
-// piMessagesRewriteImpact is the impact summary of a server-side message rewrite
-// (e.g. a gateway policy). Port of PiMessagesRewriteImpact.
-type piMessagesRewriteImpact struct {
-	PolicyID            string `json:"policyId"`
-	PolicyVersion       int    `json:"policyVersion"`
-	Changed             bool   `json:"changed"`
-	TokenCountChange    int    `json:"tokenCountChange"`
-	MessageCountChange  int    `json:"messageCountChange"`
-	SystemPromptChanged bool   `json:"systemPromptChanged"`
-}
-
 // piMessagesEvent is a serialized assistant-message event as sent by a
-// pi-messages backend. It is the flattened union of every event variant; the
-// converter reads only the fields its `type` implies. Port of PiMessagesEvent.
+// pi-messages backend, read the way pi's createEventConverter reads the
+// event's properties (piMessagesEventOf). It is the flattened union of every
+// event variant; the converter reads only the fields its `type` implies. Port
+// of PiMessagesEvent.
 type piMessagesEvent struct {
-	Type         string        `json:"type"`
-	ContentIndex int           `json:"contentIndex"`
-	Delta        string        `json:"delta"`
-	Content      string        `json:"content"`
-	Signature    *string       `json:"contentSignature"`
-	Redacted     bool          `json:"redacted"`
-	ID           string        `json:"id"`
-	ToolName     string        `json:"toolName"`
-	ToolCall     *ai.ToolCall  `json:"toolCall"`
-	Reason       ai.StopReason `json:"reason"`
-	Usage        *ai.Usage     `json:"usage"`
-	ResponseID   string        `json:"responseId"`
+	Type         string
+	ContentIndex int
+	// Delta is the delta the pushed event carries: the event's own when it is
+	// a string. delta is the raw value, whose String() pi's `+=` appends (5 as
+	// "5", an absent delta as "undefined").
+	Delta     string
+	delta     json.RawMessage
+	Content   string
+	Signature *string
+	Redacted  bool
+	ID        string
+	ToolName  string
+	ToolCall  *ai.ToolCall
+	Reason    ai.StopReason
+	Usage     *ai.Usage
+	// ResponseID is the backend's response id.
+	ResponseID string
 	// ProviderThinkingLevel is the effort the upstream provider actually ran the
 	// turn at, forwarded so the next request can replay it. A pointer because pi
 	// only copies it when the field is present: an absent one leaves the
 	// message's own level standing rather than blanking it.
-	ProviderThinkingLevel *string                  `json:"providerThinkingLevel"`
-	ErrorMessage          string                   `json:"errorMessage"`
-	Rewrite               *piMessagesRewriteImpact `json:"rewrite"`
+	ProviderThinkingLevel *string
+	ErrorMessage          string
+	// Rewrite is the details of the pi_messages_rewrite diagnostic, nil when
+	// the event carries no rewrite (see piMessagesRewriteDetails).
+	Rewrite map[string]any
+}
+
+// piMessagesEventOf reads an object frame's members as pi's converter reads
+// the event's properties: each by its exact name and on its own, so a member
+// of an unexpected JSON type never drops the frame — pi converts the event
+// whatever its members hold. A member pi stores as-is into a field Go types as
+// string, bool or int reads as absent unless it is that type (a count accepts
+// any finite number: the 10.0 a non-JavaScript backend writes is 10).
+func piMessagesEventOf(o rawObject) piMessagesEvent {
+	ev := piMessagesEvent{delta: o["delta"]}
+	ev.Type, _ = rawString(o["type"])
+	// A contentIndex that addresses no slot (absent, a string, fractional,
+	// negative) reads as 0, the port's reading of an absent one.
+	ev.ContentIndex, _ = rawArrayIndex(o["contentIndex"])
+	ev.Delta, _ = rawString(o["delta"])
+	ev.Content, _ = rawString(o["content"])
+	if s, ok := rawString(o["contentSignature"]); ok {
+		ev.Signature = &s
+	}
+	ev.Redacted = jsonValueKind(o["redacted"]) == 't'
+	ev.ID, _ = rawString(o["id"])
+	ev.ToolName, _ = rawString(o["toolName"])
+	if jsonValueKind(o["toolCall"]) == '{' {
+		var tc ai.ToolCall
+		if json.Unmarshal(o["toolCall"], &tc) == nil {
+			ev.ToolCall = &tc
+		}
+	}
+	if reason, ok := rawString(o["reason"]); ok {
+		ev.Reason = ai.StopReason(reason)
+	}
+	ev.Usage = piMessagesUsage(o["usage"])
+	ev.ResponseID, _ = rawString(o["responseId"])
+	if level, ok := rawString(o["providerThinkingLevel"]); ok {
+		ev.ProviderThinkingLevel = &level
+	}
+	ev.ErrorMessage, _ = rawString(o["errorMessage"])
+	ev.Rewrite = piMessagesRewriteDetails(o["rewrite"])
+	return ev
+}
+
+// piMessagesUsage reads the usage a terminal event carries, which pi assigns
+// to the message whole: its counts as finite numbers (rawCount) and its cost
+// as finite numbers; nil when the event has no usage object.
+func piMessagesUsage(raw json.RawMessage) *ai.Usage {
+	o := rawOptional(raw)
+	if o == nil {
+		return nil
+	}
+	var u ai.Usage
+	for key, dst := range map[string]*int{
+		"input": &u.Input, "output": &u.Output, "cacheRead": &u.CacheRead, "cacheWrite": &u.CacheWrite,
+		"cacheWrite1h": &u.CacheWrite1h, "reasoning": &u.Reasoning, "totalTokens": &u.TotalTokens,
+	} {
+		*dst, _ = rawCount(o[key])
+	}
+	cost := rawOptional(o["cost"])
+	for key, dst := range map[string]*float64{
+		"input": &u.Cost.Input, "output": &u.Cost.Output, "cacheRead": &u.Cost.CacheRead,
+		"cacheWrite": &u.Cost.CacheWrite, "total": &u.Cost.Total,
+	} {
+		if f, ok := rawNumber(cost[key]); ok && !math.IsInf(f, 0) {
+			*dst = f
+		}
+	}
+	return &u
+}
+
+// piMessagesRewriteDetails is pi appendRewriteDiagnostic's `if (!rewrite)`
+// and `{ ...rewrite }`: nil for a falsy rewrite (no diagnostic), else what the
+// spread copies — an object's members, whatever they are (numbers as
+// json.Number, jstext.Parse's form); an array's elements under their indices;
+// a string's UTF-16 code units under theirs (a surrogate half, which a Go
+// string cannot hold, as U+FFFD); nothing from a number or true.
+func piMessagesRewriteDetails(raw json.RawMessage) map[string]any {
+	if !rawTruthy(raw) {
+		return nil
+	}
+	details := map[string]any{}
+	value, err := jstext.Parse(raw)
+	if err != nil {
+		return details // unreachable: raw is a member of a decoded document
+	}
+	switch v := value.(type) {
+	case map[string]any:
+		return v
+	case []any:
+		for i, e := range v {
+			details[strconv.Itoa(i)] = e
+		}
+	case string:
+		for i, unit := range utf16.Encode([]rune(v)) {
+			details[strconv.Itoa(i)] = string(rune(unit))
+		}
+	}
+	return details
 }
 
 // piMessagesResponseError is a non-2xx HTTP failure carrying redacted diagnostic
@@ -174,22 +271,16 @@ func createPiMessagesResponseError(model *ai.Model, url string, status int, body
 }
 
 // appendPiMessagesRewriteDiagnostic mirrors pi appendRewriteDiagnostic: attach a
-// "pi_messages_rewrite" diagnostic whose details are the rewrite impact fields.
-func appendPiMessagesRewriteDiagnostic(msg *ai.AssistantMessage, rewrite *piMessagesRewriteImpact) {
-	if rewrite == nil {
+// "pi_messages_rewrite" diagnostic whose details are what the event's rewrite
+// spreads into (piMessagesRewriteDetails); nil details attach nothing.
+func appendPiMessagesRewriteDiagnostic(msg *ai.AssistantMessage, details map[string]any) {
+	if details == nil {
 		return
 	}
 	msg.Diagnostics = append(msg.Diagnostics, ai.Diagnostic{
 		Type:      "pi_messages_rewrite",
 		Timestamp: nowMillis(),
-		Details: map[string]any{
-			"policyId":            rewrite.PolicyID,
-			"policyVersion":       rewrite.PolicyVersion,
-			"changed":             rewrite.Changed,
-			"tokenCountChange":    rewrite.TokenCountChange,
-			"messageCountChange":  rewrite.MessageCountChange,
-			"systemPromptChanged": rewrite.SystemPromptChanged,
-		},
+		Details:   details,
 	})
 }
 
@@ -226,7 +317,10 @@ func (c *piMessagesConverter) ensureContent(i int) {
 	}
 }
 
-func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEvent {
+// convert applies one event to the partial message and returns the event to
+// push. Its error is the TypeError pi's `+=` throws on a delta with no string
+// form (see rawToString), which fails the stream.
+func (c *piMessagesConverter) convert(ev piMessagesEvent) (ai.AssistantMessageEvent, error) {
 	idx := ev.ContentIndex
 	switch ev.Type {
 	case "done":
@@ -239,7 +333,7 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEve
 			c.partial.ProviderThinkingLevel = *ev.ProviderThinkingLevel
 		}
 		appendPiMessagesRewriteDiagnostic(c.partial, ev.Rewrite)
-		return ai.AssistantMessageEvent{Type: ai.EventDone, Reason: ev.Reason, Message: c.partial}
+		return ai.AssistantMessageEvent{Type: ai.EventDone, Reason: ev.Reason, Message: c.partial}, nil
 	case "error":
 		c.partial.StopReason = ev.Reason
 		if ev.Usage != nil {
@@ -251,19 +345,23 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEve
 			c.partial.ProviderThinkingLevel = *ev.ProviderThinkingLevel
 		}
 		appendPiMessagesRewriteDiagnostic(c.partial, ev.Rewrite)
-		return ai.AssistantMessageEvent{Type: ai.EventError, Reason: ev.Reason, Error: c.partial}
+		return ai.AssistantMessageEvent{Type: ai.EventError, Reason: ev.Reason, Error: c.partial}, nil
 	case "start":
-		return ai.AssistantMessageEvent{Type: ai.EventStart, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventStart, Partial: c.partial.Clone()}, nil
 	case "text_start":
 		c.ensureContent(idx)
 		c.partial.Content[idx] = ai.TextContent{Text: ""}
-		return ai.AssistantMessageEvent{Type: ai.EventTextStart, ContentIndex: idx, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventTextStart, ContentIndex: idx, Partial: c.partial.Clone()}, nil
 	case "text_delta":
 		if tc, ok := c.partial.Content[idx].(ai.TextContent); ok {
-			tc.Text += ev.Delta
+			piece, err := rawToString(ev.delta)
+			if err != nil {
+				return ai.AssistantMessageEvent{}, err
+			}
+			tc.Text += piece
 			c.partial.Content[idx] = tc
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}, nil
 	case "text_end":
 		if tc, ok := c.partial.Content[idx].(ai.TextContent); ok {
 			tc.Text = ev.Content
@@ -272,17 +370,21 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEve
 			}
 			c.partial.Content[idx] = tc
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventTextEnd, ContentIndex: idx, Content: ev.Content, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventTextEnd, ContentIndex: idx, Content: ev.Content, Partial: c.partial.Clone()}, nil
 	case "thinking_start":
 		c.ensureContent(idx)
 		c.partial.Content[idx] = ai.ThinkingContent{Thinking: ""}
-		return ai.AssistantMessageEvent{Type: ai.EventThinkingStart, ContentIndex: idx, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventThinkingStart, ContentIndex: idx, Partial: c.partial.Clone()}, nil
 	case "thinking_delta":
 		if tc, ok := c.partial.Content[idx].(ai.ThinkingContent); ok {
-			tc.Thinking += ev.Delta
+			piece, err := rawToString(ev.delta)
+			if err != nil {
+				return ai.AssistantMessageEvent{}, err
+			}
+			tc.Thinking += piece
 			c.partial.Content[idx] = tc
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}, nil
 	case "thinking_end":
 		if tc, ok := c.partial.Content[idx].(ai.ThinkingContent); ok {
 			tc.Thinking = ev.Content
@@ -292,20 +394,24 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEve
 			tc.Redacted = ev.Redacted
 			c.partial.Content[idx] = tc
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: idx, Content: ev.Content, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: idx, Content: ev.Content, Partial: c.partial.Clone()}, nil
 	case "toolcall_start":
 		c.ensureContent(idx)
 		c.partial.Content[idx] = ai.ToolCall{ID: ev.ID, Name: ev.ToolName, Arguments: map[string]any{}}
 		c.toolJSON[idx] = ""
-		return ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: idx, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: idx, Partial: c.partial.Clone()}, nil
 	case "toolcall_delta":
-		j := c.toolJSON[idx] + ev.Delta
+		piece, err := rawToString(ev.delta)
+		if err != nil {
+			return ai.AssistantMessageEvent{}, err
+		}
+		j := c.toolJSON[idx] + piece
 		c.toolJSON[idx] = j
 		if tc, ok := c.partial.Content[idx].(ai.ToolCall); ok {
 			tc.Arguments, tc.ArgumentsOrder = parseStreamingJSON(j)
 			c.partial.Content[idx] = tc
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}, nil
 	case "toolcall_end":
 		if ev.ToolCall != nil {
 			c.ensureContent(idx)
@@ -317,87 +423,88 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEve
 			cp := v
 			tc = &cp
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: idx, ToolCall: tc, Partial: c.partial.Clone()}
+		return ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: idx, ToolCall: tc, Partial: c.partial.Clone()}, nil
 	}
 	// Unknown event type: emit nothing meaningful (pi returns {...event,partial}
 	// for the exhaustive-known set; an unmodeled type has no unified analogue).
-	return ai.AssistantMessageEvent{Type: ai.EventType(ev.Type), Partial: c.partial.Clone()}
+	return ai.AssistantMessageEvent{Type: ai.EventType(ev.Type), Partial: c.partial.Clone()}, nil
 }
 
-// parsePiMessagesFrame extracts the event a single SSE frame yields (pi
-// parsePiMessagesEvent plus readPiMessagesEvents' `if (event)`): the JSON of
-// its first `data:` line, JS-trimmed, as its text and its parsed value. ok is
-// false when the frame yields nothing — no data line, an empty one, `[DONE]`,
-// or a JS-falsy value (null, false, 0, ""). err is the failure pi's
-// JSON.parse throws on a line that is not JSON, which fails the stream.
-func parsePiMessagesFrame(raw string) (data string, value any, ok bool, err error) {
-	found := false
-	for _, line := range strings.Split(raw, "\n") {
+// piMessagesFrameData is pi parsePiMessagesEvent's text: the first `data:`
+// line of a frame, JS-trimmed. ok is false when the frame has none, or when it
+// is empty or `[DONE]`, which pi passes over without parsing.
+func piMessagesFrameData(frame string) (string, bool) {
+	for _, line := range strings.Split(frame, "\n") {
 		if strings.HasPrefix(line, "data:") {
-			data = jstext.Trim(line[5:])
-			found = true
-			break
+			data := jstext.Trim(line[5:])
+			return data, data != "" && data != "[DONE]"
 		}
 	}
-	if !found || data == "" || data == "[DONE]" {
-		return "", nil, false, nil
+	return "", false
+}
+
+// decodePiMessagesEvent is pi's JSON.parse of a frame's data plus
+// readPiMessagesEvents' `if (event)`: yielded is false for a JS-falsy value
+// (null, false, 0, -0, "" — and 1e-400, which parses to 0). An object's members
+// are read into the typed event; any other truthy value converts as an event
+// with no type, as pi's `{...event, partial}` of it has none. err is the
+// syntax error JSON.parse throws on data that is not JSON, which fails the
+// stream.
+//
+// data is decoded once: an object into its members, which validates it on the
+// way, anything else only validated. The value an observer receives is a
+// separate decode (readPiMessagesEvents), made only when there is one.
+func decodePiMessagesEvent(data string) (ev piMessagesEvent, yielded bool, err error) {
+	if jsonValueKind(data) == '{' {
+		o, err := decodeRawObject([]byte(data))
+		if err != nil {
+			return piMessagesEvent{}, false, err
+		}
+		return piMessagesEventOf(o), true, nil
 	}
 	if !json.Valid([]byte(data)) {
 		var v any
-		return "", nil, false, json.Unmarshal([]byte(data), &v)
+		return piMessagesEvent{}, false, json.Unmarshal([]byte(data), &v)
 	}
-	value, err = ai.DecodeOrderedValue([]byte(data))
-	if err != nil {
-		return "", nil, false, err
-	}
-	if !jsTruthy(value) {
-		return "", nil, false, nil
-	}
-	return data, value, true, nil
-}
-
-// piMessagesEventOf is the typed view of a yielded frame. An object decodes
-// into piMessagesEvent; any other truthy value converts as an event with no
-// type, as pi's `{...event, partial}` spread of it has none. ok is false for an
-// object whose fields do not decode into the typed event, which is skipped.
-func piMessagesEventOf(data string, value any) (piMessagesEvent, bool) {
-	if _, isObject := value.(ai.OrderedObject); !isObject {
-		return piMessagesEvent{}, true
-	}
-	var ev piMessagesEvent
-	if json.Unmarshal([]byte(data), &ev) != nil {
-		return piMessagesEvent{}, false
-	}
-	return ev, true
+	return piMessagesEvent{}, rawTruthy(json.RawMessage(data)), nil
 }
 
 // readPiMessagesEvents consumes the SSE body: frames are separated by "\n\n",
 // CRLF is normalized to "\n", and a trailing non-terminal buffer is flushed.
-// handle returns false to stop early (a terminal event was seen). A frame that
-// is not JSON fails the read, as pi's JSON.parse throw does. Port of
-// readPiMessagesEvents.
+// handle returns false to stop early (a terminal event was seen), and its
+// error ends the read. A frame that is not JSON fails the read, as pi's
+// JSON.parse throw does. Port of readPiMessagesEvents.
 //
 // onEvent, when non-nil, observes every yielded frame's parsed value — objects
 // as ai.OrderedObject, unknown fields and the terminal done/error included —
 // before it is converted (pi's onProviderStreamEvent, upstream 002fc8385); its
-// error ends the read.
-func readPiMessagesEvents(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(piMessagesEvent) bool) error {
+// error ends the read. The value is a decode of its own, made only when
+// onEvent is non-nil, so observing costs nothing when unset and a mutating
+// observer cannot change what is converted.
+func readPiMessagesEvents(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(piMessagesEvent) (bool, error)) error {
 	// emit handles one frame and reports whether to keep reading.
 	emit := func(frame string) (bool, error) {
-		data, value, ok, err := parsePiMessagesFrame(frame)
-		if err != nil || !ok {
-			return true, err
+		data, ok := piMessagesFrameData(frame)
+		if !ok {
+			return true, nil
+		}
+		ev, yielded, err := decodePiMessagesEvent(data)
+		if err != nil {
+			return false, err
+		}
+		if !yielded {
+			return true, nil
 		}
 		if onEvent != nil {
+			value, err := ai.DecodeOrderedValue([]byte(data))
+			if err != nil {
+				return false, err // unreachable: data parsed above
+			}
 			if err := onEvent(value); err != nil {
 				return false, err
 			}
 		}
-		ev, ok := piMessagesEventOf(data, value)
-		if !ok {
-			return true, nil
-		}
-		return handle(ev), nil
+		return handle(ev)
 	}
 	buf := make([]byte, 32*1024)
 	var pending string
@@ -628,14 +735,17 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 			onEvent = func(data any) error { return opts.OnProviderStreamEvent(data, model) }
 		}
 		terminal := false
-		perr := readPiMessagesEvents(resp.Body, ctx, onEvent, func(ev piMessagesEvent) bool {
-			out := conv.convert(ev)
+		perr := readPiMessagesEvents(resp.Body, ctx, onEvent, func(ev piMessagesEvent) (bool, error) {
+			out, err := conv.convert(ev)
+			if err != nil {
+				return false, err
+			}
 			stream.Push(out)
 			if out.Type == ai.EventDone || out.Type == ai.EventError {
 				terminal = true
-				return false
+				return false, nil
 			}
-			return true
+			return true, nil
 		})
 		if perr != nil {
 			fail(perr)

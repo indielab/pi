@@ -397,9 +397,9 @@ func TestPiMessagesCRLFSeamAcrossReads(t *testing.T) {
 	reader := &chunkedReader{chunks: [][]byte{[]byte(frame1), []byte(frame2)}}
 
 	var types []string
-	err := readPiMessagesEvents(reader, nil, nil, func(ev piMessagesEvent) bool {
+	err := readPiMessagesEvents(reader, nil, nil, func(ev piMessagesEvent) (bool, error) {
 		types = append(types, ev.Type)
-		return ev.Type != "done"
+		return ev.Type != "done", nil
 	})
 	if err != nil {
 		t.Fatalf("readPiMessagesEvents error: %v", err)
@@ -479,11 +479,13 @@ func TestPiMessagesAbsentProviderThinkingLevelLeavesExistingLevel(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			c := newPiMessagesConverter(piMessagesTestModel("http://unused"))
 			c.partial.ProviderThinkingLevel = "xhigh"
-			var ev piMessagesEvent
-			if err := json.Unmarshal([]byte(tc.terminal), &ev); err != nil {
+			ev, _, err := decodePiMessagesEvent(tc.terminal)
+			if err != nil {
 				t.Fatal(err)
 			}
-			c.convert(ev)
+			if _, err := c.convert(ev); err != nil {
+				t.Fatal(err)
+			}
 			if c.partial.ProviderThinkingLevel != "xhigh" {
 				t.Fatalf("providerThinkingLevel = %q, want the existing %q left standing by an absent field", c.partial.ProviderThinkingLevel, "xhigh")
 			}

@@ -373,7 +373,7 @@ func jsonTextWithRepair(s string) (string, error) {
 // jsonValueKind reports what a valid JSON text holds, by its first
 // non-whitespace byte: '{' object, '[' array, '"' string, 'n' null, 't'/'f'
 // booleans, anything else a number.
-func jsonValueKind(text string) byte {
+func jsonValueKind[T ~string | ~[]byte](text T) byte {
 	for i := 0; i < len(text); i++ {
 		switch c := text[i]; c {
 		case ' ', '\t', '\n', '\r':

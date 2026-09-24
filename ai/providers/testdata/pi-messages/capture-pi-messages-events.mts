@@ -19,7 +19,9 @@
 //   observed   each value onProviderStreamEvent received, as JSON.stringify
 //              text, so key order is part of the expectation;
 //   pushed     the type of every event the stream pushed (null: no type);
-//   message    stopReason, errorMessage, responseId and content of the result;
+//   message    stopReason, errorMessage, responseId, content and usage of the
+//              result, and the type and details of each diagnostic (not their
+//              timestamps);
 //   v8Error    the frame data whose JSON.parse failure is the errorMessage:
 //              V8's text, which the port does not reproduce.
 // A row may make the observer throw ("observer boom") on the observed event at
@@ -152,6 +154,42 @@ const cases: Case[] = [
 		name: "observedTextIsNotHTMLEscaped",
 		sse: framed(start, textStart, { ...textDelta, delta: markup }, { ...textEnd, content: markup }, done),
 	},
+	// A member of an unexpected JSON type never drops the event: pi reads each
+	// property as whatever it holds. An unknown type with a string contentIndex
+	// and an object with no type are observed and pushed; a delta that is not a
+	// string is appended as String() writes it (5 as "5", none as "undefined",
+	// null as "null", [1,[2,null]] as "1,2,"); counts written 10.0 and 5e0 are
+	// the numbers 10 and 5; and a rewrite's members, whatever they hold, are the
+	// diagnostic's details.
+	{
+		name: "mistypedMembersStillConvert",
+		sse:
+			framed(start) +
+			frame('{"type":"gateway_note","contentIndex":"x"}') +
+			frame('{"note":1}') +
+			framed(textStart) +
+			frame('{"type":"text_delta","contentIndex":0,"delta":5}') +
+			frame('{"type":"text_delta","contentIndex":0}') +
+			frame('{"type":"text_delta","contentIndex":0,"delta":null}') +
+			frame('{"type":"text_delta","contentIndex":0,"delta":[1,[2,null]]}') +
+			frame(
+				'{"type":"done","reason":"stop","usage":{"input":10.0,"output":5e0,"cacheRead":0,"cacheWrite":0,"totalTokens":15.0,' +
+					'"cost":{"input":0.1,"output":0.2,"cacheRead":0,"cacheWrite":0,"total":0.3}},"responseId":"resp_1",' +
+					'"rewrite":{"policyId":"p","policyVersion":"2","changed":true,"extra":[1]}}',
+			),
+	},
+	// A property is read by its exact name: "Type" and "DELTA" are not the
+	// event's type and delta, so the frame converts as an event with no type.
+	{
+		name: "memberNamesMatchExactly",
+		sse: framed(start, textStart) + frame('{"Type":"text_delta","contentIndex":0,"DELTA":"x"}') + framed(textDelta, done),
+	},
+	// A delta with no string form (an object with its own toString member)
+	// makes pi's `+=` throw V8's TypeError, which fails the stream.
+	{
+		name: "deltaWithNoStringFormFails",
+		sse: framed(start, textStart) + frame('{"type":"text_delta","contentIndex":0,"delta":{"toString":1}}') + framed(textEnd, done),
+	},
 	// A throwing observer fails the stream with its message: on the first event,
 	{ name: "observerThrowsOnFirstEvent", sse: framed(...wireEvents), throwAt: 0 },
 	// on the terminal done event, which then never converts to done,
@@ -198,6 +236,11 @@ for (const c of cases) {
 			errorMessage: message.errorMessage ?? null,
 			responseId: message.responseId ?? null,
 			content: message.content,
+			usage: message.usage,
+			diagnostics: (message.diagnostics ?? []).map((d: { type: string; details?: unknown }) => ({
+				type: d.type,
+				details: d.details ?? null,
+			})),
 		},
 	});
 }
