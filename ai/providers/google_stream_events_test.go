@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -91,12 +92,32 @@ func (r *readsReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// googleScenarioResponse is the *http.Response Go's client makes of the
+// scenario's head, read by net/http itself.
+func googleScenarioResponse(t *testing.T, sc googleStreamScenario) *http.Response {
+	t.Helper()
+	var head strings.Builder
+	head.WriteString("HTTP/1.1 200 OK\r\n")
+	for _, h := range sc.Headers {
+		fmt.Fprintf(&head, "%s: %s\r\n", h[0], h[1])
+	}
+	if sc.Framing == "chunked" {
+		head.WriteString("Transfer-Encoding: chunked\r\n")
+	}
+	head.WriteString("\r\n")
+	resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(head.String())), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return resp
+}
+
 // TestGoogleSSEReadChunksMatchPi replays, read by read, every captured
 // scenario whose outcome the SDK's read loop decides — a bare JSON read that
-// throws ApiError, or a tail left unconsumed — and requires pi's error. The
-// SDK checks each network read, before buffering it, for a bare JSON
-// {"error":{...}} payload (processStreamResponse), so where the reads fall is
-// part of the outcome.
+// throws ApiError, or a tail left unconsumed — and requires pi's error and
+// the chunks pi observed before it. The SDK checks each network read, before
+// buffering it, for a bare JSON {"error":{...}} payload
+// (processStreamResponse), so where the reads fall is part of the outcome.
 func TestGoogleSSEReadChunksMatchPi(t *testing.T) {
 	ran := 0
 	for _, sc := range loadGoogleStreamCapture(t).Scenarios {
@@ -106,10 +127,20 @@ func TestGoogleSSEReadChunksMatchPi(t *testing.T) {
 		}
 		ran++
 		t.Run(sc.Name, func(t *testing.T) {
+			headers := googleSDKResponseHeaders(googleScenarioResponse(t, sc))
+			events := []string{}
+			observe := func(data any) error {
+				text, err := jstext.Stringify(googleGenerateContentResponse(data, headers))
+				events = append(events, text)
+				return err
+			}
 			err := iterateGoogleSSE(&readsReader{reads: append([]string(nil), sc.Segments...)}, context.Background(),
-				func(googleChunk) error { return nil })
+				observe, func(googleChunk) error { return nil })
 			if err == nil || err.Error() != msg {
 				t.Fatalf("error %v\npi:   %s", err, msg)
+			}
+			if !slices.Equal(events, sc.Pi.Events) {
+				t.Fatalf("observed %q\npi:       %q", events, sc.Pi.Events)
 			}
 		})
 	}
@@ -223,20 +254,36 @@ func googleCaptureModel(baseURL string) *ai.Model {
 
 // TestGoogleStreamEventsMatchPi replays each captured scenario whose outcome
 // does not hang on where the reads fall, over a real connection, and requires
-// pi's result: the assistant stream event by event (with deltas), the stop
+// pi's result: every value OnProviderStreamEvent received, as JSON.stringify
+// writes it (key order included), always with the model the stream was
+// called with; the assistant stream event by event (with deltas); the stop
 // reason, error message, response id, content JSON and usage tokens.
 func TestGoogleStreamEventsMatchPi(t *testing.T) {
 	ran := 0
 	for _, sc := range loadGoogleStreamCapture(t).Scenarios {
-		if sc.Divergence != "" || sc.ReadBoundariesMatter || sc.ThrowOn != nil {
+		if sc.Divergence != "" || sc.ReadBoundariesMatter {
 			continue
 		}
 		ran++
 		t.Run(sc.Name, func(t *testing.T) {
 			model := googleCaptureModel(serveGoogleScenario(t, sc))
 			req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+			events := []string{}
+			sameModel, calls := true, 0
 			stream := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{
 				ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key"},
+				OnProviderStreamEvent: func(data any, eventModel *ai.Model) error {
+					if eventModel != model {
+						sameModel = false
+					}
+					if sc.ThrowOn != nil && *sc.ThrowOn == calls {
+						return errors.New(sc.ThrowMessage)
+					}
+					calls++
+					text, err := jstext.Stringify(data)
+					events = append(events, text)
+					return err
+				},
 			}})
 			var got, want []string
 			for ev := range stream.Events() {
@@ -258,6 +305,12 @@ func TestGoogleStreamEventsMatchPi(t *testing.T) {
 				t.Errorf("stream %q\npi:     %q", got, want)
 			}
 			final := stream.Result()
+			if !slices.Equal(events, sc.Pi.Events) {
+				t.Errorf("observed %q\npi:       %q", events, sc.Pi.Events)
+			}
+			if !sameModel || !sc.Pi.SameModel {
+				t.Errorf("observer's model: same %v, pi same %v", sameModel, sc.Pi.SameModel)
+			}
 			if string(final.StopReason) != sc.Pi.StopReason || final.ErrorMessage != sc.Pi.ErrorMessage {
 				t.Errorf("stop %s %q, pi %s %q", final.StopReason, final.ErrorMessage, sc.Pi.StopReason, sc.Pi.ErrorMessage)
 			}

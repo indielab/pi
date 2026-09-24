@@ -1016,6 +1016,127 @@ func TestGoogleNeverCallsOnResponse(t *testing.T) {
 	}
 }
 
+// TestGoogleForwardsEachSDKChunkInOrder transliterates
+// google-raw-stop-reason.test.ts › 'Google provider stream events' ›
+// 'forwards each SDK chunk in order before normalizing it for Google
+// Generative AI' (upstream 002fc8385). Upstream mocks the SDK, so its chunks
+// are the literals it yields; here they come off the wire, so each is the
+// SDK's converted shape — the known fields in the converter's order plus
+// sdkHttpResponse.headers (the full record is TestGoogleStreamEventsMatchPi's).
+func TestGoogleForwardsEachSDKChunkInOrder(t *testing.T) {
+	sse := "data: {\"responseId\":\"resp_google\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\n\n" +
+		"data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":1,\"totalTokenCount\":3}}\n\n"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
+	var received []ai.OrderedObject
+	var eventModels []*ai.Model
+	opts := &GoogleOptions{StreamOptions: ai.StreamOptions{
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key"},
+		OnProviderStreamEvent: func(data any, eventModel *ai.Model) error {
+			received = append(received, data.(ai.OrderedObject))
+			eventModels = append(eventModels, eventModel)
+			return nil
+		},
+	}}
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	result := StreamGoogle(context.Background(), model, ai.NormalizeContext(req), opts).Result()
+
+	want := []struct{ keys, candidates string }{
+		{"candidates responseId sdkHttpResponse", `[{"content":{"parts":[{"text":"hello"}]}}]`},
+		{"candidates usageMetadata sdkHttpResponse", `[{"finishReason":"STOP"}]`},
+	}
+	if len(received) != len(want) {
+		t.Fatalf("received %d chunks, want %d", len(received), len(want))
+	}
+	for i, chunk := range received {
+		var keys []string
+		for _, f := range chunk {
+			keys = append(keys, f.Key)
+		}
+		if got := strings.Join(keys, " "); got != want[i].keys {
+			t.Errorf("chunk %d keys %q, want %q", i, got, want[i].keys)
+		}
+		candidates, _ := json.Marshal(googleField(chunk, "candidates"))
+		if string(candidates) != want[i].candidates {
+			t.Errorf("chunk %d candidates %s, want %s", i, candidates, want[i].candidates)
+		}
+		headers, _ := googleField(chunk, "sdkHttpResponse").(ai.OrderedObject)
+		if ct := googleField(googleField(headers, "headers").(ai.OrderedObject), "content-type"); ct != "text/event-stream" {
+			t.Errorf("chunk %d content-type %v", i, ct)
+		}
+	}
+	if usage, _ := json.Marshal(googleField(received[1], "usageMetadata")); string(usage) != `{"promptTokenCount":2,"candidatesTokenCount":1,"totalTokenCount":3}` {
+		t.Errorf("usageMetadata %s", usage)
+	}
+	if !slices.Equal(eventModels, []*ai.Model{model, model}) {
+		t.Errorf("event models %v, want the stream's model twice", eventModels)
+	}
+	if result.StopReason != ai.StopStop || result.ResponseID != "resp_google" {
+		t.Fatalf("result %s %q (%s)", result.StopReason, result.ResponseID, result.ErrorMessage)
+	}
+	if len(result.Content) != 1 || result.Content[0].(ai.TextContent).Text != "hello" {
+		t.Fatalf("content %#v", result.Content)
+	}
+}
+
+// TestGoogleProviderStreamEventErrorFailsStream: pi awaits the callback, so a
+// throw fails the request (README, 002fc8385): the catch sets errorMessage to
+// the thrown message (formatProviderError of a status-less Error) and
+// stopReason to "aborted" when the signal is aborted, else "error". The chunk
+// the callback refused is never normalized.
+func TestGoogleProviderStreamEventErrorFailsStream(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		cancel bool
+		want   ai.StopReason
+	}{
+		{"error", false, ai.StopError},
+		{"aborted", true, ai.StopAborted},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("content-type", "text/event-stream")
+				io.WriteString(w, googleSSE)
+			}))
+			defer server.Close()
+			model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: server.URL}
+			calls := 0
+			opts := &GoogleOptions{StreamOptions: ai.StreamOptions{
+				ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"},
+				OnProviderStreamEvent: func(any, *ai.Model) error {
+					calls++
+					if tc.cancel {
+						cancel()
+					}
+					return errors.New("observer boom")
+				},
+			}}
+			req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+			stream := StreamGoogle(ctx, model, ai.NormalizeContext(req), opts)
+			var types []ai.EventType
+			for ev := range stream.Events() {
+				types = append(types, ev.Type)
+			}
+			final := stream.Result()
+			if calls != 1 {
+				t.Fatalf("callback called %d times, want 1", calls)
+			}
+			if !slices.Equal(types, []ai.EventType{ai.EventStart, ai.EventError}) {
+				t.Fatalf("events %v, want [start error]", types)
+			}
+			if final.StopReason != tc.want || final.ErrorMessage != "observer boom" {
+				t.Fatalf("got %s %q, want %s %q", final.StopReason, final.ErrorMessage, tc.want, "observer boom")
+			}
+		})
+	}
+}
+
 // mustBuildGoogleParams builds a generateContent request body, failing the test
 // on the errors constrained sampling can raise.
 func mustBuildGoogleParams(t *testing.T, model *ai.Model, req ai.Context, opts *GoogleOptions) map[string]any {

@@ -7,10 +7,13 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"github.com/sky-valley/pi/ai"
 	"github.com/sky-valley/pi/internal/jstext"
@@ -492,7 +495,18 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			current = nil
 		}
 
-		err = iterateGoogleSSE(resp.Body, ctx, func(chunk googleChunk) error {
+		// pi: `await options?.onProviderStreamEvent?.(chunk, model)` first
+		// thing for every chunk @google/genai yields (upstream 002fc8385), so
+		// what it observes is the SDK's converted response, not the wire JSON.
+		var observe func(data any) error
+		if opts.OnProviderStreamEvent != nil {
+			headers := googleSDKResponseHeaders(resp)
+			observe = func(data any) error {
+				// The SDK builds a fresh header record for every chunk.
+				return opts.OnProviderStreamEvent(googleGenerateContentResponse(data, slices.Clone(headers)), model)
+			}
+		}
+		err = iterateGoogleSSE(resp.Body, ctx, observe, func(chunk googleChunk) error {
 			if chunk.ResponseID != "" && output.ResponseID == "" {
 				output.ResponseID = chunk.ResponseID
 			}
@@ -1194,7 +1208,10 @@ func googleStringifyRead(read string, parsed any) string {
 // split on \n\n, \r\r, or \r\n\r\n; only "data:"-prefixed events are decoded;
 // and a trailing unconsumed segment fails with the SDK's "Incomplete JSON
 // segment at the end".
-func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChunk) error) error {
+//
+// observe, when set, receives each data: payload's parsed value before handle
+// sees the chunk, and its error ends the stream.
+func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(data any) error, handle func(googleChunk) error) error {
 	delimiters := []string{"\n\n", "\r\r", "\r\n\r\n"}
 	buf := make([]byte, 32*1024)
 	var pending string
@@ -1209,7 +1226,15 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 			return nil
 		}
 		var chunk googleChunk
-		if err := parseJSONWithRepair(data, &chunk); err != nil {
+		decodeErr := parseJSONWithRepair(data, &chunk)
+		if observe != nil {
+			if value, ok := googleObservedValue(data); ok {
+				if err := observe(value); err != nil {
+					return err
+				}
+			}
+		}
+		if decodeErr != nil {
 			return nil
 		}
 		// No error check here: the SDK checks only whole reads that are bare
@@ -1259,6 +1284,167 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 		return fmt.Errorf("Incomplete JSON segment at the end")
 	}
 	return nil
+}
+
+// googleObservedValue parses a data: payload for the stream-event observer,
+// keeping every object's key order. It reads the payload the way the typed
+// decode does — as is, else after the repair pass — so the observer sees each
+// event the adapter goes on to handle. (pi's SDK parses strictly and fails
+// the stream on a payload that needs repair or cannot be parsed; the port's
+// leniency there predates the observer.)
+func googleObservedValue(data string) (any, bool) {
+	if value, err := ai.DecodeOrderedValue([]byte(data)); err == nil {
+		return value, true
+	}
+	if repaired := repairJSON(data); repaired != data {
+		if value, err := ai.DecodeOrderedValue([]byte(repaired)); err == nil {
+			return value, true
+		}
+	}
+	return nil, false
+}
+
+// googleGenerateContentResponse is the chunk @google/genai 2.21.0 yields for
+// one parsed data: payload, which pi hands to onProviderStreamEvent:
+// generateContentResponseFromMldev(payload) (index.cjs:10916) with
+// sdkHttpResponse = {headers} set on the result (generateContentStreamInternal,
+// ~15850). The converter copies only the fields it knows, in its own order,
+// and only when they are not null or undefined (`!= null`); everything else
+// the payload carries — unknown fields, "error" — never reaches pi. A payload
+// that is not an object (null, a scalar, an array) yields no fields at all.
+func googleGenerateContentResponse(payload any, headers ai.OrderedObject) ai.OrderedObject {
+	src, _ := payload.(ai.OrderedObject)
+	out := ai.OrderedObject{}
+	// The converter copies a payload's own sdkHttpResponse first; the SDK's
+	// record then replaces its value, keeping that first slot.
+	if googleField(src, "sdkHttpResponse") != nil {
+		out = append(out, ai.OrderedField{Key: "sdkHttpResponse"})
+	}
+	if v := googleField(src, "candidates"); v != nil {
+		if list, ok := v.([]any); ok {
+			converted := make([]any, len(list))
+			for i, candidate := range list {
+				converted[i] = googleCandidateFromMldev(candidate)
+			}
+			v = converted
+		}
+		out = append(out, ai.OrderedField{Key: "candidates", Value: v})
+	}
+	for _, key := range []string{"modelVersion", "promptFeedback", "responseId", "usageMetadata", "modelStatus"} {
+		if v := googleField(src, key); v != nil {
+			out = append(out, ai.OrderedField{Key: key, Value: v})
+		}
+	}
+	record := ai.OrderedObject{{Key: "headers", Value: headers}}
+	if len(out) > 0 && out[0].Key == "sdkHttpResponse" {
+		out[0].Value = record
+	} else {
+		out = append(out, ai.OrderedField{Key: "sdkHttpResponse", Value: record})
+	}
+	return out
+}
+
+// googleCandidateFromMldev is @google/genai's candidateFromMldev
+// (index.cjs:9635): the known candidate fields in its order, citationMetadata
+// through citationMetadataFromMldev. A candidate that is not an object
+// converts to {}.
+func googleCandidateFromMldev(candidate any) ai.OrderedObject {
+	src, _ := candidate.(ai.OrderedObject)
+	out := ai.OrderedObject{}
+	for _, key := range []string{
+		"content", "citationMetadata", "tokenCount", "finishReason", "groundingMetadata",
+		"avgLogprobs", "index", "logprobsResult", "safetyRatings", "urlContextMetadata",
+	} {
+		v := googleField(src, key)
+		if v == nil {
+			continue
+		}
+		if key == "citationMetadata" {
+			v = googleCitationMetadataFromMldev(v)
+		}
+		out = append(out, ai.OrderedField{Key: key, Value: v})
+	}
+	return out
+}
+
+// googleCitationMetadataFromMldev is @google/genai's citationMetadataFromMldev:
+// citationSources renamed to citations, every other field dropped.
+func googleCitationMetadataFromMldev(metadata any) ai.OrderedObject {
+	src, _ := metadata.(ai.OrderedObject)
+	if v := googleField(src, "citationSources"); v != nil {
+		return ai.OrderedObject{{Key: "citations", Value: v}}
+	}
+	return ai.OrderedObject{}
+}
+
+// googleField is @google/genai's getValueByPath for one key of a parsed
+// object: nil when the key is absent or null.
+func googleField(o ai.OrderedObject, key string) any {
+	for _, f := range o {
+		if f.Key == key {
+			return f.Value
+		}
+	}
+	return nil
+}
+
+// googleSDKResponseHeaders is the header record @google/genai 2.21.0 puts on
+// every chunk as sdkHttpResponse.headers. processStreamResponse wraps each
+// data: payload in `new Response(payload, {headers: response.headers})`, and
+// HttpResponse copies that Response's headers.entries() into a plain object:
+//
+//   - names are lowercase, in sorted order (the Fetch Headers iterator sorts);
+//   - a repeated header's values are joined with ", ", except set-cookie,
+//     whose values iterate one by one so the last one wins;
+//   - values are the header bytes read as latin1, as undici decodes them;
+//   - a response without content-type gets the "text/plain;charset=UTF-8" a
+//     string-bodied Response adds.
+//
+// Go's transport moves Transfer-Encoding out of the header map and, when it
+// transparently gunzips, drops Content-Encoding; undici keeps both, so they
+// are put back.
+func googleSDKResponseHeaders(resp *http.Response) ai.OrderedObject {
+	values := map[string][]string{}
+	for _, name := range slices.Sorted(maps.Keys(resp.Header)) {
+		key := strings.ToLower(name)
+		values[key] = append(values[key], resp.Header[name]...)
+	}
+	if _, ok := values["transfer-encoding"]; !ok && len(resp.TransferEncoding) > 0 {
+		values["transfer-encoding"] = []string{strings.Join(resp.TransferEncoding, ", ")}
+	}
+	if _, ok := values["content-encoding"]; !ok && resp.Uncompressed {
+		values["content-encoding"] = []string{"gzip"}
+	}
+	if _, ok := values["content-type"]; !ok {
+		values["content-type"] = []string{"text/plain;charset=UTF-8"}
+	}
+	names := slices.Sorted(maps.Keys(values))
+	out := make(ai.OrderedObject, 0, len(names))
+	for _, name := range names {
+		vs := values[name]
+		value := strings.Join(vs, ", ")
+		if name == "set-cookie" {
+			value = vs[len(vs)-1]
+		}
+		out = append(out, ai.OrderedField{Key: name, Value: latin1(value)})
+	}
+	return out
+}
+
+// latin1 reads each byte of s as the character with that code point, the way
+// undici decodes header bytes.
+func latin1(s string) string {
+	for i := 0; i < len(s); i++ {
+		if s[i] >= utf8.RuneSelf {
+			var b strings.Builder
+			b.Grow(len(s) * 2)
+			for j := 0; j < len(s); j++ {
+				b.WriteRune(rune(s[j]))
+			}
+			return b.String()
+		}
+	}
+	return s
 }
 
 // RegisterGoogle registers the google-generative-ai api provider.
