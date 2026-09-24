@@ -1587,9 +1587,9 @@ func googleResponseBody(resp *http.Response) (io.Reader, error) {
 	for _, coding := range chain {
 		switch coding {
 		case "gzip", "x-gzip":
-			body = &lazyDecoder{src: body, open: func(r io.Reader) (io.Reader, error) { return gzip.NewReader(r) }}
+			body = newCodedBody(body, true)
 		case "deflate":
-			body = &lazyDecoder{src: body, open: openInflate}
+			body = newCodedBody(body, false)
 		default:
 			return nil, fmt.Errorf("the google response body is %s-encoded, and Go's standard library cannot decode %s; remove the Accept-Encoding header that asked for it, or ask for gzip or deflate", coding, coding)
 		}
@@ -1597,52 +1597,185 @@ func googleResponseBody(resp *http.Response) (io.Reader, error) {
 	return body, nil
 }
 
-// openInflate is undici's InflateStream: zlib-wrapped when the first byte's
-// low nibble is 8 (the deflate method), raw deflate otherwise.
-func openInflate(r io.Reader) (io.Reader, error) {
-	br := bufio.NewReader(r)
-	first, err := br.Peek(1)
-	if err != nil {
+// codedBody undoes one content coding the way undici's decoding pipeline
+// does, through node's zlib streams (createGunzip, and createInflate, which
+// is zlib-wrapped when the first byte's low nibble is 8, the deflate method,
+// and raw deflate otherwise; both finish with Z_SYNC_FLUSH):
+//
+//   - the stream opens on the first Read, so a response's headers are
+//     handled before its body is waited on;
+//   - a stream that its source ends cleanly before it is complete ends
+//     quietly with what it decoded, a header cut short included;
+//   - a failure of the source (the connection dropping, or the coding undone
+//     before this one failing) fails the read after handing over what was
+//     decoded before it, even once the stream is complete: zlib ends its
+//     output only when its input ends;
+//   - a corrupt stream fails the read without handing over the bytes decoded
+//     alongside the error;
+//   - after a deflate stream, any byte ends the body (zlib reads no further);
+//     after a gzip member, a zero byte ends it (trailing zeros are padding),
+//     and anything else must be another member, whose two magic bytes are
+//     checked as soon as both are in.
+type codedBody struct {
+	src    *bufio.Reader // reads a sourceReader
+	gzip   bool
+	zr     *gzip.Reader // reused from member to member
+	dec    io.Reader    // the open stream; nil before one opens and after one ends
+	opened bool         // a stream has been opened
+	err    error
+}
+
+func newCodedBody(src io.Reader, gzip bool) *codedBody {
+	return &codedBody{src: bufio.NewReader(sourceReader{src}), gzip: gzip}
+}
+
+// sourceReader marks every failure of what a codedBody reads — the
+// connection, or the coding undone before this one — as a sourceError, so
+// that a decoder's own io.ErrUnexpectedEOF means only that the coded stream
+// stopped where its source ended cleanly. (net/http's body reports a
+// connection that drops mid-body as io.ErrUnexpectedEOF too.)
+type sourceReader struct{ r io.Reader }
+
+func (s sourceReader) Read(p []byte) (int, error) {
+	n, err := s.r.Read(p)
+	if err != nil && err != io.EOF {
+		err = &sourceError{err}
+	}
+	return n, err
+}
+
+type sourceError struct{ err error }
+
+func (e *sourceError) Error() string { return e.err.Error() }
+func (e *sourceError) Unwrap() error { return e.err }
+
+// errUndecided is codedBody.next's answer when the bytes in hand do not
+// decide what follows a stream.
+var errUndecided = errors.New("what follows the coded stream is not in hand yet")
+
+func (d *codedBody) Read(p []byte) (int, error) {
+	for d.err == nil {
+		if d.dec == nil {
+			if d.dec, d.err = d.next(false); d.err != nil {
+				break
+			}
+		}
+		n, err := d.dec.Read(p)
+		switch {
+		case err == nil:
+			return n, nil
+		case err != io.EOF:
+			return d.fail(n, err)
+		}
+		d.dec = nil
+		if n == 0 {
+			continue
+		}
+		// The stream ended with decoded bytes to hand over. node's zlib looks
+		// past a stream's end within the chunk it is working on, and a
+		// failure there takes that chunk's output with it; here only the
+		// bytes already buffered decide what follows before the decoded ones
+		// go, since reading more could hold them back waiting on the network.
+		if _, err := d.next(true); err != errUndecided {
+			if d.err = err; err != io.EOF {
+				return 0, err
+			}
+		}
+		return n, nil
+	}
+	return 0, d.err
+}
+
+// next decides what follows the start of the body or the end of a stream:
+// another stream, the end of the body (io.EOF), or a failure. With inHand it
+// only looks at buffered bytes, opens nothing, and returns errUndecided when
+// those do not decide it.
+func (d *codedBody) next(inHand bool) (io.Reader, error) {
+	head, err := d.ahead(1, inHand)
+	if len(head) == 0 {
 		return nil, err
 	}
-	if first[0]&0x0f == 0x08 {
-		return zlib.NewReader(br)
+	if d.opened && (!d.gzip || head[0] == 0) {
+		return nil, io.EOF
 	}
-	return flate.NewReader(br), nil
-}
-
-// lazyDecoder opens its decoder on the first Read, so a response's headers
-// are handled before its body is waited on, as undici's decoding pipeline
-// is. It reads as undici's zlib streams do (they finish with Z_SYNC_FLUSH):
-// a stream that stops early ends quietly with what it decoded, and a read
-// that meets a corrupt stream fails without handing over the bytes decoded
-// alongside the error.
-type lazyDecoder struct {
-	src  io.Reader
-	open func(io.Reader) (io.Reader, error)
-	dec  io.Reader
-	err  error
-}
-
-func (d *lazyDecoder) Read(p []byte) (int, error) {
-	if d.err != nil {
-		return 0, d.err
-	}
-	if d.dec == nil {
-		if d.dec, d.err = d.open(d.src); d.err != nil {
-			if d.err == io.EOF || d.err == io.ErrUnexpectedEOF {
-				d.err = io.EOF
-			}
-			return 0, d.err
+	if !d.gzip {
+		d.opened = true
+		if head[0]&0x0f != 0x08 {
+			return flate.NewReader(d.src), nil
 		}
+		zr, err := zlib.NewReader(d.src)
+		if err != nil {
+			return nil, headerFailure(err)
+		}
+		return zr, nil
 	}
-	n, err := d.dec.Read(p)
+	// zlib reads a gzip member's magic once it has both bytes, and waits for
+	// the second: a body that ends after one ends quietly.
+	if head, err = d.ahead(2, inHand); len(head) < 2 {
+		return nil, err
+	}
+	if head[0] != 0x1f || head[1] != 0x8b {
+		return nil, gzip.ErrHeader
+	}
+	if inHand {
+		return nil, errUndecided // the rest of the header may not be in yet
+	}
+	d.opened = true
+	if d.zr == nil {
+		d.zr, err = gzip.NewReader(d.src)
+	} else {
+		err = d.zr.Reset(d.src)
+	}
+	if err != nil {
+		return nil, headerFailure(err)
+	}
+	d.zr.Multistream(false) // what follows a member is next's to decide
+	return d.zr, nil
+}
+
+// ahead returns the source's next n bytes, or fewer with the reason: io.EOF
+// when the source ended cleanly, the source's failure, or errUndecided when
+// inHand and they are not buffered yet.
+func (d *codedBody) ahead(n int, inHand bool) ([]byte, error) {
+	if inHand && d.src.Buffered() < n {
+		head, _ := d.src.Peek(d.src.Buffered())
+		return head, errUndecided
+	}
+	head, err := d.src.Peek(n)
+	var source *sourceError
+	if errors.As(err, &source) {
+		err = source.err
+	}
+	return head, err
+}
+
+// headerFailure is the outcome of a stream header the decoder could not
+// read: a header the source's clean end cut short ends the body quietly (zlib
+// waits for the rest, and Z_SYNC_FLUSH finishes without it); a source failure
+// or a malformed header fails the read.
+func headerFailure(err error) error {
+	var source *sourceError
 	switch {
-	case err == nil || err == io.EOF:
-		return n, err
+	case err == io.EOF || err == io.ErrUnexpectedEOF:
+		return io.EOF
+	case errors.As(err, &source):
+		return source.err
+	}
+	return err
+}
+
+// fail settles a decoder's error with the n bytes it decoded alongside it.
+func (d *codedBody) fail(n int, err error) (int, error) {
+	var source *sourceError
+	switch {
 	case err == io.ErrUnexpectedEOF:
+		// The source ended cleanly before the stream did.
 		d.err = io.EOF
-		return n, io.EOF
+		return n, d.err
+	case errors.As(err, &source):
+		// What was decoded before the source failed goes first.
+		d.err = source.err
+		return n, d.err
 	}
 	d.err = err
 	return 0, err

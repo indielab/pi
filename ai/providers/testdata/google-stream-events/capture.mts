@@ -26,7 +26,8 @@
 // segment is one HTTP chunk). `encode` turns the whole body into the bytes
 // written in one write (a gzip, deflate or brotli body, whole or damaged),
 // recorded as `encodedBody` so a replay serves the same bytes;
-// `contentLength` adds a Content-Length for what is written; `oneWrite` sends
+// `contentLength` adds a Content-Length for what is written, and
+// `contentLengthExtra` that many bytes more, so the body ends short; `oneWrite` sends
 // every segment as its own HTTP chunk but all in one socket write;
 // `abruptEnd` destroys the socket after the segments instead of ending the
 // body. `requestHeaders` are the options.headers pi's caller passes, and
@@ -94,6 +95,7 @@ type Scenario = {
 	// The bytes written for the whole body, in one write.
 	encode?: (body: Buffer) => Buffer;
 	contentLength?: boolean;
+	contentLengthExtra?: number;
 	oneWrite?: boolean;
 	abruptEnd?: boolean;
 	requestHeaders?: Record<string, string>;
@@ -372,6 +374,305 @@ const scenarios: Scenario[] = [
 		abruptEnd: true,
 		headers: eventStream,
 		segments: [sse(text("before the drop"))],
+	},
+	{
+		name: "a gzip body whose connection drops after it ends",
+		note: "undici's gunzip ends its output only when the body does, so a drop after the whole member still rejects the read with terminated",
+		framing: "chunked",
+		abruptEnd: true,
+		encode: (b) => zlib.gzipSync(b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "a gzip body shorter than its content-length",
+		framing: "close",
+		encode: (b) => zlib.gzipSync(b),
+		contentLength: true,
+		contentLengthExtra: 20,
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "a cut-off gzip body whose connection drops",
+		note: "a stream cut short ends quietly only when the body ends cleanly",
+		framing: "chunked",
+		abruptEnd: true,
+		encode: (b) => zlib.gzipSync(b).subarray(0, 40),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "a zlib deflate body whose connection drops after it ends",
+		framing: "chunked",
+		abruptEnd: true,
+		encode: (b) => zlib.deflateSync(b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("deflated"), stop)],
+	},
+	{
+		name: "a raw deflate body whose connection drops after it ends",
+		framing: "chunked",
+		abruptEnd: true,
+		encode: (b) => zlib.deflateRawSync(b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("raw"), stop)],
+	},
+	{
+		name: "a deflate body shorter than its content-length",
+		framing: "close",
+		encode: (b) => zlib.deflateSync(b),
+		contentLength: true,
+		contentLengthExtra: 5,
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("deflated"), stop)],
+	},
+	{
+		name: "two codings whose connection drops after they end",
+		framing: "chunked",
+		abruptEnd: true,
+		encode: (b) => zlib.gzipSync(zlib.deflateSync(b)),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate, gzip"],
+		],
+		segments: [sse(text("twice"), stop)],
+	},
+	{
+		name: "two gzip members",
+		note: "undici's gunzip reads member after member",
+		framing: "close",
+		encode: (b) => Buffer.concat([zlib.gzipSync(b.subarray(0, 20)), zlib.gzipSync(b.subarray(20))]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("members"), stop)],
+	},
+	{
+		name: "bytes after a gzip member that are not a member fail the read",
+		note: "a non-zero byte after a member starts another, whose magic x y is not gzip's; the chunk's decoded output goes with it",
+		framing: "close",
+		encode: (b) => Buffer.concat([zlib.gzipSync(b), Buffer.from("xyz")]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "one byte after a gzip member ends the body",
+		note: "zlib waits for the magic's second byte, and the clean end finishes quietly",
+		framing: "close",
+		encode: (b) => Buffer.concat([zlib.gzipSync(b), Buffer.from("x")]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "a gzip member header cut short ends the body",
+		note: "zlib waits for the rest of the header, and the clean end finishes quietly",
+		framing: "close",
+		encode: (b) => Buffer.concat([zlib.gzipSync(b), Buffer.from([0x1f, 0x8b, 8, 0, 0, 0])]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "zeros after a gzip member are padding",
+		framing: "close",
+		encode: (b) => Buffer.concat([zlib.gzipSync(b), Buffer.alloc(16)]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "a zero after a gzip member ends the body whatever follows",
+		framing: "close",
+		encode: (b) => Buffer.concat([zlib.gzipSync(b), Buffer.from([0]), Buffer.from("xyz")]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "padding after a gzip member ends the body before the connection drops",
+		framing: "chunked",
+		abruptEnd: true,
+		encode: (b) => Buffer.concat([zlib.gzipSync(b), Buffer.alloc(16)]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "bytes after a zlib deflate stream are ignored",
+		note: "zlib reads nothing past a deflate stream's end",
+		framing: "close",
+		encode: (b) => Buffer.concat([zlib.deflateSync(b), Buffer.from("xyz")]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("deflated"), stop)],
+	},
+	{
+		name: "bytes after a raw deflate stream are ignored",
+		framing: "close",
+		encode: (b) => Buffer.concat([zlib.deflateRawSync(b), Buffer.from("xyz")]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("raw"), stop)],
+	},
+	{
+		name: "bytes after a deflate stream end the body before the connection drops",
+		framing: "chunked",
+		abruptEnd: true,
+		encode: (b) => Buffer.concat([zlib.deflateSync(b), Buffer.from("xyz")]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("deflated"), stop)],
+	},
+	{
+		name: "a gzip body that does not start with gzip's magic fails the read",
+		framing: "close",
+		encode: () => Buffer.from("xy"),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a gzip body of one byte ends quietly",
+		framing: "close",
+		encode: () => Buffer.from("x"),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "an empty gzip body ends quietly",
+		framing: "close",
+		encode: () => Buffer.alloc(0),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a gzip body cut short in its header ends quietly",
+		framing: "close",
+		encode: () => Buffer.from([0x1f, 0x8b, 8]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a zlib deflate body cut short in its header ends quietly",
+		framing: "close",
+		encode: () => Buffer.from([0x78]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a zlib deflate body with a bad header fails the read",
+		framing: "close",
+		encode: () => Buffer.from([0x78, 0x00, 0x01]),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a gzip body of zeros fails the read",
+		note: "zeros are padding only after a member",
+		framing: "close",
+		encode: () => Buffer.alloc(3),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "an empty deflate body ends quietly",
+		framing: "close",
+		encode: () => Buffer.alloc(0),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a zlib deflate body with a bad checksum fails the read",
+		framing: "close",
+		encode: (b) => {
+			const z = zlib.deflateSync(b);
+			z[z.length - 1] ^= 1; // the Adler-32's low byte
+			return z;
+		},
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("checked"), stop)],
+	},
+	{
+		name: "divergence: a failure later in the chunk that ended a gzip member",
+		divergence: "node's zlib works one body chunk at a time, and a failure anywhere in a chunk takes all of that chunk's output with it; Go's decoders hand over what they decode as they go, so a whole member's events reach the port's callback before the next member, corrupt in the same chunk, fails the read (both end terminated)",
+		divergentFields: ["stream", "events", "content"],
+		framing: "close",
+		encode: (b) => {
+			const next = zlib.gzipSync(Buffer.from(sse(stop)));
+			next[next.length - 8] ^= 1; // the second member's CRC-32
+			return Buffer.concat([zlib.gzipSync(b), next]);
+		},
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("first member"))],
 	},
 	{
 		name: "connection close on a chunked body",
@@ -793,7 +1094,7 @@ function serve(
 				acceptEncoding = /^accept-encoding:[ \t]*(.*?)[ \t]*$/im.exec(requestHead)?.[1];
 				const writes: Buffer[] = encoded ? [encoded] : segments.map((seg) => Buffer.from(seg));
 				const head = ["HTTP/1.1 200 OK", ...s.headers.map(([k, v]) => `${k}: ${v}`)];
-				if (s.contentLength) head.push(`Content-Length: ${writes.reduce((n, w) => n + w.length, 0)}`);
+				if (s.contentLength) head.push(`Content-Length: ${writes.reduce((n, w) => n + w.length, 0) + (s.contentLengthExtra ?? 0)}`);
 				if (s.framing === "chunked") head.push("Transfer-Encoding: chunked");
 				sock.write(`${head.join("\r\n")}\r\n\r\n`);
 				const frame = (w: Buffer) =>

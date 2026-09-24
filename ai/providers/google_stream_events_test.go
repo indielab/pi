@@ -46,8 +46,10 @@ type googleStreamScenario struct {
 	// EncodedBody, when set, is the whole body as written instead (a gzip,
 	// deflate or brotli encoding of the joined segments, whole or damaged).
 	EncodedBody []byte `json:"encodedBody"`
-	// ContentLength adds a Content-Length for the body as written.
-	ContentLength bool `json:"contentLength"`
+	// ContentLength adds a Content-Length for the body as written, and
+	// ContentLengthExtra that many bytes more, so the body ends short.
+	ContentLength      bool `json:"contentLength"`
+	ContentLengthExtra int  `json:"contentLengthExtra"`
 	// OneWrite sends each segment as its own HTTP chunk, all in one write.
 	OneWrite bool `json:"oneWrite"`
 	// AbruptEnd drops the connection after the body, unterminated.
@@ -203,7 +205,7 @@ func googleScenarioHead(sc googleStreamScenario) string {
 		fmt.Fprintf(&head, "%s: %s\r\n", h[0], h[1])
 	}
 	if sc.ContentLength {
-		n := 0
+		n := sc.ContentLengthExtra
 		for _, w := range googleScenarioWrites(sc) {
 			n += len(w)
 		}
