@@ -11,6 +11,7 @@ import (
 	"maps"
 	"net/http"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
@@ -689,7 +690,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// throws on a non-2xx status first, so an error response never reaches
 		// it — and before pushing start; a throw fails the stream.
 		if opts.OnResponse != nil {
-			if err := opts.OnResponse(ai.ProviderResponse{Status: resp.StatusCode, Headers: flattenHeaders(resp.Header)}, model); err != nil {
+			if err := opts.OnResponse(ai.ProviderResponse{Status: resp.StatusCode, Headers: responseHeadersRecord(resp)}, model); err != nil {
 				fail(err)
 				return
 			}
@@ -2307,11 +2308,47 @@ func convertAnthropicSeed(pending *json.RawMessage) error {
 	return err
 }
 
+// responseHeadersRecord is pi's headersToRecord(response.headers) for a
+// response net/http read: flattenHeaders of its header map, plus what net/http
+// takes out of that map where undici's Headers keeps it as sent —
+// Transfer-Encoding (moved to resp.TransferEncoding), a Trailer header (moved
+// to resp.Trailer, under canonical names), Content-Encoding when the transport
+// undid a gzip body itself (resp.Uncompressed), and on HTTP/1.1 a Connection
+// header carrying "close" (deleted, leaving resp.Close — which a
+// close-delimited body sets too, so only a body with a length or chunks shows
+// the header was there). What net/http leaves no trace of cannot be put back:
+// the Content-Length of a body it gunzipped, a close-delimited body's
+// Connection: close, a Trailer name's own spelling, and trailing whitespace
+// in a value. Over HTTP/2 there is no Transfer-Encoding to put back.
+func responseHeadersRecord(resp *http.Response) map[string]string {
+	out := flattenHeaders(resp.Header)
+	restore := func(name, value string) {
+		if _, ok := out[name]; !ok {
+			out[name] = value
+		}
+	}
+	if len(resp.TransferEncoding) > 0 {
+		restore("transfer-encoding", strings.Join(resp.TransferEncoding, ", "))
+	}
+	if len(resp.Trailer) > 0 {
+		restore("trailer", strings.Join(slices.Sorted(maps.Keys(resp.Trailer)), ", "))
+	}
+	if resp.Uncompressed {
+		restore("content-encoding", "gzip")
+	}
+	bounded := resp.ContentLength >= 0 || slices.Contains(resp.TransferEncoding, "chunked")
+	if resp.Close && bounded && resp.ProtoMajor == 1 && resp.ProtoMinor >= 1 {
+		restore("connection", "close")
+	}
+	return out
+}
+
 // flattenHeaders is pi's headersToRecord(response.headers), the record every
-// adapter hands onResponse. It iterates Headers.entries(), which yields each
-// name lowercased with a repeated name's values joined by ", " in wire order —
-// except set-cookie, whose values it yields one at a time, so the record keeps
-// the last.
+// adapter hands onResponse, over a header map as sent. It iterates
+// Headers.entries(), which yields each name lowercased with a repeated name's
+// values joined by ", " in wire order — except set-cookie, whose values it
+// yields one at a time, so the record keeps the last. responseHeadersRecord
+// adds what net/http took out of the map.
 func flattenHeaders(h http.Header) map[string]string {
 	out := map[string]string{}
 	for k, v := range h {

@@ -963,7 +963,7 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 			// pi calls onResponse before the response.ok check, so error responses
 			// still surface their headers; an awaited rejection propagates to the
 			// catch (a terminal error event), so a non-nil error fails the stream.
-			if rerr := opts.OnResponse(ai.ProviderResponse{Status: resp.StatusCode, Headers: flattenHeaders(resp.Header)}, model); rerr != nil {
+			if rerr := opts.OnResponse(ai.ProviderResponse{Status: resp.StatusCode, Headers: responseHeadersRecord(resp)}, model); rerr != nil {
 				fail(rerr)
 				return
 			}

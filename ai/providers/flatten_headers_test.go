@@ -1,13 +1,17 @@
 package providers
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net"
 	"net/http"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
+
+	"github.com/sky-valley/pi/ai"
 )
 
 // responseHeadersCaptureFile is written by
@@ -37,20 +41,25 @@ func serveRaw(t *testing.T, raw string) string {
 	return "http://" + ln.Addr().String() + "/"
 }
 
-// TestFlattenHeadersMatchesPi reads each captured raw response through Go's
-// client and requires flattenHeaders to build pi's headersToRecord record:
-// names lowercased, a repeated name's values joined with ", " in wire order,
-// and set-cookie holding its last value.
-func TestFlattenHeadersMatchesPi(t *testing.T) {
+// TestResponseHeadersRecordMatchesPi reads each captured raw response through
+// Go's client and requires responseHeadersRecord to build pi's
+// headersToRecord record: names lowercased, a repeated name's values joined
+// with ", " in wire order, set-cookie holding its last value, and the
+// headers net/http takes out of its header map — Transfer-Encoding, Trailer,
+// Connection: close, and Content-Encoding of a body it gunzipped — kept as
+// undici keeps them.
+func TestResponseHeadersRecordMatchesPi(t *testing.T) {
 	data, err := os.ReadFile(responseHeadersCaptureFile)
 	if err != nil {
 		t.Fatalf("read %s: %v (regenerate it with testdata/response-headers/capture-response-headers.mts)", responseHeadersCaptureFile, err)
 	}
 	var capture struct {
 		Rows []struct {
-			Name     string            `json:"name"`
-			Response string            `json:"response"`
-			Record   map[string]string `json:"record"`
+			Name     string `json:"name"`
+			Response string `json:"response"`
+			// ResponseBase64 is the response instead when it is not text.
+			ResponseBase64 []byte            `json:"responseBase64"`
+			Record         map[string]string `json:"record"`
 		} `json:"rows"`
 	}
 	if err := json.Unmarshal(data, &capture); err != nil {
@@ -61,15 +70,72 @@ func TestFlattenHeadersMatchesPi(t *testing.T) {
 	}
 	for _, row := range capture.Rows {
 		t.Run(row.Name, func(t *testing.T) {
-			resp, err := http.Get(serveRaw(t, row.Response))
+			raw := row.Response
+			if row.ResponseBase64 != nil {
+				raw = string(row.ResponseBase64)
+			}
+			resp, err := http.Get(serveRaw(t, raw))
 			if err != nil {
 				t.Fatal(err)
 			}
 			defer resp.Body.Close()
 			_, _ = io.ReadAll(resp.Body)
-			if got := flattenHeaders(resp.Header); !reflect.DeepEqual(got, row.Record) {
-				t.Errorf("flattenHeaders = %v, want pi's %v", got, row.Record)
+			if got := responseHeadersRecord(resp); !reflect.DeepEqual(got, row.Record) {
+				t.Errorf("responseHeadersRecord = %v, want pi's %v", got, row.Record)
 			}
 		})
+	}
+}
+
+// TestOnResponseGetsTheRecordPiHands requires the anthropic and pi-messages
+// adapters to hand OnResponse the record TestResponseHeadersRecordMatchesPi
+// pins — for the chunked event stream they read, Transfer-Encoding included —
+// by serving each captured response to each adapter.
+func TestOnResponseGetsTheRecordPiHands(t *testing.T) {
+	data, err := os.ReadFile(responseHeadersCaptureFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capture struct {
+		Rows []struct {
+			Name           string            `json:"name"`
+			Response       string            `json:"response"`
+			ResponseBase64 []byte            `json:"responseBase64"`
+			Record         map[string]string `json:"record"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatal(err)
+	}
+	adapters := map[string]func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessageEventStream{
+		"anthropic": func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessageEventStream {
+			model := &ai.Model{ID: "claude-test", Api: ai.APIAnthropicMessages, Provider: "anthropic", BaseURL: baseURL, MaxTokens: 4096}
+			return StreamAnthropic(context.Background(), model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("Hello", 1)}}), &AnthropicOptions{StreamOptions: opts})
+		},
+		"pi-messages": func(baseURL string, opts ai.StreamOptions) *ai.AssistantMessageEventStream {
+			return StreamPiMessages(context.Background(), piMessagesTestModel(baseURL), ai.NormalizeContext(piMessagesTestContext()), &PiMessagesOptions{StreamOptions: opts})
+		},
+	}
+	for _, row := range capture.Rows {
+		raw := row.Response
+		if row.ResponseBase64 != nil {
+			raw = string(row.ResponseBase64)
+		}
+		for name, stream := range adapters {
+			t.Run(row.Name+"/"+name, func(t *testing.T) {
+				var got map[string]string
+				opts := ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+					APIKey: "k",
+					OnResponse: func(r ai.ProviderResponse, _ *ai.Model) error {
+						got = r.Headers
+						return nil
+					},
+				}}
+				stream(strings.TrimSuffix(serveRaw(t, raw), "/"), opts).Result()
+				if !reflect.DeepEqual(got, row.Record) {
+					t.Errorf("OnResponse headers = %v, want pi's %v", got, row.Record)
+				}
+			})
+		}
 	}
 }
