@@ -410,6 +410,22 @@ func TestOpenAIStreamJSONFailsOnDeepNesting(t *testing.T) {
 	}
 }
 
+// A line past the reader's limit fails the stream with the port's own error,
+// which says the limit is the port's and what to report: the SDK's
+// LineDecoder reads a line of any length.
+func TestOpenAIStreamLineLimitSaysItIsThePorts(t *testing.T) {
+	body := "data: {\"id\":\"" + strings.Repeat("x", maxOpenAISSELine) + "\"}\n\n"
+	err := iterateOpenAIStream(strings.NewReader(body), context.Background(), func(openaiStreamItem) error { return nil })
+	want := "an openai stream line is longer than the port's 16 MiB limit (pi reads a line of any length); this is a port limit, report it with the provider and model: bufio.Scanner: token too long"
+	if err == nil || err.Error() != want || !errors.Is(err, bufio.ErrTooLong) {
+		t.Fatalf("err = %v, want %q wrapping bufio.ErrTooLong", err, want)
+	}
+	under := "data: {\"id\":\"" + strings.Repeat("x", maxOpenAISSELine-20) + "\"}\n\n"
+	if err := iterateOpenAIStream(strings.NewReader(under), context.Background(), func(openaiStreamItem) error { return nil }); err != nil {
+		t.Fatalf("a line just under the limit: %v", err)
+	}
+}
+
 // The line splitter ends lines where the SDK's LineDecoder does wherever the
 // reads cut a line ending: "\r\n" is one line ending even when a read ends
 // between its two bytes, so a "\r" at the end of what has been read waits for

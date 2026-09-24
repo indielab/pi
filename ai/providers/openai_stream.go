@@ -46,6 +46,8 @@ const utf8BOM = "\xef\xbb\xbf"
 // own whitespace around a value, so data padded with anything else (U+00A0,
 // U+FEFF, U+0085, VT, FF) does not parse.
 //
+// A line longer than maxOpenAISSELine fails the reading, a port limit.
+//
 // A read that fails ends the reading where the SDK's does: the LineDecoder is
 // flushed only at the body's end, so a line still waiting for its ending is
 // dropped. A cancelled request ends the stream rather than failing it, as the
@@ -58,7 +60,7 @@ const utf8BOM = "\xef\xbb\xbf"
 func readOpenAISSE(body io.Reader, ctx context.Context, dispatch func(openaiSSEEvent) error) error {
 	chunks := &openaiSSEChunkReader{body: body}
 	scanner := bufio.NewScanner(chunks)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxOpenAISSELine)
 	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
 		return scanOpenAISSELines(data, atEOF && chunks.err == io.EOF)
 	})
@@ -90,10 +92,18 @@ func readOpenAISSE(body io.Reader, ctx context.Context, dispatch func(openaiSSEE
 		}
 	}
 	if err := scanner.Err(); err != nil && (ctx == nil || ctx.Err() == nil) {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return fmt.Errorf("an openai stream line is longer than the port's %d MiB limit (pi reads a line of any length); this is a port limit, report it with the provider and model: %w", maxOpenAISSELine>>20, err)
+		}
 		return err
 	}
 	return nil
 }
+
+// maxOpenAISSELine is the longest line readOpenAISSE reads. The SDK's
+// LineDecoder has no limit; a longer line fails the stream with the port's
+// own error.
+const maxOpenAISSELine = 16 << 20
 
 // openaiSSEChunkReader is the SDK's iterSSEChunks: it passes the body on only
 // up to the end of its last event separator ("\n\n", "\r\r" or "\r\n\r\n",
