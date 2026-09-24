@@ -816,6 +816,14 @@ const scenarios: Scenario[] = [
 		segments: [sse(text("brotli"), stop)],
 	},
 	{
+		name: "a malformed response fails the fetch",
+		note: "fetch rejects with TypeError: fetch failed before the SDK sees a response, so there is no start",
+		status: "HTTP/1.1 OK 200",
+		framing: "close",
+		headers: eventStream,
+		segments: [sse(text("never"), stop)],
+	},
+	{
 		name: "a 204 response has no body to read",
 		note: "fetch gives a 204 or 205 a null body whatever the server sends, and processStreamResponse throws on the first iteration, after start",
 		status: "HTTP/1.1 204 No Content",

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
@@ -1013,6 +1014,54 @@ func TestGoogleNeverCallsOnResponse(t *testing.T) {
 				t.Fatalf("stop reason %s (%s), want %s", final.StopReason, final.ErrorMessage, tc.want)
 			}
 		})
+	}
+}
+
+// TestGoogleRefusedConnectionFailsFetch: a request that gets no response
+// fails as fetch rejects it in pi, with undici's "fetch failed" and no start
+// event, not with net/http's error text. Measured against pi's stream at
+// 8676a0dcd (node v26.4.0): a closed port gives [error] "fetch failed". The
+// malformed-response case is the capture's "a malformed response fails the
+// fetch".
+func TestGoogleRefusedConnectionFailsFetch(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseURL := "http://" + ln.Addr().String()
+	ln.Close()
+	var types []string
+	stream := StreamGoogle(context.Background(), googleCaptureModel(baseURL),
+		ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}})
+	for ev := range stream.Events() {
+		types = append(types, string(ev.Type))
+	}
+	final := stream.Result()
+	if !slices.Equal(types, []string{"error"}) || final.StopReason != ai.StopError || final.ErrorMessage != "fetch failed" {
+		t.Fatalf("stream %v, stop %s %q; pi: [error], error \"fetch failed\"", types, final.StopReason, final.ErrorMessage)
+	}
+}
+
+// TestGoogleHeaderTimeoutIsNotFetchFailed: the port's own response-header
+// timeout (TimeoutMs; pi's google adapter gives @google/genai no timeout)
+// keeps net/http's timeout text rather than passing for pi's "fetch failed",
+// so the error still says what the caller can change.
+func TestGoogleHeaderTimeoutIsNotFetchFailed(t *testing.T) {
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	defer close(release)
+	final := StreamGoogle(context.Background(), googleCaptureModel(server.URL),
+		ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", TimeoutMs: 50}}}).Result()
+	if final.StopReason != ai.StopError || !strings.Contains(final.ErrorMessage, "timeout awaiting response headers") {
+		t.Fatalf("stop %s %q; want net/http's response-header timeout", final.StopReason, final.ErrorMessage)
 	}
 }
 

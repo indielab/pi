@@ -4112,6 +4112,49 @@
 			}
 		},
 		{
+			"name": "a malformed response fails the fetch",
+			"note": "fetch rejects with TypeError: fetch failed before the SDK sees a response, so there is no start",
+			"status": "HTTP/1.1 OK 200",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"never\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "fetch failed",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
 			"name": "a 204 response has no body to read",
 			"note": "fetch gives a 204 or 205 a null body whatever the server sends, and processStreamResponse throws on the first iteration, after start",
 			"status": "HTTP/1.1 204 No Content",

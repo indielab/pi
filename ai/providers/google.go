@@ -15,6 +15,7 @@ import (
 	"maps"
 	"math"
 	"net/http"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -456,7 +457,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, nil))
 		if err != nil {
-			fail(err)
+			fail(googleFetchError(err))
 			return
 		}
 		defer resp.Body.Close()
@@ -1636,6 +1637,20 @@ func googleResponseBody(resp *http.Response) (io.Reader, error) {
 		}
 	}
 	return body, nil
+}
+
+// googleFetchError is the error pi reports when the request gets no response:
+// fetch rejects with undici's TypeError "fetch failed" (a refused or dropped
+// connection, a malformed response), and neither @google/genai nor pi's catch
+// adds to that message. A timeout keeps net/http's text: it is the port's
+// own ResponseHeaderTimeout, since pi's google adapter gives the SDK no
+// timeout at all.
+func googleFetchError(err error) error {
+	var sent *url.Error
+	if errors.As(err, &sent) && sent.Op == "Post" && !sent.Timeout() {
+		return errors.New("fetch failed")
+	}
+	return err
 }
 
 // codedBody undoes one content coding the way undici's decoding pipeline
