@@ -29,8 +29,10 @@ type piMessagesEventsRow struct {
 	AbortFirst bool     `json:"abortFirst"`
 	Observed   []string `json:"observed"`
 	// Pushed holds each pushed event's type; pi's null (no type) decodes to "".
-	Pushed  []string `json:"pushed"`
-	Message struct {
+	Pushed []string `json:"pushed"`
+	// PushedIndex holds each pushed event's contentIndex; null for none.
+	PushedIndex []json.RawMessage `json:"pushedIndex"`
+	Message     struct {
 		StopReason   ai.StopReason   `json:"stopReason"`
 		ErrorMessage string          `json:"errorMessage"`
 		ResponseID   string          `json:"responseId"`
@@ -64,9 +66,9 @@ func loadPiMessagesEventsCapture(t *testing.T) []piMessagesEventsRow {
 }
 
 // streamPiMessagesEvents streams body through StreamSimplePiMessages on the
-// upstream suite's model and returns the model, the type of every pushed event
-// and the final message.
-func streamPiMessagesEvents(t *testing.T, ctx context.Context, body string, opts ai.StreamOptions) (*ai.Model, []string, *ai.AssistantMessage) {
+// upstream suite's model and returns the model, every pushed event and the
+// final message.
+func streamPiMessagesEvents(t *testing.T, ctx context.Context, body string, opts ai.StreamOptions) (*ai.Model, []ai.AssistantMessageEvent, *ai.AssistantMessage) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
@@ -76,11 +78,50 @@ func streamPiMessagesEvents(t *testing.T, ctx context.Context, body string, opts
 	model := piMessagesTestModel(server.URL + "/v1")
 	opts.APIKey = "test-key"
 	stream := StreamSimplePiMessages(ctx, model, ai.NormalizeContext(piMessagesTestContext()), &ai.SimpleStreamOptions{StreamOptions: opts})
-	var pushed []string
+	var pushed []ai.AssistantMessageEvent
 	for ev := range stream.Events() {
-		pushed = append(pushed, string(ev.Type))
+		pushed = append(pushed, ev)
 	}
 	return model, pushed, stream.Result()
+}
+
+// assertPiMessagesPushedMatchesPi compares the pushed events with pi's: their
+// types, and the contentIndex of each per-block event. pi's event carries the
+// wire event's own contentIndex; the port's carries the slot that value
+// addresses (see rawPropertyKey), or -1 when it addresses none, since an int
+// cannot hold what pi's event then holds ("01", 1.5, undefined).
+func assertPiMessagesPushedMatchesPi(t *testing.T, row piMessagesEventsRow, pushed []ai.AssistantMessageEvent) {
+	t.Helper()
+	types := make([]string, len(pushed))
+	for i, ev := range pushed {
+		types[i] = string(ev.Type)
+	}
+	if !reflect.DeepEqual(types, row.Pushed) {
+		t.Errorf("pushed = %q, want %q", types, row.Pushed)
+		return
+	}
+	if len(row.PushedIndex) != len(pushed) {
+		t.Fatalf("capture has %d pushed indices for %d pushed events", len(row.PushedIndex), len(pushed))
+	}
+	for i, ev := range pushed {
+		switch ev.Type {
+		case ai.EventTextStart, ai.EventTextDelta, ai.EventTextEnd,
+			ai.EventThinkingStart, ai.EventThinkingDelta, ai.EventThinkingEnd,
+			ai.EventToolCallStart, ai.EventToolCallDelta, ai.EventToolCallEnd:
+		default:
+			continue
+		}
+		_, slot, isSlot, err := rawPropertyKey(row.PushedIndex[i])
+		if err != nil {
+			t.Fatalf("pushed event %d: pi's contentIndex %s: %v", i, row.PushedIndex[i], err)
+		}
+		if !isSlot {
+			slot = -1
+		}
+		if ev.ContentIndex != slot {
+			t.Errorf("pushed event %d (%s): contentIndex = %d, want %d for pi's %s", i, ev.Type, ev.ContentIndex, slot, row.PushedIndex[i])
+		}
+	}
 }
 
 // assertPiMessagesMessageMatchesPi compares the final message with pi's. A
@@ -176,19 +217,17 @@ func TestPiMessagesEventsMatchPi(t *testing.T) {
 				t.Errorf("observed = %q, want %q", obs.observed, row.Observed)
 			}
 			obs.assertModel(model)
-			if !reflect.DeepEqual(pushed, row.Pushed) {
-				t.Errorf("pushed = %q, want %q", pushed, row.Pushed)
-			}
+			assertPiMessagesPushedMatchesPi(t, row, pushed)
 			assertPiMessagesMessageMatchesPi(t, row, final)
 			if row.V8Error != "" {
 				assertPiMessagesFrameSyntaxError(t, row)
 			}
 			if row.ThrowAt == nil {
 				_, pushed, final := streamPiMessagesEvents(t, context.Background(), row.SSE, ai.StreamOptions{})
-				if !reflect.DeepEqual(pushed, row.Pushed) {
-					t.Errorf("without an observer: pushed = %q, want %q", pushed, row.Pushed)
-				}
-				assertPiMessagesMessageMatchesPi(t, row, final)
+				t.Run("withoutObserver", func(t *testing.T) {
+					assertPiMessagesPushedMatchesPi(t, row, pushed)
+					assertPiMessagesMessageMatchesPi(t, row, final)
+				})
 			}
 		})
 	}

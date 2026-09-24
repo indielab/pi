@@ -116,16 +116,22 @@ func rawCount(raw json.RawMessage) (int, bool) {
 	return int(f), true
 }
 
-// rawArrayIndex reads raw as `array[raw]` reads it when that addresses a slot:
-// a number that is an array index, a whole number in [0, 2^32-1) (-0 and 1.0
-// included). ok is false for any other value, which in JavaScript names an
-// ordinary property of the array, not a slot.
-func rawArrayIndex(raw json.RawMessage) (int, bool) {
-	f, ok := rawNumber(raw)
-	if !ok || f != math.Trunc(f) || f < 0 || f >= math.MaxUint32 || f >= float64(math.MaxInt) {
-		return 0, false
+// rawPropertyKey is the property key `object[raw]` looks up — ToPropertyKey,
+// which for every value JSON holds is String(raw) (rawToString, whose error it
+// returns) — and, when that key is an array index (jstext.ArrayIndexKey), the
+// slot it addresses in an array. So "1", [1] and 1.0 all address slot 1 and
+// -0 slot 0, while "01", 1.5, -1, 2^32-1 and an absent value ("undefined")
+// name an ordinary property of the array. An index past the int range (on a
+// 32-bit platform) is reported as no slot.
+func rawPropertyKey(raw json.RawMessage) (key string, slot int, isSlot bool, err error) {
+	key, err = rawToString(raw)
+	if err != nil {
+		return "", 0, false, err
 	}
-	return int(f), true
+	if index, ok := jstext.ArrayIndexKey(key); ok && uint64(index) <= math.MaxInt {
+		return key, int(index), true, nil
+	}
+	return key, 0, false, nil
 }
 
 // rawToString is String(value), which `+` and a template literal apply: the

@@ -15,6 +15,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
@@ -46,21 +47,27 @@ type PiMessagesOptions struct {
 // event variant; the converter reads only the fields its `type` implies. Port
 // of PiMessagesEvent.
 type piMessagesEvent struct {
-	Type         string
-	ContentIndex int
+	Type string
+	// contentIndex is the raw value the converter looks blocks up by (see
+	// piMessagesConverter.ref); nil when absent.
+	contentIndex json.RawMessage
 	// Delta is the delta the pushed event carries: the event's own when it is
 	// a string. delta is the raw value, whose String() pi's `+=` appends (5 as
 	// "5", an absent delta as "undefined").
-	Delta     string
-	delta     json.RawMessage
+	Delta string
+	delta json.RawMessage
+	// Content and Signature are what text_end and thinking_end assign, whether
+	// or not the event carries them: absent, they clear the block's.
 	Content   string
-	Signature *string
+	Signature string
 	Redacted  bool
 	ID        string
 	ToolName  string
-	ToolCall  *ai.ToolCall
-	Reason    ai.StopReason
-	Usage     *ai.Usage
+	// toolCall is the raw toolCall toolcall_end assigns onto its block (see
+	// assignPiMessagesToolCall); nil when absent.
+	toolCall json.RawMessage
+	Reason   ai.StopReason
+	Usage    *ai.Usage
 	// ResponseID is the backend's response id.
 	ResponseID string
 	// ProviderThinkingLevel is the effort the upstream provider actually ran the
@@ -81,25 +88,14 @@ type piMessagesEvent struct {
 // string, bool or int reads as absent unless it is that type (a count accepts
 // any finite number: the 10.0 a non-JavaScript backend writes is 10).
 func piMessagesEventOf(o rawObject) piMessagesEvent {
-	ev := piMessagesEvent{delta: o["delta"]}
+	ev := piMessagesEvent{contentIndex: o["contentIndex"], delta: o["delta"], toolCall: o["toolCall"]}
 	ev.Type, _ = rawString(o["type"])
-	// A contentIndex that addresses no slot (absent, a string, fractional,
-	// negative) reads as 0, the port's reading of an absent one.
-	ev.ContentIndex, _ = rawArrayIndex(o["contentIndex"])
 	ev.Delta, _ = rawString(o["delta"])
 	ev.Content, _ = rawString(o["content"])
-	if s, ok := rawString(o["contentSignature"]); ok {
-		ev.Signature = &s
-	}
+	ev.Signature, _ = rawString(o["contentSignature"])
 	ev.Redacted = jsonValueKind(o["redacted"]) == 't'
 	ev.ID, _ = rawString(o["id"])
 	ev.ToolName, _ = rawString(o["toolName"])
-	if jsonValueKind(o["toolCall"]) == '{' {
-		var tc ai.ToolCall
-		if json.Unmarshal(o["toolCall"], &tc) == nil {
-			ev.ToolCall = &tc
-		}
-	}
 	if reason, ok := rawString(o["reason"]); ok {
 		ev.Reason = ai.StopReason(reason)
 	}
@@ -288,9 +284,16 @@ func appendPiMessagesRewriteDiagnostic(msg *ai.AssistantMessage, details map[str
 // stream, converting each backend event into a unified AssistantMessageEvent.
 // Port of createEventConverter (1:1 on event semantics).
 type piMessagesConverter struct {
-	model    *ai.Model
-	partial  *ai.AssistantMessage
-	toolJSON map[int]string
+	model   *ai.Model
+	partial *ai.AssistantMessage
+	// named holds the blocks pi stores under a contentIndex that is no array
+	// index: ordinary properties of its content array, which are not content.
+	named map[string]ai.Content
+	// toolJSON is pi's toolJson Map of each tool call's streamed arguments.
+	toolJSON map[piMessagesMapKey]string
+	// events counts the converted events, which gives an object or array key
+	// the identity of the event that carried it.
+	events int
 }
 
 func newPiMessagesConverter(model *ai.Model) *piMessagesConverter {
@@ -305,23 +308,162 @@ func newPiMessagesConverter(model *ai.Model) *piMessagesConverter {
 			StopReason: ai.StopPending,
 			Timestamp:  nowMillis(),
 		},
-		toolJSON: map[int]string{},
+		named:    map[string]ai.Content{},
+		toolJSON: map[piMessagesMapKey]string{},
 	}
 }
 
-// ensureContent grows the partial content slice so index i is addressable,
-// mirroring JS array assignment past the current length (holes become nil).
-func (c *piMessagesConverter) ensureContent(i int) {
-	for len(c.partial.Content) <= i {
+// piMessagesBlockRef is `partial.content[event.contentIndex]`, which looks
+// up the property key String(contentIndex) (rawPropertyKey): a slot of the
+// content array when that key is an array index ("1", [1] and 1.0 all address
+// slot 1), and an ordinary property of the array otherwise ("01", 1.5, -1, an
+// absent index as "undefined"). The array's own length and its inherited
+// members are not modelled: a key naming one reads as an unset property.
+type piMessagesBlockRef struct {
+	name   string
+	slot   int
+	isSlot bool
+}
+
+// ref resolves contentIndex. Its error is V8's TypeError for an index with no
+// string form, which pi throws evaluating the property access.
+func (c *piMessagesConverter) ref(contentIndex json.RawMessage) (piMessagesBlockRef, error) {
+	name, slot, isSlot, err := rawPropertyKey(contentIndex)
+	return piMessagesBlockRef{name: name, slot: slot, isSlot: isSlot}, err
+}
+
+// get reads the block r addresses: nil where pi reads undefined — an unset
+// property, a slot past the end of the array, or a hole in it.
+func (c *piMessagesConverter) get(r piMessagesBlockRef) ai.Content {
+	if !r.isSlot {
+		return c.named[r.name]
+	}
+	if r.slot >= len(c.partial.Content) {
+		return nil
+	}
+	return c.partial.Content[r.slot]
+}
+
+// set stores block where r addresses it. A slot past the end of the array
+// grows it, as JS array assignment does, leaving holes (nil) between.
+func (c *piMessagesConverter) set(r piMessagesBlockRef, block ai.Content) {
+	if !r.isSlot {
+		c.named[r.name] = block
+		return
+	}
+	for len(c.partial.Content) <= r.slot {
 		c.partial.Content = append(c.partial.Content, nil)
 	}
+	c.partial.Content[r.slot] = block
+}
+
+// pushedIndex is the contentIndex of the event the port pushes: the slot, or
+// -1 when the event's index addresses none. pi's pushed event carries the
+// event's own contentIndex, a value an int cannot hold when it is not a slot.
+func (r piMessagesBlockRef) pushedIndex() int {
+	if r.isSlot {
+		return r.slot
+	}
+	return -1
+}
+
+// piMessagesMapKey is a key of pi's toolJson Map, which compares keys by
+// SameValueZero: a primitive by its value (0 and -0 alike, "0" apart from 0),
+// and an object or array — a fresh value in every parsed event — by identity,
+// so it matches no other event's.
+type piMessagesMapKey struct {
+	kind  byte // jsonValueKind of the value; 0 for undefined
+	num   float64
+	str   string
+	event int // the carrying event, for an object or array
+}
+
+func (c *piMessagesConverter) mapKey(raw json.RawMessage) piMessagesMapKey {
+	if raw == nil {
+		return piMessagesMapKey{}
+	}
+	if n, ok := rawNumber(raw); ok {
+		return piMessagesMapKey{kind: '0', num: n}
+	}
+	switch kind := jsonValueKind(raw); kind {
+	case '"':
+		s, _ := rawString(raw)
+		return piMessagesMapKey{kind: kind, str: s}
+	case '{', '[':
+		return piMessagesMapKey{kind: kind, event: c.events}
+	default: // null, true, false
+		return piMessagesMapKey{kind: kind}
+	}
+}
+
+// The TypeErrors V8 throws where pi's converter reaches a block that is not
+// there: `block.text += delta` reads a property of it, `block.arguments = x`
+// sets one, and Object.assign converts it to an object.
+func readOfUndefined(key string) error {
+	return fmt.Errorf("Cannot read properties of undefined (reading '%s')", key)
+}
+
+func setOnUndefined(key string) error {
+	return fmt.Errorf("Cannot set properties of undefined (setting '%s')", key)
+}
+
+var errAssignToUndefined = errors.New("Cannot convert undefined or null to object")
+
+// assignPiMessagesToolCall is toolcall_end's `Object.assign(block, toolCall)`:
+// each member the event's toolCall holds replaces the block's, and a member it
+// lacks leaves the block's standing — the arguments its deltas built, for one.
+// A null arguments is assigned as null. A toolCall that is not an object
+// assigns nothing a tool call holds.
+//
+// pi assigns onto the block it has, whatever that is, and the block then
+// carries the toolCall's type beside its own members. The port's block types
+// cannot mix, so a text or thinking block becomes a tool call when the toolCall
+// says `"type":"toolCall"`, and stays as it is otherwise. A member Go cannot
+// hold in its field (a non-string id) is left as it was.
+func assignPiMessagesToolCall(block ai.Content, raw json.RawMessage) ai.Content {
+	o := rawOptional(raw)
+	if o == nil {
+		return block
+	}
+	tc, ok := block.(ai.ToolCall)
+	if !ok {
+		if typ, _ := rawString(o["type"]); typ != "toolCall" {
+			return block
+		}
+	}
+	if s, ok := rawString(o["id"]); ok {
+		tc.ID = s
+	}
+	if s, ok := rawString(o["name"]); ok {
+		tc.Name = s
+	}
+	switch args := o["arguments"]; jsonValueKind(args) {
+	case '{':
+		if m, order, err := ai.DecodeOrderedObject(args); err == nil {
+			tc.Arguments, tc.ArgumentsOrder = m, order
+		}
+	case 'n':
+		tc.Arguments, tc.ArgumentsOrder = nil, nil
+	}
+	if s, ok := rawString(o["thoughtSignature"]); ok {
+		tc.ThoughtSignature = s
+	}
+	if s, ok := rawString(o["namespace"]); ok {
+		tc.Namespace = s
+	}
+	return tc
 }
 
 // convert applies one event to the partial message and returns the event to
-// push. Its error is the TypeError pi's `+=` throws on a delta with no string
-// form (see rawToString), which fails the stream.
+// push. Its error is a TypeError pi's converter throws, which fails the
+// stream: an index or delta with no string form (see rawToString), or an event
+// for a block that was never started.
+//
+// An event for a block of another kind than its type implies (a text_delta
+// into a thinking block) gives pi's block a stray property the port's block
+// types cannot hold; the port leaves the block as it is.
 func (c *piMessagesConverter) convert(ev piMessagesEvent) (ai.AssistantMessageEvent, error) {
-	idx := ev.ContentIndex
+	c.events++
 	switch ev.Type {
 	case "done":
 		c.partial.StopReason = ev.Reason
@@ -348,82 +490,126 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) (ai.AssistantMessageEv
 		return ai.AssistantMessageEvent{Type: ai.EventError, Reason: ev.Reason, Error: c.partial}, nil
 	case "start":
 		return ai.AssistantMessageEvent{Type: ai.EventStart, Partial: c.partial.Clone()}, nil
-	case "text_start":
-		c.ensureContent(idx)
-		c.partial.Content[idx] = ai.TextContent{Text: ""}
-		return ai.AssistantMessageEvent{Type: ai.EventTextStart, ContentIndex: idx, Partial: c.partial.Clone()}, nil
-	case "text_delta":
-		if tc, ok := c.partial.Content[idx].(ai.TextContent); ok {
-			piece, err := rawToString(ev.delta)
-			if err != nil {
-				return ai.AssistantMessageEvent{}, err
-			}
-			tc.Text += piece
-			c.partial.Content[idx] = tc
+	case "text_start", "thinking_start":
+		r, err := c.ref(ev.contentIndex)
+		if err != nil {
+			return ai.AssistantMessageEvent{}, err
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}, nil
-	case "text_end":
-		if tc, ok := c.partial.Content[idx].(ai.TextContent); ok {
-			tc.Text = ev.Content
-			if ev.Signature != nil {
-				tc.TextSignature = *ev.Signature
-			}
-			c.partial.Content[idx] = tc
+		pushed := ai.EventTextStart
+		var block ai.Content = ai.TextContent{Text: ""}
+		if ev.Type == "thinking_start" {
+			pushed, block = ai.EventThinkingStart, ai.ThinkingContent{Thinking: ""}
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventTextEnd, ContentIndex: idx, Content: ev.Content, Partial: c.partial.Clone()}, nil
-	case "thinking_start":
-		c.ensureContent(idx)
-		c.partial.Content[idx] = ai.ThinkingContent{Thinking: ""}
-		return ai.AssistantMessageEvent{Type: ai.EventThinkingStart, ContentIndex: idx, Partial: c.partial.Clone()}, nil
-	case "thinking_delta":
-		if tc, ok := c.partial.Content[idx].(ai.ThinkingContent); ok {
-			piece, err := rawToString(ev.delta)
-			if err != nil {
-				return ai.AssistantMessageEvent{}, err
-			}
-			tc.Thinking += piece
-			c.partial.Content[idx] = tc
+		c.set(r, block)
+		return ai.AssistantMessageEvent{Type: pushed, ContentIndex: r.pushedIndex(), Partial: c.partial.Clone()}, nil
+	case "text_delta", "thinking_delta":
+		// pi: `(partial.content[i] as {text}).text += event.delta` (thinking
+		// alike): the block's property is read before the delta converts.
+		r, err := c.ref(ev.contentIndex)
+		if err != nil {
+			return ai.AssistantMessageEvent{}, err
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}, nil
-	case "thinking_end":
-		if tc, ok := c.partial.Content[idx].(ai.ThinkingContent); ok {
-			tc.Thinking = ev.Content
-			if ev.Signature != nil {
-				tc.ThinkingSignature = *ev.Signature
-			}
-			tc.Redacted = ev.Redacted
-			c.partial.Content[idx] = tc
+		pushed, member := ai.EventTextDelta, "text"
+		if ev.Type == "thinking_delta" {
+			pushed, member = ai.EventThinkingDelta, "thinking"
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: idx, Content: ev.Content, Partial: c.partial.Clone()}, nil
-	case "toolcall_start":
-		c.ensureContent(idx)
-		c.partial.Content[idx] = ai.ToolCall{ID: ev.ID, Name: ev.ToolName, Arguments: map[string]any{}}
-		c.toolJSON[idx] = ""
-		return ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: idx, Partial: c.partial.Clone()}, nil
-	case "toolcall_delta":
+		block := c.get(r)
+		if block == nil {
+			return ai.AssistantMessageEvent{}, readOfUndefined(member)
+		}
 		piece, err := rawToString(ev.delta)
 		if err != nil {
 			return ai.AssistantMessageEvent{}, err
 		}
-		j := c.toolJSON[idx] + piece
-		c.toolJSON[idx] = j
-		if tc, ok := c.partial.Content[idx].(ai.ToolCall); ok {
+		switch b := block.(type) {
+		case ai.TextContent:
+			if member == "text" {
+				b.Text += piece
+				c.set(r, b)
+			}
+		case ai.ThinkingContent:
+			if member == "thinking" {
+				b.Thinking += piece
+				c.set(r, b)
+			}
+		}
+		return ai.AssistantMessageEvent{Type: pushed, ContentIndex: r.pushedIndex(), Delta: ev.Delta, Partial: c.partial.Clone()}, nil
+	case "text_end":
+		r, err := c.ref(ev.contentIndex)
+		if err != nil {
+			return ai.AssistantMessageEvent{}, err
+		}
+		block := c.get(r)
+		if block == nil {
+			return ai.AssistantMessageEvent{}, errAssignToUndefined
+		}
+		if tc, ok := block.(ai.TextContent); ok {
+			tc.Text, tc.TextSignature = ev.Content, ev.Signature
+			c.set(r, tc)
+		}
+		return ai.AssistantMessageEvent{Type: ai.EventTextEnd, ContentIndex: r.pushedIndex(), Content: ev.Content, Partial: c.partial.Clone()}, nil
+	case "thinking_end":
+		r, err := c.ref(ev.contentIndex)
+		if err != nil {
+			return ai.AssistantMessageEvent{}, err
+		}
+		block := c.get(r)
+		if block == nil {
+			return ai.AssistantMessageEvent{}, errAssignToUndefined
+		}
+		if tc, ok := block.(ai.ThinkingContent); ok {
+			tc.Thinking, tc.ThinkingSignature, tc.Redacted = ev.Content, ev.Signature, ev.Redacted
+			c.set(r, tc)
+		}
+		return ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: r.pushedIndex(), Content: ev.Content, Partial: c.partial.Clone()}, nil
+	case "toolcall_start":
+		r, err := c.ref(ev.contentIndex)
+		if err != nil {
+			return ai.AssistantMessageEvent{}, err
+		}
+		c.set(r, ai.ToolCall{ID: ev.ID, Name: ev.ToolName, Arguments: map[string]any{}})
+		c.toolJSON[c.mapKey(ev.contentIndex)] = ""
+		return ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: r.pushedIndex(), Partial: c.partial.Clone()}, nil
+	case "toolcall_delta":
+		// pi: the buffer `${toolJson.get(i) ?? ""}${event.delta}` is built and
+		// stored before `partial.content[i].arguments` is set from it.
+		piece, err := rawToString(ev.delta)
+		if err != nil {
+			return ai.AssistantMessageEvent{}, err
+		}
+		key := c.mapKey(ev.contentIndex)
+		j := c.toolJSON[key] + piece
+		c.toolJSON[key] = j
+		r, err := c.ref(ev.contentIndex)
+		if err != nil {
+			return ai.AssistantMessageEvent{}, err
+		}
+		block := c.get(r)
+		if block == nil {
+			return ai.AssistantMessageEvent{}, setOnUndefined("arguments")
+		}
+		if tc, ok := block.(ai.ToolCall); ok {
 			tc.Arguments, tc.ArgumentsOrder = parseStreamingJSON(j)
-			c.partial.Content[idx] = tc
+			c.set(r, tc)
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: ev.Delta, Partial: c.partial.Clone()}, nil
+		return ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: r.pushedIndex(), Delta: ev.Delta, Partial: c.partial.Clone()}, nil
 	case "toolcall_end":
-		if ev.ToolCall != nil {
-			c.ensureContent(idx)
-			c.partial.Content[idx] = *ev.ToolCall
+		r, err := c.ref(ev.contentIndex)
+		if err != nil {
+			return ai.AssistantMessageEvent{}, err
 		}
-		delete(c.toolJSON, idx)
+		block := c.get(r)
+		if block == nil {
+			return ai.AssistantMessageEvent{}, errAssignToUndefined
+		}
+		block = assignPiMessagesToolCall(block, ev.toolCall)
+		c.set(r, block)
+		delete(c.toolJSON, c.mapKey(ev.contentIndex))
 		var tc *ai.ToolCall
-		if v, ok := c.partial.Content[idx].(ai.ToolCall); ok {
-			cp := v
-			tc = &cp
+		if v, ok := block.(ai.ToolCall); ok {
+			tc = &v
 		}
-		return ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: idx, ToolCall: tc, Partial: c.partial.Clone()}, nil
+		return ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: r.pushedIndex(), ToolCall: tc, Partial: c.partial.Clone()}, nil
 	}
 	// Unknown event type: emit nothing meaningful (pi returns {...event,partial}
 	// for the exhaustive-known set; an unmodeled type has no unified analogue).
@@ -617,10 +803,11 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 			stream.Push(createPiMessagesErrorEvent(model, err, aborted()))
 			stream.End()
 		}
-		// Mirror pi's streaming-block try/catch: any panic — e.g. a
-		// non-conformant backend that sends a *_delta/*_end for a contentIndex it
-		// never started — becomes a terminal error event, exactly as pi's throw is
-		// caught into createErrorEvent, rather than crashing the host process.
+		// Mirror pi's streaming-block try/catch: the converter returns the
+		// TypeErrors pi's throws (a delta or end for a block never started), and
+		// any panic past those still becomes a terminal error event, as pi's
+		// throw is caught into createErrorEvent, rather than crashing the host
+		// process.
 		defer func() {
 			if r := recover(); r != nil {
 				fail(fmt.Errorf("%v", r))

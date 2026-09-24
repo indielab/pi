@@ -19,6 +19,7 @@
 //   observed   each value onProviderStreamEvent received, as JSON.stringify
 //              text, so key order is part of the expectation;
 //   pushed     the type of every event the stream pushed (null: no type);
+//   pushedIndex the contentIndex every pushed event carries (null: none);
 //   message    stopReason, errorMessage, responseId, content and usage of the
 //              result, and the type and details of each diagnostic (not their
 //              timestamps);
@@ -190,6 +191,100 @@ const cases: Case[] = [
 		name: "deltaWithNoStringFormFails",
 		sse: framed(start, textStart) + frame('{"type":"text_delta","contentIndex":0,"delta":{"toString":1}}') + framed(textEnd, done),
 	},
+	// contentIndex is a property key of the content array: any value whose
+	// String() is a canonical array index addresses that slot ("1", [1] and
+	// 1.0 all address slot 1, -0 slot 0), and any other ("01", 1.5, -1, an
+	// absent one as "undefined") names an ordinary property, which is not
+	// content: the message never holds it, and it never clobbers a slot.
+	{
+		name: "contentIndexIsAPropertyKey",
+		sse:
+			framed(start, textStart) +
+			frame('{"type":"text_delta","contentIndex":-0,"delta":"a"}') +
+			frame('{"type":"text_start","contentIndex":"1"}') +
+			frame('{"type":"text_delta","contentIndex":[1],"delta":"b"}') +
+			frame('{"type":"text_delta","contentIndex":1.0,"delta":"c"}') +
+			frame('{"type":"text_start"}') +
+			frame('{"type":"text_delta","delta":"x"}') +
+			frame('{"type":"text_start","contentIndex":"01"}') +
+			frame('{"type":"text_delta","contentIndex":"01","delta":"y"}') +
+			frame('{"type":"thinking_start","contentIndex":1.5}') +
+			frame('{"type":"thinking_delta","contentIndex":1.5,"delta":"z"}') +
+			frame('{"type":"thinking_end","contentIndex":1.5,"content":"z"}') +
+			frame('{"type":"toolcall_start","contentIndex":-1,"id":"t1","toolName":"read"}') +
+			frame('{"type":"toolcall_delta","contentIndex":-1,"delta":"{}"}') +
+			frame('{"type":"toolcall_end","contentIndex":-1}') +
+			framed(done),
+	},
+	// The partial tool JSON is kept in a Map keyed by the contentIndex VALUE
+	// (SameValueZero), so "0" and 0 address one block but two buffers.
+	{
+		name: "toolJsonIsKeyedByTheIndexValue",
+		sse:
+			framed(start) +
+			frame('{"type":"toolcall_start","contentIndex":0,"id":"t1","toolName":"read"}') +
+			frame('{"type":"toolcall_delta","contentIndex":"0","delta":"{\\"a\\":1"}') +
+			frame('{"type":"toolcall_delta","contentIndex":0,"delta":"{\\"b\\":2"}') +
+			frame('{"type":"toolcall_delta","contentIndex":-0,"delta":",\\"c\\":3}"}') +
+			framed(done),
+	},
+	// toolcall_end is Object.assign: the end event's toolCall members replace
+	// the block's, and a member it lacks (here arguments) keeps the value the
+	// deltas built. A null member is assigned as null. An end with no toolCall
+	// leaves the block as it is.
+	{
+		name: "toolcallEndMergesIntoTheBlock",
+		sse:
+			framed(start) +
+			frame('{"type":"toolcall_start","contentIndex":0,"id":"t1","toolName":"read"}') +
+			frame('{"type":"toolcall_delta","contentIndex":0,"delta":"{\\"path\\":\\"a\\"}"}') +
+			frame('{"type":"toolcall_end","contentIndex":0,"toolCall":{"type":"toolCall","name":"read2","thoughtSignature":"sig"}}') +
+			frame('{"type":"toolcall_start","contentIndex":1,"id":"t2","toolName":"write"}') +
+			frame('{"type":"toolcall_delta","contentIndex":1,"delta":"{\\"x\\":1}"}') +
+			frame('{"type":"toolcall_end","contentIndex":1,"toolCall":{"type":"toolCall","id":"t2b","arguments":null}}') +
+			frame('{"type":"toolcall_start","contentIndex":2,"id":"t3","toolName":"ls"}') +
+			frame('{"type":"toolcall_end","contentIndex":2}') +
+			framed(done),
+	},
+	// text_end and thinking_end assign the event's contentSignature (and
+	// redacted) whether or not it carries one: a later end without one leaves
+	// the block with none.
+	{
+		name: "endAssignsAnAbsentSignature",
+		sse:
+			framed(start, textStart) +
+			frame('{"type":"text_end","contentIndex":0,"content":"a","contentSignature":"s1"}') +
+			frame('{"type":"text_end","contentIndex":0,"content":"b"}') +
+			frame('{"type":"thinking_start","contentIndex":1}') +
+			frame('{"type":"thinking_end","contentIndex":1,"content":"t","contentSignature":"s2","redacted":true}') +
+			frame('{"type":"thinking_end","contentIndex":1,"content":"u"}') +
+			framed(done),
+	},
+	// An event for a block that was never started reads a property of
+	// undefined, and V8's TypeError fails the stream: a delta reads the
+	// block's text or thinking, a toolcall_delta sets its arguments, and an end
+	// is Object.assign onto it. A hole in the array is undefined too.
+	{ name: "textDeltaWithoutBlockFails", sse: framed(start) + frame('{"type":"text_delta","contentIndex":0,"delta":"x"}') + framed(done) },
+	{
+		name: "thinkingDeltaIntoAHoleFails",
+		sse:
+			framed(start) +
+			frame('{"type":"text_start","contentIndex":2}') +
+			frame('{"type":"thinking_delta","contentIndex":1,"delta":"x"}') +
+			framed(done),
+	},
+	{ name: "textEndWithoutBlockFails", sse: framed(start) + frame('{"type":"text_end","contentIndex":3,"content":"x"}') + framed(done) },
+	{
+		name: "toolcallDeltaWithoutBlockFails",
+		sse: framed(start) + frame('{"type":"toolcall_delta","contentIndex":0,"delta":"{}"}') + framed(done),
+	},
+	{
+		name: "toolcallEndWithoutBlockFails",
+		sse:
+			framed(start) +
+			frame('{"type":"toolcall_end","contentIndex":0,"toolCall":{"type":"toolCall","id":"t1","name":"read","arguments":{}}}') +
+			framed(done),
+	},
 	// A throwing observer fails the stream with its message: on the first event,
 	{ name: "observerThrowsOnFirstEvent", sse: framed(...wireEvents), throwAt: 0 },
 	// on the terminal done event, which then never converts to done,
@@ -218,7 +313,11 @@ for (const c of cases) {
 		},
 	});
 	const pushed: Array<string | null> = [];
-	for await (const event of s) pushed.push(event.type ?? null);
+	const pushedIndex: unknown[] = [];
+	for await (const event of s) {
+		pushed.push(event.type ?? null);
+		pushedIndex.push((event as { contentIndex?: unknown }).contentIndex ?? null);
+	}
 	const message = await s.result();
 	if (c.v8Error !== undefined && !/^(Unexpected|Expected)/.test(message.errorMessage)) {
 		throw new Error(`${c.name}: not a JSON.parse failure: ${message.errorMessage}`);
@@ -231,6 +330,7 @@ for (const c of cases) {
 		...(c.abortFirst ? { abortFirst: true } : {}),
 		observed,
 		pushed,
+		pushedIndex,
 		message: {
 			stopReason: message.stopReason,
 			errorMessage: message.errorMessage ?? null,
