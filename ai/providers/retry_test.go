@@ -7,6 +7,7 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -503,7 +504,8 @@ func TestRetryFromOptionsDefaults(t *testing.T) {
 }
 
 // TestRetryAbortWinsDuringBackoff: context cancellation during the backoff
-// sleep aborts immediately instead of retrying.
+// sleep aborts immediately instead of retrying, with pi's
+// Error("Request aborted") (abortableSleep's createAbortError).
 func TestRetryAbortWinsDuringBackoff(t *testing.T) {
 	var calls int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -520,11 +522,49 @@ func TestRetryAbortWinsDuringBackoff(t *testing.T) {
 	}()
 	build := func() (*http.Request, error) { return http.NewRequestWithContext(ctx, "GET", server.URL, nil) }
 	_, err := sendWithRetry(ctx, build, retryConfig{maxRetries: 5, maxRetryDelayMs: defaultMaxRetryDelayMs, timeoutMs: defaultTimeoutMs})
-	if err == nil || ctx.Err() == nil {
-		t.Fatalf("expected context cancellation error, got %v", err)
+	if err == nil || err.Error() != "Request aborted" || ctx.Err() == nil {
+		t.Fatalf("error %v, want Request aborted after the context was cancelled", err)
 	}
 	if atomic.LoadInt32(&calls) != 1 {
 		t.Fatalf("expected 1 attempt before abort, got %d", calls)
+	}
+}
+
+// cancellingDoer cancels its context while answering with status, the way a
+// response can land just as the signal aborts.
+type cancellingDoer struct {
+	cancel context.CancelFunc
+	status int
+}
+
+func (d cancellingDoer) Do(req *http.Request) (*http.Response, error) {
+	d.cancel()
+	return &http.Response{StatusCode: d.status, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"error":{}}`)), Request: req}, nil
+}
+
+// TestRetryAbortedRequestThatFailsIsRequestAborted: retryProviderRequest
+// checks the signal in its catch, before anything else
+// (utils/provider-retry.ts at 8676a0dcd), and the SDKs throw for a non-2xx
+// response, so a failed request whose signal has aborted ends with "Request
+// aborted", while a 2xx one is returned as it is — pi's `return await
+// request()` does not look at the signal.
+func TestRetryAbortedRequestThatFailsIsRequestAborted(t *testing.T) {
+	for _, tc := range []struct {
+		status  int
+		wantErr string
+	}{{http.StatusBadRequest, "Request aborted"}, {http.StatusServiceUnavailable, "Request aborted"}, {http.StatusOK, ""}} {
+		ctx, cancel := context.WithCancel(context.Background())
+		build := func() (*http.Request, error) {
+			return http.NewRequestWithContext(ctx, "GET", "http://example.invalid", nil)
+		}
+		resp, err := sendWithRetry(ctx, build, retryConfig{maxRetries: 0, httpClient: cancellingDoer{cancel, tc.status}})
+		switch {
+		case tc.wantErr != "" && (err == nil || err.Error() != tc.wantErr):
+			t.Errorf("status %d: error %v, want %s", tc.status, err, tc.wantErr)
+		case tc.wantErr == "" && (err != nil || resp == nil || resp.StatusCode != tc.status):
+			t.Errorf("status %d: got %v, %v; want the response itself", tc.status, resp, err)
+		}
+		cancel()
 	}
 }
 

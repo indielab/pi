@@ -343,10 +343,21 @@ func retryDelay(resp *http.Response, attempt int, cfg retryConfig, providerMsg s
 	return backoffDelay(attempt), nil
 }
 
+// errRequestAborted is pi's createAbortError() (utils/provider-retry.ts):
+// retryProviderRequest throws Error("Request aborted") for a request whose
+// signal has aborted by the time it fails, and for an abort during its retry
+// wait (abortableSleep).
+var errRequestAborted = errors.New("Request aborted")
+
 // sendWithRetry issues the request built by build, retrying transient network
 // errors (like 5xx) and retryable HTTP statuses with backoff. build must
 // produce a fresh *http.Request on each call (request bodies are single-use).
 // With cfg.maxRetries == 0 (pi's default) exactly one attempt is made.
+//
+// It is pi's retryProviderRequest, which every adapter sending through it
+// wraps its SDK request in: once ctx is done, a request that fails — no
+// response, or a non-2xx one, which the SDKs throw — and a retry wait both
+// end with errRequestAborted.
 //
 // For providers pi wraps (cfg.providerError non-nil) a server-requested delay
 // above cfg.maxRetryDelayMs terminates the loop with the fail-fast error from
@@ -358,10 +369,11 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 	}
 	attempts := cfg.maxRetries + 1
 	var lastErr error
+	aborted := func() bool { return ctx != nil && ctx.Err() != nil }
 
 	for attempt := 0; attempt < attempts; attempt++ {
-		if ctx != nil && ctx.Err() != nil {
-			return nil, ctx.Err()
+		if aborted() {
+			return nil, errRequestAborted
 		}
 		req, err := build()
 		if err != nil {
@@ -369,15 +381,22 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 		}
 		resp, err := client.Do(req)
 		if err != nil {
+			if aborted() {
+				return nil, errRequestAborted
+			}
 			lastErr = err
 			if attempt == attempts-1 {
 				return nil, err
 			}
 			// No response, so no server-requested delay: pure backoff.
 			if !sleepCtx(ctx, backoffDelay(attempt)) {
-				return nil, ctx.Err()
+				return nil, errRequestAborted
 			}
 			continue
+		}
+		if (resp.StatusCode < 200 || resp.StatusCode >= 300) && aborted() {
+			readAndCloseBody(resp)
+			return nil, errRequestAborted
 		}
 		if shouldRetryResponse(resp) && attempt < attempts-1 {
 			// The body is only needed to quote the provider in a fail-fast
@@ -392,7 +411,7 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 				return nil, err
 			}
 			if !sleepCtx(ctx, delay) {
-				return nil, ctx.Err()
+				return nil, errRequestAborted
 			}
 			continue
 		}

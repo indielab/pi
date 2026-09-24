@@ -381,6 +381,12 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			fail(err)
 			return
 		}
+		// pi's buildParams ends by refusing a signal that has already
+		// aborted, before onPayload runs.
+		if ctx != nil && ctx.Err() != nil {
+			fail(errRequestAborted)
+			return
+		}
 		if opts.OnPayload != nil {
 			next, perr := opts.OnPayload(body, model)
 			if perr != nil {
