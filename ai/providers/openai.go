@@ -154,6 +154,62 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			fail(err)
 			return
 		}
+		// pi createClient (openai-completions.ts, upstream 87af49dec)
+		// builds ONE header object and hands it to the SDK as
+		// `defaultHeaders`; headerObject is that object, slots and all.
+		// It opens with pi's runtime user agent —
+		// `{"User-Agent": getPiUserAgent(), ...model.headers}` — so it is a
+		// default every later source outranks, xai included.
+		o := &headerObject{}
+		o.merge(piUserAgentHeaders())
+		// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
+		// bundle at the bottom of the precedence stack: emit session +
+		// default attribution first so model.headers and options.headers
+		// override them.
+		applyAttributionDefaults(o.set, model, opts.SessionID)
+		// Header-owned provider auth (pi resolves it in the auth layer and
+		// delivers it as options.headers, above attribution and below
+		// model/consumer headers).
+		if model.Provider == "cloudflare-ai-gateway" {
+			o.merge(cloudflareAIGatewayAuthHeaders(apiKey))
+		}
+		// pi createClient header precedence (openai-completions.ts:458-477):
+		// model.headers first, then copilot dynamic headers, then session
+		// affinity (overrides model headers), with options.headers merged last.
+		o.merge(model.Headers)
+		if model.Provider == "github-copilot" {
+			o.mergeStrings(buildCopilotDynamicHeaders(normalized.Messages, hasCopilotVisionInput(normalized.Messages)))
+		}
+		// Session-affinity headers for cache-routing providers (e.g. Fireworks).
+		// Format selects the header shape (pi openai-completions.ts:519-530).
+		if compat := getOpenAICompat(model); opts.SessionID != "" &&
+			resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone &&
+			compat.SendSessionAffinityHeaders {
+			if compat.SessionAffinityFormat == sessionAffinityOpenRouter {
+				o.set("x-session-id", opts.SessionID)
+			} else {
+				if compat.SessionAffinityFormat == sessionAffinityOpenAI {
+					o.set("session_id", opts.SessionID)
+				}
+				o.set("x-client-request-id", opts.SessionID)
+				o.set("x-session-affinity", opts.SessionID)
+			}
+		}
+		// pi options.headers (consumer) are spread last and win over
+		// everything above, including model.headers and the attribution
+		// defaults — a deletion marker here suppresses any of them.
+		o.merge(opts.Headers)
+
+		// The client is built here, in pi's createClient, before the params and
+		// onPayload, and its constructor reads the environment then (see
+		// openAIClientHeaders). The SDK sends its own Accept and the api key as
+		// its auth header in bundles below pi's object, so a deletion marker
+		// there can suppress either, and content-type in a bundle above it.
+		headers, err := openAIClientHeaders(o, apiKey)
+		if err != nil {
+			fail(err)
+			return
+		}
 		params, err := buildOpenAIParams(model, normalized, opts)
 		if err != nil {
 			fail(err)
@@ -180,61 +236,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			if err != nil {
 				return nil, err
 			}
-			// pi createClient (openai-completions.ts, upstream 87af49dec)
-			// builds ONE header object and hands it to the SDK as
-			// `defaultHeaders`; headerObject is that object, slots and all.
-			// It opens with pi's runtime user agent —
-			// `{"User-Agent": getPiUserAgent(), ...model.headers}` — so it is a
-			// default every later source outranks, xai included.
-			o := &headerObject{}
-			o.merge(piUserAgentHeaders())
-			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
-			// bundle at the bottom of the precedence stack: emit session +
-			// default attribution first so model.headers and options.headers
-			// override them.
-			applyAttributionDefaults(o.set, model, opts.SessionID)
-			// Header-owned provider auth (pi resolves it in the auth layer and
-			// delivers it as options.headers, above attribution and below
-			// model/consumer headers).
-			if model.Provider == "cloudflare-ai-gateway" {
-				o.merge(cloudflareAIGatewayAuthHeaders(apiKey))
-			}
-			// pi createClient header precedence (openai-completions.ts:458-477):
-			// model.headers first, then copilot dynamic headers, then session
-			// affinity (overrides model headers), with options.headers merged last.
-			o.merge(model.Headers)
-			if model.Provider == "github-copilot" {
-				o.mergeStrings(buildCopilotDynamicHeaders(normalized.Messages, hasCopilotVisionInput(normalized.Messages)))
-			}
-			// Session-affinity headers for cache-routing providers (e.g. Fireworks).
-			// Format selects the header shape (pi openai-completions.ts:519-530).
-			if compat := getOpenAICompat(model); opts.SessionID != "" &&
-				resolveCacheRetention(opts.CacheRetention, opts.Env) != ai.CacheNone &&
-				compat.SendSessionAffinityHeaders {
-				if compat.SessionAffinityFormat == sessionAffinityOpenRouter {
-					o.set("x-session-id", opts.SessionID)
-				} else {
-					if compat.SessionAffinityFormat == sessionAffinityOpenAI {
-						o.set("session_id", opts.SessionID)
-					}
-					o.set("x-client-request-id", opts.SessionID)
-					o.set("x-session-affinity", opts.SessionID)
-				}
-			}
-			// pi options.headers (consumer) are spread last and win over
-			// everything above, including model.headers and the attribution
-			// defaults — a deletion marker here suppresses any of them.
-			o.merge(opts.Headers)
-
-			// The SDK sends its own Accept and the api key as its auth header
-			// in bundles below pi's object, so a deletion marker there can
-			// suppress either, and content-type in a bundle above it.
-			if err := (sdkHeaders{
-				own:      openAIOwnHeaders,
-				auth:     []recordEntry{{"authorization", "Bearer " + apiKey}},
-				defaults: o,
-				body:     jsonBody,
-			}).apply(r.Header); err != nil {
+			if err := headers.apply(r.Header); err != nil {
 				return nil, err
 			}
 			return r, nil
@@ -1153,11 +1155,6 @@ func buildOpenAIParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIOp
 
 	return params, nil
 }
-
-// openAIOwnHeaders is the bundle openai's buildHeaders writes for itself ahead
-// of its auth header: `Accept: application/json`, whether or not the request
-// streams (openai 6.40.0 client.buildHeaders).
-var openAIOwnHeaders = []recordEntry{{"accept", "application/json"}}
 
 // clientAPIKey ports pi's getClientApiKey (129eb460): when the request carries
 // no api key but its options headers supply an authorization or

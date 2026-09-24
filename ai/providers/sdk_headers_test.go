@@ -26,7 +26,8 @@ var sdkAdapters = []string{"openai-completions", "openai-responses", "anthropic-
 // stream's final message.
 func runSDKWire(t *testing.T, adapter string, modelHeaders ai.ProviderHeaders, opts ai.StreamOptions) (http.Header, *ai.AssistantMessage) {
 	t.Helper()
-	sse := map[string]string{"openai-completions": attrDoneSSE, "openai-responses": responsesSSE, "anthropic-messages": anthropicSSE}[adapter]
+	sse := map[string]string{"openai-completions": attrDoneSSE, "openai-completions-groq": attrDoneSSE,
+		"openai-responses": responsesSSE, "anthropic-messages": anthropicSSE}[adapter]
 	var got http.Header
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		got = r.Header.Clone()
@@ -40,6 +41,9 @@ func runSDKWire(t *testing.T, adapter string, modelHeaders ai.ProviderHeaders, o
 	switch adapter {
 	case "openai-completions":
 		model.ID, model.Api, model.Provider = "gpt-test", ai.APIOpenAICompletions, "openai"
+		final = StreamOpenAICompletions(context.Background(), model, req, &OpenAIOptions{StreamOptions: opts}).Result()
+	case "openai-completions-groq":
+		model.ID, model.Api, model.Provider = "llama", ai.APIOpenAICompletions, "groq"
 		final = StreamOpenAICompletions(context.Background(), model, req, &OpenAIOptions{StreamOptions: opts}).Result()
 	case "openai-responses":
 		model.ID, model.Api, model.Provider = "gpt-test", ai.APIOpenAIResponses, "openai"

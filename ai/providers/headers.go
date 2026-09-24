@@ -3,6 +3,7 @@ package providers
 import (
 	"fmt"
 	"net/http"
+	"os"
 	"slices"
 	"sort"
 	"strings"
@@ -143,19 +144,68 @@ func (o *headerObject) mergeStrings(source map[string]string) {
 // by slot, on the name and then on the value. buildHeaders deletes a name from
 // its Headers before it first appends one, and a marker is that delete alone,
 // so the name is checked, and refused, by Headers.delete.
-func (o *headerObject) applyAsDefaultHeaders(h http.Header) error {
+func (o *headerObject) applyAsDefaultHeaders(h http.Header) error { return o.fold(h, nil) }
+
+// fold is buildHeaders' loop over one plain-object bundle (see
+// applyAsDefaultHeaders). When nulls is not nil it also keeps the Headers'
+// `nulls`: the names a marker left deleted, by canonical key, which a later
+// fold over the result deletes again (see builtHeaders).
+func (o *headerObject) fold(h http.Header, nulls map[string]bool) error {
 	for _, name := range o.names {
 		if err := checkHeaderName("Headers.delete", name); err != nil {
 			return err
 		}
+		key := http.CanonicalHeaderKey(name)
 		value := o.values[name]
 		if value == nil {
 			h.Del(name)
+			if nulls != nil {
+				nulls[key] = true
+			}
 			continue
 		}
 		if err := setHeader(h, name, *value); err != nil {
 			return err
 		}
+		delete(nulls, key)
+	}
+	return nil
+}
+
+// defaultHeaders is a client's `defaultHeaders` option as its buildHeaders
+// reads it: pi's header object, or the Headers a client built from it at
+// construction (builtHeaders).
+type defaultHeaders interface {
+	applyAsDefaultHeaders(h http.Header) error
+}
+
+// builtHeaders is what buildHeaders returns: a Headers object, every value in
+// it converted and checked already, and the names a marker left deleted.
+// openai's constructor keeps one as its defaultHeaders when
+// OPENAI_CUSTOM_HEADERS is set (see openAIClientHeaders), so writing it at
+// request time cannot fail.
+type builtHeaders struct {
+	header http.Header
+	nulls  map[string]bool
+}
+
+// buildDefaultHeaders is buildHeaders over plain-object bundles, in order.
+func buildDefaultHeaders(bundles ...*headerObject) (builtHeaders, error) {
+	b := builtHeaders{header: http.Header{}, nulls: map[string]bool{}}
+	for _, o := range bundles {
+		if err := o.fold(b.header, b.nulls); err != nil {
+			return builtHeaders{}, err
+		}
+	}
+	return b, nil
+}
+
+func (b builtHeaders) applyAsDefaultHeaders(h http.Header) error {
+	for key, values := range b.header {
+		h[key] = slices.Clone(values)
+	}
+	for key := range b.nulls {
+		h.Del(key)
 	}
 	return nil
 }
@@ -181,12 +231,15 @@ func (o *headerObject) applyAsDefaultHeaders(h http.Header) error {
 // starts), then own, defaults and body as the fold reaches them.
 type sdkHeaders struct {
 	// own is the bundle the SDK writes for itself (Accept, anthropic-version).
-	// Its User-Agent is left out: pi's object always replaces or deletes it.
+	// Its User-Agent is left out, as pi's object always replaces or deletes
+	// it, and so is its X-Stainless-* telemetry, which describes the JS
+	// runtime.
 	own []recordEntry
 	// auth is the header the SDK builds from its apiKey or authToken option.
 	auth []recordEntry
-	// defaults is pi's header object, the client's `defaultHeaders`.
-	defaults *headerObject
+	// defaults is the client's `defaultHeaders`: pi's header object, or the
+	// Headers openai's constructor built from it (see openAIClientHeaders).
+	defaults defaultHeaders
 	// body is the bundle the SDK adds for a JSON body.
 	body []recordEntry
 	// request is the per-request `headers` option: the anthropic-beta header
@@ -244,6 +297,72 @@ func headerValues(entries []recordEntry) ([]recordEntry, error) {
 		out[i] = recordEntry{name: e.name, value: wire}
 	}
 	return out, nil
+}
+
+// openAIClientHeaders is the headers openai's client sends with every request
+// pi makes through it (see sdkHeaders), given pi's object o and the api key.
+// pi builds the client once per stream, in createClient, before the params and
+// onPayload, and openai 6.40.0's constructor reads the environment then:
+//
+//   - OPENAI_ORG_ID and OPENAI_PROJECT_ID become the OpenAI-Organization and
+//     OpenAI-Project headers of its own bundle. pi passes neither option, so
+//     every request through the client sends them, whatever the provider.
+//   - OPENAI_CUSTOM_HEADERS is folded, below pi's object, into the Headers the
+//     client keeps as its defaultHeaders (buildHeaders([parsed, o])). Every
+//     name and value in both is converted and checked there, so one that fails
+//     fails the stream before the params are built, and ahead of the api key.
+func openAIClientHeaders(o *headerObject, apiKey string) (sdkHeaders, error) {
+	s := sdkHeaders{
+		// Accept is application/json whether or not the request streams.
+		own:      []recordEntry{{"accept", "application/json"}},
+		auth:     []recordEntry{{"authorization", "Bearer " + apiKey}},
+		defaults: o,
+		body:     jsonBody,
+	}
+	if org, ok := sdkEnv("OPENAI_ORG_ID"); ok {
+		s.own = append(s.own, recordEntry{"openai-organization", org})
+	}
+	if project, ok := sdkEnv("OPENAI_PROJECT_ID"); ok {
+		s.own = append(s.own, recordEntry{"openai-project", project})
+	}
+	if parsed, ok := sdkCustomHeaders("OPENAI_CUSTOM_HEADERS"); ok {
+		built, err := buildDefaultHeaders(parsed, o)
+		if err != nil {
+			return sdkHeaders{}, err
+		}
+		s.defaults = built
+	}
+	return s, nil
+}
+
+// sdkEnv reads an environment variable as both SDKs' readEnv does: from the
+// process environment, which is where they look (pi's options.env never
+// reaches them), trimmed as String.prototype.trim trims, and unset when that
+// leaves nothing.
+func sdkEnv(name string) (string, bool) {
+	value := jstext.Trim(os.Getenv(name))
+	return value, value != ""
+}
+
+// sdkCustomHeaders parses the <SDK>_CUSTOM_HEADERS variable env as both SDKs'
+// constructors do, into the plain object they fold into defaultHeaders: one
+// `Name: value` per LF-separated line, split at its first colon, both sides
+// trimmed. A line with no colon is skipped, and a line naming a key an earlier
+// one named assigns over it in place. ok is false when env is unset, which is
+// the only case the constructor skips: a value with no header line still
+// makes openai build its defaultHeaders.
+func sdkCustomHeaders(env string) (parsed *headerObject, ok bool) {
+	value, ok := sdkEnv(env)
+	if !ok {
+		return nil, false
+	}
+	parsed = &headerObject{}
+	for _, line := range strings.Split(value, "\n") {
+		if name, value, found := strings.Cut(line, ":"); found {
+			parsed.set(jstext.Trim(name), jstext.Trim(value))
+		}
+	}
+	return parsed, true
 }
 
 // recordEntry is one header of pi's providerHeadersToRecord result: the

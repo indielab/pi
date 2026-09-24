@@ -658,21 +658,23 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// query string is part of the request pi makes; difftest compares bodies
 		// only, so it is pinned by test instead.
 		url := strings.TrimRight(baseURL, "/") + "/v1/messages?beta=true"
+		// pi builds the client once per stream, and its constructor reads the
+		// environment then (see anthropicClientHeaders).
+		headers := anthropicClientHeaders(model, opts, oauth, apiKey, authToken, normalized.Messages)
+		// The betas header is a PER-REQUEST header in the SDK, so it beats every
+		// default header the merge produced — including one the consumer
+		// spelled differently, and including the empty-string value an empty
+		// `betas` list produces, which REPLACES the inherited header rather than
+		// leaving it standing. The beta namespace builds it before the client
+		// builds any other header, so its value is converted, and refused, first
+		// (see sdkHeaders).
+		if betaHeader != nil {
+			headers.request = []recordEntry{{"anthropic-beta", *betaHeader}}
+		}
 		build := func() (*http.Request, error) {
 			r, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 			if err != nil {
 				return nil, err
-			}
-			headers := anthropicClientHeaders(model, opts, oauth, apiKey, authToken, normalized.Messages)
-			// The betas header is a PER-REQUEST header in the SDK, so it beats
-			// every default header the merge produced — including one the
-			// consumer spelled differently, and including the empty-string value
-			// an empty `betas` list produces, which REPLACES the inherited header
-			// rather than leaving it standing. The beta namespace builds it before
-			// the client builds any other header, so its value is converted, and
-			// refused, first (see sdkHeaders).
-			if betaHeader != nil {
-				headers.request = []recordEntry{{"anthropic-beta", *betaHeader}}
 			}
 			if err := headers.apply(r.Header); err != nil {
 				return nil, err
@@ -1878,8 +1880,10 @@ func convertContentBlocks(content ai.ContentList) any {
 	return blocks
 }
 
-// anthropicClientHeaders is the request's headers as the SDK folds them (see
-// sdkHeaders), all but the per-request anthropic-beta.
+// anthropicClientHeaders is the headers @anthropic-ai/sdk's client sends with
+// every request pi makes through it (see sdkHeaders), all but the per-request
+// anthropic-beta. pi builds the client once per stream, and its constructor
+// reads ANTHROPIC_CUSTOM_HEADERS then.
 func anthropicClientHeaders(model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey, authToken string, messages []ai.Message) sdkHeaders {
 	// pi builds ONE header object per request (mergeClientHeaders,
 	// anthropic-messages.ts at upstream 87af49dec) and hands it to the SDK as
@@ -1897,7 +1901,16 @@ func anthropicClientHeaders(model *ai.Model, opts *AnthropicOptions, oauth bool,
 	// OAuth branch below is the one place where the SPELLING matters: it holds
 	// its claude-cli identity under the lowercase name, at a later slot, so a
 	// later source spelled "User-Agent" updates slot 0 and still loses to it.
+	//
+	// The SDK's constructor spreads ANTHROPIC_CUSTOM_HEADERS under the object
+	// it is given — `{...parsed, ...defaultHeaders}` — so the variable's
+	// headers take the first slots, and a source spelled exactly like one of
+	// them takes that slot: "user-agent: x" there puts the OAuth identity in
+	// slot 0, where pi's runtime agent, in a later slot, beats it.
 	o := &headerObject{}
+	if parsed, ok := sdkCustomHeaders("ANTHROPIC_CUSTOM_HEADERS"); ok {
+		o = parsed
+	}
 	o.merge(piUserAgentHeaders())
 	o.set("accept", "application/json")
 	o.set("anthropic-dangerous-direct-browser-access", "true")
