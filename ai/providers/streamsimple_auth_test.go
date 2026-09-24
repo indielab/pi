@@ -339,7 +339,7 @@ func TestAnthropicStreamSimpleAuthTokenStillAuthenticates(t *testing.T) {
 // TestAnthropicStreamSimpleGatewayHeaderOwnedAuthSendsNoEmptyGatewayBearer
 // covers the third branch header-owned auth newly makes reachable. Widening the
 // gate to pi's header set lets a cloudflare-ai-gateway request through with no
-// api key, and applyAnthropicHeaders then built the gateway bundle from that
+// api key, and the adapter's header assembly then built the gateway bundle from that
 // empty key — synthesizing `cf-aig-authorization: "Bearer "`, a credential pi
 // never sends. pi's adapter never mentions Cloudflare at all: on the
 // "API key or header-owned auth" branch it passes `apiKey: apiKey ?? null` and

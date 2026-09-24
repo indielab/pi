@@ -19,8 +19,10 @@ import (
 //
 //   - Adapters that hand the merged headers to a vendor SDK as `defaultHeaders`
 //     (openai-completions, openai-responses, anthropic-messages) let the SDK
-//     delete on null, which also removes the auth header the SDK itself would
-//     have sent. headerObject.applyAsDefaultHeaders is that path.
+//     delete on null, which also removes a header the SDK itself would have
+//     sent, its auth header included. sdkHeaders is that path: the SDK's own
+//     bundles around pi's object, which headerObject.applyAsDefaultHeaders
+//     writes.
 //   - Adapters that build the request themselves (google-generative-ai,
 //     pi-messages) run the merged headers through providerHeadersToRecord
 //     (pi utils/headers.ts), which folds names case-insensitively: the last
@@ -81,29 +83,12 @@ type headerObject struct {
 	names []string
 	// values by exact (non-canonicalized) name; nil is a deletion marker.
 	values map[string]*string
-	// sdkAuth holds the values setSDKAuth recorded, in call order.
-	sdkAuth []string
 }
 
 // set records an adapter-owned literal header, the way pi writes one into the
 // object literal it spreads its sources into.
 func (o *headerObject) set(name, value string) {
 	o.setValue(name, &value)
-}
-
-// setSDKAuth records the auth header a vendor SDK builds from its own client
-// options (`apiKey`, `authToken`) rather than from `defaultHeaders`. It takes a
-// slot as set does, so a later source overrides it on the wire or deletes it
-// with a marker, as the SDK's buildHeaders lets `defaultHeaders` do. But the
-// SDK appends its auth header to its Headers before any `defaultHeaders`
-// entry, so the value is converted even when a later slot spelled exactly like
-// it replaces the one it holds here: applyAsDefaultHeaders converts every value
-// recorded this way first. Measured against openai 6.40.0 and
-// @anthropic-ai/sdk 0.124.0: a key holding a character above U+00FF fails the
-// request even under a consumer `authorization` override or marker.
-func (o *headerObject) setSDKAuth(name, value string) {
-	o.sdkAuth = append(o.sdkAuth, value)
-	o.set(name, value)
 }
 
 // setValue records name at its existing slot, or appends a new slot for a name
@@ -147,23 +132,18 @@ func (o *headerObject) mergeStrings(source map[string]string) {
 
 // applyAsDefaultHeaders writes the object onto h with a marker DELETING the
 // header it names. It is the Go stand-in for passing the merged headers to an
-// SDK as `defaultHeaders`, where a null value removes the header the SDK would
-// otherwise send — including its own auth header. Header names are
-// canonicalized by net/http, so the delete matches case-insensitively, as it
-// does on the wire, and slot order decides a case collision the way the SDKs'
-// own buildHeaders does (later slot wins; a marker in the last slot deletes).
+// SDK as `defaultHeaders` (see sdkHeaders), where a null value removes the
+// header an earlier bundle set — the SDK's own auth header included. Header
+// names are canonicalized by net/http, so the delete matches
+// case-insensitively, as it does on the wire, and slot order decides a case
+// collision the way the SDKs' own buildHeaders does (later slot wins; a marker
+// in the last slot deletes).
 //
-// It fails where the SDK's buildHeaders throws, before anything is sent: on
-// the SDK's own auth value first (see setSDKAuth), then slot by slot, on the
-// name and then on the value. buildHeaders deletes a name from its Headers
-// before it first appends one, and a marker is that delete alone, so the name
-// is checked, and refused, by Headers.delete.
+// It fails where the SDK's buildHeaders throws, before anything is sent: slot
+// by slot, on the name and then on the value. buildHeaders deletes a name from
+// its Headers before it first appends one, and a marker is that delete alone,
+// so the name is checked, and refused, by Headers.delete.
 func (o *headerObject) applyAsDefaultHeaders(h http.Header) error {
-	for _, value := range o.sdkAuth {
-		if _, err := headerValue(value); err != nil {
-			return err
-		}
-	}
 	for _, name := range o.names {
 		if err := checkHeaderName("Headers.delete", name); err != nil {
 			return err
@@ -178,6 +158,92 @@ func (o *headerObject) applyAsDefaultHeaders(h http.Header) error {
 		}
 	}
 	return nil
+}
+
+// sdkHeaders is one request's headers as a vendor SDK's buildHeaders folds
+// them together (openai 6.40.0 and @anthropic-ai/sdk 0.124.0,
+// client.buildHeaders), bundle by bundle in this order:
+//
+//	[own, auth, defaults, body, request]
+//
+// A bundle replaces any header an earlier one set under the same name,
+// whatever its spelling, and a marker in defaults deletes one. pi's header
+// object is the defaults bundle alone: the headers the SDK owns sit in bundles
+// of their own around it, so no spelling in pi's object can take their slot,
+// and body and request come after it, where no default can change them.
+// Measured on pi's wire with both SDKs: {"Content-Type": "text/plain"} and
+// {"content-type": null} still send `content-type: application/json`, and
+// model {"Authorization": "a"} under opts {"authorization": "b"} sends `b`.
+//
+// The values are converted in the order the SDK builds them, which is not the
+// fold order: request first (the resource method builds it before calling the
+// client), then auth (authHeaders builds its own Headers before the fold
+// starts), then own, defaults and body as the fold reaches them.
+type sdkHeaders struct {
+	// own is the bundle the SDK writes for itself (Accept, anthropic-version).
+	// Its User-Agent is left out: pi's object always replaces or deletes it.
+	own []recordEntry
+	// auth is the header the SDK builds from its apiKey or authToken option.
+	auth []recordEntry
+	// defaults is pi's header object, the client's `defaultHeaders`.
+	defaults *headerObject
+	// body is the bundle the SDK adds for a JSON body.
+	body []recordEntry
+	// request is the per-request `headers` option: the anthropic-beta header
+	// the beta namespace lifts out of the params.
+	request []recordEntry
+}
+
+// jsonBody is the SDKs' body bundle for the JSON params every adapter sends.
+var jsonBody = []recordEntry{{"content-type", "application/json"}}
+
+// apply writes the headers onto h, failing where the SDK throws, before
+// anything is sent.
+func (s sdkHeaders) apply(h http.Header) error {
+	request, err := headerValues(s.request)
+	if err != nil {
+		return err
+	}
+	auth, err := headerValues(s.auth)
+	if err != nil {
+		return err
+	}
+	own, err := headerValues(s.own)
+	if err != nil {
+		return err
+	}
+	for _, bundle := range [][]recordEntry{own, auth} {
+		for _, e := range bundle {
+			h.Set(e.name, e.value)
+		}
+	}
+	if err := s.defaults.applyAsDefaultHeaders(h); err != nil {
+		return err
+	}
+	body, err := headerValues(s.body)
+	if err != nil {
+		return err
+	}
+	for _, bundle := range [][]recordEntry{body, request} {
+		for _, e := range bundle {
+			h.Set(e.name, e.value)
+		}
+	}
+	return nil
+}
+
+// headerValues converts each entry's value as a Headers object stores it (see
+// headerValue), in order, and fails on the first that it refuses.
+func headerValues(entries []recordEntry) ([]recordEntry, error) {
+	out := make([]recordEntry, len(entries))
+	for i, e := range entries {
+		wire, err := headerValue(e.value)
+		if err != nil {
+			return nil, err
+		}
+		out[i] = recordEntry{name: e.name, value: wire}
+	}
+	return out, nil
 }
 
 // recordEntry is one header of pi's providerHeadersToRecord result: the

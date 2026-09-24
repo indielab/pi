@@ -419,7 +419,7 @@ func TestHeaderConversionFailsInPisOrder(t *testing.T) {
 // Whether the key is converted at all depends on whether the object pi hands a
 // Headers still holds it. The openai and anthropic SDKs build their auth header
 // from their own options and append it before `defaultHeaders`, so a key they
-// cannot convert fails the request whatever the headers say (setSDKAuth).
+// cannot convert fails the request whatever the headers say (sdkHeaders.auth).
 // pi-messages' key is a literal of the object its record is spread over: an
 // override spelled exactly like it replaces it unconverted, and a marker, which
 // is not part of the record, leaves it standing. genai appends its key only

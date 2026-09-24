@@ -188,12 +188,6 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			// default every later source outranks, xai included.
 			o := &headerObject{}
 			o.merge(piUserAgentHeaders())
-			o.set("content-type", "application/json")
-			o.set("accept", "text/event-stream")
-			// The SDK auth header sits below every merged source, so a deletion
-			// marker in them can suppress it (pi passes the merged headers as
-			// `defaultHeaders`, which the OpenAI SDK applies over its own auth).
-			o.setSDKAuth("authorization", "Bearer "+apiKey)
 			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
 			// bundle at the bottom of the precedence stack: emit session +
 			// default attribution first so model.headers and options.headers
@@ -232,7 +226,15 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			// defaults — a deletion marker here suppresses any of them.
 			o.merge(opts.Headers)
 
-			if err := o.applyAsDefaultHeaders(r.Header); err != nil {
+			// The SDK sends its own Accept and the api key as its auth header
+			// in bundles below pi's object, so a deletion marker there can
+			// suppress either, and content-type in a bundle above it.
+			if err := (sdkHeaders{
+				own:      openAIOwnHeaders,
+				auth:     []recordEntry{{"authorization", "Bearer " + apiKey}},
+				defaults: o,
+				body:     jsonBody,
+			}).apply(r.Header); err != nil {
 				return nil, err
 			}
 			return r, nil
@@ -1151,6 +1153,11 @@ func buildOpenAIParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIOp
 
 	return params, nil
 }
+
+// openAIOwnHeaders is the bundle openai's buildHeaders writes for itself ahead
+// of its auth header: `Accept: application/json`, whether or not the request
+// streams (openai 6.40.0 client.buildHeaders).
+var openAIOwnHeaders = []recordEntry{{"accept", "application/json"}}
 
 // clientAPIKey ports pi's getClientApiKey (129eb460): when the request carries
 // no api key but its options headers supply an authorization or

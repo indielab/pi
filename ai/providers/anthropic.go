@@ -663,20 +663,19 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 			if err != nil {
 				return nil, err
 			}
-			if err := applyAnthropicHeaders(r, model, opts, oauth, apiKey, authToken, normalized.Messages); err != nil {
-				return nil, err
-			}
+			headers := anthropicClientHeaders(model, opts, oauth, apiKey, authToken, normalized.Messages)
 			// The betas header is a PER-REQUEST header in the SDK, so it beats
-			// every default header the merge above produced — including one the
-			// consumer spelled differently, and including the empty-string value an
-			// empty `betas` list produces, which REPLACES the inherited header
-			// rather than leaving it standing. Writing it (Set, not Add) after
-			// applyAsDefaultHeaders is what reproduces that precedence. The SDK's
-			// Headers converts the value like every other (see setHeader).
+			// every default header the merge produced — including one the
+			// consumer spelled differently, and including the empty-string value
+			// an empty `betas` list produces, which REPLACES the inherited header
+			// rather than leaving it standing. The beta namespace builds it before
+			// the client builds any other header, so its value is converted, and
+			// refused, first (see sdkHeaders).
 			if betaHeader != nil {
-				if err := setHeader(r.Header, "anthropic-beta", *betaHeader); err != nil {
-					return nil, err
-				}
+				headers.request = []recordEntry{{"anthropic-beta", *betaHeader}}
+			}
+			if err := headers.apply(r.Header); err != nil {
+				return nil, err
 			}
 			return r, nil
 		}
@@ -1879,11 +1878,17 @@ func convertContentBlocks(content ai.ContentList) any {
 	return blocks
 }
 
-func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey, authToken string, messages []ai.Message) error {
+// anthropicClientHeaders is the request's headers as the SDK folds them (see
+// sdkHeaders), all but the per-request anthropic-beta.
+func anthropicClientHeaders(model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey, authToken string, messages []ai.Message) sdkHeaders {
 	// pi builds ONE header object per request (mergeClientHeaders,
 	// anthropic-messages.ts at upstream 87af49dec) and hands it to the SDK as
 	// `defaultHeaders`; headerObject is that object, slots and all, so a case
 	// collision resolves by insertion slot rather than by which Set ran last.
+	// It holds pi's own accept and anthropic-dangerous-direct-browser-access;
+	// the SDK sends both again, with anthropic-version, in its own bundle
+	// below the object, the api key or bearer in its auth bundle, and
+	// content-type in its body bundle above the object.
 	//
 	// The merge is seeded with pi's runtime user agent FIRST, so every later
 	// source outranks it: the attribution bundle, model.Headers (the catalog's
@@ -1894,9 +1899,7 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// later source spelled "User-Agent" updates slot 0 and still loses to it.
 	o := &headerObject{}
 	o.merge(piUserAgentHeaders())
-	o.set("content-type", "application/json")
 	o.set("accept", "application/json")
-	o.set("anthropic-version", anthropicVersion)
 	o.set("anthropic-dangerous-direct-browser-access", "true")
 
 	// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution bundle at
@@ -1939,7 +1942,9 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// anthropic provider and, like pi's resolve(), sends Authorization: Bearer.
 	// Each branch now contributes auth and identity only — the betas the OAuth
 	// branch used to own are gated on the same `oauth` flag inside
-	// getAnthropicBetaFeatures instead.
+	// getAnthropicBetaFeatures instead. The SDK's own auth header (apiKey,
+	// authToken) goes to its auth bundle, not into the object.
+	var auth []recordEntry
 	switch {
 	case authToken != "":
 		// pi's resolve() returns this bearer as auth.headers, which enter the
@@ -1950,10 +1955,10 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 		// at all — the request rides on whatever header owns its auth — not an
 		// empty bearer.
 		if branchKey != "" {
-			o.setSDKAuth("authorization", "Bearer "+branchKey)
+			auth = []recordEntry{{"authorization", "Bearer " + branchKey}}
 		}
 	case oauth:
-		o.setSDKAuth("authorization", "Bearer "+branchKey)
+		auth = []recordEntry{{"authorization", "Bearer " + branchKey}}
 		o.set("user-agent", "claude-cli/"+claudeCodeVersion)
 		o.set("x-app", "cli")
 	default:
@@ -1964,7 +1969,7 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 		// empty branchKey here is pi's null: emit nothing and let the header
 		// that authorized the request do the work.
 		if branchKey != "" {
-			o.setSDKAuth("x-api-key", branchKey)
+			auth = []recordEntry{{"x-api-key", branchKey}}
 		}
 		// pi anthropic.ts:496-497: cacheSessionId is dropped when the effective
 		// cacheRetention is "none", so no session-affinity header is sent under
@@ -1994,7 +1999,16 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// marker here suppresses any of them.
 	o.merge(opts.Headers)
 
-	return o.applyAsDefaultHeaders(r.Header)
+	return sdkHeaders{own: anthropicOwnHeaders, auth: auth, defaults: o, body: jsonBody}
+}
+
+// anthropicOwnHeaders is the bundle @anthropic-ai/sdk's buildHeaders writes for
+// itself ahead of its auth header (0.124.0 client.buildHeaders; pi's
+// dangerouslyAllowBrowser adds the browser-access header).
+var anthropicOwnHeaders = []recordEntry{
+	{"accept", "application/json"},
+	{"anthropic-dangerous-direct-browser-access", "true"},
+	{"anthropic-version", anthropicVersion},
 }
 
 // mapAnthropicStopReason maps an Anthropic stop_reason to the unified

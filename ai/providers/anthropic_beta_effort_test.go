@@ -280,7 +280,7 @@ func TestAnthropicConfiguredBetaNullSuppressesEverything(t *testing.T) {
 // The consumer's value is deliberately one that does NOT survive getBetaFeatures
 // unchanged — it is padded and duplicated — so the normalized betas string and
 // the raw default-header write differ, and writing the betas header before
-// applyAnthropicHeaders instead of after is visible here.
+// pi's object instead of after it is visible here.
 func TestAnthropicBetasHeaderBeatsConsumerSpelling(t *testing.T) {
 	model := anthropicPlainModel()
 	model.Headers = ai.ProviderHeaders{"anthropic-beta": ai.HeaderValue("from-model")}
