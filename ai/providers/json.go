@@ -365,140 +365,67 @@ func jsonValueKind[T ~string | ~[]byte](text T) byte {
 	return 0
 }
 
-// parseStreamingJSON parses potentially-incomplete JSON from streaming tool-call
-// deltas, always returning a map (empty on total failure). Port of
-// parseStreamingJson. The second return is the same object with the model's key
-// order kept (nil when nothing parsed): pi's JS object preserves it for free,
-// and the order is replayed into later requests.
+// parseStreamingJSON is pi's parseStreamingJson, which reads a tool call's
+// arguments out of the text streamed so far: JSON.parse of the text, then of
+// its repair (repairJSON) when that differs, then partial-json's parse of the
+// text and then of its repair, `?? {}`, and {} when all four throw. The second
+// return is the object in the order pi's JS object lists its keys; the map
+// holds the same members.
+//
+// Two differences are the map's. pi keeps a value that is not an object —
+// `12`, `"x"`, `[1]`, `null` from JSON.parse — as the arguments; the port has
+// {} for it. And a number that is not finite (a JSON number past float64's
+// range, or partial-json's NaN and Infinity) is held as nil: JSON.stringify
+// writes pi's value as null, so the arguments persist and replay as pi's do,
+// and the map never holds a number encoding/json cannot write.
 func parseStreamingJSON(partial string) (map[string]any, ai.OrderedObject) {
 	if jstext.Trim(partial) == "" {
 		return map[string]any{}, nil
 	}
-	if out, order, err := ai.DecodeOrderedObject([]byte(partial)); err == nil {
-		return out, order
-	}
-	if repaired := repairJSON(partial); repaired != partial {
-		if out, order, err := ai.DecodeOrderedObject([]byte(repaired)); err == nil {
-			return out, order
+	value, err := ai.DecodeOrderedValue([]byte(partial))
+	if err != nil {
+		if repaired := repairJSON(partial); repaired != partial {
+			value, err = ai.DecodeOrderedValue([]byte(repaired))
 		}
 	}
-	if completed, ok := completePartialJSON(partial); ok {
-		if out, order, err := ai.DecodeOrderedObject([]byte(completed)); err == nil {
-			return out, order
+	if err != nil {
+		value, err = partialJSONParse(partial)
+		if err != nil {
+			value, err = partialJSONParse(repairJSON(partial))
+		}
+		if err != nil {
+			return map[string]any{}, nil
 		}
 	}
-	if completed, ok := completePartialJSON(repairJSON(partial)); ok {
-		if out, order, err := ai.DecodeOrderedObject([]byte(completed)); err == nil {
-			return out, order
-		}
+	// pi's `result ?? {}` gives {} for a null partial-json result, as the
+	// port does for any value that is not an object.
+	obj, isObject := value.(ai.OrderedObject)
+	if !isObject {
+		return map[string]any{}, nil
 	}
-	return map[string]any{}, nil
+	nullNonFinite(obj)
+	return obj.Plain(), obj
 }
 
-// completePartialJSON closes open strings, arrays, and objects in a truncated
-// JSON document so it can parse. It approximates the partial-json library for
-// the streaming tool-argument case.
-func completePartialJSON(s string) (string, bool) {
-	// partial-json trims the whole input first (jsonString.trim()), as
-	// JavaScript trims and even when it ends inside an open string.
-	s = jstext.Trim(s)
-	var stack []byte
-	inString := false
-	escaped := false
-	stringStart := -1
-	// closedStart and closedEnd bound the last string that closed.
-	closedStart, closedEnd := -1, -1
-	for i := 0; i < len(s); i++ {
-		ch := s[i]
-		if inString {
-			if escaped {
-				escaped = false
-				continue
-			}
-			if ch == '\\' {
-				escaped = true
-				continue
-			}
-			if ch == '"' {
-				inString = false
-				closedStart, closedEnd = stringStart, i+1
-			}
-			continue
+// nullNonFinite replaces every number in v that is not finite with nil, in
+// place, at any depth, and returns v. The trees it is given are freshly
+// parsed and so shared with nothing.
+func nullNonFinite(v any) any {
+	switch t := v.(type) {
+	case float64:
+		if math.IsInf(t, 0) || math.IsNaN(t) {
+			return nil
 		}
-		switch ch {
-		case '"':
-			inString = true
-			stringStart = i
-		case '{':
-			stack = append(stack, '}')
-		case '[':
-			stack = append(stack, ']')
-		case '}', ']':
-			if len(stack) > 0 {
-				stack = stack[:len(stack)-1]
-			}
+	case []any:
+		for i := range t {
+			t[i] = nullNonFinite(t[i])
+		}
+	case ai.OrderedObject:
+		for i := range t {
+			t[i].Value = nullNonFinite(t[i].Value)
 		}
 	}
-
-	completed := s
-	switch {
-	case inString && isDanglingObjectKey(s, stack, stringStart):
-		// An open string in object-KEY position can't be completed into a
-		// member; partial-json drops the incomplete key entirely.
-		completed = dropDanglingMember(s[:stringStart])
-	case inString:
-		// A trailing comma inside an open string is string CONTENT, not a
-		// dangling token — close the string without stripping it.
-		completed += "\""
-	case closedStart >= 0 && isDanglingObjectKey(s, stack, closedStart) && isDanglingColon(s[closedEnd:]):
-		// A complete key whose value has not started — `"key"` or
-		// `"key":` — cannot be completed either; partial-json drops the
-		// member, and the comma before it, keeping the members before it.
-		completed = dropDanglingMember(s[:closedStart])
-	default:
-		// A trailing comma is a dangling token too.
-		completed = dropDanglingMember(completed)
-	}
-
-	for i := len(stack) - 1; i >= 0; i-- {
-		completed += string(stack[i])
-	}
-	if completed == "" {
-		return "", false
-	}
-	return completed, true
-}
-
-// isDanglingObjectKey reports whether the open string starting at stringStart
-// sits in object-key position (directly after '{' or ',' inside an object).
-func isDanglingObjectKey(s string, stack []byte, stringStart int) bool {
-	if stringStart < 0 || len(stack) == 0 || stack[len(stack)-1] != '}' {
-		return false
-	}
-	for j := stringStart - 1; j >= 0; j-- {
-		switch s[j] {
-		case ' ', '\t', '\r', '\n':
-			continue
-		case '{', ',':
-			return true
-		default:
-			return false
-		}
-	}
-	return false
-}
-
-// isDanglingColon reports whether rest, the text after an object key, is at
-// most the colon that starts its value, with whitespace around it.
-func isDanglingColon(rest string) bool {
-	rest = strings.Trim(rest, " \t\r\n")
-	return rest == "" || rest == ":"
-}
-
-// dropDanglingMember trims the text before a member that cannot be completed:
-// the whitespace and the one comma that separated it from the members before.
-func dropDanglingMember(s string) string {
-	return strings.TrimSuffix(strings.TrimRight(s, " \t\r\n"), ",")
+	return v
 }
 
 // sanitizeSurrogates removes unpaired UTF-16 surrogate code units (port of

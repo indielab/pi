@@ -6213,6 +6213,202 @@
 				]
 			}
 		},
+		"length-partial-literal": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"overwrite\\\":tr\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"overwrite\\\":tr\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "length",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "length",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"path\":\"a.txt\",\"overwrite\":true}}"
+				],
+				"thinking": []
+			}
+		},
+		"length-partial-number": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"n\\\":1e\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"n\\\":1e\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "length",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "length",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"path\":\"a.txt\",\"n\":1}}"
+				],
+				"thinking": []
+			}
+		},
+		"length-minus": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"n\\\":-\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"n\\\":-\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "length",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "length",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"path\":\"a.txt\"}}"
+				],
+				"thinking": []
+			}
+		},
+		"length-trailing-backslash": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"C:\\\\\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"C:\\\\\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "length",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "length",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"path\":\"C:\"}}"
+				],
+				"thinking": []
+			}
+		},
+		"length-partial-unicode-escape": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"s\\\":\\\"x\\\\u00\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"s\\\":\\\"x\\\\u00\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "length",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "length",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"path\":\"a.txt\",\"s\":\"x\"}}"
+				],
+				"thinking": []
+			}
+		},
+		"length-dangling-key": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"content\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"content\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "length",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "length",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"path\":\"a.txt\"}}"
+				],
+				"thinking": []
+			}
+		},
+		"length-infinity": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"n\\\":Infinity,\\\"m\\\":1e400,\\\"k\\\":Na\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"n\\\":Infinity,\\\"m\\\":1e400,\\\"k\\\":Na\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"length\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "length",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "length",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"path\":\"a.txt\",\"n\":null,\"m\":null,\"k\":null}}"
+				],
+				"thinking": []
+			}
+		},
 		"reasoning-details-object": {
 			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\",\"reasoning_details\":{\"type\":\"reasoning.text\",\"text\":\"x\"}}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
 			"completions": {
@@ -8294,6 +8490,36 @@
 					"totalTokens": "0"
 				},
 				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"incomplete-partial-arguments": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"f\",\"arguments\":\"\"}}\n\ndata: {\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"overwrite\\\":fal\"}\n\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"id\":\"fc_1\",\"call_id\":\"call_1\",\"name\":\"f\",\"arguments\":\"\"}}",
+					"{\"type\":\"response.function_call_arguments.delta\",\"output_index\":0,\"delta\":\"{\\\"path\\\":\\\"a.txt\\\",\\\"overwrite\\\":fal\"}",
+					"{\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "length",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "resp_1",
+				"rawStopReason": "incomplete.max_output_tokens",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"call_1|fc_1\",\"name\":\"f\",\"arguments\":{\"path\":\"a.txt\",\"overwrite\":false}}"
+				],
 				"thinking": []
 			}
 		},

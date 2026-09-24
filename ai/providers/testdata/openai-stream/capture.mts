@@ -427,6 +427,14 @@ const C = (...chunks: string[]) => chunks.map((c) => `data: ${c}\n\n`).join("");
 const hi = (fields: string) => `{"id":"a",${fields}"choices":[{"index":0,"delta":{"content":"hi"}}]}`;
 const withDelta = (delta: string, extra = "") => `{"id":"a","choices":[{"index":0,"delta":${delta}${extra}}]}`;
 const TOOL_FIN = J({ id: "a", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] });
+// cutOff is a tool call whose arguments stream as far as args and then stop
+// at finish_reason "length": pi keeps what parseStreamingJson makes of them.
+const BS = String.fromCharCode(92);
+const cutOff = (args: string) =>
+	C(
+		J({ id: "a", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "c1", function: { name: "f", arguments: args } }] } }] }),
+		J({ id: "a", choices: [{ index: 0, delta: {}, finish_reason: "length" }] }),
+	);
 const completionsBodies: Record<string, string> = {
 	// pi reads each member it uses off the parsed chunk with JS semantics —
 	// exact keys, any type, its own typeof / Array.isArray / truthiness guards,
@@ -504,6 +512,13 @@ const completionsBodies: Record<string, string> = {
 	// A number past float64's range is still a number, which JSON.stringify
 	// writes null; written out, since J() would already have made it null.
 	"reasoning-details-index-past-float64": C(withDelta(`{"reasoning_details":[{"type":"reasoning.text","text":"a","index":1e400}]}`), FIN),
+	"length-partial-literal": cutOff(`{"path":"a.txt","overwrite":tr`),
+	"length-partial-number": cutOff(`{"path":"a.txt","n":1e`),
+	"length-minus": cutOff(`{"path":"a.txt","n":-`),
+	"length-trailing-backslash": cutOff(`{"path":"C:${BS}`),
+	"length-partial-unicode-escape": cutOff(`{"path":"a.txt","s":"x${BS}u00`),
+	"length-dangling-key": cutOff(`{"path":"a.txt","content`),
+	"length-infinity": cutOff(`{"path":"a.txt","n":Infinity,"m":1e400,"k":Na`),
 	"reasoning-details-object": C(withDelta(`{"content":"hi","reasoning_details":{"type":"reasoning.text","text":"x"}}`), FIN),
 	"array-chunk": C(`[{"id":"x","choices":[{"index":0,"delta":{"content":"no"}}]}]`, hi(""), FIN),
 	// packages/ai/test/openai-completions-provider-stream-event.test.ts
@@ -689,6 +704,13 @@ const responsesBodies: Record<string, string> = {
 	"completed-mistyped-other-member":
 		created + textEvents + R({ type: "response.completed", output_index: "x", item: 5, response: { id: "resp_1", status: "completed" } }),
 	"error-event-mistyped-other-member": errorEvent({ code: "c", message: "m", delta: 5, part: "p" }),
+	// A response cut off mid-arguments keeps what parseStreamingJson makes of
+	// the text streamed so far.
+	"incomplete-partial-arguments":
+		created +
+		R({ type: "response.output_item.added", output_index: 0, item: { type: "function_call", id: "fc_1", call_id: "call_1", name: "f", arguments: "" } }) +
+		R({ type: "response.function_call_arguments.delta", output_index: 0, delta: `{"path":"a.txt","overwrite":fal` }) +
+		R({ type: "response.incomplete", response: { id: "resp_1", status: "incomplete", incomplete_details: { reason: "max_output_tokens" } } }),
 	"completed-number-service-tier":
 		created + textEvents + R({ type: "response.completed", response: { status: "completed", service_tier: 5 } }),
 };
