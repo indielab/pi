@@ -2169,11 +2169,22 @@ func derefOr(p *int, d int) int {
 	return d
 }
 
+// flattenHeaders is pi's headersToRecord(response.headers), the record every
+// adapter hands onResponse. It iterates Headers.entries(), which yields each
+// name lowercased with a repeated name's values joined by ", " in wire order —
+// except set-cookie, whose values it yields one at a time, so the record keeps
+// the last.
 func flattenHeaders(h http.Header) map[string]string {
 	out := map[string]string{}
 	for k, v := range h {
-		if len(v) > 0 {
-			out[strings.ToLower(k)] = v[0]
+		if len(v) == 0 {
+			continue
+		}
+		name := strings.ToLower(k)
+		if name == "set-cookie" {
+			out[name] = v[len(v)-1]
+		} else {
+			out[name] = strings.Join(v, ", ")
 		}
 	}
 	return out

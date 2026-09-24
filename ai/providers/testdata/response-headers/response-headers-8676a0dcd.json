@@ -1,0 +1,6 @@
+{"sha":"8676a0dcd","node":"v26.4.0","undici":"8.5.0","rows":[
+{"name":"repeatedNameJoinsInWireOrder","response":"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Multi: a\r\nx-multi: b\r\nX-MULTI: c\r\nContent-Length: 2\r\n\r\nok","record":{"content-length":"2","content-type":"text/event-stream","x-multi":"a, b, c"}},
+{"name":"setCookieKeepsTheLast","response":"HTTP/1.1 200 OK\r\nSet-Cookie: c=1\r\nset-cookie: d=2\r\nSet-Cookie: e=3\r\nContent-Length: 2\r\n\r\nok","record":{"content-length":"2","set-cookie":"e=3"}},
+{"name":"emptyValuesStillJoin","response":"HTTP/1.1 200 OK\r\nX-Empty:\r\nX-Empty2: \r\nX-Empty2: v\r\nX-Mixed: v\r\nX-Mixed:\r\nContent-Length: 2\r\n\r\nok","record":{"content-length":"2","x-empty":"","x-empty2":", v","x-mixed":"v, "}},
+{"name":"namesAreLowercased","response":"HTTP/1.1 200 OK\r\nX-Request-ID: req_1\r\nRetry-After: 5\r\nanthropic-ratelimit-requests-remaining: 9\r\nContent-Length: 2\r\n\r\nok","record":{"anthropic-ratelimit-requests-remaining":"9","content-length":"2","retry-after":"5","x-request-id":"req_1"}}
+]}
