@@ -109,7 +109,31 @@ type SessionOptions struct {
 	// Use &DefaultCompactionSettings for pi's defaults.
 	Compaction *CompactionSettings
 	// StreamFn overrides the stream function (for tests). Default: ai.StreamSimple.
+	// Either way the session asserts a chat model first (see sessionStreamFn).
 	StreamFn agent.StreamFn
+}
+
+// sessionStreamFn is the stream function a session's agent uses for every
+// request it makes — turns, and the compaction and branch summaries that reuse
+// the agent's stream function. pi's createAgentSession streams all of them
+// through ModelRuntime.streamSimple, whose first act is assertChatModel
+// (upstream a328aa89a), so a model of another type fails with "Model
+// <provider>/<id> is not a chat model" before any provider dispatch. The port's
+// session streams through ai.StreamSimple, the compat global, which asserts
+// nothing (pi's compat streamSimple does not either), so the session asserts
+// here and then delegates to next, or to ai.StreamSimple when next is nil.
+func sessionStreamFn(next agent.StreamFn) agent.StreamFn {
+	if next == nil {
+		next = func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			return ai.StreamSimple(ctx, model, ai.Context{Messages: req.Messages}, opts)
+		}
+	}
+	return func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+		if err := ai.AssertChatModel(model); err != nil {
+			return ai.ErrorStream(model, err)
+		}
+		return next(ctx, model, req, opts)
+	}
 }
 
 var defaultActiveToolNames = []string{"read", "bash", "edit", "write"}
@@ -499,7 +523,7 @@ func NewSession(opts SessionOptions) *Session {
 			Model:         opts.Model,
 			ThinkingLevel: thinking,
 		},
-		StreamFn:        opts.StreamFn,
+		StreamFn:        sessionStreamFn(opts.StreamFn),
 		SessionID:       opts.SessionID,
 		GetApiKey:       func(provider string) string { return opts.APIKey },
 		Temperature:     opts.Temperature,
