@@ -282,6 +282,8 @@ const completed = R({
 	response: { id: "resp_1", status: "completed", usage: { input_tokens: 5, output_tokens: 1, total_tokens: 6 } },
 });
 const errorEvent = (fields: Record<string, unknown>) => created + R({ type: "error", ...fields }) + completed;
+const failed = (response: Record<string, unknown>) =>
+	created + R({ type: "response.failed", response: { id: "resp_1", status: "failed", ...response } });
 
 const responsesBodies: Record<string, string> = {
 	// packages/ai/test/openai-responses-terminal-event.test.ts, as SSE.
@@ -318,6 +320,24 @@ const responsesBodies: Record<string, string> = {
 		R({
 			type: "response.failed",
 			response: { id: "resp_1", status: "failed", error: { code: "server_error", message: "bad" } },
+		}),
+	"response-failed-number-code": failed({ error: { code: 500, message: "bad" } }),
+	"response-failed-true-code": failed({ error: { code: true, message: "bad" } }),
+	"response-failed-falsy-members": failed({ error: { code: "", message: 0 } }),
+	"response-failed-object-message": failed({ error: { code: "x", message: { a: 1 } } }),
+	"response-failed-uncoercible-message": failed({ error: { code: "x", message: { toString: 1 } } }),
+	"response-failed-string-error": failed({ error: "boom", incomplete_details: { reason: "max_output_tokens" } }),
+	"response-failed-empty-error": failed({ error: {}, incomplete_details: { reason: "max_output_tokens" } }),
+	"response-failed-false-error": failed({ error: false, incomplete_details: { reason: "max_output_tokens" } }),
+	"response-failed-number-reason": failed({ error: null, incomplete_details: { reason: 5 } }),
+	"response-failed-empty-reason": failed({ incomplete_details: { reason: "" } }),
+	"response-failed-no-details": failed({}),
+	"incomplete-number-reason":
+		created +
+		textEvents +
+		R({
+			type: "response.incomplete",
+			response: { id: "resp_1", status: "incomplete", incomplete_details: { reason: 5 } },
 		}),
 };
 

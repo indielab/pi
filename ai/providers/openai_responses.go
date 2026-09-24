@@ -634,9 +634,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			status, incompleteReason := "", ""
 			if r != nil {
 				status = r.Status
-				if r.IncompleteDetails != nil {
-					incompleteReason = r.IncompleteDetails.Reason
-				}
+				incompleteReason = incompleteDetailsReason(r.IncompleteDetails)
 			}
 			output.RawStopReason = status
 			if incompleteReason != "" {
@@ -852,7 +850,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				if ev.Response != nil {
 					output.RawStopReason = ev.Response.Status
 				}
-				return fmt.Errorf("%s", responsesFailedMessage(ev))
+				return responsesFailedMessage(ev)
 			}
 			return nil
 		})
@@ -1510,26 +1508,46 @@ func jsTemplateValue(raw json.RawMessage) (string, bool) {
 	return jstext.ToString(value)
 }
 
-// responsesFailedMessage surfaces error.code/message or incomplete_details.reason
-// from a response.failed event (port of pi's response.failed handling).
-func responsesFailedMessage(ev responsesEvent) string {
+// responsesFailedMessage is the error pi throws for a response.failed event:
+//
+//	error ? `${error.code || "unknown"}: ${error.message || "no message"}`
+//	  : details?.reason ? `incomplete: ${details.reason}`
+//	  : "Unknown error (no error details in response)"
+//
+// over event.response's error and incomplete_details, with JS truthiness and
+// template-literal writing throughout (jsTemplateValue): an error that is not
+// an object reads its members as undefined, and a member no template literal
+// can write throws V8's TypeError, which pi's catch block surfaces.
+func responsesFailedMessage(ev responsesEvent) error {
+	var errorValue, details json.RawMessage
 	if ev.Response != nil {
-		if ev.Response.Error != nil {
-			code := ev.Response.Error.Code
-			if code == "" {
-				code = "unknown"
-			}
-			msg := ev.Response.Error.Message
-			if msg == "" {
-				msg = "no message"
-			}
-			return fmt.Sprintf("%s: %s", code, msg)
-		}
-		if ev.Response.IncompleteDetails != nil && ev.Response.IncompleteDetails.Reason != "" {
-			return fmt.Sprintf("incomplete: %s", ev.Response.IncompleteDetails.Reason)
-		}
+		errorValue, details = ev.Response.Error, ev.Response.IncompleteDetails
 	}
-	return "Unknown error (no error details in response)"
+	orDefault := func(value any, fallback string) (string, bool) {
+		if !jstext.Truthy(value) {
+			return fallback, true
+		}
+		return jstext.ToString(value)
+	}
+	if rawTruthy(errorValue) {
+		code, ok := orDefault(jsMember(errorValue, "code"), "unknown")
+		if !ok {
+			return errors.New("Cannot convert object to primitive value")
+		}
+		message, ok := orDefault(jsMember(errorValue, "message"), "no message")
+		if !ok {
+			return errors.New("Cannot convert object to primitive value")
+		}
+		return errors.New(code + ": " + message)
+	}
+	if reason := jsMember(details, "reason"); jstext.Truthy(reason) {
+		text, ok := jstext.ToString(reason)
+		if !ok {
+			return errors.New("Cannot convert object to primitive value")
+		}
+		return errors.New("incomplete: " + text)
+	}
+	return errors.New("Unknown error (no error details in response)")
 }
 
 // ---- SSE event types ----
@@ -1592,13 +1610,31 @@ type responsesPayload struct {
 			ReasoningTokens int `json:"reasoning_tokens"`
 		} `json:"output_tokens_details"`
 	} `json:"usage"`
-	Error *struct {
-		Code    string `json:"code"`
-		Message string `json:"message"`
-	} `json:"error"`
-	IncompleteDetails *struct {
-		Reason string `json:"reason"`
-	} `json:"incomplete_details"`
+	// Error and IncompleteDetails stay raw: pi reads their members with JS
+	// coercions (responsesFailedMessage, incompleteDetailsReason), so a member
+	// of any JSON type must not fail the event's decode and drop the event.
+	Error             json.RawMessage `json:"error"`
+	IncompleteDetails json.RawMessage `json:"incomplete_details"`
+}
+
+// jsMember is `value?.[key]` on a parsed JSON value given as its text (nil
+// when absent): the member when value is an object holding key, else nil,
+// which stands for undefined as well as null — every read here treats the two
+// alike.
+func jsMember(raw json.RawMessage, key string) any {
+	if raw == nil {
+		return nil
+	}
+	value, _ := jstext.Parse(raw) // a member of an event that decoded, so it parses
+	object, _ := value.(map[string]any)
+	return object[key]
+}
+
+// incompleteDetailsReason is finalizeResponse's reason: incomplete_details.reason
+// when it is a string (pi: `typeof incompleteDetails?.reason === "string"`).
+func incompleteDetailsReason(details json.RawMessage) string {
+	reason, _ := jsMember(details, "reason").(string)
+	return reason
 }
 
 // iterateOpenAISSE2 reads a /responses stream the way pi iterates the openai
