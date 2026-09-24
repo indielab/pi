@@ -46,25 +46,62 @@ type googleStreamScenario struct {
 	// ReadBoundariesMatter reports whether pi's outcome changes when the
 	// segments arrive as one read.
 	ReadBoundariesMatter bool `json:"readBoundariesMatter"`
-	Pi                   struct {
+	// Pi is pi's outcome. A mistyped wire field can leave pi holding a value
+	// no Go field can (a numeric delta or response id, a string token
+	// count), so those are kept as JSON and compared by value.
+	Pi struct {
 		Events    []string `json:"events"`
 		SameModel bool     `json:"sameModel"`
 		Stream    []struct {
-			Type  string  `json:"type"`
-			Delta *string `json:"delta"`
+			Type  string          `json:"type"`
+			Delta json.RawMessage `json:"delta"`
 		} `json:"stream"`
-		StopReason   string `json:"stopReason"`
-		ErrorMessage string `json:"errorMessage"`
-		ResponseID   string `json:"responseId"`
-		Content      string `json:"content"`
-		Usage        struct {
-			Input       int `json:"input"`
-			Output      int `json:"output"`
-			CacheRead   int `json:"cacheRead"`
-			CacheWrite  int `json:"cacheWrite"`
-			TotalTokens int `json:"totalTokens"`
-		} `json:"usage"`
+		StopReason   string         `json:"stopReason"`
+		ErrorMessage string         `json:"errorMessage"`
+		ResponseID   any            `json:"responseId"`
+		Content      string         `json:"content"`
+		Usage        map[string]any `json:"usage"`
 	} `json:"pi"`
+}
+
+// piStreamEvent is one of pi's stream events as the replay compares it: the
+// type, and the delta when there is one. A delta that is not a string (pi
+// pushes part.text as it came) is written as its JSON, which no Go delta
+// can equal.
+func piStreamEvent(typ string, delta json.RawMessage) string {
+	if delta == nil {
+		return typ
+	}
+	var text string
+	if delta[0] == '"' && json.Unmarshal(delta, &text) == nil {
+		return typ + " " + text
+	}
+	var compact bytes.Buffer
+	json.Compact(&compact, delta)
+	return typ + " <non-string delta " + compact.String() + ">"
+}
+
+// sameGoogleUsage reports whether the Go usage's token counts are pi's:
+// numbers equal to the ints, where pi can also hold a string, a fraction or
+// null (NaN, Infinity).
+func sameGoogleUsage(u ai.Usage, pi map[string]any) bool {
+	for key, got := range map[string]int{"input": u.Input, "output": u.Output, "cacheRead": u.CacheRead, "cacheWrite": u.CacheWrite, "totalTokens": u.TotalTokens} {
+		if want, ok := pi[key].(float64); !ok || want != float64(got) {
+			return false
+		}
+	}
+	return true
+}
+
+// sameGoogleResponseID reports whether the Go response id is pi's: pi's
+// absent or "" is Go's "", a string is itself, and anything else is a value
+// Go's string cannot hold.
+func sameGoogleResponseID(got string, pi any) bool {
+	if pi == nil {
+		return got == ""
+	}
+	want, ok := pi.(string)
+	return ok && got == want
 }
 
 func loadGoogleStreamCapture(t *testing.T) googleStreamCapture {
@@ -144,7 +181,7 @@ func TestGoogleSSEReadChunksMatchPi(t *testing.T) {
 				return err
 			}
 			err := iterateGoogleSSE(&readsReader{reads: append([]string(nil), sc.Segments...)}, ctx,
-				observe, func(googleChunk) error { return nil })
+				observe, func(any) error { return nil })
 			if err == nil || err.Error() != msg {
 				t.Fatalf("error %v\npi:   %s", err, msg)
 			}
@@ -186,7 +223,7 @@ func TestGoogleToolCallArgumentsKeepModelOrder(t *testing.T) {
 	var piDeltas []string
 	for _, ev := range sc.Pi.Stream {
 		if ev.Type == "toolcall_delta" {
-			piDeltas = append(piDeltas, *ev.Delta)
+			piDeltas = append(piDeltas, strings.TrimPrefix(piStreamEvent(ev.Type, ev.Delta), ev.Type+" "))
 		}
 	}
 	if !slices.Equal(deltas, piDeltas) {
@@ -300,11 +337,7 @@ func replayGoogleScenario(t *testing.T, sc googleStreamScenario) []string {
 		}
 	}
 	for _, ev := range sc.Pi.Stream {
-		if ev.Delta != nil {
-			want = append(want, ev.Type+" "+*ev.Delta)
-		} else {
-			want = append(want, ev.Type)
-		}
+		want = append(want, piStreamEvent(ev.Type, ev.Delta))
 	}
 	if !slices.Equal(got, want) {
 		diffs = append(diffs, fmt.Sprintf("stream %q\npi:     %q", got, want))
@@ -319,15 +352,14 @@ func replayGoogleScenario(t *testing.T, sc googleStreamScenario) []string {
 	if string(final.StopReason) != sc.Pi.StopReason || final.ErrorMessage != sc.Pi.ErrorMessage {
 		diffs = append(diffs, fmt.Sprintf("stop %s %q, pi %s %q", final.StopReason, final.ErrorMessage, sc.Pi.StopReason, sc.Pi.ErrorMessage))
 	}
-	if final.ResponseID != sc.Pi.ResponseID {
-		diffs = append(diffs, fmt.Sprintf("responseId %q, pi %q", final.ResponseID, sc.Pi.ResponseID))
+	if !sameGoogleResponseID(final.ResponseID, sc.Pi.ResponseID) {
+		diffs = append(diffs, fmt.Sprintf("responseId %q, pi %#v", final.ResponseID, sc.Pi.ResponseID))
 	}
 	if content, _ := jstext.Stringify(final.Content); content != sc.Pi.Content {
 		diffs = append(diffs, fmt.Sprintf("content %s\npi:      %s", content, sc.Pi.Content))
 	}
-	u, pu := final.Usage, sc.Pi.Usage
-	if u.Input != pu.Input || u.Output != pu.Output || u.CacheRead != pu.CacheRead || u.CacheWrite != pu.CacheWrite || u.TotalTokens != pu.TotalTokens {
-		diffs = append(diffs, fmt.Sprintf("usage %+v, pi %+v", u, pu))
+	if !sameGoogleUsage(final.Usage, sc.Pi.Usage) {
+		diffs = append(diffs, fmt.Sprintf("usage %+v, pi %v", final.Usage, sc.Pi.Usage))
 	}
 	return diffs
 }
@@ -437,8 +469,44 @@ func (r abortingReader) Read([]byte) (int, error) {
 func TestGoogleAbortDuringReadIsAbortError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	err := iterateGoogleSSE(abortingReader{cancel}, ctx, nil, func(googleChunk) error { return nil })
+	err := iterateGoogleSSE(abortingReader{cancel}, ctx, nil, func(any) error { return nil })
 	if err == nil || err.Error() != "This operation was aborted" {
 		t.Fatalf("error %v, want This operation was aborted", err)
 	}
+}
+
+// TestGoogleDivergencesMatchPiWhereTheyCan: two tagged scenarios differ from
+// pi only in values a Go field cannot hold, and the rest of their outcome
+// must still be pi's. With part.text null, 5 and an array, pi's deltas are
+// those values (the divergence) but the text it appends is their String()
+// form, which the content carries; with tool-call fields of other types,
+// pi's ids and arguments are those values (the divergence) but each
+// toolcall_delta is JSON.stringify of the arguments.
+func TestGoogleDivergencesMatchPiWhereTheyCan(t *testing.T) {
+	t.Run("text content", func(t *testing.T) {
+		sc := googleCaptureScenario(t, "divergence: text deltas that are not strings")
+		stream := googleServe(t, "gemini-2.5-flash", strings.Join(sc.Segments, ""))
+		final := stream.Result()
+		if content, _ := jstext.Stringify(final.Content); content != sc.Pi.Content || string(final.StopReason) != sc.Pi.StopReason {
+			t.Fatalf("content %s %s\npi:      %s %s", content, final.StopReason, sc.Pi.Content, sc.Pi.StopReason)
+		}
+	})
+	t.Run("toolcall deltas", func(t *testing.T) {
+		sc := googleCaptureScenario(t, "divergence: tool-call fields of other types")
+		stream := googleServe(t, "gemini-2.5-flash", strings.Join(sc.Segments, ""))
+		var deltas, piDeltas []string
+		for ev := range stream.Events() {
+			if ev.Type == ai.EventToolCallDelta {
+				deltas = append(deltas, ev.Delta)
+			}
+		}
+		for _, ev := range sc.Pi.Stream {
+			if ev.Type == "toolcall_delta" {
+				piDeltas = append(piDeltas, strings.TrimPrefix(piStreamEvent(ev.Type, ev.Delta), ev.Type+" "))
+			}
+		}
+		if !slices.Equal(deltas, piDeltas) || len(deltas) != 3 {
+			t.Fatalf("toolcall_delta %q\npi:            %q", deltas, piDeltas)
+		}
+	})
 }

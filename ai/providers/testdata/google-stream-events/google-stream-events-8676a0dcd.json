@@ -2037,8 +2037,8 @@
 			}
 		},
 		{
-			"name": "divergence: a field of an unexpected type",
-			"divergence": "pi reads the fields it can; the port's typed decode drops the whole event",
+			"name": "a string token count is read as a number",
+			"note": "pi reads each chunk untyped: \"2\" - 0 is 2, and the rest of the chunk still counts",
 			"framing": "close",
 			"headers": [
 				[
@@ -2083,6 +2083,867 @@
 				"content": "[{\"type\":\"text\",\"text\":\"t!\"}]",
 				"usage": {
 					"input": 2,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "boolean and array token counts, then a usage that is not an object",
+			"note": "true - 0 is 1 and [3] + 0 is \"30\"; a later truthy non-object usage reads every count as 0",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"usageMetadata\":{\"promptTokenCount\":true,\"candidatesTokenCount\":[3]}}\n\ndata: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":\"str\"}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"usageMetadata\":{\"promptTokenCount\":true,\"candidatesTokenCount\":[3]},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":\"str\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"t\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a falsy usage keeps the previous one",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":4}}\n\ndata: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":0}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":4},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":0,\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"t\"}]",
+				"usage": {
+					"input": 4,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 4
+				}
+			}
+		},
+		{
+			"name": "an empty response id gives way to a later one",
+			"note": "output.responseId ||= chunk.responseId",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"responseId\":\"\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}]}\n\ndata: {\"responseId\":\"r2\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}]},\"finishReason\":\"STOP\"}]}\n\ndata: {\"responseId\":\"r3\"}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"responseId\":\"\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}]},\"finishReason\":\"STOP\"}],\"responseId\":\"r2\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"responseId\":\"r3\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"responseId": "r2",
+				"content": "[{\"type\":\"text\",\"text\":\"t!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a candidates object is read by its 0 key",
+			"note": "the SDK copies a non-array candidates as it is, and chunk.candidates?.[0] reads its \"0\" member",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":{\"0\":{\"content\":{\"parts\":[{\"text\":\"via key\"}]},\"finishReason\":\"STOP\"}}}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":{\"0\":{\"content\":{\"parts\":[{\"text\":\"via key\"}]},\"finishReason\":\"STOP\"}},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "via key"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"via key\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "candidates, content and parts of other types read nothing",
+			"note": "a string candidates' [0] is a letter, a string content has no parts, a string parts iterates letters, and parts that are not objects carry no text",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":\"str\"}\n\ndata: {\"candidates\":[{\"content\":\"x\"}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":\"ab\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[\"s\",5,true,[1]]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":\"str\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":\"x\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":\"ab\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[\"s\",5,true,[1]]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "parts that is an object is not iterable",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":{\"text\":\"x\"}}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":{\"text\":\"x\"}}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "a"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "candidate.content.parts is not iterable",
+				"content": "[{\"type\":\"text\",\"text\":\"a\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a null part fails reading its text",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[null]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[null]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "a"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Cannot read properties of null (reading 'text')",
+				"content": "[{\"type\":\"text\",\"text\":\"a\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "text with its own toString fails after the block opens",
+			"note": "text_start is pushed before block.text += part.text throws",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":{\"toString\":1}}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":{\"toString\":1}}]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Cannot convert object to primitive value",
+				"content": "[{\"type\":\"text\",\"text\":\"\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a thought that is not true and a thoughtSignature that is not a string",
+			"note": "isThinkingPart is part.thought === true; retainThoughtSignature keeps only a non-empty string",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\",\"thought\":\"true\",\"thoughtSignature\":5}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\",\"thought\":\"true\",\"thoughtSignature\":5}]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "a"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"a!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a finish reason that is a number",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":5}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":5}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Unhandled stop reason: 5",
+				"content": "[{\"type\":\"text\",\"text\":\"t\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a finish reason that is an array",
+			"note": "mapStopReason compares with ===, then the template literal joins the array",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":[\"STOP\"]}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":[\"STOP\"]}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Unhandled stop reason: STOP",
+				"content": "[{\"type\":\"text\",\"text\":\"t\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a finish reason with its own toString",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":{\"toString\":1}}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":{\"toString\":1}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Cannot convert object to primitive value",
+				"content": "[{\"type\":\"text\",\"text\":\"t\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: token counts pi keeps as strings",
+			"divergence": "pi's usage keeps output \"21\" (\"2\" + 1), cacheRead \"1\" and totalTokens \"8\" as strings; an ai.Usage count is an int, holding 21, 1 and 8",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":5,\"cachedContentTokenCount\":\"1\",\"candidatesTokenCount\":\"2\",\"thoughtsTokenCount\":1,\"totalTokenCount\":\"8\"}}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":5,\"cachedContentTokenCount\":\"1\",\"candidatesTokenCount\":\"2\",\"thoughtsTokenCount\":1,\"totalTokenCount\":\"8\"},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"t\"}]",
+				"usage": {
+					"input": 4,
+					"output": "21",
+					"cacheRead": "1",
+					"cacheWrite": 0,
+					"totalTokens": "8"
+				}
+			}
+		},
+		{
+			"name": "divergence: fractional and infinite token counts",
+			"divergence": "pi's usage keeps input Infinity (JSON null) and totalTokens 3.7; an ai.Usage count is an int, holding 0 and 3",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":1e400,\"candidatesTokenCount\":1,\"totalTokenCount\":3.7}}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":null,\"candidatesTokenCount\":1,\"totalTokenCount\":3.7},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"t\"}]",
+				"usage": {
+					"input": null,
+					"output": 1,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 3.7
+				}
+			}
+		},
+		{
+			"name": "divergence: a numeric response id",
+			"divergence": "pi's responseId is the number 5; the port's ResponseID string holds \"5\"",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"responseId\":5,\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}]}\n\ndata: {\"responseId\":\"later\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"responseId\":5,\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}]},\"finishReason\":\"STOP\"}],\"responseId\":\"later\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"responseId": 5,
+				"content": "[{\"type\":\"text\",\"text\":\"t!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: text deltas that are not strings",
+			"divergence": "pi's text_delta carries part.text as it came (null, 5, an array); the port's Delta string holds the text appended (\"null\", \"5\", \"1,2,,[object Object]\"), which the content matches",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":null},{\"text\":5},{\"text\":[1,[2,null],{}]}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":null},{\"text\":5},{\"text\":[1,[2,null],{}]}]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": null
+					},
+					{
+						"type": "text_delta",
+						"delta": 5
+					},
+					{
+						"type": "text_delta",
+						"delta": [
+							1,
+							[
+								2,
+								null
+							],
+							{}
+						]
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"null51,2,,[object Object]!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: tool-call fields of other types",
+			"divergence": "pi's tool call keeps id 7, name 5, thoughtSignature 7 and arguments [1,{\"b\":2}] / \"s\" as they came; the port's strings hold \"7\", \"5\" and \"7\" and its Arguments map is {} (the toolcall_delta text matches)",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":7,\"name\":5,\"args\":[1,{\"b\":2}]},\"thoughtSignature\":7},{\"functionCall\":{\"id\":\"c2\",\"name\":\"f\",\"args\":\"s\"}},{\"functionCall\":{\"id\":\"c3\",\"name\":\"\",\"args\":null}}]},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":7,\"name\":5,\"args\":[1,{\"b\":2}]},\"thoughtSignature\":7},{\"functionCall\":{\"id\":\"c2\",\"name\":\"f\",\"args\":\"s\"}},{\"functionCall\":{\"id\":\"c3\",\"name\":\"\",\"args\":null}}]},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "toolcall_start"
+					},
+					{
+						"type": "toolcall_delta",
+						"delta": "[1,{\"b\":2}]"
+					},
+					{
+						"type": "toolcall_end"
+					},
+					{
+						"type": "toolcall_start"
+					},
+					{
+						"type": "toolcall_delta",
+						"delta": "\"s\""
+					},
+					{
+						"type": "toolcall_end"
+					},
+					{
+						"type": "toolcall_start"
+					},
+					{
+						"type": "toolcall_delta",
+						"delta": "{}"
+					},
+					{
+						"type": "toolcall_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "toolUse",
+				"content": "[{\"type\":\"toolCall\",\"id\":7,\"name\":5,\"arguments\":[1,{\"b\":2}],\"thoughtSignature\":7},{\"type\":\"toolCall\",\"id\":\"c2\",\"name\":\"f\",\"arguments\":\"s\"},{\"type\":\"toolCall\",\"id\":\"c3\",\"name\":\"\",\"arguments\":{}}]",
+				"usage": {
+					"input": 0,
 					"output": 0,
 					"cacheRead": 0,
 					"cacheWrite": 0,

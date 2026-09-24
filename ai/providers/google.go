@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"regexp"
 	"slices"
@@ -506,20 +507,38 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 				return opts.OnProviderStreamEvent(googleGenerateContentResponse(data, slices.Clone(headers)), model)
 			}
 		}
-		err = iterateGoogleSSE(resp.Body, ctx, observe, func(chunk googleChunk) error {
-			if chunk.ResponseID != "" && output.ResponseID == "" {
-				output.ResponseID = chunk.ResponseID
+		// pi reads each chunk untyped, as the SDK converted it, with
+		// JavaScript's semantics: a field of an unexpected type is read as V8
+		// reads it, never a reason to drop the chunk. Where pi ends up holding
+		// a value a Go field cannot (a numeric id, a non-object arguments
+		// value), the field carries its String() reading (googleStringValue);
+		// testdata/google-stream-events tags those cases as divergences.
+		responseIDTruthy := false
+		toolCallIDs := map[int]any{} // builder index -> the id pi compares with ===
+		err = iterateGoogleSSE(resp.Body, ctx, observe, func(payload any) error {
+			chunk := googleGenerateContentResponse(payload, nil)
+			// output.responseId ||= chunk.responseId
+			if !responseIDTruthy {
+				id := jsGet(chunk, "responseId")
+				responseIDTruthy = jsTruthy(id)
+				output.ResponseID = googleStringValue(id)
 			}
-			if len(chunk.Candidates) > 0 {
-				cand := chunk.Candidates[0]
-				for _, part := range cand.Content.Parts {
+			candidate := jsIndex0(jsGet(chunk, "candidates"))
+			if parts := jsGet(jsGet(candidate, "content"), "parts"); jsTruthy(parts) {
+				list, err := googleIterate(parts, "candidate.content.parts")
+				if err != nil {
+					return err
+				}
+				for _, part := range list {
+					if part == nil {
+						return errors.New("Cannot read properties of null (reading 'text')")
+					}
 					// pi runs INDEPENDENT checks (google.ts:97,158): `text !== undefined`
 					// first, then `functionCall` — a part carrying both processes both;
 					// a part with neither (signature-only, inlineData-only) produces
 					// nothing at all.
-					if part.Text != nil {
-						text := *part.Text
-						isThinking := part.Thought
+					if rawText := jsGet(part, "text"); rawText != jsUndefined {
+						isThinking := jsGet(part, "thought") == true
 						want := "text"
 						if isThinking {
 							want = "thinking"
@@ -536,95 +555,115 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 								stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextStart, ContentIndex: idx, Partial: output.Clone()})
 							}
 						}
+						// block.text += part.text, after the block is opened.
+						text, err := jsToString(rawText)
+						if err != nil {
+							return err
+						}
+						// retainThoughtSignature keeps the last non-empty string.
+						sig, _ := jsGet(part, "thoughtSignature").(string)
 						idx := len(builders) - 1
 						if isThinking {
 							current.thinking.WriteString(text)
-							if part.ThoughtSignature != "" {
-								current.thinkingSig = part.ThoughtSignature
+							if sig != "" {
+								current.thinkingSig = sig
 							}
 							materialize()
 							stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: idx, Delta: text, Partial: output.Clone()})
 						} else {
 							current.text.WriteString(text)
-							// A thoughtSignature can appear on a text part (pi: textSignature via
-							// retainThoughtSignature — keep last non-empty for the block).
-							if part.ThoughtSignature != "" {
-								textSigs[idx] = part.ThoughtSignature
+							if sig != "" {
+								textSigs[idx] = sig
 							}
 							materialize()
 							stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: idx, Delta: text, Partial: output.Clone()})
 						}
 					}
-					if part.FunctionCall != nil {
+					if fc := jsGet(part, "functionCall"); jsTruthy(fc) {
 						endCurrent()
-						// Regenerate the ID when it is empty OR a duplicate of one already
-						// seen in this response (pi google.ts: needsNewId).
-						providedID := part.FunctionCall.ID
-						needsNewID := providedID == ""
-						if !needsNewID {
-							for _, b := range builders {
-								if b.kind == "toolCall" && b.toolID == providedID {
-									needsNewID = true
-									break
-								}
+						// A new id when the provided one is falsy or === one already
+						// in this response (pi google.ts: needsNewId), built from the
+						// name as a template literal reads it.
+						providedID := jsGet(fc, "id")
+						needsNewID := !jsTruthy(providedID)
+						for _, seen := range toolCallIDs {
+							if jsStrictEqual(seen, providedID) {
+								needsNewID = true
 							}
 						}
-						id := providedID
+						var rawID any = providedID
 						if needsNewID {
-							id = nextGoogleToolCallID(part.FunctionCall.Name)
+							name, err := jsToString(jsGet(fc, "name"))
+							if err != nil {
+								return err
+							}
+							rawID = nextGoogleToolCallID(name)
 						}
-						// pi: `arguments: part.functionCall.args ?? {}`, the parsed object
-						// itself, so the model's key order rides along.
-						args, order := part.FunctionCall.Args.values, part.FunctionCall.Args.order
-						if args == nil {
-							args = map[string]any{}
+						name := ""
+						if n := jsGet(fc, "name"); jsTruthy(n) {
+							name = googleStringValue(n)
 						}
-						b := &blockBuilder{kind: "toolCall", toolID: id, toolName: part.FunctionCall.Name, args: args, argsOrder: order}
+						// arguments: part.functionCall.args ?? {} — the parsed object
+						// itself, so its key order rides along.
+						var args any = ai.OrderedObject{}
+						if a := jsGet(fc, "args"); a != nil && a != jsUndefined {
+							args = a
+						}
+						b := &blockBuilder{kind: "toolCall", toolID: googleStringValue(rawID), toolName: name}
+						if obj, ok := args.(ai.OrderedObject); ok {
+							b.args, b.argsOrder = obj.Plain(), obj
+						}
 						builders = append(builders, b)
 						idx := len(builders) - 1
+						toolCallIDs[idx] = rawID
 						// pi sets thoughtSignature on the ToolCall object BEFORE pushing
 						// toolcall_start (google.ts:186-195), so partials already carry it.
-						if part.ThoughtSignature != "" {
-							toolCallSigs[idx] = part.ThoughtSignature
+						thoughtSig := ""
+						if ts := jsGet(part, "thoughtSignature"); jsTruthy(ts) {
+							thoughtSig = googleStringValue(ts)
+							toolCallSigs[idx] = thoughtSig
 						}
 						materialize()
 						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: idx, Partial: output.Clone()})
-						tc := b.toContent().(ai.ToolCall)
-						argsJSON, _ := jstext.Stringify(tc.OrderedArguments())
+						argsJSON, _ := jstext.Stringify(args)
 						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: argsJSON, Partial: output.Clone()})
-						if part.ThoughtSignature != "" {
-							tc.ThoughtSignature = part.ThoughtSignature
-						}
+						tc := b.toContent().(ai.ToolCall)
+						tc.ThoughtSignature = thoughtSig
 						stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: idx, ToolCall: &tc, Partial: output.Clone()})
 					}
 				}
-				if cand.FinishReason != "" {
-					output.RawStopReason = cand.FinishReason
-					reason, rerr := mapGoogleStopReason(cand.FinishReason)
-					if rerr != nil {
-						return rerr
+			}
+			if finishReason := jsGet(candidate, "finishReason"); jsTruthy(finishReason) {
+				output.RawStopReason = googleStringValue(finishReason)
+				reason, isString := finishReason.(string)
+				if !isString {
+					// mapStopReason's exhaustive switch compares with ===.
+					text, err := jsToString(finishReason)
+					if err != nil {
+						return err
 					}
-					output.StopReason = reason
-					if reason == ai.StopStop {
-						for _, b := range builders {
-							if b.kind == "toolCall" {
-								output.StopReason = ai.StopToolUse
-								break
-							}
+					return fmt.Errorf("Unhandled stop reason: %s", text)
+				}
+				stopReason, rerr := mapGoogleStopReason(reason)
+				if rerr != nil {
+					return rerr
+				}
+				output.StopReason = stopReason
+				if stopReason == ai.StopStop {
+					for _, b := range builders {
+						if b.kind == "toolCall" {
+							output.StopReason = ai.StopToolUse
+							break
 						}
 					}
 				}
 			}
-			if chunk.UsageMetadata != nil {
-				u := chunk.UsageMetadata
-				output.Usage = ai.Usage{
-					Input:       u.PromptTokenCount - u.CachedContentTokenCount,
-					Output:      u.CandidatesTokenCount + u.ThoughtsTokenCount,
-					CacheRead:   u.CachedContentTokenCount,
-					CacheWrite:  0,
-					Reasoning:   u.ThoughtsTokenCount,
-					TotalTokens: u.TotalTokenCount,
+			if usage := jsGet(chunk, "usageMetadata"); jsTruthy(usage) {
+				u, err := googleUsage(usage)
+				if err != nil {
+					return err
 				}
+				output.Usage = u
 				ai.CalculateCost(model, &output.Usage)
 			}
 			return nil
@@ -1088,60 +1127,6 @@ func mapGoogleStopReason(reason string) (ai.StopReason, error) {
 	}
 }
 
-// ---- SSE chunk types ----
-
-type googleChunk struct {
-	ResponseID string `json:"responseId"`
-	Candidates []struct {
-		Content struct {
-			Parts []googlePart `json:"parts"`
-		} `json:"content"`
-		FinishReason string `json:"finishReason"`
-	} `json:"candidates"`
-	UsageMetadata *struct {
-		PromptTokenCount        int `json:"promptTokenCount"`
-		CandidatesTokenCount    int `json:"candidatesTokenCount"`
-		CachedContentTokenCount int `json:"cachedContentTokenCount"`
-		ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
-		TotalTokenCount         int `json:"totalTokenCount"`
-	} `json:"usageMetadata"`
-}
-
-type googlePart struct {
-	// Text is a pointer so presence ("" included) is distinguishable from
-	// absence, mirroring pi's `part.text !== undefined` check (google.ts:97).
-	Text             *string `json:"text"`
-	Thought          bool    `json:"thought"`
-	ThoughtSignature string  `json:"thoughtSignature"`
-	FunctionCall     *struct {
-		ID   string             `json:"id"`
-		Name string             `json:"name"`
-		Args googleFunctionArgs `json:"args"`
-	} `json:"functionCall"`
-}
-
-// googleFunctionArgs is a functionCall's args with the model's key order kept:
-// pi's tool-call arguments are the parsed object itself, which JSON.stringify
-// (the toolcall_delta) and every later replay write in that order. A value
-// that is not an object fails the chunk's decode, as a map field did.
-type googleFunctionArgs struct {
-	values map[string]any
-	order  ai.OrderedObject
-}
-
-func (a *googleFunctionArgs) UnmarshalJSON(data []byte) error {
-	if string(data) == "null" {
-		*a = googleFunctionArgs{}
-		return nil
-	}
-	values, order, err := ai.DecodeOrderedObject(data)
-	if err != nil {
-		return err
-	}
-	*a = googleFunctionArgs{values: values, order: order}
-	return nil
-}
-
 // googleBareJSONError is the check @google/genai 2.21.0 runs on every network
 // read before buffering it (processStreamResponse): when the whole read
 // parses as JSON holding an "error" key, it reads status and code from
@@ -1200,8 +1185,8 @@ func googleBareJSONError(read string) error {
 // segment at the end".
 //
 // observe, when set, receives each data: payload's parsed value before handle
-// sees the chunk, and its error ends the stream.
-func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(data any) error, handle func(googleChunk) error) error {
+// receives its own copy, and either one's error ends the stream.
+func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload any) error, handle func(payload any) error) error {
 	delimiters := []string{"\n\n", "\r\r", "\r\n\r\n"}
 	buf := make([]byte, 32*1024)
 	var pending string
@@ -1220,25 +1205,35 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(data any
 		if err := jstext.JSONSyntaxError(data); err != nil {
 			return err
 		}
-		if observe != nil {
+		// The observer and the handler each get their own decode, so an
+		// observer that writes to the value it was handed cannot change what
+		// the adapter reads.
+		decode := func() (any, error) {
 			value, err := ai.DecodeOrderedValue([]byte(data))
 			if err != nil {
 				// Unreachable short of encoding/json's nesting limit: JSON.parse
 				// accepted the payload.
-				return fmt.Errorf("a google stream payload JSON.parse accepts failed the port's decode (%v); report it as a port bug with this payload: %s", err, data)
+				return nil, fmt.Errorf("a google stream payload JSON.parse accepts failed the port's decode (%v); report it as a port bug with this payload: %s", err, data)
+			}
+			return value, nil
+		}
+		if observe != nil {
+			value, err := decode()
+			if err != nil {
+				return err
 			}
 			if err := observe(value); err != nil {
 				return err
 			}
 		}
-		var chunk googleChunk
-		if json.Unmarshal([]byte(data), &chunk) != nil {
-			return nil
+		value, err := decode()
+		if err != nil {
+			return err
 		}
 		// No error check here: the SDK checks only whole reads that are bare
 		// JSON, and generateContentResponseFromMldev keeps no "error" field, so
 		// a data: event carrying one reaches pi as an empty chunk.
-		return handle(chunk)
+		return handle(value)
 	}
 
 	// An abort rejects the SDK's pending body read with undici's AbortError.
@@ -1378,6 +1373,96 @@ func googleField(o ai.OrderedObject, key string) any {
 		}
 	}
 	return nil
+}
+
+// googleStringValue is the Go string a string-typed field carries for a
+// value pi holds as it came: a string as itself, any other truthy value by its
+// String() reading (pi holds the value itself, which the field cannot), and
+// anything falsy as "".
+func googleStringValue(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if !jsTruthy(v) {
+		return ""
+	}
+	s, err := jsToString(v)
+	if err != nil {
+		return ""
+	}
+	return s
+}
+
+// googleIterate is `for (const x of v)` over a truthy value named expr in
+// pi's source: an array's elements; a string's code points, which are
+// strings and so carry none of the fields pi reads; anything else throws
+// V8's TypeError.
+func googleIterate(v any, expr string) ([]any, error) {
+	switch t := v.(type) {
+	case []any:
+		return t, nil
+	case string:
+		return nil, nil
+	}
+	return nil, fmt.Errorf("%s is not iterable", expr)
+}
+
+// googleUsage is pi's usage literal for a truthy chunk.usageMetadata:
+//
+//	input:       (promptTokenCount || 0) - (cachedContentTokenCount || 0)
+//	output:      (candidatesTokenCount || 0) + (thoughtsTokenCount || 0)
+//	cacheRead:   cachedContentTokenCount || 0
+//	reasoning:   thoughtsTokenCount || 0
+//	totalTokens: totalTokenCount || 0
+//
+// with JavaScript's coercions ("2" - 0 is 2; "2" + 1 is "21"), a conversion
+// that fails throwing as it does in pi. pi keeps each result as it is; an
+// ai.Usage count holds its whole-number reading (googleTokenCount).
+func googleUsage(usage any) (ai.Usage, error) {
+	or0 := func(key string) any {
+		if v := jsGet(usage, key); jsTruthy(v) {
+			return v
+		}
+		return 0.0
+	}
+	prompt, cached := or0("promptTokenCount"), or0("cachedContentTokenCount")
+	candidates, thoughts := or0("candidatesTokenCount"), or0("thoughtsTokenCount")
+	p, err := jsToNumber(prompt)
+	if err != nil {
+		return ai.Usage{}, err
+	}
+	c, err := jsToNumber(cached)
+	if err != nil {
+		return ai.Usage{}, err
+	}
+	output, err := jsAdd(candidates, thoughts)
+	if err != nil {
+		return ai.Usage{}, err
+	}
+	return ai.Usage{
+		Input:       googleTokenCount(p - c),
+		Output:      googleTokenCount(output),
+		CacheRead:   googleTokenCount(cached),
+		Reasoning:   googleTokenCount(thoughts),
+		TotalTokens: googleTokenCount(or0("totalTokenCount")),
+	}, nil
+}
+
+// googleTokenCount is the int an ai.Usage count holds for a value pi keeps in
+// that slot: its Number() reading truncated toward zero, 0 when that is NaN
+// or infinite. It equals pi's value exactly when pi's is a whole number.
+func googleTokenCount(v any) int {
+	f, err := jsToNumber(v)
+	if err != nil || math.IsNaN(f) || math.IsInf(f, 0) {
+		return 0
+	}
+	switch f = math.Trunc(f); {
+	case f >= float64(math.MaxInt):
+		return math.MaxInt
+	case f <= float64(math.MinInt):
+		return math.MinInt
+	}
+	return int(f)
 }
 
 // googleSDKResponseHeaders is the header record @google/genai 2.21.0 puts on
