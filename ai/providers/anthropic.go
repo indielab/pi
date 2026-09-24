@@ -757,8 +757,8 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// mapAnthropicStopReason).
 		errorMessageSet := false
 		err = iterateAnthropicSSE(resp.Body, ctx, onEvent, func(ev rawObject) error {
-			typ, _ := rawString(ev["type"])
-			switch typ {
+			typ, _ := rawStringBytes(ev["type"])
+			switch string(typ) {
 			case "message_start":
 				sawStart = true
 				msg, err := rawRead(ev["message"], "id")
@@ -867,9 +867,9 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 				}
 				// pi only applies a delta when the indexed block has the matching
 				// type; mismatches are dropped silently.
-				deltaType, _ := rawString(delta["type"])
+				deltaType, _ := rawStringBytes(delta["type"])
 				var kind, member string
-				switch deltaType {
+				switch string(deltaType) {
 				case "text_delta":
 					kind, member = "text", "text"
 				case "thinking_delta":
@@ -888,12 +888,14 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 				b := blocks[idx]
 				// pi's `+=` appends String() of the member ("undefined" when it is
 				// absent); the pushed event carries the member itself.
-				piece, err := rawToString(delta[member])
-				if err != nil {
-					return err
+				pushed, isString := rawString(delta[member])
+				piece := pushed
+				if !isString {
+					if piece, err = rawToString(delta[member]); err != nil {
+						return err
+					}
 				}
-				pushed, _ := rawString(delta[member])
-				switch deltaType {
+				switch string(deltaType) {
 				case "text_delta":
 					if err := convertAnthropicSeed(&b.seeds.text); err != nil {
 						return err
@@ -2118,7 +2120,7 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 		parseFailure := func(cause error) error {
 			return fmt.Errorf("Could not parse Anthropic SSE event %s: %v; data=%s; raw=%s", name, cause, data, strings.Join(raw, `\n`))
 		}
-		text, err := jsonTextWithRepair(data)
+		text, ev, err := parseAnthropicEvent(data)
 		if err != nil {
 			return parseFailure(err)
 		}
@@ -2127,7 +2129,7 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 			return parseFailure(errors.New("Cannot read properties of null (reading 'type')"))
 		}
 		if onEvent != nil {
-			value, err := ai.DecodeOrderedValue([]byte(text))
+			value, err := ai.DecodeOrderedValue(text)
 			if err != nil {
 				return parseFailure(err)
 			}
@@ -2137,10 +2139,6 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 		}
 		if kind != '{' {
 			return nil
-		}
-		ev, err := decodeRawObject([]byte(text))
-		if err != nil {
-			return parseFailure(err) // unreachable: text is valid JSON
 		}
 		return handle(ev)
 	}
@@ -2180,6 +2178,39 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 		return err
 	}
 	return flush()
+}
+
+// parseAnthropicEvent is pi's parseJsonWithRepair of an event's data: the text
+// it parses — the data when that is JSON, else its repair when that differs
+// and is — with an object's members, which the one decode that validates the
+// text reads (nil for any other value). Its error is the syntax error that
+// parse fails with: the repair's, when there is one.
+func parseAnthropicEvent(data string) (text []byte, members rawObject, err error) {
+	text = []byte(data)
+	if members, err = decodeAnthropicEventText(text); err == nil {
+		return text, members, nil
+	}
+	if repaired := repairJSON(data); repaired != data {
+		text = []byte(repaired)
+		if members, err = decodeAnthropicEventText(text); err == nil {
+			return text, members, nil
+		}
+	}
+	return nil, nil, err
+}
+
+// decodeAnthropicEventText validates text as JSON, decoding an object's
+// members on the way (a text that is not JSON never decodes, so the decode
+// is the validation); members is nil for any other value.
+func decodeAnthropicEventText(text []byte) (rawObject, error) {
+	if jsonValueKind(text) == '{' {
+		return decodeRawObject(text)
+	}
+	if json.Valid(text) {
+		return nil, nil
+	}
+	var v any
+	return nil, json.Unmarshal(text, &v)
 }
 
 // applyMessageStartUsage is message_start's usage reads: pi assigns each count

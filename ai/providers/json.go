@@ -351,25 +351,6 @@ func parseJSONWithRepair(s string, out any) error {
 	return json.Unmarshal([]byte(s), out) // return original error
 }
 
-// jsonTextWithRepair is parseJSONWithRepair's acceptance rule without a decode
-// target: it returns the text pi's parseJsonWithRepair would parse — the input
-// when it is valid JSON, else its repair when that differs and is — or the
-// syntax error that parse fails with (the repair's, when there is one).
-func jsonTextWithRepair(s string) (string, error) {
-	if json.Valid([]byte(s)) {
-		return s, nil
-	}
-	text := s
-	if repaired := repairJSON(s); repaired != s {
-		if json.Valid([]byte(repaired)) {
-			return repaired, nil
-		}
-		text = repaired
-	}
-	var v any
-	return "", json.Unmarshal([]byte(text), &v)
-}
-
 // jsonValueKind reports what a valid JSON text holds, by its first
 // non-whitespace byte: '{' object, '[' array, '"' string, 'n' null, 't'/'f'
 // booleans, anything else a number.

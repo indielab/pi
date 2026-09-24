@@ -135,3 +135,61 @@ func TestRawPropertyKeyAndCount(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeRawObjectMatchesEncodingJSON requires decodeRawObject, which splits
+// an object itself, to read every object as json.Unmarshal into a
+// map[string]json.RawMessage reads it: the same keys (escapes, surrogate
+// pairs and invalid UTF-8 unquoted alike), each value's exact text, a
+// repeated key's last value, and the same failure for text that is not an
+// object.
+func TestDecodeRawObjectMatchesEncodingJSON(t *testing.T) {
+	for _, in := range []string{
+		`{}`,
+		` { } `,
+		`{"a":1}`,
+		`{ "a" : 1 , "b" : [ 1 , { "c" : "}" } ] }`,
+		`{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}`,
+		`{"a":"x\"y","b":"\\","c":"{[","d":"]}","e":"\B""}`,
+		`{"k\u0041":1,"\ud83d\ude00":2,"\"q":3,"\n":4}`,
+		`{"dup":1,"x":2,"dup":{"n":3}}`,
+		`{"n":-1.5e+10,"m":0,"t":true,"f":false,"z":null,"e":[],"o":{}}`,
+		`{"deep":[[[{"a":[1,[2,{"b":"]"}]]}]]],"after":"ok"}`,
+		"{\"u\":\"é🙂\",\"é\":\"x\"}",
+		"{\n\t\"a\"\n:\r\n1\n,\"b\":2 }",
+		"{\"bad\xff\":\"v\xfe\",\"k\xe2\x82\":1}",
+		`[1]`, `null`, `5`, `"s"`, `{"a":}`, `{"a":1`, `{"a" 1}`, `{} x`, ``,
+	} {
+		want := rawObject{}
+		wantErr := json.Unmarshal([]byte(in), &want)
+		got, err := decodeRawObject([]byte(in))
+		if (err != nil) != (wantErr != nil) || (err != nil && err.Error() != wantErr.Error()) {
+			t.Errorf("%q: error = %v, want %v", in, err, wantErr)
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		if len(got) != len(want) {
+			t.Errorf("%q: %d members %q, want %d %q", in, len(got), got, len(want), want)
+		}
+		for k, v := range want {
+			if g, ok := got[k]; !ok || string(g) != string(v) {
+				t.Errorf("%q: member %q = %q (present %v), want %q", in, k, g, ok, v)
+			}
+		}
+	}
+}
+
+// TestDecodeRawObjectMembersCannotBeAppendedInto requires a member's capacity
+// to end with it, so appending to one cannot overwrite the text after it.
+func TestDecodeRawObjectMembersCannotBeAppendedInto(t *testing.T) {
+	data := []byte(`{"a":"x","b":"y"}`)
+	o, err := decodeRawObject(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = append(o["a"], '!')
+	if string(data) != `{"a":"x","b":"y"}` || string(o["b"]) != `"y"` {
+		t.Fatalf("appending to a member changed the text after it: %s", data)
+	}
+}

@@ -32,14 +32,114 @@ import (
 // does.
 type rawObject map[string]json.RawMessage
 
-// decodeRawObject decodes data, a JSON object. Its error is the syntax error
-// JSON.parse throws when data is not JSON at all.
+// decodeRawObject decodes data, a JSON object, as json.Unmarshal into a
+// map[string]json.RawMessage does. Its error is the syntax error JSON.parse
+// throws when data is not JSON at all.
+//
+// It sits on every event the anthropic and pi-messages streams read, so a
+// valid object is split by splitRawObject rather than by encoding/json, whose
+// decode allocates and copies each member: the members are subslices of data,
+// which the caller must not modify.
 func decodeRawObject(data []byte) (rawObject, error) {
+	if json.Valid(data) && jsonValueKind(data) == '{' {
+		return splitRawObject(data), nil
+	}
 	var o rawObject
 	if err := json.Unmarshal(data, &o); err != nil {
 		return nil, err
 	}
 	return o, nil
+}
+
+// splitRawObject splits valid, a valid JSON object, into its members: each
+// key unquoted as encoding/json unquotes it, each value its exact text (a
+// subslice of valid whose capacity ends with it, so an append cannot write
+// into what follows), a repeated key keeping its last value.
+func splitRawObject(valid []byte) rawObject {
+	o := rawObject{}
+	i := skipJSONSpace(valid, 0) + 1 // past '{'
+	for {
+		i = skipJSONSpace(valid, i)
+		if valid[i] == '}' {
+			return o
+		}
+		keyEnd := skipJSONValue(valid, i)
+		key := valid[i:keyEnd]
+		i = skipJSONSpace(valid, keyEnd) + 1 // past ':'
+		i = skipJSONSpace(valid, i)
+		end := skipJSONValue(valid, i)
+		o[unquoteJSONKey(key)] = json.RawMessage(valid[i:end:end])
+		i = skipJSONSpace(valid, end)
+		if valid[i] == ',' {
+			i++
+		}
+	}
+}
+
+// unquoteJSONKey is a valid JSON string's text: the bytes between its quotes
+// when it has no escape and is valid UTF-8, else encoding/json's unquoting
+// (which also makes each invalid UTF-8 byte U+FFFD).
+func unquoteJSONKey(quoted []byte) string {
+	inner := quoted[1 : len(quoted)-1]
+	if bytes.IndexByte(inner, '\\') < 0 && utf8.Valid(inner) {
+		return string(inner)
+	}
+	var s string
+	_ = json.Unmarshal(quoted, &s) // quoted is a valid JSON string
+	return s
+}
+
+// skipJSONSpace returns the index of the first byte at or after i that is not
+// JSON whitespace.
+func skipJSONSpace(b []byte, i int) int {
+	for i < len(b) {
+		switch b[i] {
+		case ' ', '\t', '\n', '\r':
+			i++
+		default:
+			return i
+		}
+	}
+	return i
+}
+
+// skipJSONValue returns the index just past the valid JSON value that starts
+// at i.
+func skipJSONValue(b []byte, i int) int {
+	switch b[i] {
+	case '"':
+		for i++; ; i++ {
+			switch b[i] {
+			case '\\':
+				i++
+			case '"':
+				return i + 1
+			}
+		}
+	case '{', '[':
+		depth := 0
+		for ; ; i++ {
+			switch b[i] {
+			case '"':
+				i = skipJSONValue(b, i) - 1
+			case '{', '[':
+				depth++
+			case '}', ']':
+				if depth--; depth == 0 {
+					return i + 1
+				}
+			}
+		}
+	default: // a number, true, false or null
+		for i < len(b) {
+			switch b[i] {
+			case ',', '}', ']', ' ', '\t', '\n', '\r':
+				return i
+			}
+			i++
+		}
+		return i
+	}
 }
 
 // rawRead returns the members of the value raw holds, for the property reads
@@ -74,6 +174,20 @@ func rawOptional(raw json.RawMessage) rawObject {
 // and `!= null` rules out.
 func rawNullish(raw json.RawMessage) bool {
 	return raw == nil || jsonValueKind(raw) == 'n'
+}
+
+// rawStringBytes is rawString's text as bytes — for a string with no escape,
+// the bytes between its quotes, with no copy — for a caller that only
+// compares it: `switch string(b)` does not allocate.
+func rawStringBytes(raw json.RawMessage) ([]byte, bool) {
+	if jsonValueKind(raw) != '"' {
+		return nil, false
+	}
+	if text := bytes.TrimSpace(raw); bytes.IndexByte(text, '\\') < 0 && utf8.Valid(text) {
+		return text[1 : len(text)-1], true
+	}
+	s, ok := rawString(raw)
+	return []byte(s), ok
 }
 
 // rawString is the string raw holds, when it holds one.
@@ -166,6 +280,11 @@ func rawStrictEqual(a, b json.RawMessage) bool {
 		return a == nil && b == nil
 	}
 	ka, kb := jsonValueKind(a), jsonValueKind(b)
+	// The same text is the same primitive (the common case, a block's index
+	// against an event's), compared without decoding either.
+	if ka != '{' && ka != '[' && bytes.Equal(bytes.TrimSpace(a), bytes.TrimSpace(b)) {
+		return true
+	}
 	if x, ok := rawNumber(a); ok {
 		y, ok := rawNumber(b)
 		return ok && x == y
