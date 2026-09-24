@@ -2552,6 +2552,470 @@
 				"text": "",
 				"responseId": ""
 			}
+		},
+		"utf8-truncated-3": {
+			"sseBase64": "ZGF0YTogeyJpZCI6InUiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6InjignkifX1dfQoKZGF0YTogeyJpZCI6ImYiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnt9LCJmaW5pc2hfcmVhc29uIjoic3RvcCJ9XX0KCg==",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x�y",
+				"responseId": "u"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
+		"utf8-truncated-4": {
+			"sseBase64": "ZGF0YTogeyJpZCI6InUiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6Injwn5h5In19XX0KCmRhdGE6IHsiaWQiOiJmIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7fSwiZmluaXNoX3JlYXNvbiI6InN0b3AifV19Cgo=",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x�y",
+				"responseId": "u"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
+		"utf8-overlong": {
+			"sseBase64": "ZGF0YTogeyJpZCI6InUiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6InjAr3kifX1dfQoKZGF0YTogeyJpZCI6ImYiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnt9LCJmaW5pc2hfcmVhc29uIjoic3RvcCJ9XX0KCg==",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x��y",
+				"responseId": "u"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
+		"utf8-surrogate": {
+			"sseBase64": "ZGF0YTogeyJpZCI6InUiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6InjtoIB5In19XX0KCmRhdGE6IHsiaWQiOiJmIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7fSwiZmluaXNoX3JlYXNvbiI6InN0b3AifV19Cgo=",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x���y",
+				"responseId": "u"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
+		"utf8-above-max": {
+			"sseBase64": "ZGF0YTogeyJpZCI6InUiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6Inj0kICAeSJ9fV19CgpkYXRhOiB7ImlkIjoiZiIsImNob2ljZXMiOlt7ImluZGV4IjowLCJkZWx0YSI6e30sImZpbmlzaF9yZWFzb24iOiJzdG9wIn1dfQoK",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x����y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x����y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x����y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x����y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x����y",
+				"responseId": "u"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x����y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
+		"utf8-lone-continuation": {
+			"sseBase64": "ZGF0YTogeyJpZCI6InUiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6IniAv3kifX1dfQoKZGF0YTogeyJpZCI6ImYiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnt9LCJmaW5pc2hfcmVhc29uIjoic3RvcCJ9XX0KCg==",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x��y",
+				"responseId": "u"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
+		"utf8-invalid-lead": {
+			"sseBase64": "ZGF0YTogeyJpZCI6InUiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6Inj/4IB5In19XX0KCmRhdGE6IHsiaWQiOiJmIiwiY2hvaWNlcyI6W3siaW5kZXgiOjAsImRlbHRhIjp7fSwiZmluaXNoX3JlYXNvbiI6InN0b3AifV19Cgo=",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x���y",
+				"responseId": "u"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
+		"utf8-truncated-then-valid": {
+			"sseBase64": "ZGF0YTogeyJpZCI6InUiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6InjiguKCrHkifX1dfQoKZGF0YTogeyJpZCI6ImYiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnt9LCJmaW5pc2hfcmVhc29uIjoic3RvcCJ9XX0KCg==",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�€y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�€y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�€y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�€y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x�€y",
+				"responseId": "u"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�€y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
+		"utf8-in-event-name": {
+			"sseBase64": "ZXZlbnQ6IHRocmVhZC5t4oIKZGF0YTogeyJpZCI6InQifQoKZGF0YTogeyJpZCI6ImEiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6IngifX1dfQoKZGF0YTogeyJpZCI6ImYiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnt9LCJmaW5pc2hfcmVhc29uIjoic3RvcCJ9XX0KCg==",
+			"sdk": {
+				"yields": [
+					"{\"event\":\"thread.m�\",\"data\":{\"id\":\"t\"}}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"event\":\"thread.m�\",\"data\":{\"id\":\"t\"}}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"event\":\"thread.m�\",\"data\":{\"id\":\"t\"}}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"event\":\"thread.m�\",\"data\":{\"id\":\"t\"}}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x",
+				"responseId": "a"
+			},
+			"responses": {
+				"observed": [
+					"{\"event\":\"thread.m�\",\"data\":{\"id\":\"t\"}}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
 		}
 	},
 	"completions": {

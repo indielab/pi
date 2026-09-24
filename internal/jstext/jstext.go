@@ -1,8 +1,9 @@
 // Package jstext holds the JavaScript text semantics the port reproduces
 // wherever pi relies on them: the string trims and their whitespace set, the
 // text JSON.stringify writes (Stringify), the UTF-16 code-unit order of <
-// and Array.prototype.sort (CompareUTF16), and how a value JSON.parse returns
-// converts (Parse, Number, NumberToString, ToString, Truthy).
+// and Array.prototype.sort (CompareUTF16), how a value JSON.parse returns
+// converts (Parse, Number, NumberToString, ToString, Truthy), and the text a
+// TextDecoder makes of bytes that are not UTF-8 (DecodeUTF8).
 package jstext
 
 import "strings"

@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"io"
@@ -47,8 +48,11 @@ type openaiSDKReading struct {
 }
 
 type openaiStreamRow struct {
-	SSE string `json:"sse"`
-	SDK *struct {
+	// The row's body is SSE, or SSEBase64 where it carries bytes that are
+	// not UTF-8 (body).
+	SSE       string `json:"sse"`
+	SSEBase64 string `json:"sseBase64"`
+	SDK       *struct {
 		openaiSDKReading
 		// Aborted and ReadFailed are the body read to its end and then
 		// failing: with an AbortError, as a cancelled request's read does, and
@@ -76,6 +80,19 @@ type openaiStreamCapture struct {
 		AbortOnEvent int                 `json:"abortOnEvent"`
 		Outcome      openaiStreamOutcome `json:"outcome"`
 	} `json:"hooks"`
+}
+
+// body is the row's SSE body.
+func (r openaiStreamRow) body(t *testing.T) string {
+	t.Helper()
+	if r.SSEBase64 == "" {
+		return r.SSE
+	}
+	b, err := base64.StdEncoding.DecodeString(r.SSEBase64)
+	if err != nil {
+		t.Fatalf("sseBase64: %v; rerun capture.mts", err)
+	}
+	return string(b)
 }
 
 func loadOpenAIStreamCapture(t *testing.T) openaiStreamCapture {
@@ -251,7 +268,7 @@ func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
 		for loop, parse := range openaiStreamParsers {
 			for read, reader := range openaiStreamReads {
 				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
-					readOpenAIStreamLikeTheSDK(t, nil, reader(row.SSE), parse, row.SDK.openaiSDKReading, nil)
+					readOpenAIStreamLikeTheSDK(t, nil, reader(row.body(t)), parse, row.SDK.openaiSDKReading, nil)
 				})
 			}
 		}
@@ -272,7 +289,7 @@ func TestOpenAIStreamAbortedReadEndsLikeTheSDK(t *testing.T) {
 		for loop, parse := range openaiStreamParsers {
 			for read, reader := range openaiStreamReads {
 				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
-					body := io.MultiReader(reader(row.SSE), iotest.ErrReader(ctx.Err()))
+					body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(ctx.Err()))
 					readOpenAIStreamLikeTheSDK(t, ctx, body, parse, row.SDK.Aborted, nil)
 				})
 			}
@@ -290,7 +307,7 @@ func TestOpenAIStreamFailedReadLikeTheSDK(t *testing.T) {
 		for loop, parse := range openaiStreamParsers {
 			for read, reader := range openaiStreamReads {
 				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
-					body := io.MultiReader(reader(row.SSE), iotest.ErrReader(errTerminated))
+					body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(errTerminated))
 					readOpenAIStreamLikeTheSDK(t, context.Background(), body, parse, row.SDK.ReadFailed, errTerminated)
 				})
 			}
@@ -346,7 +363,7 @@ func TestOpenAIStreamEndsLikePi(t *testing.T) {
 		}
 		for adapter, want := range map[string]*openaiStreamOutcome{"completions": row.Completions, "responses": row.Responses} {
 			t.Run(name+"/"+adapter, func(t *testing.T) {
-				compareOpenAIStreamEnding(t, runOpenAIStreamAdapter(t, adapter, http.StatusOK, row.SSE, openaiStreamHooks{}), *want)
+				compareOpenAIStreamEnding(t, runOpenAIStreamAdapter(t, adapter, http.StatusOK, row.body(t), openaiStreamHooks{}), *want)
 			})
 		}
 	}
@@ -428,8 +445,8 @@ func TestOpenAIStreamObservesLikePi(t *testing.T) {
 		if row.SDK.Threw != nil && row.SDK.Threw.Name == "SyntaxError" {
 			continue // pi fails with V8's SyntaxError text; the port skips the event
 		}
-		runs["dispatch/"+name+"/completions"] = run{"completions", row.SSE, row.Completions}
-		runs["dispatch/"+name+"/responses"] = run{"responses", row.SSE, row.Responses}
+		runs["dispatch/"+name+"/completions"] = run{"completions", row.body(t), row.Completions}
+		runs["dispatch/"+name+"/responses"] = run{"responses", row.body(t), row.Responses}
 	}
 	for name, row := range c.Completions {
 		runs["completions/"+name] = run{"completions", row.SSE, row.Completions}

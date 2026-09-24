@@ -53,7 +53,9 @@ const { Stream } = await import(pathToFileURL(path.join(openaiDir, "core/streami
 
 // A held reply writes its body and keeps the connection open, so the stream
 // can end only through the client giving up on it.
-type Reply = { status: number; contentType: string; body: string; hold?: boolean };
+// A body is text, or bytes where it must carry invalid UTF-8.
+type Body = string | Buffer;
+type Reply = { status: number; contentType: string; body: Body; hold?: boolean };
 const replies = new Map<string, Reply>();
 const held = new Set<http.ServerResponse>();
 let nextRoute = 0;
@@ -84,7 +86,7 @@ function route(reply: Reply): string {
 	replies.set(name, reply);
 	return `http://127.0.0.1:${port}/${name}/v1`;
 }
-const sse = (body: string) => route({ status: 200, contentType: "text/event-stream", body });
+const sse = (body: Body) => route({ status: 200, contentType: "text/event-stream", body });
 
 // ---- the SDK's own reading -------------------------------------------------
 
@@ -103,7 +105,7 @@ function thrown(error: unknown): Thrown {
 	return out;
 }
 
-async function sdkRead(body: string, open: (client: any) => Promise<AsyncIterable<unknown>>): Promise<SDKReading> {
+async function sdkRead(body: Body, open: (client: any) => Promise<AsyncIterable<unknown>>): Promise<SDKReading> {
 	const client = new OpenAI({ apiKey: "k", baseURL: sse(body), maxRetries: 0 });
 	const yields: string[] = [];
 	try {
@@ -118,8 +120,8 @@ async function sdkRead(body: string, open: (client: any) => Promise<AsyncIterabl
 // reads, whole or one byte per read, and ending cleanly or with a failed read
 // (end). A line ending split across reads ("\r" | "\n") is measured rather
 // than assumed to read like the whole body.
-async function sdkReadStream(body: string, bytewise: boolean, end?: Error): Promise<SDKReading> {
-	const bytes = new TextEncoder().encode(body);
+async function sdkReadStream(body: Body, bytewise: boolean, end?: Error): Promise<SDKReading> {
+	const bytes = typeof body === "string" ? new TextEncoder().encode(body) : new Uint8Array(body);
 	let at = 0;
 	const byteStream = new ReadableStream<Uint8Array>({
 		pull(controller) {
@@ -147,7 +149,7 @@ async function sdkReadStream(body: string, bytewise: boolean, end?: Error): Prom
 
 // sdkReadEndingIn reads the body whole and one byte per read, ending in end,
 // and fails unless the two agree.
-async function sdkReadEndingIn(body: string, end?: () => Error): Promise<SDKReading> {
+async function sdkReadEndingIn(body: Body, end?: () => Error): Promise<SDKReading> {
 	const whole = await sdkReadStream(body, false, end?.());
 	const bytewise = await sdkReadStream(body, true, end?.());
 	if (JSON.stringify(whole) !== JSON.stringify(bytewise)) {
@@ -158,7 +160,7 @@ async function sdkReadEndingIn(body: string, end?: () => Error): Promise<SDKRead
 
 // The SDK logs an unparseable event before rethrowing; keep the capture quiet.
 const consoleError = console.error;
-async function sdkReading(body: string): Promise<SDKReadings> {
+async function sdkReading(body: Body): Promise<SDKReadings> {
 	console.error = () => {};
 	try {
 		const chat = await sdkRead(body, (c) => c.chat.completions.create({ model: "m", messages: [], stream: true }));
@@ -269,10 +271,17 @@ const chunk = (id: string, content: string) => J({ id, choices: [{ index: 0, del
 const FIN = J({ id: "f", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] });
 const A = chunk("a", "x");
 const B = chunk("b", "y");
+// invalidUTF8Content is a chunk whose content is "x", the bytes, "y".
+const invalidUTF8Content = (bytes: number[]) =>
+	Buffer.concat([
+		Buffer.from(`data: {"id":"u","choices":[{"index":0,"delta":{"content":"x`),
+		Buffer.from(bytes),
+		Buffer.from(`y"}}]}\n\ndata: ${FIN}\n\n`),
+	]);
 const errorChunk = (error: unknown) => `data: ${A}\n\ndata: ${J({ error })}\n\ndata: ${FIN}\n\n`;
 
 // Dispatch bodies are read by the SDK and both adapters.
-const dispatch: Record<string, string> = {
+const dispatch: Record<string, Body> = {
 	"blank-line-dispatch": `data: ${A}\n\ndata: ${B}\n\ndata: ${FIN}\n\ndata: [DONE]\n\n`,
 	"multi-line-data": `data: {"id":"m",\ndata: "choices":[{"index":0,"delta":{"content":"joined"}}]}\n\ndata: ${FIN}\n\n`,
 	"unterminated-trailing-event": `data: ${A}\n\ndata: ${FIN}\n`,
@@ -323,6 +332,21 @@ const dispatch: Record<string, string> = {
 	// pi throws JSON.parse's SyntaxError on these; the port skips the event.
 	"unparseable-data": `data: ${A}\n\ndata: {not json\n\ndata: ${FIN}\n\n`,
 	"event-without-data": `data: ${A}\n\nevent: ping\n\ndata: ${FIN}\n\n`,
+	// Each line is decoded by a TextDecoder, which writes one U+FFFD per
+	// maximal subpart of an invalid UTF-8 sequence (WHATWG), not one per byte.
+	"utf8-truncated-3": invalidUTF8Content([0xe2, 0x82]),
+	"utf8-truncated-4": invalidUTF8Content([0xf0, 0x9f, 0x98]),
+	"utf8-overlong": invalidUTF8Content([0xc0, 0xaf]),
+	"utf8-surrogate": invalidUTF8Content([0xed, 0xa0, 0x80]),
+	"utf8-above-max": invalidUTF8Content([0xf4, 0x90, 0x80, 0x80]),
+	"utf8-lone-continuation": invalidUTF8Content([0x80, 0xbf]),
+	"utf8-invalid-lead": invalidUTF8Content([0xff, 0xe0, 0x80]),
+	"utf8-truncated-then-valid": invalidUTF8Content([0xe2, 0x82, 0xe2, 0x82, 0xac]),
+	"utf8-in-event-name": Buffer.concat([
+		Buffer.from("event: thread.m"),
+		Buffer.from([0xe2, 0x82]),
+		Buffer.from(`\ndata: {"id":"t"}\n\ndata: ${A}\n\ndata: ${FIN}\n\n`),
+	]),
 };
 
 // Adapter-specific bodies.
@@ -419,7 +443,10 @@ const responsesBodies: Record<string, string> = {
 
 // ---- capture ---------------------------------------------------------------------
 
-type Row = { sse: string; sdk?: SDKReadings; completions?: Outcome; responses?: Outcome };
+// A Row's body is `sse`, or `sseBase64` when it is bytes that are not UTF-8.
+type Row = { sse?: string; sseBase64?: string; sdk?: SDKReadings; completions?: Outcome; responses?: Outcome };
+const bodyFields = (body: Body) =>
+	typeof body === "string" ? { sse: body } : { sseBase64: body.toString("base64") };
 const out: {
 	sha: string;
 	openai: string;
@@ -434,7 +461,7 @@ const out: {
 
 for (const [name, body] of Object.entries(dispatch)) {
 	out.dispatch[name] = {
-		sse: body,
+		...bodyFields(body),
 		sdk: await sdkReading(body),
 		completions: await piRun(completions, completionsModel, sse(body)),
 		responses: await piRun(responses, responsesModel, sse(body)),

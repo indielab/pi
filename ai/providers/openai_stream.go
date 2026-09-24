@@ -33,11 +33,12 @@ const utf8BOM = "\xef\xbb\xbf"
 // readOpenAISSE is the SDK's _iterSSEMessages. The body reaches its line
 // splitting in iterSSEChunks' pieces (openaiSSEChunkReader). Lines end at
 // "\n", "\r\n" or a lone "\r" (LineDecoder), and each line is decoded on its
-// own by a TextDecoder, which drops one leading byte-order mark. A blank line
-// dispatches the event collected so far, unless it has neither a name nor any
-// data; `data` lines join with "\n"; a line starting with ":" is a comment;
-// every other field (id, retry, …) is ignored. An event the body ends before
-// its blank line is never dispatched.
+// own by a TextDecoder (jstext.DecodeUTF8), which writes one U+FFFD per
+// maximal subpart of an invalid sequence and drops one leading byte-order
+// mark. A blank line dispatches the event collected so far, unless it has
+// neither a name nor any data; `data` lines join with "\n"; a line starting
+// with ":" is a comment; every other field (id, retry, …) is ignored. An event
+// the body ends before its blank line is never dispatched.
 //
 // A field's value is everything after the line's first colon less exactly one
 // leading space. Nothing else is trimmed, and JSON.parse accepts only JSON's
@@ -63,7 +64,7 @@ func readOpenAISSE(body io.Reader, ctx context.Context, dispatch func(openaiSSEE
 	var event string
 	var data []string
 	for scanner.Scan() {
-		line := strings.TrimPrefix(scanner.Text(), utf8BOM)
+		line := strings.TrimPrefix(jstext.DecodeUTF8(scanner.Bytes()), utf8BOM)
 		if line == "" {
 			if event == "" && len(data) == 0 {
 				continue
