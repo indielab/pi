@@ -67,3 +67,23 @@ func TestStringifyNegativeZero(t *testing.T) {
 		t.Fatalf("Stringify = %s, want %s", got, want)
 	}
 }
+
+// JSON.stringify writes a number that is not finite as null, where
+// encoding/json refuses it (node: JSON.stringify({a: NaN, b: [Infinity]}) is
+// {"a":null,"b":[null]}). The value handed in is not changed.
+func TestStringifyNonFiniteIsNull(t *testing.T) {
+	in := map[string]any{"a": math.NaN(), "b": []any{math.Inf(1), 1.5, map[string]any{"c": math.Inf(-1)}}, "d": "Infinity"}
+	got, err := Stringify(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"a":null,"b":[null,1.5,{"c":null}],"d":"Infinity"}`; got != want {
+		t.Fatalf("Stringify = %s, want %s", got, want)
+	}
+	if !math.IsInf(in["b"].([]any)[0].(float64), 1) {
+		t.Fatalf("Stringify changed its argument: %v", in)
+	}
+	if got, err := Stringify(math.Inf(-1)); err != nil || got != "null" {
+		t.Fatalf("Stringify(-Inf) = %q, %v; want null", got, err)
+	}
+}

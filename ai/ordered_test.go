@@ -2,8 +2,11 @@ package ai
 
 import (
 	"encoding/json"
+	"math"
 	"reflect"
 	"testing"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 func TestDecodeOrderedValue(t *testing.T) {
@@ -12,7 +15,8 @@ func TestDecodeOrderedValue(t *testing.T) {
 		in   string
 		// wantJSON is JSON.stringify of pi's JSON.parse(in), as node writes
 		// it: key order is the wire's, which a map[string]any would lose,
-		// except that array-index keys come first, ascending.
+		// except that array-index keys come first, ascending, and a number
+		// past float64's range is Infinity, which it writes null.
 		wantJSON string
 		want     any
 	}{
@@ -33,6 +37,15 @@ func TestDecodeOrderedValue(t *testing.T) {
 		},
 		{name: "index keys inside arrays", in: `[{"2":1,"1":2},{"4294967296":1,"4294967294":2}]`, wantJSON: `[{"1":2,"2":1},{"4294967294":2,"4294967296":1}]`},
 		{name: "empty key is not an index", in: `{"":1,"0":2}`, wantJSON: `{"0":2,"":1}`},
+		{
+			name:     "numbers past float64's range are ±Inf, written null",
+			in:       `{"a":1e400,"b":-1e400,"c":1e-400,"d":[1e400,-0,{"e":-1e400}]}`,
+			wantJSON: `{"a":null,"b":null,"c":0,"d":[null,0,{"e":null}]}`,
+		},
+		{name: "a scalar past float64's range", in: `1e400`, want: math.Inf(1)},
+		{name: "a negative scalar past float64's range", in: `-1e400`, want: math.Inf(-1)},
+		{name: "rounds past the largest float64", in: `1.7976931348623159e308`, want: math.Inf(1)},
+		{name: "the largest float64", in: `1.7976931348623157e308`, want: math.MaxFloat64},
 		{name: "null", in: `null`, want: nil},
 		{name: "number", in: ` 5 `, want: float64(5)},
 		{name: "string", in: `"x"`, want: "x"},
@@ -45,12 +58,12 @@ func TestDecodeOrderedValue(t *testing.T) {
 				t.Fatalf("DecodeOrderedValue(%s): %v", tc.in, err)
 			}
 			if tc.wantJSON != "" {
-				b, err := json.Marshal(got)
+				b, err := jstext.Stringify(got)
 				if err != nil {
 					t.Fatal(err)
 				}
-				if string(b) != tc.wantJSON {
-					t.Fatalf("marshal = %s, want %s", b, tc.wantJSON)
+				if b != tc.wantJSON {
+					t.Fatalf("stringify = %s, want %s", b, tc.wantJSON)
 				}
 				return
 			}
@@ -77,6 +90,27 @@ func TestDecodeOrderedObjectOrdersKeysAsJSONParse(t *testing.T) {
 	}
 	if !reflect.DeepEqual(plain, ordered.Plain()) {
 		t.Fatalf("map %v does not hold the ordered twin's members %v", plain, ordered.Plain())
+	}
+}
+
+// The ±Inf JSON.parse reads a number past float64's range as is kept as a
+// number, not only written null, and OrderedObject writes it null wherever
+// it sits, as JSON.stringify does, where encoding/json refuses it.
+func TestDecodeOrderedValueNumbersPastRangeAreInfinite(t *testing.T) {
+	got, err := DecodeOrderedValue([]byte(`{"a":1e400,"b":[-1e400]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	obj := got.(OrderedObject)
+	if obj[0].Value != math.Inf(1) || obj[1].Value.([]any)[0] != math.Inf(-1) {
+		t.Fatalf("decoded %#v, want +Inf and [-Inf]", obj)
+	}
+	b, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"a":null,"b":[null]}`; string(b) != want {
+		t.Fatalf("json.Marshal = %s, want %s", b, want)
 	}
 }
 

@@ -1262,9 +1262,11 @@ type StreamOptions struct {
 	// pi normalizes it (pi StreamOptions.onProviderStreamEvent, upstream
 	// 002fc8385). data is the parsed value the adapter works from: for a
 	// JSON-wire adapter, DecodeOrderedValue of the event's data, so an object
-	// arrives as an OrderedObject in wire order; an adapter that pi runs
-	// through a vendor SDK passes that SDK's shape. It is adapter-owned and
-	// must be treated as read-only.
+	// arrives as an OrderedObject in the order JSON.parse's object lists its
+	// keys, and a number past float64's range as ±Inf (OrderedObject writes
+	// it null, as JSON.stringify does); an adapter that pi runs through a
+	// vendor SDK passes that SDK's shape. It is adapter-owned and must be
+	// treated as read-only.
 	// Adapter support is explicit: adapters that do not support it never call
 	// it. Calls are synchronous and in stream order, and a non-nil error fails
 	// the stream with err.Error() as its error message.

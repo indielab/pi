@@ -3,6 +3,8 @@ package jstext
 import (
 	"bytes"
 	"encoding/json"
+	"math"
+	"slices"
 	"strings"
 )
 
@@ -15,12 +17,18 @@ import (
 //     json.Marshal hands the encoder text that is already escaped — so the
 //     escapes are written back as characters. JSON.stringify never emits any
 //     of the five, so this cannot misfire;
-//   - it writes negative zero as -0 where JSON.stringify writes 0.
+//   - it writes negative zero as -0 where JSON.stringify writes 0;
+//   - it refuses a number that is not finite, which JSON.stringify writes as
+//     null (a float64 directly in v or in its []any and map[string]any; a
+//     type with its own MarshalJSON writes itself).
 //
 // What remains is encoding/json's: map keys come out sorted where JS keeps
 // insertion order (the length is the same, the text is not), and a Go string
 // cannot hold a lone UTF-16 surrogate, which JS would write as an escape.
 func Stringify(v any) (string, error) {
+	if hasNonFinite(v) {
+		v = nonFiniteAsNull(v)
+	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -60,6 +68,54 @@ func Stringify(v any) (string, error) {
 		}
 	}
 	return b.String(), nil
+}
+
+// hasNonFinite reports whether v holds a float64 that is not finite, directly
+// or in its []any and map[string]any.
+func hasNonFinite(v any) bool {
+	switch t := v.(type) {
+	case float64:
+		return math.IsInf(t, 0) || math.IsNaN(t)
+	case []any:
+		return slices.ContainsFunc(t, hasNonFinite)
+	case map[string]any:
+		for _, e := range t {
+			if hasNonFinite(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// nonFiniteAsNull is a copy of v with every float64 that is not finite, in it
+// or in its []any and map[string]any, replaced by nil.
+func nonFiniteAsNull(v any) any {
+	switch t := v.(type) {
+	case float64:
+		if math.IsInf(t, 0) || math.IsNaN(t) {
+			return nil
+		}
+	case []any:
+		if t == nil {
+			return t
+		}
+		out := make([]any, len(t))
+		for i, e := range t {
+			out[i] = nonFiniteAsNull(e)
+		}
+		return out
+	case map[string]any:
+		if t == nil {
+			return t
+		}
+		out := make(map[string]any, len(t))
+		for k, e := range t {
+			out[k] = nonFiniteAsNull(e)
+		}
+		return out
+	}
+	return v
 }
 
 // isNegativeZero reports whether rest, the text after a '-' outside a string,

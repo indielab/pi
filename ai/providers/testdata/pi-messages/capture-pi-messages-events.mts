@@ -133,6 +133,19 @@ const cases: Case[] = [
 			frame('{"type":"text_delta","contentIndex":0,"delta":"Hello","7":1,"b":{"z":1,"0":2},"1":3}') +
 			framed(textEnd, done),
 	},
+	// JSON.parse reads a number past float64's range as +-Infinity (observed
+	// as JSON.stringify's null), which is truthy, and one below the smallest
+	// subnormal as 0, which is not: the frame is skipped.
+	{
+		name: "overflowNumbersAreObserved",
+		sse:
+			framed(start) +
+			frame("1e400") +
+			frame("-1e400") +
+			frame("1e-400") +
+			frame('{"type":"gateway_note","x":1e400}') +
+			framed(textStart, textDelta, textEnd, done),
+	},
 	// observed is JSON.stringify text: <, >, &, U+2028 and U+2029 are written as
 	// themselves, however deep in the event they sit.
 	{

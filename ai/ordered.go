@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"slices"
 
 	"github.com/sky-valley/pi/internal/jstext"
@@ -20,7 +21,9 @@ type OrderedField struct {
 // OrderedObject marshals key/value pairs in slice order, mirroring
 // JSON.stringify of a JS object (insertion order) for byte-exact request bodies.
 // Values may nest further OrderedObjects and []any, so the order of an entire
-// decoded document survives, not just its top level.
+// decoded document survives, not just its top level. A number that is not
+// finite, in the object or in an array in it, is written null, as
+// JSON.stringify writes Infinity and NaN; encoding/json would refuse it.
 type OrderedObject []OrderedField
 
 func (o OrderedObject) MarshalJSON() ([]byte, error) {
@@ -36,14 +39,45 @@ func (o OrderedObject) MarshalJSON() ([]byte, error) {
 		}
 		buf.Write(key)
 		buf.WriteByte(':')
-		val, err := json.Marshal(f.Value)
-		if err != nil {
+		if err := marshalOrderedValue(&buf, f.Value); err != nil {
 			return nil, err
 		}
-		buf.Write(val)
 	}
 	buf.WriteByte('}')
 	return buf.Bytes(), nil
+}
+
+// marshalOrderedValue writes v as json.Marshal does, except that a non-finite
+// number, directly or in an array, is null.
+func marshalOrderedValue(buf *bytes.Buffer, v any) error {
+	switch t := v.(type) {
+	case float64:
+		if math.IsInf(t, 0) || math.IsNaN(t) {
+			buf.WriteString("null")
+			return nil
+		}
+	case []any:
+		if t == nil {
+			break // json.Marshal's null
+		}
+		buf.WriteByte('[')
+		for i, e := range t {
+			if i > 0 {
+				buf.WriteByte(',')
+			}
+			if err := marshalOrderedValue(buf, e); err != nil {
+				return err
+			}
+		}
+		buf.WriteByte(']')
+		return nil
+	}
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+	buf.Write(b)
+	return nil
 }
 
 // Plain projects the object onto the map form `encoding/json` would have
@@ -100,13 +134,15 @@ func DecodeOrderedObject(data []byte) (map[string]any, OrderedObject, error) {
 }
 
 // DecodeOrderedValue decodes any single, complete JSON value the way
-// json.Unmarshal into `any` would, except that every object (at any depth)
-// becomes an OrderedObject, so JS insertion order survives: a top-level
-// object is an OrderedObject, an array is []any, and scalars are float64,
-// string, bool or nil. It is the value pi hands to an observer of a parsed
-// JSON event, whose key order a JSON.stringify of it would reveal.
+// JSON.parse does, in encoding/json's shapes: every object (at any depth)
+// becomes an OrderedObject, in the order JSON.parse's object lists its keys,
+// an array is []any, and scalars are float64, string, bool or nil. A number
+// past float64's range is ±Inf, as JSON.parse reads it, where json.Unmarshal
+// fails. It is the value pi hands to an observer of a parsed JSON event,
+// whose key order a JSON.stringify of it would reveal.
 func DecodeOrderedValue(data []byte) (any, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
+	dec.UseNumber()
 	v, err := decodeOrderedValue(dec)
 	if err != nil {
 		return nil, err
@@ -178,6 +214,9 @@ func decodeOrderedValue(dec *json.Decoder) (any, error) {
 	}
 	delim, ok := tok.(json.Delim)
 	if !ok {
+		if n, isNumber := tok.(json.Number); isNumber {
+			return jstext.Number(n), nil // DecodeOrderedValue: JSON.parse's number
+		}
 		return tok, nil // string, float64, bool, or nil
 	}
 	switch delim {

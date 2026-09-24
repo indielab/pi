@@ -196,6 +196,21 @@ const cases: Case[] = [
 			messageStop,
 		),
 	},
+	// JSON.parse reads a number past float64's range as Infinity (observed as
+	// JSON.stringify's null), inside an event or as the whole event, and the
+	// stream carries on.
+	{
+		name: "overflowNumbersAreObserved",
+		sse: frames(
+			messageStart,
+			blockStart,
+			ev("content_block_delta", "1e400"),
+			textDelta("Hello"),
+			blockStop,
+			messageDelta,
+			ev("message_stop", '{"type":"message_stop","big":1e400}'),
+		),
+	},
 	// observed is JSON.stringify text: <, >, &, U+2028 and U+2029 are written as
 	// themselves, however deep in the event they sit.
 	{
