@@ -616,11 +616,13 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			return nil
 		})
 
-		endCurrent()
 		if err != nil {
+			// pi's throw leaves the for-await with the open block unclosed:
+			// its catch pushes the error without a text_end/thinking_end.
 			fail(err)
 			return
 		}
+		endCurrent()
 		if ctx != nil && ctx.Err() != nil {
 			fail(fmt.Errorf("Request was aborted"))
 			return

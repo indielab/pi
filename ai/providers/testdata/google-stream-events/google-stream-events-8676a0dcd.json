@@ -1108,6 +1108,52 @@
 			}
 		},
 		{
+			"name": "an unknown finish reason fails inside the loop",
+			"note": "the throw leaves the open text block without a text_end",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}],\"role\":\"model\"},\"finishReason\":\"SOMETHING_NEW\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}],\"role\":\"model\"},\"finishReason\":\"SOMETHING_NEW\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Unhandled stop reason: SOMETHING_NEW",
+				"content": "[{\"type\":\"text\",\"text\":\"t\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
 			"name": "the callback's error fails the stream",
 			"framing": "close",
 			"headers": [

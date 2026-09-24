@@ -280,6 +280,13 @@ const scenarios: Scenario[] = [
 		segments: [sse(text("x")) + 'data: {"candidates":[{"content":{"par'],
 	},
 	{
+		name: "an unknown finish reason fails inside the loop",
+		note: "the throw leaves the open text block without a text_end",
+		framing: "close",
+		headers: eventStream,
+		segments: [sse(text("t", { finishReason: "SOMETHING_NEW" }))],
+	},
+	{
 		name: "the callback's error fails the stream",
 		framing: "close",
 		headers: eventStream,

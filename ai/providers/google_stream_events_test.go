@@ -1,9 +1,15 @@
 package providers
 
 import (
+	"bufio"
+	"bytes"
+	"compress/gzip"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
+	"net"
+	"net/http"
 	"os"
 	"slices"
 	"strings"
@@ -152,5 +158,122 @@ func TestGoogleToolCallArgumentsKeepModelOrder(t *testing.T) {
 	}
 	if content != sc.Pi.Content {
 		t.Fatalf("content %s\npi:      %s", content, sc.Pi.Content)
+	}
+}
+
+// serveGoogleScenario answers every request with the scenario's raw response:
+// the captured head line for line, then the whole body in one write (gzipped
+// when sc.Gzip, as one HTTP chunk when chunked) — the joined form, which is
+// pi's outcome too for every scenario whose read boundaries do not matter.
+func serveGoogleScenario(t *testing.T, sc googleStreamScenario) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	body := []byte(strings.Join(sc.Segments, ""))
+	if sc.Gzip {
+		var zipped bytes.Buffer
+		zw := gzip.NewWriter(&zipped)
+		zw.Write(body)
+		zw.Close()
+		body = zipped.Bytes()
+	}
+	var resp bytes.Buffer
+	resp.WriteString("HTTP/1.1 200 OK\r\n")
+	for _, h := range sc.Headers {
+		fmt.Fprintf(&resp, "%s: %s\r\n", h[0], h[1])
+	}
+	if sc.Framing == "chunked" {
+		fmt.Fprintf(&resp, "Transfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n0\r\n\r\n", len(body), body)
+	} else {
+		resp.WriteString("\r\n")
+		resp.Write(body)
+	}
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				req, err := http.ReadRequest(bufio.NewReader(conn))
+				if err != nil {
+					return
+				}
+				io.Copy(io.Discard, req.Body)
+				conn.Write(resp.Bytes())
+			}()
+		}
+	}()
+	return "http://" + ln.Addr().String()
+}
+
+// googleCaptureModel is the literal model capture.mts streams with.
+func googleCaptureModel(baseURL string) *ai.Model {
+	return &ai.Model{
+		ID: "gemini-2.5-flash", Name: "Gemini 2.5 Flash", Api: ai.APIGoogleGenerativeAI, Provider: "google",
+		BaseURL: baseURL, Reasoning: true, Input: []string{"text", "image"},
+		Cost:          ai.ModelCost{Input: 0.3, Output: 2.5, CacheRead: 0.03},
+		ContextWindow: 1048576, MaxTokens: 65536,
+	}
+}
+
+// TestGoogleStreamEventsMatchPi replays each captured scenario whose outcome
+// does not hang on where the reads fall, over a real connection, and requires
+// pi's result: the assistant stream event by event (with deltas), the stop
+// reason, error message, response id, content JSON and usage tokens.
+func TestGoogleStreamEventsMatchPi(t *testing.T) {
+	ran := 0
+	for _, sc := range loadGoogleStreamCapture(t).Scenarios {
+		if sc.Divergence != "" || sc.ReadBoundariesMatter || sc.ThrowOn != nil {
+			continue
+		}
+		ran++
+		t.Run(sc.Name, func(t *testing.T) {
+			model := googleCaptureModel(serveGoogleScenario(t, sc))
+			req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+			stream := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{
+				ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key"},
+			}})
+			var got, want []string
+			for ev := range stream.Events() {
+				switch ev.Type {
+				case ai.EventTextDelta, ai.EventThinkingDelta, ai.EventToolCallDelta:
+					got = append(got, string(ev.Type)+" "+ev.Delta)
+				default:
+					got = append(got, string(ev.Type))
+				}
+			}
+			for _, ev := range sc.Pi.Stream {
+				if ev.Delta != nil {
+					want = append(want, ev.Type+" "+*ev.Delta)
+				} else {
+					want = append(want, ev.Type)
+				}
+			}
+			if !slices.Equal(got, want) {
+				t.Errorf("stream %q\npi:     %q", got, want)
+			}
+			final := stream.Result()
+			if string(final.StopReason) != sc.Pi.StopReason || final.ErrorMessage != sc.Pi.ErrorMessage {
+				t.Errorf("stop %s %q, pi %s %q", final.StopReason, final.ErrorMessage, sc.Pi.StopReason, sc.Pi.ErrorMessage)
+			}
+			if final.ResponseID != sc.Pi.ResponseID {
+				t.Errorf("responseId %q, pi %q", final.ResponseID, sc.Pi.ResponseID)
+			}
+			if content, _ := jstext.Stringify(final.Content); content != sc.Pi.Content {
+				t.Errorf("content %s\npi:      %s", content, sc.Pi.Content)
+			}
+			u, pu := final.Usage, sc.Pi.Usage
+			if u.Input != pu.Input || u.Output != pu.Output || u.CacheRead != pu.CacheRead || u.CacheWrite != pu.CacheWrite || u.TotalTokens != pu.TotalTokens {
+				t.Errorf("usage %+v, pi %+v", u, pu)
+			}
+		})
+	}
+	if ran < 15 {
+		t.Fatalf("only %d replayable scenarios in the capture", ran)
 	}
 }
