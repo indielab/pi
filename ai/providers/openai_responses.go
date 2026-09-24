@@ -837,7 +837,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 					return finalizeErr
 				}
 			case "error":
-				return fmt.Errorf("Error Code %s: %s", ev.Code, ev.Message)
+				return errorEventMessage(ev)
 			case "response.failed":
 				// Upstream cd95c274: response.failed is a terminal event too,
 				// recorded before its error is thrown.
@@ -1479,6 +1479,33 @@ func orEmptyJSON(s string) string {
 	return s
 }
 
+// errorEventMessage is the error pi throws for an `error` event:
+// `Error Code ${event.code}: ${event.message}`. A template literal writes any
+// value — "undefined" for an absent member, "null", a number as JS formats it,
+// an array joined with ",", "[object Object]" — and throws V8's TypeError on
+// an object it cannot convert to a primitive, which pi's catch block surfaces.
+func errorEventMessage(ev responsesEvent) error {
+	code, ok := jsTemplateValue(ev.Code)
+	if !ok {
+		return errors.New("Cannot convert object to primitive value")
+	}
+	message, ok := jsTemplateValue(ev.Message)
+	if !ok {
+		return errors.New("Cannot convert object to primitive value")
+	}
+	return errors.New("Error Code " + code + ": " + message)
+}
+
+// jsTemplateValue is what `${value}` writes for a member of a parsed event,
+// given as its JSON (nil when absent). ok is false where the conversion throws.
+func jsTemplateValue(raw json.RawMessage) (string, bool) {
+	if raw == nil {
+		return "undefined", true
+	}
+	value, _ := jstext.Parse(raw) // a member of an event that decoded, so it parses
+	return jstext.ToString(value)
+}
+
 // responsesFailedMessage surfaces error.code/message or incomplete_details.reason
 // from a response.failed event (port of pi's response.failed handling).
 func responsesFailedMessage(ev responsesEvent) string {
@@ -1514,9 +1541,11 @@ type responsesEvent struct {
 	Delta     string `json:"delta"`
 	Arguments string `json:"arguments"`
 	// Input carries response.custom_tool_call_input.done's final raw input.
-	Input       string                `json:"input"`
-	Code        string                `json:"code"`
-	Message     string                `json:"message"`
+	Input string `json:"input"`
+	// Code and Message stay raw: an `error` event's message writes whatever
+	// value each holds (errorEventMessage).
+	Code        json.RawMessage       `json:"code"`
+	Message     json.RawMessage       `json:"message"`
 	OutputIndex int                   `json:"output_index"`
 	Part        *responsesContentPart `json:"part"`
 	Item        *responsesItem        `json:"item"`

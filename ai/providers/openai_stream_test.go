@@ -151,16 +151,17 @@ func compareOpenAIStreamEnding(t *testing.T, got, want openaiStreamOutcome) {
 	}
 }
 
-// A `data: null` event reaches pi's processResponsesStream as null, whose
-// event.type read throws: the stream fails there instead of reading on to the
-// completed response.
-func TestOpenAIResponsesNullEventFailsLikePi(t *testing.T) {
-	row := loadOpenAIStreamCapture(t).Responses["null-mid-stream"]
-	if row.Responses == nil {
-		t.Fatalf("%s has no responses/null-mid-stream; rerun capture.mts", openaiStreamCaptureFile)
+// The responses adapter ends each of its bodies the way pi's does. Among them:
+// a `data: null` event reaches pi's processResponsesStream as null, whose
+// event.type read throws, and an `error` event fails with a template literal
+// over whatever code and message it carries.
+func TestOpenAIResponsesEndsLikePi(t *testing.T) {
+	for name, row := range loadOpenAIStreamCapture(t).Responses {
+		t.Run(name, func(t *testing.T) {
+			got := runOpenAIStreamAdapter(t, "responses", http.StatusOK, row.SSE, openaiStreamHooks{})
+			compareOpenAIStreamEnding(t, got, *row.Responses)
+		})
 	}
-	got := runOpenAIStreamAdapter(t, "responses", http.StatusOK, row.SSE, openaiStreamHooks{})
-	compareOpenAIStreamEnding(t, got, *row.Responses)
 }
 
 // openaiStreamParsers are the two loops' JSON acceptance: completions repairs

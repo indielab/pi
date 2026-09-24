@@ -312,6 +312,7 @@ const responsesBodies: Record<string, string> = {
 	"error-event-no-message": errorEvent({ code: "x" }),
 	"error-event-object-message": errorEvent({ code: "x", message: { a: 1 } }),
 	"error-event-array-code": errorEvent({ code: [1, [2, null]], message: "m" }),
+	"error-event-uncoercible-code": errorEvent({ code: { toString: 1 }, message: "m" }),
 	"response-failed":
 		created +
 		R({

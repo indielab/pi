@@ -1815,6 +1815,21 @@
 				"responseId": "resp_1"
 			}
 		},
+		"error-event-uncoercible-code": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"error\",\"code\":{\"toString\":1},\"message\":\"m\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"error\",\"code\":{\"toString\":1},\"message\":\"m\"}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot convert object to primitive value",
+				"text": "",
+				"responseId": "resp_1"
+			}
+		},
 		"response-failed": {
 			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.failed\",\"response\":{\"id\":\"resp_1\",\"status\":\"failed\",\"error\":{\"code\":\"server_error\",\"message\":\"bad\"}}}\n\n",
 			"responses": {
