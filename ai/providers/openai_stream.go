@@ -116,7 +116,17 @@ type openaiSSEChunkReader struct {
 	ready int
 	// err is the read error that ended the body; io.EOF at its end.
 	err error
+	// emptyReads counts the body's reads in a row that returned nothing.
+	emptyReads int
 }
+
+// maxEmptyBodyReads is how many reads in a row may return no data and no
+// error before the body is taken for broken, bufio.Scanner's own limit.
+const maxEmptyBodyReads = 100
+
+// errOpenAIBodyNoProgress fails a body whose reads keep returning nothing,
+// which io.Reader's contract discourages; the SDK would wait on it forever.
+var errOpenAIBodyNoProgress = fmt.Errorf("the openai response body returned no data and no error %d reads in a row; this is a port guard against a broken body reader, report it with the provider: %w", maxEmptyBodyReads, io.ErrNoProgress)
 
 func (c *openaiSSEChunkReader) Read(p []byte) (int, error) {
 	for c.ready == 0 {
@@ -129,6 +139,11 @@ func (c *openaiSSEChunkReader) Read(p []byte) (int, error) {
 		scanned := max(0, len(c.buf)-3) // a separator ends past what was scanned
 		n, err := c.body.Read(c.buf[len(c.buf):cap(c.buf)])
 		c.buf = c.buf[:len(c.buf)+n]
+		if n > 0 || err != nil {
+			c.emptyReads = 0
+		} else if c.emptyReads++; c.emptyReads >= maxEmptyBodyReads {
+			err = errOpenAIBodyNoProgress
+		}
 		for at := scanned; ; {
 			end := openaiSSEChunkEnd(c.buf[at:])
 			if end < 0 {

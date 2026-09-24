@@ -410,6 +410,52 @@ func TestOpenAIStreamJSONFailsOnDeepNesting(t *testing.T) {
 	}
 }
 
+// emptyReader returns no data and no error, forever.
+type emptyReader struct{}
+
+func (emptyReader) Read([]byte) (int, error) { return 0, nil }
+
+// stutteringReader returns nothing on every other read, and one byte of r on
+// the others.
+type stutteringReader struct {
+	r     io.Reader
+	empty bool
+}
+
+func (s *stutteringReader) Read(p []byte) (int, error) {
+	if s.empty = !s.empty; s.empty || len(p) == 0 {
+		return 0, nil
+	}
+	return s.r.Read(p[:1])
+}
+
+// A body whose reads keep returning nothing fails the stream, as bufio.Scanner
+// fails its reader, rather than spinning: the chunk reader loops on its reads
+// until it has an event, out of the scanner's sight. Empty reads between ones
+// that return data do not add up.
+func TestOpenAIStreamBrokenBodyFails(t *testing.T) {
+	body := strings.Repeat("data: {\"id\":\"a\"}\n\n", 20)
+	items := 0
+	err := iterateOpenAIStream(&stutteringReader{r: strings.NewReader(body)}, context.Background(), func(openaiStreamItem) error { items++; return nil })
+	if err != nil || items != 20 {
+		t.Fatalf("a body with an empty read between each byte: %d items, err %v; want 20 and no error", items, err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		body := io.MultiReader(strings.NewReader("data: {\"id\":\"a\"}\n\n"), emptyReader{})
+		done <- iterateOpenAIStream(body, context.Background(), func(openaiStreamItem) error { return nil })
+	}()
+	select {
+	case err := <-done:
+		if !errors.Is(err, io.ErrNoProgress) || !strings.Contains(err.Error(), "report it with the provider") {
+			t.Fatalf("err = %v, want the port's guard wrapping io.ErrNoProgress", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("iterateOpenAIStream still reading a body that returns nothing forever")
+	}
+}
+
 // A line past the reader's limit fails the stream with the port's own error,
 // which says the limit is the port's and what to report: the SDK's
 // LineDecoder reads a line of any length.
