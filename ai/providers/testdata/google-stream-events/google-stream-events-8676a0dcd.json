@@ -232,7 +232,7 @@
 		},
 		{
 			"name": "an SSE-framed error event is observed and the stream continues",
-			"note": "parity-sweep-2 F3 recorded that this throws; @google/genai only checks whole network reads that are bare JSON",
+			"note": "parity-sweep-2 F3 once recorded that this throws; @google/genai only checks whole body reads that are bare JSON",
 			"framing": "close",
 			"headers": [
 				[
@@ -292,7 +292,7 @@
 		},
 		{
 			"name": "an SSE-framed error event as the last event",
-			"note": "TestGoogleErrorChunkFailsStream's fixture: no throw, so the stream ends without a finish reason",
+			"note": "an error event with nothing after it: no throw, so the stream ends without a finish reason",
 			"framing": "close",
 			"headers": [
 				[
@@ -1652,7 +1652,7 @@
 		},
 		{
 			"name": "a bare JSON error sharing a read with an event does not",
-			"note": "TestGoogleBareJSONErrorChunkFailsStream's fixture as one write: the read is not JSON, so the tail is an incomplete segment",
+			"note": "an event and a bare JSON error in one write: the read is not JSON, so the tail is an incomplete segment",
 			"framing": "close",
 			"headers": [
 				[
