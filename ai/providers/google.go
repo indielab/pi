@@ -459,10 +459,18 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			return
 		}
 		defer resp.Body.Close()
-		respBody, err := googleResponseBody(resp)
-		if err != nil {
-			fail(err)
-			return
+		// fetch hands a 204 or 205 response over with a null body, whatever
+		// the server sent: undici neither reads nor decodes one (its codings
+		// limit included), and @google/genai's processStreamResponse throws
+		// "Response body is empty" on the first iteration, after pi has
+		// pushed start. (net/http reads a 205's body like any other.)
+		nullBody := resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusResetContent
+		var respBody io.Reader
+		if !nullBody {
+			if respBody, err = googleResponseBody(resp); err != nil {
+				fail(err)
+				return
+			}
 		}
 		// No OnResponse: pi hands the request to the @google/genai client,
 		// which owns the fetch, and its google adapter never calls onResponse.
@@ -481,6 +489,10 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		}
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
+		if nullBody {
+			fail(errors.New("Response body is empty"))
+			return
+		}
 
 		var builders []*blockBuilder
 		var current *blockBuilder // text or thinking

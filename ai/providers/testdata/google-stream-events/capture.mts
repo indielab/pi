@@ -18,7 +18,8 @@
 // integrity.
 //
 // Each scenario is served by a raw TCP server that writes the response head
-// and then each body segment as its own socket write, 50ms apart, so each
+// (its status line is `status`, "HTTP/1.1 200 OK" by default) and then each
+// body segment as its own socket write, 50ms apart, so each
 // segment reaches the SDK as its own body read (its bare-JSON error check
 // runs per read). Nothing else is added to the head — no Date, no
 // Connection — so the header record the SDK builds is fully determined by the
@@ -89,6 +90,7 @@ const { stream } = await import(pathToFileURL(path.join(src, "api/google-generat
 type Scenario = {
 	name: string;
 	note?: string;
+	status?: string;
 	framing: "close" | "chunked";
 	headers: Array<[string, string]>;
 	segments: string[];
@@ -716,6 +718,65 @@ const scenarios: Scenario[] = [
 		segments: [sse(text("brotli"), stop)],
 	},
 	{
+		name: "a 204 response has no body to read",
+		note: "fetch gives a 204 or 205 a null body whatever the server sends, and processStreamResponse throws on the first iteration, after start",
+		status: "HTTP/1.1 204 No Content",
+		framing: "close",
+		headers: eventStream,
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a 204 response without a body",
+		status: "HTTP/1.1 204 No Content",
+		framing: "close",
+		headers: eventStream,
+		segments: [],
+	},
+	{
+		name: "a 205 response has no body to read",
+		status: "HTTP/1.1 205 Reset Content",
+		framing: "close",
+		headers: eventStream,
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a 205 response with a content-length has no body to read",
+		status: "HTTP/1.1 205 Reset Content",
+		framing: "close",
+		contentLength: true,
+		headers: eventStream,
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a 204 response's content codings are never counted",
+		note: "undici builds its decoders, and checks there are at most five, only for a body it reads",
+		status: "HTTP/1.1 204 No Content",
+		framing: "close",
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip, gzip, gzip, gzip, gzip, gzip"],
+		],
+		segments: [],
+	},
+	{
+		name: "a 205 response's gzip body is never decoded",
+		status: "HTTP/1.1 205 Reset Content",
+		framing: "close",
+		encode: () => Buffer.from("not gzip"),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a 206 response streams",
+		status: "HTTP/1.1 206 Partial Content",
+		framing: "close",
+		headers: eventStream,
+		segments: [sse(text("partial"), stop)],
+	},
+	{
 		name: "a bare JSON error in its own read throws",
 		framing: "close",
 		headers: eventStream,
@@ -1093,7 +1154,7 @@ function serve(
 				responded = true;
 				acceptEncoding = /^accept-encoding:[ \t]*(.*?)[ \t]*$/im.exec(requestHead)?.[1];
 				const writes: Buffer[] = encoded ? [encoded] : segments.map((seg) => Buffer.from(seg));
-				const head = ["HTTP/1.1 200 OK", ...s.headers.map(([k, v]) => `${k}: ${v}`)];
+				const head = [s.status ?? "HTTP/1.1 200 OK", ...s.headers.map(([k, v]) => `${k}: ${v}`)];
 				if (s.contentLength) head.push(`Content-Length: ${writes.reduce((n, w) => n + w.length, 0) + (s.contentLengthExtra ?? 0)}`);
 				if (s.framing === "chunked") head.push("Transfer-Encoding: chunked");
 				sock.write(`${head.join("\r\n")}\r\n\r\n`);

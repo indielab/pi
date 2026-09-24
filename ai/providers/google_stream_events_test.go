@@ -32,7 +32,9 @@ type googleStreamCapture struct {
 }
 
 type googleStreamScenario struct {
-	Name       string `json:"name"`
+	Name string `json:"name"`
+	// Status is the response's status line, "HTTP/1.1 200 OK" when empty.
+	Status     string `json:"status"`
 	Divergence string `json:"divergence"`
 	// DivergentFields names the parts of the outcome, as replayGoogleScenario
 	// keys them, where a divergence scenario differs from pi. Every other part
@@ -200,7 +202,11 @@ func googleScenarioWrites(sc googleStreamScenario) [][]byte {
 // it.
 func googleScenarioHead(sc googleStreamScenario) string {
 	var head strings.Builder
-	head.WriteString("HTTP/1.1 200 OK\r\n")
+	status := sc.Status
+	if status == "" {
+		status = "HTTP/1.1 200 OK"
+	}
+	head.WriteString(status + "\r\n")
 	for _, h := range sc.Headers {
 		fmt.Fprintf(&head, "%s: %s\r\n", h[0], h[1])
 	}
