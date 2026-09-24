@@ -894,8 +894,11 @@ func (m *modelsImpl) GetModel(provider, id string) *Model {
 }
 
 // allModelsOf reads a provider's models of every type: GetAllModels when it
-// implements AllModelsLister — whose answer stands even when it lists nothing,
-// as pi's `??` falls back only on an absent method — and GetModels otherwise.
+// implements AllModelsLister, and GetModels otherwise. pi reads
+// `entry.getAllModels?.() ?? entry.getModels()`, whose `??` also falls back
+// when a present getAllModels returns undefined or null. A []*Model has no such
+// value besides nil, and a nil slice is Go's empty list — pi's [] — so an
+// implemented GetAllModels always stands, even when it lists nothing.
 func allModelsOf(p Provider) []*Model {
 	if lister, ok := p.(AllModelsLister); ok {
 		return lister.GetAllModels()

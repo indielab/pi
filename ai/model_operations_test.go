@@ -401,10 +401,11 @@ type allModelsProvider struct {
 func (p allModelsProvider) GetAllModels() []*Model { return p.all }
 
 // pi models-runtime.test.ts "keeps chat reads independent from the all-model
-// catalog". pi's provider throws from getAllModels; a Go provider cannot, so
-// this pins the independence half: the chat reads never consult GetAllModels,
-// and an empty GetAllModels answer stands rather than falling back to
-// GetModels (pi's `??` falls back only on an absent method).
+// catalog". pi's provider throws from getAllModels, which pi's Models turns
+// into []; a Go provider cannot throw, so this pins the independence half: the
+// chat reads never consult GetAllModels, and a nil GetAllModels answer stands
+// as pi's [] does rather than falling back to GetModels (see allModelsOf for
+// why nil is not pi's undefined, on which `??` would fall back).
 func TestChatReadsIgnoreGetAllModels(t *testing.T) {
 	base := typedTestProvider("chat-only", noAuthConfigured(), typedChatModel("chat-only", "model-a"))
 	models := CreateModels(nil)
