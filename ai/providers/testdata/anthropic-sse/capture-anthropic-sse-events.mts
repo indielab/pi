@@ -18,7 +18,9 @@
 //
 // Every row streams through the upstream suite's fake client
 // (anthropic-sse-parsing.test.ts createFakeAnthropicClient), so neither side
-// needs a key or the network, and records:
+// needs a key or the network — except an oauth row, which needs pi to create
+// its own client for an OAuth token: that client's fetch serves the body, and
+// the Go test streams with the same token. Each row records:
 //   sse        the exact body, which the Go test replays byte for byte;
 //   observed   each value onProviderStreamEvent received, as JSON.stringify
 //              text, so key order is part of the expectation;
@@ -87,7 +89,7 @@ const messageDelta = ev(
 const messageStop = ev("message_stop", JSON.stringify({ type: "message_stop" }));
 const minimal = [messageStart, blockStart, textDelta("Hello"), blockStop, messageDelta, messageStop];
 
-type Case = { name: string; sse: string; v8Cause?: boolean; throwAt?: number; abortFirst?: boolean };
+type Case = { name: string; sse: string; v8Cause?: boolean; throwAt?: number; abortFirst?: boolean; oauth?: boolean };
 const B = String.fromCharCode(92); // a backslash, spelled so no tool decodes an escape
 // U+2028 and U+2029, spelled so no tool decodes an escape: JSON.stringify writes
 // both literally, as it does <, > and &.
@@ -321,6 +323,36 @@ const cases: Case[] = [
 	{ name: "contentBlockStartWithoutBlockFails", sse: frames(messageStart, ev("content_block_start", '{"type":"content_block_start","index":0}')) },
 	{ name: "contentBlockDeltaWithoutDeltaFails", sse: frames(messageStart, blockStart, ev("content_block_delta", '{"type":"content_block_delta","index":0}')) },
 	{ name: "messageDeltaWithoutDeltaFails", sse: frames(messageStart, ev("message_delta", '{"type":"message_delta","usage":{"output_tokens":5}}')) },
+	// With an OAuth token, a tool_use block's name maps back to the current
+	// tool it lowercases to (fromClaudeCodeName)...
+	{
+		name: "oauthToolNameMapsToACurrentTool",
+		oauth: true,
+		sse: frames(
+			messageStart,
+			ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"read","input":{}}}'),
+			ev("content_block_stop", '{"type":"content_block_stop","index":0}'),
+			ev("message_delta", '{"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}'),
+			messageStop,
+		),
+	},
+	// ...and a name that is not a string makes its toLowerCase() throw V8's
+	// TypeError, which fails the stream.
+	{
+		name: "oauthToolUseWithoutNameFails",
+		oauth: true,
+		sse: frames(messageStart, ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","input":{}}}')),
+	},
+	{
+		name: "oauthToolUseNullNameFails",
+		oauth: true,
+		sse: frames(messageStart, ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":null,"input":{}}}')),
+	},
+	{
+		name: "oauthToolUseNumericNameFails",
+		oauth: true,
+		sse: frames(messageStart, ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":5,"input":{}}}')),
+	},
 	// A throwing observer fails the stream with its message (pi awaits the
 	// callback inside the adapter's try): on the first event...
 	{ name: "observerThrowsOnFirstEvent", sse: frames(...minimal), throwAt: 0 },
@@ -331,12 +363,32 @@ const cases: Case[] = [
 ];
 
 const context = normalizeContext({ messages: [{ role: "user", content: "Hello", timestamp: 1 }] });
+// An oauth row streams with an OAuth token through the SDK client pi creates,
+// its fetch serving the body, and with one current tool, Read.
+const oauthToken = "sk-ant-oat01-capture";
+const oauthContext = normalizeContext({
+	messages: [
+		{
+			role: "system",
+			content: "You are a test.",
+			toolsAdded: [{ name: "Read", description: "Read a file", parameters: { type: "object", properties: {} } }],
+			timestamp: 1,
+		},
+		{ role: "user", content: "Hello", timestamp: 1 },
+	],
+});
 const rows = [];
 for (const c of cases) {
 	const observed: string[] = [];
 	const controller = new AbortController();
-	const s = streamAnthropic(model, context, {
-		client: createFakeAnthropicClient(c.sse),
+	const transport = c.oauth
+		? {
+				apiKey: oauthToken,
+				fetch: async () => new Response(c.sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+			}
+		: { client: createFakeAnthropicClient(c.sse) };
+	const s = streamAnthropic(model, c.oauth ? oauthContext : context, {
+		...transport,
 		signal: controller.signal,
 		onProviderStreamEvent: async (event: unknown, eventModel: unknown) => {
 			await Promise.resolve();
@@ -362,6 +414,7 @@ for (const c of cases) {
 		...(c.v8Cause ? { v8Cause: true } : {}),
 		...(c.throwAt !== undefined ? { throwAt: c.throwAt } : {}),
 		...(c.abortFirst ? { abortFirst: true } : {}),
+		...(c.oauth ? { oauth: true } : {}),
 		observed,
 		pushed,
 		message: {

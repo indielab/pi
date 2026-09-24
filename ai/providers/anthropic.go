@@ -88,6 +88,21 @@ func fromClaudeCodeName(name string, tools []ai.Tool) string {
 	return name
 }
 
+// claudeCodeNameOf is pi's `fromClaudeCodeName(event.content_block.name,
+// currentTools)` on a tool_use block's raw name. With current tools, its
+// `name.toLowerCase()` throws V8's TypeError for a name that is not a string,
+// which fails the stream.
+func claudeCodeNameOf(raw json.RawMessage, tools []ai.Tool) (string, error) {
+	name, isString := rawString(raw)
+	if isString || len(tools) == 0 {
+		return fromClaudeCodeName(name, tools), nil
+	}
+	if _, err := rawRead(raw, "toLowerCase"); err != nil {
+		return "", err // undefined or null
+	}
+	return "", errors.New("name.toLowerCase is not a function")
+}
+
 // AnthropicOptions are the provider-native options for streamAnthropic.
 type AnthropicOptions struct {
 	ai.StreamOptions
@@ -811,7 +826,9 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 					id, _ := rawString(block["id"])
 					name, _ := rawString(block["name"])
 					if oauth {
-						name = fromClaudeCodeName(name, currentTools)
+						if name, err = claudeCodeNameOf(block["name"], currentTools); err != nil {
+							return err
+						}
 					}
 					// pi: `arguments: event.content_block.input ?? {}` — the
 					// arguments stand until the first input_json_delta (or the

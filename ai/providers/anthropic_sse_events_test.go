@@ -23,12 +23,14 @@ import (
 const anthropicSSEEventsCaptureFile = "testdata/anthropic-sse/anthropic-sse-events-8676a0dcd.json"
 
 type anthropicSSEEventsRow struct {
-	Name       string   `json:"name"`
-	SSE        string   `json:"sse"`
-	V8Cause    bool     `json:"v8Cause"`
-	ThrowAt    *int     `json:"throwAt"`
-	AbortFirst bool     `json:"abortFirst"`
-	Observed   []string `json:"observed"`
+	Name       string `json:"name"`
+	SSE        string `json:"sse"`
+	V8Cause    bool   `json:"v8Cause"`
+	ThrowAt    *int   `json:"throwAt"`
+	AbortFirst bool   `json:"abortFirst"`
+	// OAuth rows stream with an OAuth token and one current tool, Read.
+	OAuth    bool     `json:"oauth"`
+	Observed []string `json:"observed"`
 	// Pushed holds each pushed event's type; pi's null (no type) decodes to "".
 	Pushed  []string `json:"pushed"`
 	Message struct {
@@ -63,7 +65,9 @@ func loadAnthropicSSEEventsCapture(t *testing.T) []anthropicSSEEventsRow {
 
 // streamAnthropicSSEEvents streams body on claude-haiku-4-5 and returns the
 // model it streamed, the type of every pushed event and the final message.
-func streamAnthropicSSEEvents(t *testing.T, ctx context.Context, body string, opts ai.StreamOptions) (*ai.Model, []string, *ai.AssistantMessage) {
+// With oauth it streams as the capture's oauth rows do: with an OAuth token,
+// and a leading system message that adds one tool, Read.
+func streamAnthropicSSEEvents(t *testing.T, ctx context.Context, body string, oauth bool, opts ai.StreamOptions) (*ai.Model, []string, *ai.AssistantMessage) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
@@ -78,8 +82,14 @@ func streamAnthropicSSEEvents(t *testing.T, ctx context.Context, body string, op
 	model := *base
 	model.BaseURL = server.URL
 	opts.APIKey = "k"
-	stream := StreamAnthropic(ctx, &model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("Hello", 1)}}),
-		&AnthropicOptions{StreamOptions: opts})
+	messages := []ai.Message{ai.NewUserText("Hello", 1)}
+	if oauth {
+		opts.APIKey = "sk-ant-oat01-capture"
+		system := ai.NewSystemText("You are a test.", 1)
+		system.ToolsAdded = []ai.Tool{{Name: "Read", Description: "Read a file", Parameters: ai.Object()}}
+		messages = append([]ai.Message{system}, messages...)
+	}
+	stream := StreamAnthropic(ctx, &model, ai.NormalizeContext(ai.Context{Messages: messages}), &AnthropicOptions{StreamOptions: opts})
 	var pushed []string
 	for ev := range stream.Events() {
 		pushed = append(pushed, string(ev.Type))
@@ -252,7 +262,7 @@ func TestAnthropicSSEEventsMatchPi(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			obs := &providerStreamObserver{t: t, throwAt: row.ThrowAt, abortFirst: row.AbortFirst, cancel: cancel}
-			model, pushed, final := streamAnthropicSSEEvents(t, ctx, row.SSE, ai.StreamOptions{OnProviderStreamEvent: obs.observe})
+			model, pushed, final := streamAnthropicSSEEvents(t, ctx, row.SSE, row.OAuth, ai.StreamOptions{OnProviderStreamEvent: obs.observe})
 			if !reflect.DeepEqual(obs.observed, row.Observed) && (len(obs.observed) > 0 || len(row.Observed) > 0) {
 				t.Errorf("observed = %q, want %q", obs.observed, row.Observed)
 			}
@@ -263,7 +273,7 @@ func TestAnthropicSSEEventsMatchPi(t *testing.T) {
 			assertAnthropicMessageMatchesPi(t, row, final)
 			// pi's pushed events and message do not depend on observing.
 			if row.ThrowAt == nil {
-				_, pushed, final := streamAnthropicSSEEvents(t, context.Background(), row.SSE, ai.StreamOptions{})
+				_, pushed, final := streamAnthropicSSEEvents(t, context.Background(), row.SSE, row.OAuth, ai.StreamOptions{})
 				if !reflect.DeepEqual(pushed, row.Pushed) {
 					t.Errorf("without an observer: pushed = %q, want %q", pushed, row.Pushed)
 				}
@@ -335,5 +345,32 @@ data: {"type":"message_stop"}
 		if m != &model {
 			t.Errorf("event %d: observer got model %p, want the streamed model %p", i, m, &model)
 		}
+	}
+}
+
+// TestClaudeCodeNameOfReadsTheNameOnlyWithTools pins pi's fromClaudeCodeName
+// guard (anthropic-messages.ts at 8676a0dcd): `name.toLowerCase()` runs only
+// when there are current tools, so with none a name that is not a string is
+// passed through (the port holds it as "") instead of throwing. The thrown
+// texts are the oauth rows' of the capture.
+func TestClaudeCodeNameOfReadsTheNameOnlyWithTools(t *testing.T) {
+	tools := []ai.Tool{{Name: "Read", Description: "Read a file", Parameters: ai.Object()}}
+	for _, tc := range []struct {
+		raw  json.RawMessage
+		want string
+	}{
+		{nil, "Cannot read properties of undefined (reading 'toLowerCase')"},
+		{json.RawMessage(`null`), "Cannot read properties of null (reading 'toLowerCase')"},
+		{json.RawMessage(`5`), "name.toLowerCase is not a function"},
+	} {
+		if _, err := claudeCodeNameOf(tc.raw, tools); err == nil || err.Error() != tc.want {
+			t.Errorf("claudeCodeNameOf(%s) with tools: error %v, want %q", tc.raw, err, tc.want)
+		}
+		if name, err := claudeCodeNameOf(tc.raw, nil); err != nil || name != "" {
+			t.Errorf("claudeCodeNameOf(%s) without tools = %q, %v; want the name passed through", tc.raw, name, err)
+		}
+	}
+	if name, err := claudeCodeNameOf(json.RawMessage(`"read"`), tools); err != nil || name != "Read" {
+		t.Errorf(`claudeCodeNameOf("read") = %q, %v; want "Read"`, name, err)
 	}
 }
