@@ -1212,19 +1212,27 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(data any
 			return nil
 		}
 		data := jstext.Trim(strings.TrimPrefix(trimmed, "data:"))
-		if data == "" {
-			return nil
+		// The SDK yields every data: payload, and pi's loop reads it with
+		// Response.json() — JSON.parse, whose SyntaxError fails the stream: an
+		// empty payload, one that is not JSON, one that JSON.parse would need
+		// repaired (a raw control character in a string), and a multi-line
+		// event, whose later "data:" lines are part of the one payload.
+		if err := jstext.JSONSyntaxError(data); err != nil {
+			return err
 		}
-		var chunk googleChunk
-		decodeErr := parseJSONWithRepair(data, &chunk)
 		if observe != nil {
-			if value, ok := googleObservedValue(data); ok {
-				if err := observe(value); err != nil {
-					return err
-				}
+			value, err := ai.DecodeOrderedValue([]byte(data))
+			if err != nil {
+				// Unreachable short of encoding/json's nesting limit: JSON.parse
+				// accepted the payload.
+				return fmt.Errorf("a google stream payload JSON.parse accepts failed the port's decode (%v); report it as a port bug with this payload: %s", err, data)
+			}
+			if err := observe(value); err != nil {
+				return err
 			}
 		}
-		if decodeErr != nil {
+		var chunk googleChunk
+		if json.Unmarshal([]byte(data), &chunk) != nil {
 			return nil
 		}
 		// No error check here: the SDK checks only whole reads that are bare
@@ -1286,24 +1294,6 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(data any
 		return fmt.Errorf("Incomplete JSON segment at the end")
 	}
 	return nil
-}
-
-// googleObservedValue parses a data: payload for the stream-event observer,
-// keeping every object's key order. It reads the payload the way the typed
-// decode does — as is, else after the repair pass — so the observer sees each
-// event the adapter goes on to handle. (pi's SDK parses strictly and fails
-// the stream on a payload that needs repair or cannot be parsed; the port's
-// leniency there predates the observer.)
-func googleObservedValue(data string) (any, bool) {
-	if value, err := ai.DecodeOrderedValue([]byte(data)); err == nil {
-		return value, true
-	}
-	if repaired := repairJSON(data); repaired != data {
-		if value, err := ai.DecodeOrderedValue([]byte(repaired)); err == nil {
-			return value, true
-		}
-	}
-	return nil, false
 }
 
 // googleGenerateContentResponse is the chunk @google/genai 2.21.0 yields for

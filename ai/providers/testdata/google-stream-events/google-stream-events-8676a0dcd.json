@@ -1765,8 +1765,8 @@
 			}
 		},
 		{
-			"name": "divergence: an empty data payload",
-			"divergence": "pi parses every data payload with Response.json() (strict JSON.parse) and fails the stream with V8's SyntaxError text; the port skips an empty payload",
+			"name": "an empty data payload fails the stream",
+			"note": "pi reads every data: payload with Response.json() (strict JSON.parse); its SyntaxError fails the stream",
 			"framing": "close",
 			"headers": [
 				[
@@ -1775,15 +1775,24 @@
 				]
 			],
 			"segments": [
-				"data:\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"before\"}],\"role\":\"model\"}}]}\n\ndata:\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
 			],
 			"readBoundariesMatter": false,
 			"pi": {
-				"events": [],
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"before\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
 				"sameModel": true,
 				"stream": [
 					{
 						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "before"
 					},
 					{
 						"type": "error"
@@ -1791,7 +1800,7 @@
 				],
 				"stopReason": "error",
 				"errorMessage": "Unexpected end of JSON input",
-				"content": "[]",
+				"content": "[{\"type\":\"text\",\"text\":\"before\"}]",
 				"usage": {
 					"input": 0,
 					"output": 0,
@@ -1802,8 +1811,7 @@
 			}
 		},
 		{
-			"name": "divergence: an unparseable data payload",
-			"divergence": "pi fails the stream with V8's SyntaxError text; the port skips a payload it cannot parse",
+			"name": "an unparseable data payload fails the stream",
 			"framing": "close",
 			"headers": [
 				[
@@ -1839,8 +1847,8 @@
 			}
 		},
 		{
-			"name": "divergence: a multi-line data event",
-			"divergence": "the SDK parses everything after the first \"data:\" as one payload, so pi fails with V8's SyntaxError text; the port skips it",
+			"name": "a multi-line data event fails the stream",
+			"note": "the SDK parses everything after the first \"data:\" as one payload",
 			"framing": "close",
 			"headers": [
 				[
@@ -1876,8 +1884,7 @@
 			}
 		},
 		{
-			"name": "divergence: a raw control character in a string",
-			"divergence": "pi fails with V8's SyntaxError text; the port repairs the string and handles the event",
+			"name": "a raw control character in a string fails the stream",
 			"framing": "close",
 			"headers": [
 				[
@@ -1902,6 +1909,123 @@
 				],
 				"stopReason": "error",
 				"errorMessage": "Bad control character in string literal in JSON at position 46 (line 1 column 47)",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a long unparseable payload quotes the text around the error",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"kept\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}]}}],\"usageMetadata\":{\"promptTokenCount\":NaN}}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"kept\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "kept"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Unexpected token 'N', ...\"kenCount\":NaN}}\" is not valid JSON",
+				"content": "[{\"type\":\"text\",\"text\":\"kept\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a payload with a bad unicode escape on its second line fails the stream",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[\n{\"text\":\"\\u12x4\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Bad Unicode escape in JSON at position 50 (line 2 column 14)",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a truncated payload fails the stream",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Expected ',' or ']' after array element in JSON at position 48 (line 1 column 49)",
 				"content": "[]",
 				"usage": {
 					"input": 0,
