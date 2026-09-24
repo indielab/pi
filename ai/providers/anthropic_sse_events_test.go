@@ -29,7 +29,10 @@ type anthropicSSEEventsRow struct {
 	ThrowAt    *int   `json:"throwAt"`
 	AbortFirst bool   `json:"abortFirst"`
 	// OAuth rows stream with an OAuth token and one current tool, Read.
-	OAuth    bool     `json:"oauth"`
+	OAuth bool `json:"oauth"`
+	// RawSeed rows end with a block member pi holds as the raw non-string
+	// value it was seeded with, which the port's string field cannot hold.
+	RawSeed  bool     `json:"rawSeed"`
 	Observed []string `json:"observed"`
 	// Pushed holds each pushed event's type; pi's null (no type) decodes to "".
 	Pushed  []string `json:"pushed"`
@@ -134,6 +137,9 @@ func assertAnthropicMessageMatchesPi(t *testing.T, row anthropicSSEEventsRow, fi
 	if err := json.Unmarshal(want.Content, &w); err != nil {
 		t.Fatalf("decode pi content: %v", err)
 	}
+	if row.RawSeed {
+		dropRawSeedMembers(g, w)
+	}
 	if !reflect.DeepEqual(g, w) {
 		t.Errorf("content = %s, want %s", gotContent, want.Content)
 	}
@@ -153,6 +159,31 @@ func assertAnthropicMessageMatchesPi(t *testing.T, row anthropicSSEEventsRow, fi
 		}
 		if d.Type != want.Diagnostics[i].Type || string(details) != string(want.Diagnostics[i].Details) {
 			t.Errorf("diagnostic %d = %s %s, want %s %s", i, d.Type, details, want.Diagnostics[i].Type, want.Diagnostics[i].Details)
+		}
+	}
+}
+
+// dropRawSeedMembers removes, from both decoded contents, each block's text,
+// thinking or thinkingSignature that pi holds as a non-string — the raw value
+// content_block_start seeded it with, which no delta converted before the
+// stream failed. The port's string field cannot hold such a value; every
+// other member is still compared.
+func dropRawSeedMembers(got, want any) {
+	gotBlocks, _ := got.([]any)
+	wantBlocks, _ := want.([]any)
+	for i, wb := range wantBlocks {
+		wm, _ := wb.(map[string]any)
+		if i >= len(gotBlocks) || wm == nil {
+			continue
+		}
+		gm, _ := gotBlocks[i].(map[string]any)
+		for _, key := range []string{"text", "thinking", "thinkingSignature"} {
+			if v, ok := wm[key]; ok {
+				if _, isString := v.(string); !isString {
+					delete(wm, key)
+					delete(gm, key)
+				}
+			}
 		}
 	}
 }

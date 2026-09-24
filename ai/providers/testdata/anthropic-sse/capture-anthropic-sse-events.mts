@@ -29,7 +29,11 @@
 //              result, and the type and details of each diagnostic (not its
 //              timestamp), when it has any;
 //   v8Cause    true when errorMessage embeds a V8 JSON.parse message, which
-//              the port does not reproduce: only the text around it is pi's.
+//              the port does not reproduce: only the text around it is pi's;
+//   rawSeed    true when the message's content still holds a block member as
+//              the raw non-string value content_block_start seeded it with
+//              (the stream failed before a delta converted it), which the
+//              port's string field cannot hold: that member is not compared.
 // A row may make the observer throw ("observer boom") on the observed event at
 // index throwAt, after aborting the request when abortFirst is set.
 import fs from "node:fs";
@@ -103,7 +107,15 @@ const deltaTransforming = (transformations: string, stopReason = "end_turn") =>
 		`{"type":"message_delta","input_transformations":${transformations},"delta":{"stop_reason":"${stopReason}"},"usage":{"output_tokens":5}}`,
 	);
 
-type Case = { name: string; sse: string; v8Cause?: boolean; throwAt?: number; abortFirst?: boolean; oauth?: boolean };
+type Case = {
+	name: string;
+	sse: string;
+	v8Cause?: boolean;
+	throwAt?: number;
+	abortFirst?: boolean;
+	oauth?: boolean;
+	rawSeed?: boolean;
+};
 const B = String.fromCharCode(92); // a backslash, spelled so no tool decodes an escape
 // U+2028 and U+2029, spelled so no tool decodes an escape: JSON.stringify writes
 // both literally, as it does <, > and &.
@@ -367,6 +379,76 @@ const cases: Case[] = [
 		oauth: true,
 		sse: frames(messageStart, ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":5,"input":{}}}')),
 	},
+	// content_block_start seeds a block's text, thinking and signature with the
+	// raw value (`?? ""`; a redacted block's data as it is), which the first
+	// `+=` converts with String(). A signature_delta first does
+	// `thinkingSignature ||= ""`-style `|| ""`, so a falsy seed (0, false, -0,
+	// an absent or null data) is dropped; a truthy one is converted, and so is
+	// a thinking seed however falsy.
+	{
+		name: "signatureDeltaDropsAFalsySeed",
+		sse: frames(
+			messageStart,
+			...["0", "false", "-0", '""', "{}", "1", "true", '"s"'].flatMap((seed, i) => [
+				ev("content_block_start", `{"type":"content_block_start","index":${i},"content_block":{"type":"thinking","signature":${seed}}}`),
+				ev("content_block_delta", `{"type":"content_block_delta","index":${i},"delta":{"type":"signature_delta","signature":"sig"}}`),
+				ev("content_block_stop", `{"type":"content_block_stop","index":${i}}`),
+			]),
+			ev("content_block_start", '{"type":"content_block_start","index":8,"content_block":{"type":"thinking","thinking":false,"signature":0}}'),
+			ev("content_block_delta", '{"type":"content_block_delta","index":8,"delta":{"type":"thinking_delta","thinking":"x"}}'),
+			ev("content_block_delta", '{"type":"content_block_delta","index":8,"delta":{"type":"signature_delta","signature":"a"}}'),
+			ev("content_block_delta", '{"type":"content_block_delta","index":8,"delta":{"type":"signature_delta","signature":"b"}}'),
+			ev("content_block_stop", '{"type":"content_block_stop","index":8}'),
+			messageDelta,
+			messageStop,
+		),
+	},
+	{
+		name: "redactedDataConvertsOnTheFirstSignatureDelta",
+		sse: frames(
+			messageStart,
+			...['"data":5', '"data":[1]', '"data":true', '"data":{}', '"data":null', "", '"data":false', '"data":"d"'].flatMap((data, i) => [
+				ev("content_block_start", `{"type":"content_block_start","index":${i},"content_block":{"type":"redacted_thinking"${data ? "," + data : ""}}}`),
+				ev("content_block_delta", `{"type":"content_block_delta","index":${i},"delta":{"type":"signature_delta","signature":"sig"}}`),
+				ev("content_block_stop", `{"type":"content_block_stop","index":${i}}`),
+			]),
+			messageDelta,
+			messageStop,
+		),
+	},
+	// A seed with no string form (an object with its own toString member) makes
+	// the first `+=` onto it throw V8's TypeError, failing the stream — for a
+	// text, a thinking, a signature and a redacted block's data alike.
+	...[
+		["textSeedWithNoStringFormFails", '"type":"text","text":{"toString":1}', '"type":"text_delta","text":"a"'],
+		["thinkingSeedWithNoStringFormFails", '"type":"thinking","thinking":{"toString":1},"signature":"s"', '"type":"thinking_delta","thinking":"a"'],
+		["signatureSeedWithNoStringFormFails", '"type":"thinking","signature":{"toString":1}', '"type":"signature_delta","signature":"a"'],
+		["redactedDataWithNoStringFormFails", '"type":"redacted_thinking","data":{"toString":1}', '"type":"signature_delta","signature":"a"'],
+	].map(([name, block, delta]) => ({
+		name,
+		rawSeed: true,
+		sse: frames(
+			messageStart,
+			ev("content_block_start", `{"type":"content_block_start","index":0,"content_block":{${block}}}`),
+			ev("content_block_delta", `{"type":"content_block_delta","index":0,"delta":{${delta}}}`),
+			blockStop,
+			messageDelta,
+			messageStop,
+		),
+	})),
+	// A seed converts once: later deltas append to the string it became.
+	{
+		name: "aSeedConvertsOnce",
+		sse: frames(
+			messageStart,
+			ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"text","text":5}}'),
+			textDelta("a"),
+			textDelta("b"),
+			blockStop,
+			messageDelta,
+			messageStop,
+		),
+	},
 	// input_transformations: any array replaces the list (Array.isArray is the
 	// only guard), and on a turn that succeeds each entry becomes {type, path,
 	// reason}, each `?? undefined`. A null entry makes that `.type` read throw
@@ -489,6 +571,7 @@ for (const c of cases) {
 		...(c.throwAt !== undefined ? { throwAt: c.throwAt } : {}),
 		...(c.abortFirst ? { abortFirst: true } : {}),
 		...(c.oauth ? { oauth: true } : {}),
+		...(c.rawSeed ? { rawSeed: true } : {}),
 		observed,
 		pushed,
 		message: {

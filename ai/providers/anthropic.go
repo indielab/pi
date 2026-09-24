@@ -700,11 +700,14 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// blocks is pi's `output.content` as its handler holds it: each block's
 		// builder with the two fields pi deletes on content_block_stop — the
 		// event's raw `index` a block is found by (nil once deleted: undefined)
-		// and whether its partialJson is gone.
+		// and whether its partialJson is gone — and the raw seeds of its
+		// text, thinking and signature, which pi converts only when a delta is
+		// appended to them (see anthropicSeed).
 		type anthropicBlock struct {
 			*blockBuilder
 			index          json.RawMessage
 			partialDeleted bool
+			seeds          anthropicSeeds
 		}
 		var blocks []*anthropicBlock
 		materialize := func() {
@@ -805,21 +808,32 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 					return nil
 				}
 				var b *blockBuilder
+				var seeds anthropicSeeds
 				var evType ai.EventType
 				switch blockType {
 				case "text":
 					// The start event may already carry the block's first chunk; seed
 					// the builder with it so the deltas that follow append to it.
+					// pi: `text: event.content_block.text ?? ""`.
 					b = &blockBuilder{kind: "text"}
-					b.text.WriteString(anthropicSeedText(block["text"]))
+					var text string
+					text, seeds.text = anthropicSeed(block["text"])
+					b.text.WriteString(text)
 					evType = ai.EventTextStart
 				case "thinking":
-					b = &blockBuilder{kind: "thinking", thinkingSig: anthropicSeedText(block["signature"])}
-					b.thinking.WriteString(anthropicSeedText(block["thinking"]))
+					// pi: `thinking: ... ?? ""` and `thinkingSignature: ... ?? ""`.
+					b = &blockBuilder{kind: "thinking"}
+					var thinking string
+					thinking, seeds.thinking = anthropicSeed(block["thinking"])
+					b.thinking.WriteString(thinking)
+					b.thinkingSig, seeds.signature = anthropicSeed(block["signature"])
 					evType = ai.EventThinkingStart
 				case "redacted_thinking":
-					data, _ := rawString(block["data"])
-					b = &blockBuilder{kind: "thinking", redacted: true, thinkingSig: data}
+					// pi: `thinkingSignature: event.content_block.data`, with no
+					// `?? ""` — an absent or null data, which the port holds as "",
+					// is falsy all the same when a signature_delta comes.
+					b = &blockBuilder{kind: "thinking", redacted: true}
+					b.thinkingSig, seeds.signature = anthropicSeed(block["data"])
 					b.thinking.WriteString("[Reasoning redacted]")
 					evType = ai.EventThinkingStart
 				case "tool_use":
@@ -843,7 +857,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 				default:
 					return nil
 				}
-				blocks = append(blocks, &anthropicBlock{blockBuilder: b, index: ev["index"]})
+				blocks = append(blocks, &anthropicBlock{blockBuilder: b, index: ev["index"], seeds: seeds})
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: evType, ContentIndex: len(blocks) - 1, Partial: output.Clone()})
 			case "content_block_delta":
@@ -881,10 +895,16 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 				pushed, _ := rawString(delta[member])
 				switch deltaType {
 				case "text_delta":
+					if err := convertAnthropicSeed(&b.seeds.text); err != nil {
+						return err
+					}
 					b.text.WriteString(piece)
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: idx, Delta: pushed, Partial: output.Clone()})
 				case "thinking_delta":
+					if err := convertAnthropicSeed(&b.seeds.thinking); err != nil {
+						return err
+					}
 					b.thinking.WriteString(piece)
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: idx, Delta: pushed, Partial: output.Clone()})
@@ -900,6 +920,14 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: pushed, Partial: output.Clone()})
 				case "signature_delta":
+					// pi: `thinkingSignature = thinkingSignature || ""`, then
+					// `+= signature`: a falsy seed (0, false) is dropped first.
+					if b.seeds.signature != nil && !rawTruthy(b.seeds.signature) {
+						b.thinkingSig, b.seeds.signature = "", nil
+					}
+					if err := convertAnthropicSeed(&b.seeds.signature); err != nil {
+						return err
+					}
 					b.thinkingSig += piece
 				}
 			case "content_block_stop":
@@ -2197,16 +2225,45 @@ func applyMessageDeltaUsage(usage *ai.Usage, u rawObject) {
 	assign(&usage.Reasoning, rawOptional(u["output_tokens_details"])["thinking_tokens"])
 }
 
-// anthropicSeedText is `value ?? ""` for a text pi then appends deltas to with
-// `+=`: "" for undefined or null, a string's text, and String() of any other
-// value, which is what the first `+=` makes of it (a value with no string
-// form, where that `+=` would throw, seeds nothing).
-func anthropicSeedText(raw json.RawMessage) string {
+// anthropicSeeds holds the raw seeds of a block's text, thinking and
+// signature that pi has not converted yet (see anthropicSeed).
+type anthropicSeeds struct {
+	text, thinking, signature json.RawMessage
+}
+
+// anthropicSeed is a block member content_block_start seeds with a raw value
+// (`value ?? ""` for text, thinking and a thinking signature; a redacted
+// block's data as it is), to which pi then appends deltas with `+=`. pi keeps
+// the raw value until the first `+=` converts it; the port's block holds a
+// string, so text is the member as it holds it: "" for undefined or null, a
+// string's text, and String() of any other value — what that first `+=` makes
+// of it — or "" for a value with no string form. pending is the raw value
+// while pi still holds something other than that string (a number, boolean,
+// object or array), and nil otherwise: a signature_delta drops it when it is
+// falsy (`|| ""`), and the first delta fails as pi's `+=` throws when it has
+// no string form (convertAnthropicSeed). Until a delta comes, the block holds
+// text where pi's holds the raw value.
+func anthropicSeed(raw json.RawMessage) (text string, pending json.RawMessage) {
 	if rawNullish(raw) {
-		return ""
+		return "", nil
 	}
-	text, _ := rawToString(raw)
-	return text
+	if s, ok := rawString(raw); ok {
+		return s, nil
+	}
+	text, _ = rawToString(raw)
+	return text, raw
+}
+
+// convertAnthropicSeed is the conversion of a pending seed that the first
+// `+=` onto it makes: its error is V8's TypeError for a seed with no string
+// form, which fails the stream. After it, the member is the string it holds.
+func convertAnthropicSeed(pending *json.RawMessage) error {
+	if *pending == nil {
+		return nil
+	}
+	_, err := rawToString(*pending)
+	*pending = nil
+	return err
 }
 
 // flattenHeaders is pi's headersToRecord(response.headers), the record every
