@@ -540,6 +540,22 @@ const errorEvent = (fields: Record<string, unknown>) => created + R({ type: "err
 const failed = (response: Record<string, unknown>) =>
 	created + R({ type: "response.failed", response: { id: "resp_1", status: "failed", ...response } });
 
+// backfill is a stream whose reasoning item rs_1 ends without
+// encrypted_content (plus stored's members) and whose completed response
+// lists it with outputItem's members.
+const backfill = (outputItem: Record<string, unknown>, stored: Record<string, unknown> = {}) =>
+	created +
+	R({ type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs_1", summary: [] } }) +
+	R({
+		type: "response.output_item.done",
+		output_index: 0,
+		item: { type: "reasoning", id: "rs_1", summary: [{ type: "summary_text", text: "t" }], ...stored },
+	}) +
+	R({
+		type: "response.completed",
+		response: { id: "resp_1", status: "completed", output: [{ type: "reasoning", id: "rs_1", summary: [], ...outputItem }] },
+	});
+
 const responsesBodies: Record<string, string> = {
 	// packages/ai/test/openai-responses-terminal-event.test.ts, as SSE.
 	"terminal-missing":
@@ -649,6 +665,25 @@ const responsesBodies: Record<string, string> = {
 		created +
 		textEvents +
 		R({ type: "response.completed", response: { status: "completed", usage: { input_tokens: 1.5, output_tokens: 1, total_tokens: 6 } } }),
+	// A reasoning item's signature is JSON.stringify(item) at
+	// output_item.done — the parsed item, not the provider's bytes — and a
+	// completed response's truthy encrypted_content is backfilled into it as
+	// JSON.stringify({...storedItem, encrypted_content}).
+	"reasoning-signature-normalized":
+		created +
+		R({ type: "response.output_item.added", output_index: 0, item: { type: "reasoning", id: "rs_1", summary: [] } }) +
+		`data: {"type":"response.output_item.done","output_index":0,"item": {"type":"reasoning", "id":"rs_1","summary":[{"type":"summary_text","text":"t\\u00e9 </x>"}],"2":1,"x":1.0,"x":1E2,"1":[-0]}}\n\n` +
+		completed,
+	"backfill-string": backfill({ encrypted_content: "enc" }),
+	"backfill-html": backfill({ encrypted_content: "a<b" }, { x: "<&>" }),
+	"backfill-number": backfill({ encrypted_content: 5 }),
+	"backfill-object": backfill({ encrypted_content: { b: 1, a: [2] } }),
+	"backfill-falsy": backfill({ encrypted_content: "" }),
+	"backfill-stored-empty": backfill({ encrypted_content: "enc" }, { encrypted_content: "", z: 1 }),
+	"backfill-stored-null": backfill({ encrypted_content: "enc" }, { encrypted_content: null, z: 1 }),
+	"backfill-stored-set": backfill({ encrypted_content: "enc" }, { encrypted_content: "old" }),
+	"backfill-id-absent": backfill({ id: undefined, encrypted_content: "enc" }, { id: undefined }),
+	"backfill-other-id": backfill({ id: "rs_2", encrypted_content: "enc" }),
 	// Members the typed events carry, mistyped on an event that ends the
 	// stream, which pi never reads there.
 	"completed-mistyped-other-member":

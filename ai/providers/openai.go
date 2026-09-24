@@ -1635,11 +1635,12 @@ func jsNullish(values ...any) any {
 }
 
 // jsMapKey is value as a key of a JS Map, whose keys compare by
-// SameValueZero: a string, number or boolean is its own key, and an object or
-// array — which two parsed values never share — matches nothing (ok false).
+// SameValueZero: a string, number, boolean, null or undefined is its own key,
+// and an object or array — which two parsed values never share — matches
+// nothing (ok false).
 func jsMapKey(value any) (any, bool) {
 	switch value.(type) {
-	case string, float64, bool:
+	case string, float64, bool, nil, jsUndefinedValue:
 		return value, true
 	}
 	return nil, false

@@ -10,6 +10,7 @@ import (
 	"maps"
 	"math"
 	"net/http"
+	"slices"
 	"strings"
 	"unicode/utf16"
 
@@ -429,8 +430,10 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		// can omit reasoning.encrypted_content from response.output_item.done and
 		// supply it only in response.completed.response.output; backfilling keeps
 		// store:false multi-turn replay stateless. See
-		// https://github.com/earendil-works/pi/issues/6409.
-		reasoningBlocksByID := map[string]*blockBuilder{}
+		// https://github.com/earendil-works/pi/issues/6409. Like pi's Map, it is
+		// keyed by the item's id as parsed (jsMapKey), so an absent id is a key
+		// of its own, undefined.
+		reasoningBlocksByID := map[any]*blockBuilder{}
 		// textSigs carries the per-text-block textSignature (blockBuilder, shared
 		// with anthropic, has no textSignature field) keyed by builder index.
 		textSigs := map[int]string{}
@@ -564,10 +567,11 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		// output_item.done omitted encrypted_content (port of upstream 1f0dbc00).
 		// It reads `response.output ?? []` as pi does: a for-of over it, so an
 		// output that is neither nullish, an array nor a string throws V8's
-		// TypeError, as does a null item (item.type). The signature is stored as
-		// the raw reasoning item JSON; on replay it is re-parsed (see the
-		// ThinkingContent case in the request builder), so only the presence of
-		// encrypted_content matters, not the key order.
+		// TypeError, as does a null item (item.type). The rebuilt signature is
+		// pi's `JSON.stringify({...storedItem, encrypted_content})`: the stored
+		// item's keys in their order, encrypted_content in its place or after
+		// them, written as JSON.stringify writes it. The signature persists in
+		// the session and replays to the provider.
 		backfillReasoningSignatures := func(responseOutput any) error {
 			var items []any
 			switch v := responseOutput.(type) {
@@ -586,22 +590,33 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				if jsGet(item, "type") != "reasoning" || !jsTruthy(encrypted) {
 					continue
 				}
-				id, _ := jsGet(item, "id").(string) // the blocks are keyed by string ids
-				block := reasoningBlocksByID[id]
+				var block *blockBuilder
+				if key, ok := jsMapKey(jsGet(item, "id")); ok {
+					block = reasoningBlocksByID[key]
+				}
 				if block == nil || block.thinkingSig == "" {
 					continue
 				}
-				stored, _ := jstext.Parse([]byte(block.thinkingSig)) // written by json.Marshal
-				storedItem, _ := stored.(map[string]any)
-				if storedItem == nil || jstext.Truthy(storedItem["encrypted_content"]) {
-					continue
-				}
-				storedItem["encrypted_content"] = encrypted
-				rebuilt, err := json.Marshal(storedItem)
+				// Written by JSON.stringify at output_item.done, so it parses.
+				stored, err := ai.DecodeOrderedValue([]byte(block.thinkingSig))
 				if err != nil {
+					return fmt.Errorf("re-reading a reasoning signature the stream wrote: %w; this is a port bug, report it with the event", err)
+				}
+				if jsTruthy(jsGet(stored, "encrypted_content")) {
 					continue
 				}
-				block.thinkingSig = string(rebuilt)
+				storedItem, _ := stored.(ai.OrderedObject)
+				rebuilt := slices.Clone(storedItem)
+				if i := slices.IndexFunc(rebuilt, func(f ai.OrderedField) bool { return f.Key == "encrypted_content" }); i >= 0 {
+					rebuilt[i].Value = encrypted
+				} else {
+					rebuilt = append(rebuilt, ai.OrderedField{Key: "encrypted_content", Value: encrypted})
+				}
+				signature, err := jstext.Stringify(rebuilt)
+				if err != nil {
+					return fmt.Errorf("writing a reasoning signature as JSON.stringify does: %w; this is a port bug, report it with the event", err)
+				}
+				block.thinkingSig = signature
 			}
 			return nil
 		}
@@ -797,12 +812,19 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 					}
 					slot.block.thinking.Reset()
 					slot.block.thinking.WriteString(rebuilt)
-					if len(ev.RawItem) > 0 {
-						slot.block.thinkingSig = string(ev.RawItem)
+					// pi: `thinkingSignature = JSON.stringify(item)`, the item as
+					// JSON.parse read it, not the provider's bytes.
+					item := jsGet(ev.JS, "item")
+					signature, err := jstext.Stringify(item)
+					if err != nil {
+						return fmt.Errorf("writing a reasoning item as JSON.stringify does: %w; this is a port bug, report it with the event", err)
 					}
+					slot.block.thinkingSig = signature
 					// Index by item id so a terminal response.completed can backfill
 					// a late-arriving encrypted_content (port of upstream 1f0dbc00).
-					reasoningBlocksByID[ev.Item.ID] = slot.block
+					if key, ok := jsMapKey(jsGet(item, "id")); ok {
+						reasoningBlocksByID[key] = slot.block
+					}
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: slot.contentIndex, Content: slot.block.thinking.String(), Partial: output.Clone()})
 					delete(outputSlots, ev.OutputIndex)
@@ -1601,7 +1623,6 @@ type responsesEvent struct {
 	OutputIndex int                   `json:"output_index"`
 	Part        *responsesContentPart `json:"part"`
 	Item        *responsesItem        `json:"item"`
-	RawItem     json.RawMessage       `json:"-"`
 	// JS is the event as JSON.parse made it (ai.DecodeOrderedValue's
 	// shapes). The handlers for the events that end the stream —
 	// response.created's id, response.completed/incomplete/failed and error —
@@ -1701,13 +1722,6 @@ func iterateOpenAISSE2(body io.Reader, ctx context.Context, onEvent func(any) er
 		}
 		if json.Unmarshal(item.text, &ev) != nil {
 			return nil
-		}
-		// Capture the raw item for reasoning-signature round-tripping.
-		var probe struct {
-			Item json.RawMessage `json:"item"`
-		}
-		if json.Unmarshal(item.text, &probe) == nil {
-			ev.RawItem = probe.Item
 		}
 		return handle(ev)
 	})
