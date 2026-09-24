@@ -14,7 +14,9 @@ type OrderedField struct {
 }
 
 // OrderedObject marshals key/value pairs in slice order, mirroring
-// JSON.stringify of a JS object (insertion order) for byte-exact request bodies.
+// JSON.stringify of a JS object — whose own keys list array indices first,
+// ascending, then the rest in the order they were added — for byte-exact
+// request bodies.
 // Values may nest further OrderedObjects and []any, so the order of an entire
 // decoded document survives, not just its top level. A number that is not
 // finite, in the object or in an array in it, is written null, as

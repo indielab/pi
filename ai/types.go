@@ -275,13 +275,15 @@ type ToolCall struct {
 	ID        string         `json:"id"`
 	Name      string         `json:"name"`
 	Arguments map[string]any `json:"arguments"`
-	// ArgumentsOrder is Arguments in the key order the model authored, recorded
-	// when the arguments were decoded (from a stream or from a stored session).
-	// pi holds arguments in a JS object, which keeps insertion order; a Go map
-	// does not, and the order is model-visible wherever the arguments are
-	// replayed into a request. Arguments stays authoritative: ArgumentsOrder is
-	// only used for serialization while the two still agree, so leaving it
-	// behind when Arguments is replaced costs the order, never the values.
+	// ArgumentsOrder is Arguments in the order pi's JS object lists its keys,
+	// recorded when the arguments were decoded (from a stream or from a stored
+	// session): keys that are array indices first, ascending, then the rest in
+	// the order they first appeared (OrdinaryOwnPropertyKeys, as JSON.parse's
+	// object has them). A Go map keeps no order, and the order is
+	// model-visible wherever the arguments are replayed into a request.
+	// Arguments stays authoritative: ArgumentsOrder is only used for
+	// serialization while the two still agree, so leaving it behind when
+	// Arguments is replaced costs the order, never the values.
 	// It is never persisted — a stored session records the order as the key
 	// order of the "arguments" object itself, exactly as pi writes it.
 	ArgumentsOrder OrderedObject `json:"-"`
@@ -308,7 +310,8 @@ func (t ToolCall) OrderedArguments() any {
 	return t.Arguments
 }
 
-// MarshalJSON writes arguments in the model's original key order.
+// MarshalJSON writes arguments in the order pi's JS object lists their keys
+// (see ArgumentsOrder).
 func (t ToolCall) MarshalJSON() ([]byte, error) {
 	return json.Marshal(struct {
 		ID               string `json:"id"`
@@ -325,8 +328,9 @@ func (t ToolCall) MarshalJSON() ([]byte, error) {
 	})
 }
 
-// UnmarshalJSON recovers the argument key order from the source bytes, so a
-// tool call reloaded from a session replays in the order the model wrote it.
+// UnmarshalJSON recovers the argument key order from the source bytes, as
+// JSON.parse's object lists them, so a tool call reloaded from a session
+// replays in the order pi's would.
 func (t *ToolCall) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		ID               string          `json:"id"`

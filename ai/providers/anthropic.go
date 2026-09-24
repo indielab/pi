@@ -1043,7 +1043,8 @@ type blockBuilder struct {
 	toolNamespace string
 	partialJSON   strings.Builder
 	args          map[string]any
-	// argsOrder is args in the key order the model streamed them in.
+	// argsOrder is args in the order pi's JS object lists their keys
+	// (ai.ToolCall.ArgumentsOrder).
 	argsOrder ai.OrderedObject
 	// grammar is set on custom (grammar-constrained) tool calls, whose raw input
 	// is re-synthesized into JSON deltas instead of being parsed from partialJSON.

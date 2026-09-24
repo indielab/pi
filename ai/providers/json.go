@@ -330,7 +330,7 @@ func jsNumber(src string) string {
 }
 
 // orEmptyArguments returns a tool call's arguments for a request body, in the
-// model's original key order, standing in an empty object for absent arguments
+// order pi's JS object lists their keys (ai.ToolCall.ArgumentsOrder), standing in an empty object for absent arguments
 // (pi's `toolCall.arguments ?? {}`).
 func orEmptyArguments(tc ai.ToolCall) any {
 	if args := tc.OrderedArguments(); args != nil {

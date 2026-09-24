@@ -20,7 +20,7 @@ func TestDecodeOrderedValue(t *testing.T) {
 		wantJSON string
 		want     any
 	}{
-		{name: "object keeps wire order", in: `{"type":"a","id":1,"choices":[]}`, wantJSON: `{"type":"a","id":1,"choices":[]}`},
+		{name: "object keeps JSON.parse order", in: `{"type":"a","id":1,"choices":[]}`, wantJSON: `{"type":"a","id":1,"choices":[]}`},
 		{name: "nested objects keep order", in: `{"z":{"b":1,"a":[{"d":true,"c":null}]},"y":"s"}`, wantJSON: `{"z":{"b":1,"a":[{"d":true,"c":null}]},"y":"s"}`},
 		{name: "repeated key keeps first slot, last value", in: `{"a":1,"b":2,"a":3}`, wantJSON: `{"a":3,"b":2}`},
 		{name: "array", in: `[3,{"b":1,"a":2}]`, wantJSON: `[3,{"b":1,"a":2}]`},

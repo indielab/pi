@@ -2002,7 +2002,7 @@ func TestOpenAIReplayedArgumentsAreJSONStringify(t *testing.T) {
 // parsed, with the fields pi's normalization drops (usage.cost, is_byok,
 // openrouter_metadata), and never the [DONE] sentinel. pi deep-equals the
 // objects; the port's are compared as JSON.stringify writes them, which also
-// holds them to the wire's key order.
+// holds them to the key order JSON.parse's objects have.
 func TestOpenAICompletionsProviderStreamEventsIncludeOpenRouterMetadata(t *testing.T) {
 	firstChunk := `{"id":"chatcmpl-1","model":"anthropic/claude-sonnet-4.6","choices":[{"index":0,"delta":{"content":"hello"}}]}`
 	finalChunk := `{"id":"chatcmpl-1","model":"anthropic/claude-sonnet-4.6","choices":[{"index":0,"delta":{},"finish_reason":"stop"}],` +
