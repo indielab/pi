@@ -1653,14 +1653,15 @@ func jsStringField(value any) string {
 	return text
 }
 
-// jsTokenCount is a usage member as pi's `member || 0` and its arithmetic read
-// it, as ai.Usage holds it: a number counts as its value, truncated to an
-// integer. Any other value counts 0 — where pi coerces a numeric string, which
-// no provider sends.
+// jsTokenCount is a usage value as ai.Usage holds it: the number pi's
+// arithmetic reads it as (Number(): a numeric string is its number, null and
+// false 0), truncated to an integer. A value with no number (NaN, undefined,
+// an object) counts 0. pi keeps a member it does not compute with as the value
+// itself, a string included, and does not truncate a fraction.
 func jsTokenCount(value any) int {
-	f, ok := value.(float64)
+	f, err := jsToNumber(value)
 	switch {
-	case !ok, math.IsNaN(f):
+	case err != nil, math.IsNaN(f):
 		return 0
 	case f >= math.MaxInt:
 		return math.MaxInt

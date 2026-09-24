@@ -43,7 +43,17 @@
 				"errorMessage": "",
 				"text": "xy",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -57,7 +67,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"multi-line-data": {
@@ -97,7 +117,17 @@
 				"errorMessage": "",
 				"text": "joined",
 				"responseId": "m",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -110,7 +140,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"unterminated-trailing-event": {
@@ -146,7 +186,17 @@
 				"errorMessage": "Stream ended without finish_reason",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -158,7 +208,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"unterminated-no-newline": {
@@ -194,7 +254,17 @@
 				"errorMessage": "Stream ended without finish_reason",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -206,7 +276,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"done-prefix": {
@@ -246,7 +326,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -259,7 +349,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"done-exact-first": {
@@ -287,7 +387,17 @@
 				"errorMessage": "Stream ended without finish_reason",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [],
@@ -297,7 +407,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"done-mid-line": {
@@ -339,7 +459,17 @@
 				"errorMessage": "Unexpected token 'D', \"[DONE\" is not valid JSON",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -351,7 +481,17 @@
 				"errorMessage": "Unexpected token 'D', \"[DONE\" is not valid JSON",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"crlf": {
@@ -395,7 +535,17 @@
 				"errorMessage": "",
 				"text": "xy",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -409,7 +559,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"lone-cr": {
@@ -451,7 +611,17 @@
 				"errorMessage": "",
 				"text": "xy",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -465,7 +635,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"mixed-line-endings": {
@@ -507,7 +687,17 @@
 				"errorMessage": "",
 				"text": "xy",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -521,7 +711,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"crlf-multi-line-data": {
@@ -561,7 +761,17 @@
 				"errorMessage": "",
 				"text": "joined",
 				"responseId": "m",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -574,7 +784,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"crlf-thread-event": {
@@ -618,7 +838,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -632,7 +862,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"comments-and-other-fields": {
@@ -672,7 +912,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -685,7 +935,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"field-value-spacing": {
@@ -725,7 +985,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -738,7 +1008,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"data-field-without-colon": {
@@ -778,7 +1058,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -791,7 +1081,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"bom-at-line-start": {
@@ -835,7 +1135,17 @@
 				"errorMessage": "",
 				"text": "xy",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -849,7 +1159,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"event-named-error": {
@@ -889,7 +1209,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -902,7 +1232,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"event-name-empty": {
@@ -942,7 +1282,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -955,7 +1305,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"thread-event": {
@@ -999,7 +1359,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1013,7 +1383,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"scalars": {
@@ -1077,7 +1457,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1096,7 +1486,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"null-event": {
@@ -1140,7 +1540,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1153,7 +1563,17 @@
 				"errorMessage": "Cannot read properties of null (reading 'type')",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"no-choices-chunks": {
@@ -1201,7 +1621,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "3",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "4"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1216,7 +1646,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"key-order": {
@@ -1256,7 +1696,17 @@
 				"errorMessage": "",
 				"text": "<&>",
 				"responseId": "k",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1269,7 +1719,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"numbers-past-float64": {
@@ -1317,7 +1777,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1332,7 +1802,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"index-keys": {
@@ -1372,7 +1852,17 @@
 				"errorMessage": "",
 				"text": "i",
 				"responseId": "k",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1385,7 +1875,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-openrouter": {
@@ -1430,7 +1930,17 @@
 				"errorMessage": "boom\nupstream exploded",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1442,7 +1952,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-raw-contained": {
@@ -1487,7 +2007,17 @@
 				"errorMessage": "boom: upstream exploded",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1499,7 +2029,17 @@
 				"errorMessage": "boom: upstream exploded",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-raw-number": {
@@ -1544,7 +2084,17 @@
 				"errorMessage": "boom\n5",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1556,7 +2106,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-raw-object": {
@@ -1601,7 +2161,17 @@
 				"errorMessage": "boom\n[object Object]",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1613,7 +2183,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-raw-array": {
@@ -1658,7 +2238,17 @@
 				"errorMessage": "boom\n1,2,,x",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1670,7 +2260,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-raw-true": {
@@ -1715,7 +2315,17 @@
 				"errorMessage": "boom\ntrue",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1727,7 +2337,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-raw-falsy": {
@@ -1772,7 +2392,17 @@
 				"errorMessage": "boom",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1784,7 +2414,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-raw-zero": {
@@ -1829,7 +2469,17 @@
 				"errorMessage": "boom",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1841,7 +2491,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-raw-false": {
@@ -1886,7 +2546,17 @@
 				"errorMessage": "boom",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1898,7 +2568,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-raw-null": {
@@ -1943,7 +2623,17 @@
 				"errorMessage": "boom",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -1955,7 +2645,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-metadata-string": {
@@ -2000,7 +2700,17 @@
 				"errorMessage": "boom",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2012,7 +2722,17 @@
 				"errorMessage": "boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-no-message": {
@@ -2057,7 +2777,17 @@
 				"errorMessage": "{\"code\":\"x\",\"type\":\"y\"}",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2069,7 +2799,17 @@
 				"errorMessage": "{\"code\":\"x\",\"type\":\"y\"}",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-message-object": {
@@ -2114,7 +2854,17 @@
 				"errorMessage": "{\"b\":1,\"a\":2}",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2126,7 +2876,17 @@
 				"errorMessage": "{\"b\":1,\"a\":2}",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-message-number": {
@@ -2171,7 +2931,17 @@
 				"errorMessage": "42",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2183,7 +2953,17 @@
 				"errorMessage": "42",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-message-empty": {
@@ -2228,7 +3008,17 @@
 				"errorMessage": "{\"message\":\"\",\"code\":1}",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2240,7 +3030,17 @@
 				"errorMessage": "{\"message\":\"\",\"code\":1}",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-message-escapes": {
@@ -2285,7 +3085,17 @@
 				"errorMessage": "café </script> \"q\"",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2297,7 +3107,17 @@
 				"errorMessage": "café </script> \"q\"",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-string": {
@@ -2342,7 +3162,17 @@
 				"errorMessage": "\"boom\"",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2354,7 +3184,17 @@
 				"errorMessage": "\"boom\"",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-number": {
@@ -2399,7 +3239,17 @@
 				"errorMessage": "7",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2411,7 +3261,17 @@
 				"errorMessage": "7",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-true": {
@@ -2456,7 +3316,17 @@
 				"errorMessage": "true",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2468,7 +3338,17 @@
 				"errorMessage": "true",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-empty-object": {
@@ -2513,7 +3393,17 @@
 				"errorMessage": "{}",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2525,7 +3415,17 @@
 				"errorMessage": "{}",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-empty-array": {
@@ -2570,7 +3470,17 @@
 				"errorMessage": "[]",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2582,7 +3492,17 @@
 				"errorMessage": "[]",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-chunk-integer-keys": {
@@ -2627,7 +3547,17 @@
 				"errorMessage": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2639,7 +3569,17 @@
 				"errorMessage": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-values-falsy": {
@@ -2695,7 +3635,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "n",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2712,7 +3662,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-key-case": {
@@ -2756,7 +3716,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2770,7 +3740,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-after-done": {
@@ -2810,7 +3790,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2823,7 +3813,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"unparseable-data": {
@@ -2865,7 +3865,17 @@
 				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2877,7 +3887,17 @@
 				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"event-without-data": {
@@ -2919,7 +3939,17 @@
 				"errorMessage": "Unexpected end of JSON input",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2931,7 +3961,17 @@
 				"errorMessage": "Unexpected end of JSON input",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"control-character-in-string": {
@@ -2973,7 +4013,17 @@
 				"errorMessage": "Bad control character in string literal in JSON at position 53 (line 1 column 54)",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -2985,7 +4035,17 @@
 				"errorMessage": "Bad control character in string literal in JSON at position 53 (line 1 column 54)",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"invalid-escape": {
@@ -3027,7 +4087,17 @@
 				"errorMessage": "Bad escaped character in JSON at position 54 (line 1 column 55)",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3039,7 +4109,17 @@
 				"errorMessage": "Bad escaped character in JSON at position 54 (line 1 column 55)",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"unexpected-token-in-context": {
@@ -3081,7 +4161,17 @@
 				"errorMessage": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3093,7 +4183,17 @@
 				"errorMessage": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"thread-event-unparseable": {
@@ -3135,7 +4235,17 @@
 				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3147,7 +4257,17 @@
 				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"unparseable-after-done": {
@@ -3187,7 +4307,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3200,7 +4330,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"utf8-truncated-3": {
@@ -3240,7 +4380,17 @@
 				"errorMessage": "",
 				"text": "x�y",
 				"responseId": "u",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3253,7 +4403,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"utf8-truncated-4": {
@@ -3293,7 +4453,17 @@
 				"errorMessage": "",
 				"text": "x�y",
 				"responseId": "u",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3306,7 +4476,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"utf8-overlong": {
@@ -3346,7 +4526,17 @@
 				"errorMessage": "",
 				"text": "x��y",
 				"responseId": "u",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3359,7 +4549,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"utf8-surrogate": {
@@ -3399,7 +4599,17 @@
 				"errorMessage": "",
 				"text": "x���y",
 				"responseId": "u",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3412,7 +4622,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"utf8-above-max": {
@@ -3452,7 +4672,17 @@
 				"errorMessage": "",
 				"text": "x����y",
 				"responseId": "u",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3465,7 +4695,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"utf8-lone-continuation": {
@@ -3505,7 +4745,17 @@
 				"errorMessage": "",
 				"text": "x��y",
 				"responseId": "u",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3518,7 +4768,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"utf8-invalid-lead": {
@@ -3558,7 +4818,17 @@
 				"errorMessage": "",
 				"text": "x���y",
 				"responseId": "u",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3571,7 +4841,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"utf8-truncated-then-valid": {
@@ -3611,7 +4891,17 @@
 				"errorMessage": "",
 				"text": "x�€y",
 				"responseId": "u",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3624,7 +4914,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"utf8-in-event-name": {
@@ -3668,7 +4968,17 @@
 				"errorMessage": "",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			},
 			"responses": {
 				"observed": [
@@ -3682,11 +4992,1280 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		}
 	},
 	"completions": {
+		"id-number": {
+			"sse": "data: {\"id\":5,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":5,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "5",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"id-zero-then-string": {
+			"sse": "data: {\"id\":0,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":0,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "f",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"id-key-case": {
+			"sse": "data: {\"ID\":\"zz\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"ID\":\"zz\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "f",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"model-number": {
+			"sse": "data: {\"id\":\"a\",\"model\":5,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"model\":5,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"model-other": {
+			"sse": "data: {\"id\":\"a\",\"model\":\"other/model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"model\":\"other/model\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"usage-fraction": {
+			"sse": "data: {\"id\":\"a\",\"usage\":{\"prompt_tokens\":1.5,\"completion_tokens\":2},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"usage\":{\"prompt_tokens\":1.5,\"completion_tokens\":2},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "1.5",
+					"output": "2",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "3.5"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"usage-numeric-string": {
+			"sse": "data: {\"id\":\"a\",\"usage\":{\"prompt_tokens\":\"3\",\"completion_tokens\":2},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"usage\":{\"prompt_tokens\":\"3\",\"completion_tokens\":2},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "3",
+					"output": "2",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "5"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"usage-string-output": {
+			"sse": "data: {\"id\":\"a\",\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":\"2\"},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":\"2\"},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "3",
+					"output": "string:2",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "string:3200"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"usage-nullish-cached": {
+			"sse": "data: {\"id\":\"a\",\"usage\":{\"prompt_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":0},\"prompt_cache_hit_tokens\":4,\"cached_tokens\":3},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"usage\":{\"prompt_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":0},\"prompt_cache_hit_tokens\":4,\"cached_tokens\":3},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "10",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "10"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"usage-nullish-fallthrough": {
+			"sse": "data: {\"id\":\"a\",\"usage\":{\"prompt_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":null},\"prompt_cache_hit_tokens\":null,\"cached_tokens\":3,\"completion_tokens\":2,\"completion_tokens_details\":{\"reasoning_tokens\":1}},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"usage\":{\"prompt_tokens\":10,\"prompt_tokens_details\":{\"cached_tokens\":null},\"prompt_cache_hit_tokens\":null,\"cached_tokens\":3,\"completion_tokens\":2,\"completion_tokens_details\":{\"reasoning_tokens\":1}},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "7",
+					"output": "2",
+					"cacheRead": "3",
+					"cacheWrite": "0",
+					"reasoning": "1",
+					"totalTokens": "12"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"usage-uncoercible": {
+			"sse": "data: {\"id\":\"a\",\"usage\":{\"prompt_tokens\":{\"toString\":1}},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"usage\":{\"prompt_tokens\":{\"toString\":1}},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot convert object to primitive value",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"usage-scalar": {
+			"sse": "data: {\"id\":\"a\",\"usage\":5,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"usage\":5,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"choice-usage-string": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"usage\":\"x\"}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"usage\":\"x\"}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"choice-usage-fallback": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":1}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"usage\":{\"prompt_tokens\":7,\"completion_tokens\":1}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "7",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "8"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"choices-object": {
+			"sse": "data: {\"id\":\"a\",\"choices\":{\"0\":{\"index\":0,\"delta\":{\"content\":\"hi\"}}}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":{\"0\":{\"index\":0,\"delta\":{\"content\":\"hi\"}}}}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"choice-scalar": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[5]}\n\ndata: {\"id\":\"b\",\"choices\":[null]}\n\ndata: {\"id\":\"c\",\"choices\":[]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[5]}",
+					"{\"id\":\"b\",\"choices\":[null]}",
+					"{\"id\":\"c\",\"choices\":[]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"delta-string": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":\"hi\"}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":\"hi\"}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"content-array": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":[\"q\",[\"r\",null],null,\"s\"]}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":[\"q\",[\"r\",null],null,\"s\"]}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "q,r,,,s",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"content-empty-array": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":[]}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":[]}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"content-number": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":5}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":true}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":5}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":true}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"content-object-length": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":2}}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":\"0\"}}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":[1]}}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":2}}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":\"0\"}}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":[1]}}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "[object Object][object Object]",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"content-uncoercible": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":1,\"toString\":1}}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":1,\"toString\":1}}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot convert object to primitive value",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"content-uncoercible-length": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":{\"toString\":1}}}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":{\"length\":{\"toString\":1}}}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot convert object to primitive value",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"content-key-case": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"Content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"Content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"content-duplicate-case": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\",\"CONTENT\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\",\"CONTENT\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"reasoning-number": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\",\"reasoning\":5,\"reasoning_text\":\"r\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\",\"reasoning\":5,\"reasoning_text\":\"r\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": [
+					"{\"thinking\":\"r\",\"thinkingSignature\":\"reasoning_text\"}"
+				]
+			}
+		},
+		"finish-number": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":5}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":5}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Provider finish_reason: 5",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "5",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"finish-array": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":[\"length\"]}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":[\"length\"]}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Provider finish_reason: length",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "length",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"finish-uncoercible": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":{\"toString\":1}}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"},\"finish_reason\":{\"toString\":1}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot convert object to primitive value",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"tool-index-string": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":\"0\",\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"a\\\":1}\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":\"0\",\"id\":\"c1\",\"type\":\"function\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"a\\\":1}\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"a\":1}}"
+				],
+				"thinking": []
+			}
+		},
+		"tool-index-fraction": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0.5,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0.5,\"function\":{\"arguments\":\"1}\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0.5,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0.5,\"function\":{\"arguments\":\"1}\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"a\":1}}"
+				],
+				"thinking": []
+			}
+		},
+		"tool-id-number-key": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":7,\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":\"7\",\"function\":{\"name\":\"g\",\"arguments\":\"{\\\"b\\\":2}\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":7,\"function\":{\"arguments\":\"1}\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":7,\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":\"7\",\"function\":{\"name\":\"g\",\"arguments\":\"{\\\"b\\\":2}\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"id\":7,\"function\":{\"arguments\":\"1}\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"7\",\"name\":\"f\",\"arguments\":{\"a\":1}}",
+					"{\"id\":\"7\",\"name\":\"g\",\"arguments\":{\"b\":2}}"
+				],
+				"thinking": []
+			}
+		},
+		"tool-name-number": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":5,\"arguments\":\"{}\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":5,\"arguments\":\"{}\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"5\",\"arguments\":{}}"
+				],
+				"thinking": []
+			}
+		},
+		"tool-arguments-number": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":7}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"}\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"function\":{\"name\":\"f\",\"arguments\":\"{\\\"a\\\":\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":7}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"}\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"f\",\"arguments\":{\"a\":7}}"
+				],
+				"thinking": []
+			}
+		},
+		"tool-calls-string": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":\"ab\"}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":\"ab\"}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"\",\"name\":\"\",\"arguments\":{}}",
+					"{\"id\":\"\",\"name\":\"\",\"arguments\":{}}"
+				],
+				"thinking": []
+			}
+		},
+		"tool-calls-number": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\",\"tool_calls\":5}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\",\"tool_calls\":5}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "choice.delta.tool_calls is not iterable",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"tool-calls-object": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":{\"0\":{\"index\":0}}}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":{\"0\":{\"index\":0}}}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "choice.delta.tool_calls is not iterable",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"tool-call-null-entry": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[null]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[null]}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Cannot read properties of null (reading 'index')",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"tool-call-scalar-entries": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[5,\"x\",true,[]]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[5,\"x\",true,[]]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"\",\"name\":\"\",\"arguments\":{}}",
+					"{\"id\":\"\",\"name\":\"\",\"arguments\":{}}",
+					"{\"id\":\"\",\"name\":\"\",\"arguments\":{}}",
+					"{\"id\":\"\",\"name\":\"\",\"arguments\":{}}"
+				],
+				"thinking": []
+			}
+		},
+		"tool-call-key-case": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"Index\":0,\"ID\":\"c1\",\"Function\":{\"name\":\"f\",\"arguments\":\"{}\"},\"function\":{\"NAME\":\"g\",\"Arguments\":\"{}\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"Index\":0,\"ID\":\"c1\",\"Function\":{\"name\":\"f\",\"arguments\":\"{}\"},\"function\":{\"NAME\":\"g\",\"Arguments\":\"{}\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"\",\"name\":\"\",\"arguments\":{}}"
+				],
+				"thinking": []
+			}
+		},
+		"tool-custom-null": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"custom\":null}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"custom\":null}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"\",\"arguments\":{}}"
+				],
+				"thinking": []
+			}
+		},
+		"tool-custom-input": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"custom\":{\"name\":\"g\",\"input\":\"abc\"}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"custom\":{\"input\":5}}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"c1\",\"custom\":{\"name\":\"g\",\"input\":\"abc\"}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"custom\":{\"input\":5}}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "toolUse",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "tool_calls",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [
+					"{\"id\":\"c1\",\"name\":\"g\",\"arguments\":{\"input\":\"abc5\"}}"
+				],
+				"thinking": []
+			}
+		},
+		"reasoning-details": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"a\",\"index\":0},{\"type\":\"reasoning.text\",\"text\":\"b\",\"index\":0,\"format\":\"f\"}]}}]}\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.encrypted\",\"data\":\"x\",\"id\":\"e1\"},{\"type\":\"reasoning.summary\",\"summary\":\"s\",\"2\":1,\"1\":2}]}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"a\",\"index\":0},{\"type\":\"reasoning.text\",\"text\":\"b\",\"index\":0,\"format\":\"f\"}]}}]}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.encrypted\",\"data\":\"x\",\"id\":\"e1\"},{\"1\":2,\"2\":1,\"type\":\"reasoning.summary\",\"summary\":\"s\"}]}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": [
+					"{\"thinking\":\"\",\"thinkingSignature\":\"[{\\\"type\\\":\\\"reasoning.text\\\",\\\"text\\\":\\\"ab\\\",\\\"index\\\":0,\\\"format\\\":\\\"f\\\"},{\\\"type\\\":\\\"reasoning.encrypted\\\",\\\"data\\\":\\\"x\\\",\\\"id\\\":\\\"e1\\\"},{\\\"1\\\":2,\\\"2\\\":1,\\\"type\\\":\\\"reasoning.summary\\\",\\\"summary\\\":\\\"s\\\"}]\"}"
+				]
+			}
+		},
+		"reasoning-details-invalid": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"a\",\"index\":\"0\"},{\"type\":\"reasoning.text\",\"text\":\"b\",\"id\":5},{\"type\":\"reasoning.text\",\"text\":\"c\",\"format\":null},{\"type\":\"reasoning.text\",\"text\":\"d\",\"signature\":5},{\"type\":\"reasoning.summary\",\"summary\":1},{\"type\":\"reasoning.encrypted\",\"data\":null},{\"type\":\"x\"},null,\"s\",[],{\"type\":\"reasoning.text\",\"text\":\"ok\",\"signature\":null,\"id\":null}]}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"a\",\"index\":\"0\"},{\"type\":\"reasoning.text\",\"text\":\"b\",\"id\":5},{\"type\":\"reasoning.text\",\"text\":\"c\",\"format\":null},{\"type\":\"reasoning.text\",\"text\":\"d\",\"signature\":5},{\"type\":\"reasoning.summary\",\"summary\":1},{\"type\":\"reasoning.encrypted\",\"data\":null},{\"type\":\"x\"},null,\"s\",[],{\"type\":\"reasoning.text\",\"text\":\"ok\",\"signature\":null,\"id\":null}]}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": [
+					"{\"thinking\":\"\",\"thinkingSignature\":\"[{\\\"type\\\":\\\"reasoning.text\\\",\\\"text\\\":\\\"ok\\\",\\\"signature\\\":null,\\\"id\\\":null}]\"}"
+				]
+			}
+		},
+		"reasoning-details-index-past-float64": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"a\",\"index\":1e400}]}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"reasoning_details\":[{\"type\":\"reasoning.text\",\"text\":\"a\",\"index\":null}]}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": [
+					"{\"thinking\":\"\",\"thinkingSignature\":\"[{\\\"type\\\":\\\"reasoning.text\\\",\\\"text\\\":\\\"a\\\",\\\"index\\\":null}]\"}"
+				]
+			}
+		},
+		"reasoning-details-object": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\",\"reasoning_details\":{\"type\":\"reasoning.text\",\"text\":\"x\"}}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\",\"reasoning_details\":{\"type\":\"reasoning.text\",\"text\":\"x\"}}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"array-chunk": {
+			"sse": "data: [{\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"no\"}}]}]\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"completions": {
+				"observed": [
+					"[{\"id\":\"x\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"no\"}}]}]",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hi\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "hi",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
 		"openrouter-metadata": {
 			"sse": "data: {\"id\":\"chatcmpl-1\",\"model\":\"anthropic/claude-sonnet-4.6\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}\n\ndata: {\"id\":\"chatcmpl-1\",\"model\":\"anthropic/claude-sonnet-4.6\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":2,\"total_tokens\":12,\"cost\":0.0012,\"is_byok\":false},\"openrouter_metadata\":{\"strategy\":\"direct\",\"region\":\"iad\"}}\n\ndata: [DONE]\n\n",
 			"completions": {
@@ -3700,7 +6279,17 @@
 				"errorMessage": "",
 				"text": "hello",
 				"responseId": "chatcmpl-1",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "10",
+					"output": "2",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "12"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		}
 	},
@@ -3719,7 +6308,19 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "",
 				"responseId": "resp_wrapper_early_eof",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": [
+					"{\"thinking\":\"partial reasoning before the wrapper stream ends\",\"thinkingSignature\":\"\"}"
+				]
 			}
 		},
 		"completed": {
@@ -3739,7 +6340,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "5",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "6"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"null-mid-stream": {
@@ -3755,7 +6366,17 @@
 				"errorMessage": "Cannot read properties of null (reading 'type')",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"scalar-events": {
@@ -3781,7 +6402,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "5",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "6"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"unknown-event-types": {
@@ -3803,7 +6434,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "5",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "6"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event": {
@@ -3819,7 +6460,17 @@
 				"errorMessage": "Error Code rate_limit_exceeded: slow down",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-no-code": {
@@ -3835,7 +6486,17 @@
 				"errorMessage": "Error Code undefined: slow down",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-null-code": {
@@ -3851,7 +6512,17 @@
 				"errorMessage": "Error Code null: slow down",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-number-code": {
@@ -3867,7 +6538,17 @@
 				"errorMessage": "Error Code 500: slow down",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-no-message": {
@@ -3883,7 +6564,17 @@
 				"errorMessage": "Error Code x: undefined",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-object-message": {
@@ -3899,7 +6590,17 @@
 				"errorMessage": "Error Code x: [object Object]",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-array-code": {
@@ -3915,7 +6616,17 @@
 				"errorMessage": "Error Code 1,2,: m",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-uncoercible-code": {
@@ -3931,7 +6642,17 @@
 				"errorMessage": "Cannot convert object to primitive value",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-code-past-float64": {
@@ -3947,7 +6668,17 @@
 				"errorMessage": "Error Code Infinity: m",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed": {
@@ -3963,7 +6694,17 @@
 				"errorMessage": "server_error: bad",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-number-code": {
@@ -3979,7 +6720,17 @@
 				"errorMessage": "500: bad",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-true-code": {
@@ -3995,7 +6746,17 @@
 				"errorMessage": "true: bad",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-falsy-members": {
@@ -4011,7 +6772,17 @@
 				"errorMessage": "unknown: no message",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-object-message": {
@@ -4027,7 +6798,17 @@
 				"errorMessage": "x: [object Object]",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-uncoercible-message": {
@@ -4043,7 +6824,17 @@
 				"errorMessage": "Cannot convert object to primitive value",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-string-error": {
@@ -4059,7 +6850,17 @@
 				"errorMessage": "unknown: no message",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-empty-error": {
@@ -4075,7 +6876,17 @@
 				"errorMessage": "unknown: no message",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-false-error": {
@@ -4091,7 +6902,17 @@
 				"errorMessage": "incomplete: max_output_tokens",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-number-reason": {
@@ -4107,7 +6928,17 @@
 				"errorMessage": "incomplete: 5",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-empty-reason": {
@@ -4123,7 +6954,17 @@
 				"errorMessage": "Unknown error (no error details in response)",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-no-details": {
@@ -4139,7 +6980,17 @@
 				"errorMessage": "Unknown error (no error details in response)",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"incomplete-number-reason": {
@@ -4159,7 +7010,17 @@
 				"errorMessage": "Response incomplete without a provider reason",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "incomplete"
+				"rawStopReason": "incomplete",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-code-key-case": {
@@ -4175,7 +7036,17 @@
 				"errorMessage": "Error Code undefined: m",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-code-duplicate-case": {
@@ -4191,7 +7062,17 @@
 				"errorMessage": "Error Code a: m",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"type-key-case": {
@@ -4211,7 +7092,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"type-duplicate-case": {
@@ -4231,7 +7122,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-key-case": {
@@ -4247,7 +7148,17 @@
 				"errorMessage": "Unknown error (no error details in response)",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-error-key-case": {
@@ -4263,7 +7174,17 @@
 				"errorMessage": "Unknown error (no error details in response)",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-number-response": {
@@ -4279,7 +7200,17 @@
 				"errorMessage": "Unknown error (no error details in response)",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-null-response": {
@@ -4295,7 +7226,17 @@
 				"errorMessage": "Unknown error (no error details in response)",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-number-status": {
@@ -4311,7 +7252,17 @@
 				"errorMessage": "c: m",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "5"
+				"rawStopReason": "5",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"response-failed-number-id": {
@@ -4327,7 +7278,17 @@
 				"errorMessage": "c: m",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": "failed"
+				"rawStopReason": "failed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"created-null-response": {
@@ -4342,7 +7303,17 @@
 				"errorMessage": "Cannot read properties of null (reading 'id')",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"created-no-response": {
@@ -4357,7 +7328,17 @@
 				"errorMessage": "Cannot read properties of undefined (reading 'id')",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"created-number-response": {
@@ -4377,7 +7358,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-null-response": {
@@ -4397,7 +7388,17 @@
 				"errorMessage": "Cannot read properties of null (reading 'output')",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-no-response": {
@@ -4417,7 +7418,17 @@
 				"errorMessage": "Cannot read properties of undefined (reading 'output')",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-string-response": {
@@ -4437,7 +7448,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-number-id": {
@@ -4457,7 +7478,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "5",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-false-id": {
@@ -4477,7 +7508,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-number-status": {
@@ -4497,7 +7538,17 @@
 				"errorMessage": "Unhandled stop reason: 5",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "5"
+				"rawStopReason": "5",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-false-status": {
@@ -4517,7 +7568,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "false"
+				"rawStopReason": "false",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-object-status-with-reason": {
@@ -4537,7 +7598,17 @@
 				"errorMessage": "Unhandled stop reason: [object Object]",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "[object Object].r"
+				"rawStopReason": "[object Object].r",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-no-status-with-reason": {
@@ -4557,7 +7628,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "undefined.max_output_tokens"
+				"rawStopReason": "undefined.max_output_tokens",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-null-status-with-reason": {
@@ -4577,7 +7658,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "null.max_output_tokens"
+				"rawStopReason": "null.max_output_tokens",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-uncoercible-status-with-reason": {
@@ -4597,7 +7688,17 @@
 				"errorMessage": "Cannot convert object to primitive value",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-number-output": {
@@ -4617,7 +7718,17 @@
 				"errorMessage": "responseOutput is not iterable",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-object-output": {
@@ -4637,7 +7748,17 @@
 				"errorMessage": "responseOutput is not iterable",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-string-output": {
@@ -4657,7 +7778,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-null-output-item": {
@@ -4677,7 +7808,17 @@
 				"errorMessage": "Cannot read properties of null (reading 'type')",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-scalar-output-items": {
@@ -4697,7 +7838,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-string-usage-member": {
@@ -4717,7 +7868,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "5",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "6"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-fractional-usage-member": {
@@ -4737,7 +7898,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "1.5",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "6"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-mistyped-other-member": {
@@ -4757,7 +7928,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"error-event-mistyped-other-member": {
@@ -4773,7 +7954,17 @@
 				"errorMessage": "Error Code c: m",
 				"text": "",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completed-number-service-tier": {
@@ -4793,7 +7984,17 @@
 				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		}
 	},
@@ -4814,7 +8015,17 @@
 				"errorMessage": "observer boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completions/callback-aborts": {
@@ -4833,7 +8044,17 @@
 				"errorMessage": "observer boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completions/on-response-throws": {
@@ -4850,7 +8071,17 @@
 				"errorMessage": "response veto",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completions/http-400": {
@@ -4867,7 +8098,17 @@
 				"errorMessage": "400: {\"message\":\"bad request\"}",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completions/http-400-on-response-throws": {
@@ -4884,7 +8125,17 @@
 				"errorMessage": "400: {\"message\":\"bad request\"}",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completions/abort-held": {
@@ -4903,7 +8154,17 @@
 				"errorMessage": "Request was aborted",
 				"text": "x",
 				"responseId": "a",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"completions/abort-held-after-finish": {
@@ -4924,7 +8185,17 @@
 				"errorMessage": "Request was aborted",
 				"text": "xy",
 				"responseId": "a",
-				"rawStopReason": "stop"
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"responses/callback-throws": {
@@ -4943,7 +8214,17 @@
 				"errorMessage": "observer boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"responses/callback-aborts": {
@@ -4962,7 +8243,17 @@
 				"errorMessage": "observer boom",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"responses/on-response-throws": {
@@ -4979,7 +8270,17 @@
 				"errorMessage": "response veto",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"responses/http-400": {
@@ -4996,7 +8297,17 @@
 				"errorMessage": "OpenAI API error (400): {\"message\":\"bad request\"}",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"responses/http-400-on-response-throws": {
@@ -5013,7 +8324,17 @@
 				"errorMessage": "OpenAI API error (400): {\"message\":\"bad request\"}",
 				"text": "",
 				"responseId": "",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"responses/abort-held": {
@@ -5036,7 +8357,17 @@
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": ""
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		},
 		"responses/abort-held-after-terminal": {
@@ -5060,7 +8391,17 @@
 				"errorMessage": "Request was aborted",
 				"text": "hi",
 				"responseId": "resp_1",
-				"rawStopReason": "completed"
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "5",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "6"
+				},
+				"toolCalls": [],
+				"thinking": []
 			}
 		}
 	},

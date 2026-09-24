@@ -11,7 +11,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"testing/iotest"
@@ -33,10 +35,19 @@ type openaiStreamOutcome struct {
 	StopReason      string   `json:"stopReason"`
 	ErrorMessage    string   `json:"errorMessage"`
 	Text            string   `json:"text"`
-	// ResponseID and RawStopReason are String() of pi's values, "" for null
-	// and undefined: pi assigns whatever the provider sent.
+	// ResponseID and RawStopReason are String() of pi's values, "" for null,
+	// undefined and a value String() throws on: pi assigns whatever the
+	// provider sent.
 	ResponseID    string `json:"responseId"`
 	RawStopReason string `json:"rawStopReason"`
+	// Usage holds each usage member as String() of a number, and as
+	// "<typeof>:<String()>" of anything else pi holds there.
+	Usage map[string]string `json:"usage"`
+	// ToolCalls are the tool calls, JSON.stringify'd, id and name as String().
+	ToolCalls []string `json:"toolCalls"`
+	// Thinking are the thinking blocks, JSON.stringify'd, the signature as
+	// String().
+	Thinking []string `json:"thinking"`
 }
 
 type openaiStreamThrown struct {
@@ -218,7 +229,7 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 	} else {
 		final = StreamSimpleOpenAIResponses(ctx, model, req, opts).Result()
 	}
-	return openaiStreamOutcome{
+	outcome := openaiStreamOutcome{
 		Observed:        observed,
 		SameModel:       sameModel,
 		OnResponseCalls: onResponseCalls,
@@ -227,8 +238,39 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 		Text:            jstrimText(final),
 		ResponseID:      final.ResponseID,
 		RawStopReason:   final.RawStopReason,
+		Usage: map[string]string{
+			"input":       strconv.Itoa(final.Usage.Input),
+			"output":      strconv.Itoa(final.Usage.Output),
+			"cacheRead":   strconv.Itoa(final.Usage.CacheRead),
+			"cacheWrite":  strconv.Itoa(final.Usage.CacheWrite),
+			"reasoning":   strconv.Itoa(final.Usage.Reasoning),
+			"totalTokens": strconv.Itoa(final.Usage.TotalTokens),
+		},
+		ToolCalls: []string{},
+		Thinking:  []string{},
 	}
+	for _, c := range final.Content {
+		if th, ok := c.(ai.ThinkingContent); ok {
+			text, err := jstext.Stringify(ai.OrderedObject{{Key: "thinking", Value: th.Thinking}, {Key: "thinkingSignature", Value: th.ThinkingSignature}})
+			if err != nil {
+				t.Fatalf("thinking block %#v has no JSON form: %v", th, err)
+			}
+			outcome.Thinking = append(outcome.Thinking, text)
+		}
+		if tc, ok := c.(ai.ToolCall); ok {
+			text, err := jstext.Stringify(ai.OrderedObject{{Key: "id", Value: tc.ID}, {Key: "name", Value: tc.Name}, {Key: "arguments", Value: tc.OrderedArguments()}})
+			if err != nil {
+				t.Fatalf("tool call %#v has no JSON form: %v", tc, err)
+			}
+			outcome.ToolCalls = append(outcome.ToolCalls, text)
+		}
+	}
+	return outcome
 }
+
+// jsIntegerText matches String() of a JS number that is an integer, the
+// usage values ai.Usage can hold as pi does.
+var jsIntegerText = regexp.MustCompile(`^-?[0-9]+$`)
 
 // compareOpenAIStreamEnding checks how a stream ended against pi's record.
 func compareOpenAIStreamEnding(t *testing.T, got, want openaiStreamOutcome) {
@@ -244,6 +286,20 @@ func compareOpenAIStreamEnding(t *testing.T, got, want openaiStreamOutcome) {
 	}
 	if got.RawStopReason != want.RawStopReason {
 		t.Errorf("rawStopReason = %q, pi = %q", got.RawStopReason, want.RawStopReason)
+	}
+	if !slices.Equal(got.Thinking, want.Thinking) {
+		t.Errorf("thinking:\n got %q\n  pi %q", got.Thinking, want.Thinking)
+	}
+	if !slices.Equal(got.ToolCalls, want.ToolCalls) {
+		t.Errorf("tool calls:\n got %q\n  pi %q", got.ToolCalls, want.ToolCalls)
+	}
+	// ai.Usage holds integers: where pi holds a fraction, a string or
+	// undefined, the port holds what that value converts to, a divergence the
+	// row cannot compare.
+	for member, value := range want.Usage {
+		if jsIntegerText.MatchString(value) && got.Usage[member] != value {
+			t.Errorf("usage.%s = %s, pi = %s", member, got.Usage[member], value)
+		}
 	}
 }
 

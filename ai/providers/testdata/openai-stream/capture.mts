@@ -227,9 +227,20 @@ type Outcome = {
 	errorMessage: string;
 	text: string;
 	// responseId and rawStopReason are String() of pi's values, which need not
-	// be strings: pi assigns what the provider sent. null and undefined are "".
+	// be strings: pi assigns what the provider sent. null, undefined and a
+	// value String() throws on are "".
 	responseId: string;
 	rawStopReason: string;
+	// usage holds each member of the message's usage as String() of a number,
+	// and as "<typeof>:<String()>" of anything else, which pi keeps where a
+	// provider sent a string (`completion_tokens || 0`) or computes one (`+`).
+	usage: Record<string, string>;
+	// toolCalls are the message's tool calls, JSON.stringify'd, with id and
+	// name as String() of pi's values.
+	toolCalls: string[];
+	// thinking are the message's thinking blocks, JSON.stringify'd, with the
+	// signature as String() of pi's value.
+	thinking: string[];
 };
 
 type Hooks = {
@@ -273,9 +284,35 @@ async function piRun(api: any, baseModel: Record<string, unknown>, baseUrl: stri
 			.filter((b: { type: string }) => b.type === "text")
 			.map((b: { text: string }) => b.text)
 			.join(""),
-		responseId: final.responseId == null ? "" : String(final.responseId),
-		rawStopReason: final.rawStopReason == null ? "" : String(final.rawStopReason),
+		responseId: jsString(final.responseId),
+		rawStopReason: jsString(final.rawStopReason),
+		usage: Object.fromEntries(
+			["input", "output", "cacheRead", "cacheWrite", "reasoning", "totalTokens"].map((k) => {
+				const v = final.usage[k];
+				return [k, typeof v === "number" ? String(v) : `${typeof v}:${jsString(v)}`];
+			}),
+		),
+		toolCalls: final.content
+			.filter((b: { type: string }) => b.type === "toolCall")
+			.map((b: { id: unknown; name: unknown; arguments: unknown }) =>
+				J({ id: jsString(b.id), name: jsString(b.name), arguments: b.arguments }),
+			),
+		thinking: final.content
+			.filter((b: { type: string }) => b.type === "thinking")
+			.map((b: { thinking: string; thinkingSignature: unknown }) =>
+				J({ thinking: b.thinking, thinkingSignature: jsString(b.thinkingSignature) }),
+			),
 	};
+}
+
+// jsString is String(v), "" for null, undefined and a value it throws on.
+function jsString(v: unknown): string {
+	if (v == null) return "";
+	try {
+		return String(v);
+	} catch {
+		return "";
+	}
 }
 
 // ---- bodies --------------------------------------------------------------------
@@ -385,7 +422,90 @@ const dispatch: Record<string, Body> = {
 };
 
 // Adapter-specific bodies.
+// C is a completions body of its chunks, each written out verbatim.
+const C = (...chunks: string[]) => chunks.map((c) => `data: ${c}\n\n`).join("");
+const hi = (fields: string) => `{"id":"a",${fields}"choices":[{"index":0,"delta":{"content":"hi"}}]}`;
+const withDelta = (delta: string, extra = "") => `{"id":"a","choices":[{"index":0,"delta":${delta}${extra}}]}`;
+const TOOL_FIN = J({ id: "a", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] });
 const completionsBodies: Record<string, string> = {
+	// pi reads each member it uses off the parsed chunk with JS semantics —
+	// exact keys, any type, its own typeof / Array.isArray / truthiness guards,
+	// JS's conversions where it concatenates or computes — so no member can
+	// cost the chunk's other members.
+	"id-number": C(`{"id":5,"choices":[{"index":0,"delta":{"content":"hi"}}]}`, FIN),
+	"id-zero-then-string": C(`{"id":0,"choices":[{"index":0,"delta":{"content":"hi"}}]}`, FIN),
+	"id-key-case": C(`{"ID":"zz","choices":[{"index":0,"delta":{"content":"hi"}}]}`, FIN),
+	"model-number": C(hi(`"model":5,`), FIN),
+	"model-other": C(hi(`"model":"other/model",`), FIN),
+	"usage-fraction": C(hi(`"usage":{"prompt_tokens":1.5,"completion_tokens":2},`), FIN),
+	"usage-numeric-string": C(hi(`"usage":{"prompt_tokens":"3","completion_tokens":2},`), FIN),
+	"usage-string-output": C(hi(`"usage":{"prompt_tokens":3,"completion_tokens":"2"},`), FIN),
+	"usage-nullish-cached": C(hi(`"usage":{"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":0},"prompt_cache_hit_tokens":4,"cached_tokens":3},`), FIN),
+	"usage-nullish-fallthrough": C(hi(`"usage":{"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":null},"prompt_cache_hit_tokens":null,"cached_tokens":3,"completion_tokens":2,"completion_tokens_details":{"reasoning_tokens":1}},`), FIN),
+	"usage-uncoercible": C(hi(`"usage":{"prompt_tokens":{"toString":1}},`), FIN),
+	"usage-scalar": C(hi(`"usage":5,`), FIN),
+	"choice-usage-string": C(`{"id":"a","choices":[{"index":0,"delta":{"content":"hi"},"usage":"x"}]}`, FIN),
+	"choice-usage-fallback": C(`{"id":"a","choices":[{"index":0,"delta":{"content":"hi"},"usage":{"prompt_tokens":7,"completion_tokens":1}}]}`, FIN),
+	"choices-object": C(`{"id":"a","choices":{"0":{"index":0,"delta":{"content":"hi"}}}}`, FIN),
+	"choice-scalar": C(`{"id":"a","choices":[5]}`, `{"id":"b","choices":[null]}`, `{"id":"c","choices":[]}`, FIN),
+	"delta-string": C(`{"id":"a","choices":[{"index":0,"delta":"hi"}]}`, FIN),
+	"content-array": C(withDelta(`{"content":["q",["r",null],null,"s"]}`), FIN),
+	"content-empty-array": C(withDelta(`{"content":[]}`), FIN),
+	"content-number": C(withDelta(`{"content":5}`), withDelta(`{"content":true}`), FIN),
+	"content-object-length": C(withDelta(`{"content":{"length":2}}`), withDelta(`{"content":{"length":"0"}}`), withDelta(`{"content":{"length":[1]}}`), FIN),
+	"content-uncoercible": C(withDelta(`{"content":{"length":1,"toString":1}}`), FIN),
+	"content-uncoercible-length": C(withDelta(`{"content":{"length":{"toString":1}}}`), FIN),
+	"content-key-case": C(withDelta(`{"Content":"hi"}`), FIN),
+	"content-duplicate-case": C(withDelta(`{"content":"hi","CONTENT":"x"}`), FIN),
+	"reasoning-number": C(withDelta(`{"content":"hi","reasoning":5,"reasoning_text":"r"}`), FIN),
+	"finish-number": C(`{"id":"a","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":5}]}`),
+	"finish-array": C(`{"id":"a","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":["length"]}]}`),
+	"finish-uncoercible": C(`{"id":"a","choices":[{"index":0,"delta":{"content":"hi"},"finish_reason":{"toString":1}}]}`),
+	"tool-index-string": C(withDelta(`{"tool_calls":[{"index":"0","id":"c1","type":"function","function":{"name":"f","arguments":"{\\"a\\":1}"}}]}`), TOOL_FIN),
+	"tool-index-fraction": C(
+		withDelta(`{"tool_calls":[{"index":0.5,"id":"c1","function":{"name":"f","arguments":"{\\"a\\":"}}]}`),
+		withDelta(`{"tool_calls":[{"index":0.5,"function":{"arguments":"1}"}}]}`),
+		TOOL_FIN,
+	),
+	"tool-id-number-key": C(
+		withDelta(`{"tool_calls":[{"id":7,"function":{"name":"f","arguments":"{\\"a\\":"}}]}`),
+		withDelta(`{"tool_calls":[{"id":"7","function":{"name":"g","arguments":"{\\"b\\":2}"}}]}`),
+		withDelta(`{"tool_calls":[{"id":7,"function":{"arguments":"1}"}}]}`),
+		TOOL_FIN,
+	),
+	"tool-name-number": C(withDelta(`{"tool_calls":[{"index":0,"id":"c1","function":{"name":5,"arguments":"{}"}}]}`), TOOL_FIN),
+	"tool-arguments-number": C(withDelta(`{"tool_calls":[{"index":0,"id":"c1","function":{"name":"f","arguments":"{\\"a\\":"}}]}`), withDelta(`{"tool_calls":[{"index":0,"function":{"arguments":7}}]}`), withDelta(`{"tool_calls":[{"index":0,"function":{"arguments":"}"}}]}`), TOOL_FIN),
+	"tool-calls-string": C(withDelta(`{"tool_calls":"ab"}`), TOOL_FIN),
+	"tool-calls-number": C(withDelta(`{"content":"hi","tool_calls":5}`), TOOL_FIN),
+	"tool-calls-object": C(withDelta(`{"tool_calls":{"0":{"index":0}}}`), TOOL_FIN),
+	"tool-call-null-entry": C(withDelta(`{"tool_calls":[null]}`), TOOL_FIN),
+	"tool-call-scalar-entries": C(withDelta(`{"tool_calls":[5,"x",true,[]]}`), TOOL_FIN),
+	"tool-call-key-case": C(withDelta(`{"tool_calls":[{"Index":0,"ID":"c1","Function":{"name":"f","arguments":"{}"},"function":{"NAME":"g","Arguments":"{}"}}]}`), TOOL_FIN),
+	"tool-custom-null": C(withDelta(`{"tool_calls":[{"index":0,"id":"c1","custom":null}]}`), TOOL_FIN),
+	"tool-custom-input": C(
+		withDelta(`{"tool_calls":[{"index":0,"id":"c1","custom":{"name":"g","input":"abc"}}]}`),
+		withDelta(`{"tool_calls":[{"index":0,"custom":{"input":5}}]}`),
+		TOOL_FIN,
+	),
+	"reasoning-details": C(
+		withDelta(`{"reasoning_details":[{"type":"reasoning.text","text":"a","index":0},{"type":"reasoning.text","text":"b","index":0,"format":"f"}]}`),
+		withDelta(`{"reasoning_details":[{"type":"reasoning.encrypted","data":"x","id":"e1"},{"type":"reasoning.summary","summary":"s","2":1,"1":2}]}`),
+		FIN,
+	),
+	"reasoning-details-invalid": C(
+		withDelta(
+			`{"reasoning_details":[{"type":"reasoning.text","text":"a","index":"0"},{"type":"reasoning.text","text":"b","id":5},` +
+				`{"type":"reasoning.text","text":"c","format":null},{"type":"reasoning.text","text":"d","signature":5},` +
+				`{"type":"reasoning.summary","summary":1},{"type":"reasoning.encrypted","data":null},{"type":"x"},null,"s",[],` +
+				`{"type":"reasoning.text","text":"ok","signature":null,"id":null}]}`,
+		),
+		FIN,
+	),
+	// A number past float64's range is still a number, which JSON.stringify
+	// writes null; written out, since J() would already have made it null.
+	"reasoning-details-index-past-float64": C(withDelta(`{"reasoning_details":[{"type":"reasoning.text","text":"a","index":1e400}]}`), FIN),
+	"reasoning-details-object": C(withDelta(`{"content":"hi","reasoning_details":{"type":"reasoning.text","text":"x"}}`), FIN),
+	"array-chunk": C(`[{"id":"x","choices":[{"index":0,"delta":{"content":"no"}}]}]`, hi(""), FIN),
 	// packages/ai/test/openai-completions-provider-stream-event.test.ts
 	"openrouter-metadata": `data: ${J({
 		id: "chatcmpl-1",

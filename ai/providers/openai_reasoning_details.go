@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+
+	"github.com/sky-valley/pi/ai"
 )
 
 // openai-completions `reasoning_details` — OpenRouter's structured reasoning
@@ -131,6 +133,41 @@ func isOpenAIReasoningDetail(raw json.RawMessage) bool {
 	default:
 		return false
 	}
+}
+
+// isOpenAIReasoningDetailValue is isOpenAIReasoningDetail over a detail as
+// JSON.parse made it (ai.DecodeOrderedValue's shapes), the form a streamed
+// chunk arrives in: an object (not null, not an array) whose id is absent,
+// null or a string, whose format is absent or a string, whose index is absent
+// or a number, and whose type names one of the three shapes with its string
+// member. A number JSON.parse reads as ±Infinity is still a number here.
+func isOpenAIReasoningDetailValue(detail any) bool {
+	if _, isObject := detail.(ai.OrderedObject); !isObject {
+		return false
+	}
+	isString := func(v any) bool { _, ok := v.(string); return ok }
+	absent := func(v any) bool { return v == jsUndefined }
+	if id := jsGet(detail, "id"); !absent(id) && id != nil && !isString(id) {
+		return false
+	}
+	if format := jsGet(detail, "format"); !absent(format) && !isString(format) {
+		return false
+	}
+	if index := jsGet(detail, "index"); !absent(index) {
+		if _, isNumber := index.(float64); !isNumber {
+			return false
+		}
+	}
+	switch jsGet(detail, "type") {
+	case "reasoning.summary":
+		return isString(jsGet(detail, "summary"))
+	case "reasoning.encrypted":
+		return isString(jsGet(detail, "data"))
+	case "reasoning.text":
+		signature := jsGet(detail, "signature")
+		return isString(jsGet(detail, "text")) && (absent(signature) || signature == nil || isString(signature))
+	}
+	return false
 }
 
 // parseOpenAIReasoningDetails reads the reasoning-detail sequence serialized in

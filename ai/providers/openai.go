@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"maps"
+	"math"
 	"net/http"
 	"regexp"
 	"strings"
@@ -273,9 +275,18 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 		var textBuilder *blockBuilder
 		// pi ensureToolCallBlock keeps BOTH maps (openai-completions.ts:229-265):
 		// lookup by stream index when the delta carries one, falling back to id,
-		// and registers blocks under both keys.
-		toolBuildersByIndex := map[int]*blockBuilder{}
-		toolBuildersByID := map[string]*blockBuilder{}
+		// and registers blocks under both keys. The maps are keyed by the JS
+		// values themselves: an index is any number (SameValueZero, which a
+		// float64 key matches for every number JSON can write), and an id any
+		// truthy value, where 5 and "5" are two keys and an object or array
+		// matches nothing (jsMapKey).
+		toolBuildersByIndex := map[float64]*blockBuilder{}
+		toolBuildersByID := map[any]*blockBuilder{}
+		setToolBuilderByID := func(id any, b *blockBuilder) {
+			if key, ok := jsMapKey(id); ok {
+				toolBuildersByID[key] = b
+			}
+		}
 		builderHasIndex := map[*blockBuilder]bool{}
 		indexOf := func(b *blockBuilder) int {
 			for i, x := range order {
@@ -324,78 +335,137 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			b.args = map[string]any{b.grammar.property: nextInput}
 			return delta, nil
 		}
-		ensureToolCallBlock := func(tcDelta openAIToolCallDelta) *blockBuilder {
-			var b *blockBuilder
-			if tcDelta.Index != nil {
-				b = toolBuildersByIndex[*tcDelta.Index]
+		// toolCallName is pi's `toolCall.function?.name ?? toolCall.custom?.name`,
+		// undefined when neither is set.
+		toolCallName := func(toolCall any) any {
+			if name := jsGet(jsGet(toolCall, "function"), "name"); name != nil && name != jsUndefined {
+				return name
 			}
-			if b == nil && tcDelta.ID != "" {
-				b = toolBuildersByID[tcDelta.ID]
+			return jsGet(jsGet(toolCall, "custom"), "name")
+		}
+		// isGrammarCall is pi's `toolCall.custom && !toolCall.function` (pi
+		// 34239180): a delta carrying both is an ordinary function call — some
+		// providers attach an empty `custom: {}` to one, and treating that as a
+		// grammar call discards the streamed arguments.
+		isGrammarCall := func(toolCall any) bool {
+			return jsTruthy(jsGet(toolCall, "custom")) && !jsTruthy(jsGet(toolCall, "function"))
+		}
+		// ensureToolCallBlock is pi's, over a tool_calls entry of any type: it
+		// reads each member with JS semantics, so an entry that is not an
+		// object opens a block with no id, name or index (a string's
+		// characters each open one), and a null entry throws reading its index.
+		ensureToolCallBlock := func(toolCall any) (*blockBuilder, error) {
+			if toolCall == nil {
+				return nil, jsReadError(nil, "index")
+			}
+			streamIndex, hasIndex := jsGet(toolCall, "index").(float64)
+			id := jsGet(toolCall, "id")
+			name := toolCallName(toolCall)
+			if name == nil || name == jsUndefined {
+				name = ""
+			}
+			var b *blockBuilder
+			if hasIndex {
+				b = toolBuildersByIndex[streamIndex]
+			}
+			if b == nil && jsTruthy(id) {
+				if key, ok := jsMapKey(id); ok {
+					b = toolBuildersByID[key]
+				}
 			}
 			if b == nil {
-				b = &blockBuilder{kind: "toolCall", toolID: tcDelta.ID, toolName: tcDelta.name(), args: map[string]any{}}
-				if tcDelta.isGrammarCall() {
+				// pi: `id: toolCall.id || ""`.
+				b = &blockBuilder{kind: "toolCall", toolName: jsStringField(name), args: map[string]any{}}
+				if jsTruthy(id) {
+					b.toolID = jsStringField(id)
+				}
+				if isGrammarCall(toolCall) {
 					startGrammarBuffer(b)
 				}
-				if tcDelta.Index != nil {
-					toolBuildersByIndex[*tcDelta.Index] = b
+				if hasIndex {
+					toolBuildersByIndex[streamIndex] = b
 					builderHasIndex[b] = true
 				}
-				if tcDelta.ID != "" {
-					toolBuildersByID[tcDelta.ID] = b
+				if jsTruthy(id) {
+					setToolBuilderByID(id, b)
 				}
 				order = append(order, b)
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallStart, ContentIndex: indexOf(b), Partial: output.Clone()})
 			}
-			if tcDelta.Index != nil && !builderHasIndex[b] {
+			if hasIndex && !builderHasIndex[b] {
 				builderHasIndex[b] = true
-				toolBuildersByIndex[*tcDelta.Index] = b
+				toolBuildersByIndex[streamIndex] = b
 			}
-			if tcDelta.ID != "" {
-				toolBuildersByID[tcDelta.ID] = b
+			if jsTruthy(id) {
+				setToolBuilderByID(id, b)
 			}
-			if b.toolName == "" {
-				b.toolName = tcDelta.name()
+			if b.toolName == "" && jsTruthy(name) {
+				b.toolName = jsStringField(name)
 			}
-			if tcDelta.isGrammarCall() && b.grammar == nil {
+			if isGrammarCall(toolCall) && b.grammar == nil {
 				startGrammarBuffer(b)
 			}
-			return b
+			return b, nil
 		}
 
 		hasFinishReason := false
+		// responseID is pi's output.responseId, the value `||=` tests: the
+		// message stores it as a string (jsStringField), whose emptiness is not
+		// the value's falsiness (0 is "0").
+		var responseID any = jsUndefined
 		var onEvent func(any) error
 		if opts.OnProviderStreamEvent != nil {
 			onEvent = func(data any) error { return opts.OnProviderStreamEvent(data, model) }
 		}
-		err = iterateOpenAISSE(resp.Body, ctx, onEvent, func(chunk openAIChunk) error {
+		// Each chunk is read as pi's loop reads it: member by member off the
+		// parsed value, by exact key, each of whatever type it holds, with pi's
+		// own guards (typeof, Array.isArray, truthiness) and JS's coercions where
+		// pi concatenates or computes.
+		err = iterateOpenAISSE(resp.Body, ctx, onEvent, func(chunk any) error {
 			// OpenAI documents ChatCompletionChunk.id as the unique chat completion
 			// identifier shared by every chunk in a streamed completion.
-			if output.ResponseID == "" && chunk.ID != "" {
-				output.ResponseID = chunk.ID
+			// pi: `output.responseId ||= chunk.id`.
+			if !jsTruthy(responseID) {
+				responseID = jsGet(chunk, "id")
+				output.ResponseID = jsStringField(responseID)
 			}
-			if output.ResponseModel == "" && chunk.Model != "" && chunk.Model != model.ID {
-				output.ResponseModel = chunk.Model
+			if m, isString := jsGet(chunk, "model").(string); isString && m != "" && m != model.ID && output.ResponseModel == "" {
+				output.ResponseModel = m
 			}
-			if chunk.Usage != nil {
-				output.Usage = parseChunkUsage(chunk.Usage, model)
+			usage := jsGet(chunk, "usage")
+			if jsTruthy(usage) {
+				parsed, err := parseChunkUsage(usage, model)
+				if err != nil {
+					return err
+				}
+				output.Usage = parsed
 			}
-			if len(chunk.Choices) == 0 {
+			// pi: `Array.isArray(chunk.choices) ? chunk.choices[0] : undefined`.
+			var choice any = jsUndefined
+			if choices, isArray := jsGet(chunk, "choices").([]any); isArray && len(choices) > 0 {
+				choice = choices[0]
+			}
+			if !jsTruthy(choice) {
 				return nil
 			}
-			choice := chunk.Choices[0]
-			d := choice.Delta
 
 			// Fallback: some providers (e.g. Moonshot) return usage in choice.usage
 			// instead of the top-level chunk.usage.
-			if chunk.Usage == nil && choice.Usage != nil {
-				output.Usage = parseChunkUsage(choice.Usage, model)
+			if choiceUsage := jsGet(choice, "usage"); !jsTruthy(usage) && jsTruthy(choiceUsage) {
+				parsed, err := parseChunkUsage(choiceUsage, model)
+				if err != nil {
+					return err
+				}
+				output.Usage = parsed
 			}
 
-			if choice.FinishReason != "" {
-				output.RawStopReason = choice.FinishReason
-				stopReason, errMsg := mapOpenAIFinishReason(choice.FinishReason)
+			if finishReason := jsGet(choice, "finish_reason"); jsTruthy(finishReason) {
+				output.RawStopReason = jsStringField(finishReason)
+				stopReason, errMsg, err := mapOpenAIFinishReasonValue(finishReason)
+				if err != nil {
+					return err
+				}
 				output.StopReason = stopReason
 				if errMsg != "" {
 					output.ErrorMessage = errMsg
@@ -403,37 +473,45 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 				hasFinishReason = true
 			}
 
+			d := jsGet(choice, "delta")
+			if !jsTruthy(d) {
+				return nil
+			}
 			// pi processes delta fields in order: content first, then reasoning,
 			// then tool_calls, then reasoning_details (openai-completions.ts:299-385).
-			if d.Content != "" {
-				if textBuilder == nil {
-					textBuilder = &blockBuilder{kind: "text"}
-					order = append(order, textBuilder)
-					materialize()
-					stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextStart, ContentIndex: indexOf(textBuilder), Partial: output.Clone()})
+			// pi: `content !== null && content !== undefined && content.length > 0`,
+			// then `block.text += content`: an array's string is its elements
+			// joined, and an object is read by its own "length".
+			if content := jsGet(d, "content"); content != nil && content != jsUndefined {
+				positive, err := jsLengthPositive(content)
+				if err != nil {
+					return err
 				}
-				textBuilder.text.WriteString(d.Content)
-				materialize()
-				stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: indexOf(textBuilder), Delta: d.Content, Partial: output.Clone()})
+				if positive {
+					if textBuilder == nil {
+						textBuilder = &blockBuilder{kind: "text"}
+						order = append(order, textBuilder)
+						materialize()
+						stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextStart, ContentIndex: indexOf(textBuilder), Partial: output.Clone()})
+					}
+					text, err := jsToString(content)
+					if err != nil {
+						return err
+					}
+					textBuilder.text.WriteString(text)
+					materialize()
+					stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: indexOf(textBuilder), Delta: text, Partial: output.Clone()})
+				}
 			}
 
 			// Reasoning may arrive in reasoning_content (llama.cpp), reasoning, or
-			// reasoning_text. Use the first non-empty field to avoid duplication
-			// (e.g. chutes.ai returns both with the same content), and record the
-			// field name as the thinking signature.
-			reasoningFields := []struct {
-				name  string
-				value string
-			}{
-				{"reasoning_content", d.ReasoningContent},
-				{"reasoning", d.Reasoning},
-				{"reasoning_text", d.ReasoningText},
-			}
+			// reasoning_text. Use the first non-empty string field to avoid
+			// duplication (e.g. chutes.ai returns both with the same content),
+			// and record the field name as the thinking signature.
 			var reasoningDelta, reasoningSig string
-			for _, f := range reasoningFields {
-				if f.value != "" {
-					reasoningSig = f.name
-					reasoningDelta = f.value
+			for _, field := range []string{"reasoning_content", "reasoning", "reasoning_text"} {
+				if value, isString := jsGet(d, field).(string); isString && value != "" {
+					reasoningSig, reasoningDelta = field, value
 					break
 				}
 			}
@@ -452,33 +530,60 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: indexOf(thinkBuilder), Delta: reasoningDelta, Partial: output.Clone()})
 			}
 
-			for _, tcDelta := range d.ToolCalls {
-				b := ensureToolCallBlock(tcDelta)
-				// id and name are first-wins, never overwritten (pi :350-356).
-				if b.toolID == "" && tcDelta.ID != "" {
-					b.toolID = tcDelta.ID
-					toolBuildersByID[tcDelta.ID] = b
-				}
-				if b.toolName == "" {
-					b.toolName = tcDelta.name()
-				}
-
-				// pi pushes a toolcall_delta for EVERY delta entry, with an empty
-				// delta string when no arguments arrived (pi :358-369).
-				delta := ""
-				if tcDelta.Function != nil && tcDelta.Function.Arguments != "" {
-					delta = tcDelta.Function.Arguments
-					b.partialJSON.WriteString(delta)
-					b.args, b.argsOrder = parseStreamingJSON(b.partialJSON.String())
-				} else if tcDelta.Custom != nil && tcDelta.Custom.Input != "" {
-					jsonDelta, gerr := appendGrammarInput(b, grammarInput(b)+tcDelta.Custom.Input, false)
-					if gerr != nil {
-						return gerr
+			// pi: `for (const toolCall of choice.delta.tool_calls)` when it is
+			// truthy. A string iterates its characters; anything else that is
+			// not an array throws.
+			if toolCalls := jsGet(d, "tool_calls"); jsTruthy(toolCalls) {
+				var entries []any
+				switch v := toolCalls.(type) {
+				case []any:
+					entries = v
+				case string:
+					for _, r := range v {
+						entries = append(entries, string(r))
 					}
-					delta = jsonDelta
+				default:
+					return errToolCallsNotIterable
 				}
-				materialize()
-				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: indexOf(b), Delta: delta, Partial: output.Clone()})
+				for _, toolCall := range entries {
+					b, err := ensureToolCallBlock(toolCall)
+					if err != nil {
+						return err
+					}
+					// id and name are first-wins, never overwritten (pi :350-356).
+					if id := jsGet(toolCall, "id"); b.toolID == "" && jsTruthy(id) {
+						b.toolID = jsStringField(id)
+						setToolBuilderByID(id, b)
+					}
+					if name := toolCallName(toolCall); b.toolName == "" && jsTruthy(name) {
+						b.toolName = jsStringField(name)
+					}
+
+					// pi pushes a toolcall_delta for EVERY delta entry, with an empty
+					// delta string when no arguments arrived (pi :358-369).
+					delta := ""
+					if arguments := jsGet(jsGet(toolCall, "function"), "arguments"); jsTruthy(arguments) {
+						text, err := jsToString(arguments)
+						if err != nil {
+							return err
+						}
+						delta = text
+						b.partialJSON.WriteString(delta)
+						b.args, b.argsOrder = parseStreamingJSON(b.partialJSON.String())
+					} else if input := jsGet(jsGet(toolCall, "custom"), "input"); jsTruthy(input) {
+						text, err := jsToString(input)
+						if err != nil {
+							return err
+						}
+						jsonDelta, gerr := appendGrammarInput(b, grammarInput(b)+text, false)
+						if gerr != nil {
+							return gerr
+						}
+						delta = jsonDelta
+					}
+					materialize()
+					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: indexOf(b), Delta: delta, Partial: output.Clone()})
+				}
 			}
 
 			// reasoning_details: OpenRouter's structured reasoning replay channel
@@ -489,21 +594,11 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			// call. OpenRouter streams them as DELTAS, so appending is a merge —
 			// see appendOpenAIReasoningDetail. Nothing is written into the
 			// signature here: applyStreamedReasoningDetails does that once, at the
-			// end of the block (upstream 7aab6c26e).
-			//
-			// pi reads the field off the untyped delta and guards it with
-			// `Array.isArray`, which ignores ONLY this field when a provider sends
-			// something else. Decoding here rather than in openAIChunk is what
-			// contains it the same way: a typed []json.RawMessage would fail the
-			// whole chunk unmarshal, and iterateOpenAISSE, which skips an item
-			// that does not decode as a chunk, would then drop the delta's
-			// content and tool calls along with it.
-			var arrivingDetails []json.RawMessage
-			if len(d.ReasoningDetails) > 0 && json.Unmarshal(d.ReasoningDetails, &arrivingDetails) != nil {
-				arrivingDetails = nil
-			}
-			for _, rawDetail := range arrivingDetails {
-				if !isOpenAIReasoningDetail(rawDetail) {
+			// end of the block (upstream 7aab6c26e). pi guards the field with
+			// `Array.isArray`, so anything else in it is ignored.
+			details, _ := jsGet(d, "reasoning_details").([]any)
+			for _, detail := range details {
+				if !isOpenAIReasoningDetailValue(detail) {
 					continue
 				}
 				// pi ensureThinkingBlock(""): the details alone are enough to open
@@ -514,9 +609,13 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingStart, ContentIndex: indexOf(thinkBuilder), Partial: output.Clone()})
 				}
+				text, err := jstext.Stringify(detail)
+				if err != nil {
+					return fmt.Errorf("writing a reasoning detail as JSON.stringify does: %w; this is a port bug, report it with the event", err)
+				}
 				// Deltas, not finished entries: consecutive text/summary details
 				// fold into the entry they extend (upstream c5ad7c1b0).
-				thinkingDetails = appendOpenAIReasoningDetail(thinkingDetails, rawDetail)
+				thinkingDetails = appendOpenAIReasoningDetail(thinkingDetails, json.RawMessage(text))
 			}
 			return nil
 		})
@@ -1462,51 +1561,111 @@ func normalizeOpenAIToolCallID(model *ai.Model, id string) string {
 	return id
 }
 
-// parseChunkUsage converts raw chunk usage into our Usage, matching pi's
-// parseChunkUsage: input excludes cache-read and cache-write tokens, and total
-// is the sum of all four buckets.
-func parseChunkUsage(raw *openAIChunkUsage, model *ai.Model) ai.Usage {
-	promptTokens := raw.PromptTokens
-	cacheWriteTokens := 0
-	if raw.PromptTokensDetails != nil {
-		cacheWriteTokens = raw.PromptTokensDetails.CacheWriteTokens
+// parseChunkUsage is pi's parseChunkUsage over a usage value of any type,
+// each member read with JS semantics:
+//
+//	promptTokens = prompt_tokens || 0
+//	cacheRead    = prompt_tokens_details?.cached_tokens ?? prompt_cache_hit_tokens ?? cached_tokens ?? 0
+//	cacheWrite   = prompt_tokens_details?.cache_write_tokens || 0
+//	input        = Math.max(0, promptTokens - cacheRead - cacheWrite)
+//	output       = completion_tokens || 0
+//	total        = input + output + cacheRead + cacheWrite
+//
+// Input excludes cache-read and cache-write tokens, and total is the sum of all
+// four buckets. The `??` arms are nullish (upstream d3ab2af96: OpenAI and
+// OpenRouter use prompt_tokens_details.cached_tokens, DeepSeek
+// prompt_cache_hit_tokens, Kimi a top-level cached_tokens), so an explicit 0
+// at any arm stops the chain. `-` and `+` convert as JS does and throw V8's
+// TypeError where JS does. ai.Usage holds integers, so a member pi keeps as
+// a string, or a fraction, is held as the integer its number truncates to.
+func parseChunkUsage(raw any, model *ai.Model) (ai.Usage, error) {
+	details := jsGet(raw, "prompt_tokens_details")
+	promptTokens := jsOr(jsGet(raw, "prompt_tokens"), 0.0)
+	cacheReadTokens := jsNullish(jsGet(details, "cached_tokens"), jsGet(raw, "prompt_cache_hit_tokens"), jsGet(raw, "cached_tokens"), 0.0)
+	cacheWriteTokens := jsOr(jsGet(details, "cache_write_tokens"), 0.0)
+	var operands [3]float64
+	for i, v := range []any{promptTokens, cacheReadTokens, cacheWriteTokens} {
+		n, err := jsToNumber(v)
+		if err != nil {
+			return ai.Usage{}, err
+		}
+		operands[i] = n
 	}
-	// pi (upstream d3ab2af96): `prompt_tokens_details?.cached_tokens ??
-	// prompt_cache_hit_tokens ?? cached_tokens ?? 0`. Providers disagree on
-	// placement: OpenAI/OpenRouter use prompt_tokens_details.cached_tokens,
-	// DeepSeek uses prompt_cache_hit_tokens, and Kimi documents top-level
-	// usage.cached_tokens on the final usage chunk. Each arm is nullish — an
-	// explicit 0 at any arm must NOT fall through to the next.
-	cacheReadTokens := 0
-	switch {
-	case raw.PromptTokensDetails != nil && raw.PromptTokensDetails.CachedTokens != nil:
-		cacheReadTokens = *raw.PromptTokensDetails.CachedTokens
-	case raw.PromptCacheHitTokens != nil:
-		cacheReadTokens = *raw.PromptCacheHitTokens
-	case raw.CachedTokens != nil:
-		cacheReadTokens = *raw.CachedTokens
-	}
-	input := promptTokens - cacheReadTokens - cacheWriteTokens
-	if input < 0 {
-		input = 0
-	}
-	// pi: `reasoning: completion_tokens_details?.reasoning_tokens || 0` — always
-	// set (0 when absent) for the completions path.
-	reasoningTokens := 0
-	if raw.CompletionTokensDetails != nil {
-		reasoningTokens = raw.CompletionTokensDetails.ReasoningTokens
+	input := math.Max(0, operands[0]-operands[1]-operands[2])
+	outputTokens := jsOr(jsGet(raw, "completion_tokens"), 0.0)
+	var total any = input
+	for _, v := range []any{outputTokens, cacheReadTokens, cacheWriteTokens} {
+		sum, err := jsAdd(total, v)
+		if err != nil {
+			return ai.Usage{}, err
+		}
+		total = sum
 	}
 	usage := ai.Usage{
-		Input:       input,
-		Output:      raw.CompletionTokens,
-		CacheRead:   cacheReadTokens,
-		CacheWrite:  cacheWriteTokens,
-		Reasoning:   reasoningTokens,
-		TotalTokens: input + raw.CompletionTokens + cacheReadTokens + cacheWriteTokens,
+		Input:      jsTokenCount(input),
+		Output:     jsTokenCount(outputTokens),
+		CacheRead:  jsTokenCount(cacheReadTokens),
+		CacheWrite: jsTokenCount(cacheWriteTokens),
+		// pi: `reasoning: completion_tokens_details?.reasoning_tokens || 0` —
+		// always set (0 when absent) for the completions path.
+		Reasoning:   jsTokenCount(jsOr(jsGet(jsGet(raw, "completion_tokens_details"), "reasoning_tokens"), 0.0)),
+		TotalTokens: jsTokenCount(total),
 	}
 	ai.CalculateCost(model, &usage)
-	return usage
+	return usage, nil
 }
+
+// jsOr is `value || fallback`.
+func jsOr(value, fallback any) any {
+	if jsTruthy(value) {
+		return value
+	}
+	return fallback
+}
+
+// jsNullish is `a ?? b ?? …`: the first value that is neither null nor
+// undefined, else the last.
+func jsNullish(values ...any) any {
+	for _, v := range values[:len(values)-1] {
+		if v != nil && v != jsUndefined {
+			return v
+		}
+	}
+	return values[len(values)-1]
+}
+
+// jsMapKey is value as a key of a JS Map, whose keys compare by
+// SameValueZero: a string, number or boolean is its own key, and an object or
+// array — which two parsed values never share — matches nothing (ok false).
+func jsMapKey(value any) (any, bool) {
+	switch value.(type) {
+	case string, float64, bool:
+		return value, true
+	}
+	return nil, false
+}
+
+// jsLengthPositive is `value.length > 0` for a value that is neither null nor
+// undefined: a string or array by its length, an object by its own "length"
+// member compared as JS does (Number() of it, which throws V8's TypeError
+// where String() does), and a number or boolean, which has no length, never.
+func jsLengthPositive(value any) (bool, error) {
+	switch v := value.(type) {
+	case string:
+		return v != "", nil
+	case []any:
+		return len(v) > 0, nil
+	case ai.OrderedObject:
+		n, err := jsToNumber(jsGet(v, "length"))
+		return n > 0, err
+	}
+	return false, nil
+}
+
+// errToolCallsNotIterable is V8's TypeError for pi's
+// `for (const toolCall of choice.delta.tool_calls)` over a truthy value that is
+// neither an array nor a string.
+var errToolCallsNotIterable = errors.New("choice.delta.tool_calls is not iterable")
 
 // mapOpenAIFinishReason ports pi's mapStopReason: returns the stop reason plus
 // an optional error message for filter/error finish reasons.
@@ -1527,111 +1686,40 @@ func mapOpenAIFinishReason(reason string) (ai.StopReason, string) {
 	}
 }
 
-// ---- SSE chunk types ----
-
-type openAIChunkUsage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	// PromptCacheHitTokens and CachedTokens are pointers so an explicit 0 at
-	// either arm stops the ??-fallback chain (pi nullish semantics; upstream
-	// d3ab2af96 added the top-level cached_tokens arm for Kimi).
-	PromptCacheHitTokens *int `json:"prompt_cache_hit_tokens"`
-	CachedTokens         *int `json:"cached_tokens"`
-	PromptTokensDetails  *struct {
-		// CachedTokens is a pointer so an explicit 0 beats the
-		// prompt_cache_hit_tokens fallback (pi `??` nullish semantics).
-		CachedTokens     *int `json:"cached_tokens"`
-		CacheWriteTokens int  `json:"cache_write_tokens"`
-	} `json:"prompt_tokens_details"`
-	CompletionTokensDetails *struct {
-		ReasoningTokens int `json:"reasoning_tokens"`
-	} `json:"completion_tokens_details"`
-}
-
-// openAIToolCallDelta is one entry of choice.delta.tool_calls. Index is a
-// pointer so an absent index (id-keyed streams) is distinguishable from 0.
-type openAIToolCallDelta struct {
-	Index    *int   `json:"index"`
-	ID       string `json:"id"`
-	Function *struct {
-		// Name is a pointer so an absent name (JS undefined) stays
-		// distinguishable from an explicit "", which name() below relies on.
-		Name      *string `json:"name"`
-		Arguments string  `json:"arguments"`
-	} `json:"function"`
-	// Custom carries the OpenAI custom-tool (grammar) variant of a tool call,
-	// whose raw input replaces function.arguments.
-	Custom *struct {
-		Name  *string `json:"name"`
-		Input string  `json:"input"`
-	} `json:"custom"`
-}
-
-// name is the tool name carried by either tool-call variant (pi:
-// `toolCall.function?.name ?? toolCall.custom?.name ?? ""`). `??` only falls
-// through on null/undefined, so a function payload carrying an explicit empty
-// name wins over a populated custom name — hence the pointer fields.
-func (d openAIToolCallDelta) name() string {
-	if d.Function != nil && d.Function.Name != nil {
-		return *d.Function.Name
+// mapOpenAIFinishReasonValue is mapStopReason over a truthy finish_reason of
+// any type: a string maps as mapOpenAIFinishReason does, and any other value
+// matches no case and falls to `Provider finish_reason: ${reason}`, whose
+// template literal throws V8's TypeError where String() does.
+func mapOpenAIFinishReasonValue(reason any) (ai.StopReason, string, error) {
+	if text, isString := reason.(string); isString {
+		stop, message := mapOpenAIFinishReason(text)
+		return stop, message, nil
 	}
-	if d.Custom != nil && d.Custom.Name != nil {
-		return *d.Custom.Name
+	text, err := jsToString(reason)
+	if err != nil {
+		return ai.StopPending, "", err
 	}
-	return ""
-}
-
-// isGrammarCall reports whether this delta is the custom-tool (grammar) variant.
-// pi 34239180: a delta carrying both custom and function is an ordinary function
-// call — some providers attach an empty `custom: {}` to one, and treating that as
-// a grammar call discards the streamed arguments. `{}` decodes to a non-nil
-// pointer, matching JS truthiness; `null` decodes to nil, matching JS falsiness.
-func (d openAIToolCallDelta) isGrammarCall() bool { return d.Custom != nil && d.Function == nil }
-
-type openAIChunk struct {
-	ID      string `json:"id"`
-	Model   string `json:"model"`
-	Choices []struct {
-		Delta struct {
-			Content          string                `json:"content"`
-			ReasoningContent string                `json:"reasoning_content"`
-			Reasoning        string                `json:"reasoning"`
-			ReasoningText    string                `json:"reasoning_text"`
-			ToolCalls        []openAIToolCallDelta `json:"tool_calls"`
-			// ReasoningDetails stays wholly raw, array brackets included, so that
-			// a provider sending a non-array here costs only this field. pi reads
-			// it off an untyped delta behind `Array.isArray`; typing it as a slice
-			// would instead fail the chunk unmarshal, which iterateOpenAISSE
-			// treats as a junk line and skips — losing the delta's content and
-			// tool calls too. Entries stay raw for a second reason: the sequence
-			// is replayed with its unknown members intact.
-			ReasoningDetails json.RawMessage `json:"reasoning_details"`
-		} `json:"delta"`
-		FinishReason string            `json:"finish_reason"`
-		Usage        *openAIChunkUsage `json:"usage"`
-	} `json:"choices"`
-	Usage *openAIChunkUsage `json:"usage"`
+	return ai.StopError, "Provider finish_reason: " + text, nil
 }
 
 // iterateOpenAISSE reads a /chat/completions stream the way pi iterates the
 // openai SDK's Stream (iterateOpenAIStream). Each item goes to onEvent (when
 // set) first, as pi's loop opens with onProviderStreamEvent — whatever the
-// item is — and then, as a chunk, to handle. null is not handled (pi's
-// `!chunk` skip), nor is an item that does not decode as a chunk — a scalar,
-// an array — which pi's `typeof chunk !== "object"` skip and its reads of
-// absent fields leave alone too.
-func iterateOpenAISSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(openAIChunk) error) error {
+// item is — and then to handle, unless pi's `!chunk || typeof chunk !==
+// "object"` skips it: null and every scalar. An array is an object to typeof,
+// so it reaches handle, which reads no member off it.
+func iterateOpenAISSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(chunk any) error) error {
 	return iterateOpenAIStream(body, ctx, func(item openaiStreamItem) error {
 		if onEvent != nil {
 			if err := onEvent(item.value); err != nil {
 				return err
 			}
 		}
-		var chunk openAIChunk
-		if item.value == nil || json.Unmarshal(item.text, &chunk) != nil {
-			return nil
+		switch item.value.(type) {
+		case ai.OrderedObject, []any:
+			return handle(item.value)
 		}
-		return handle(chunk)
+		return nil
 	})
 }
 
