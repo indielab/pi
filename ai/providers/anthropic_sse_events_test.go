@@ -40,7 +40,12 @@ type anthropicSSEEventsRow struct {
 		Content      json.RawMessage `json:"content"`
 		// Usage is decoded into ai.Usage, so pi's explicit zero and the port's
 		// omitted zero (omitempty) compare equal, as the in-memory values are.
-		Usage ai.Usage `json:"usage"`
+		Usage       ai.Usage `json:"usage"`
+		Diagnostics []struct {
+			Type string `json:"type"`
+			// Details is pi's details as JSON.stringify wrote them.
+			Details json.RawMessage `json:"details"`
+		} `json:"diagnostics"`
 	} `json:"message"`
 }
 
@@ -134,6 +139,21 @@ func assertAnthropicMessageMatchesPi(t *testing.T, row anthropicSSEEventsRow, fi
 	}
 	if final.Usage != want.Usage {
 		t.Errorf("usage = %+v, want %+v", final.Usage, want.Usage)
+	}
+	// Each diagnostic's details are pi's JSON text, byte for byte: key order
+	// and numbers as JSON.stringify writes them. (No captured details hold <,
+	// > or &, which encoding/json would escape where JSON.stringify does not.)
+	if len(final.Diagnostics) != len(want.Diagnostics) {
+		t.Fatalf("diagnostics = %+v, want %d", final.Diagnostics, len(want.Diagnostics))
+	}
+	for i, d := range final.Diagnostics {
+		details, err := json.Marshal(d.Details)
+		if err != nil {
+			t.Fatalf("marshal diagnostic details: %v", err)
+		}
+		if d.Type != want.Diagnostics[i].Type || string(details) != string(want.Diagnostics[i].Details) {
+			t.Errorf("diagnostic %d = %s %s, want %s %s", i, d.Type, details, want.Diagnostics[i].Type, want.Diagnostics[i].Details)
+		}
 	}
 }
 

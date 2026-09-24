@@ -735,7 +735,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// The last input_transformations list the stream reported. Anthropic
 		// resends the whole list rather than a delta, so a later event REPLACES
 		// what an earlier one said — including an empty list, which retracts it.
-		var inputTransformations []anthropicInputTransformation
+		var inputTransformations []any
 
 		// pi awaits options.onProviderStreamEvent(event, model) first thing in
 		// the loop, with the model the stream was called with.
@@ -985,10 +985,13 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 			return
 		}
 		// Appended only on a stream that completed successfully — pi's throws for
-		// an aborted/errored turn all fire above this point.
-		appendAnthropicInputTransformationsDiagnostic(output, inputTransformations)
-
+		// an aborted/errored turn all fire above this point — and a null entry
+		// still fails it here, as pi's read of its `.type` throws.
 		materialize()
+		if err := appendAnthropicInputTransformationsDiagnostic(output, inputTransformations); err != nil {
+			fail(err)
+			return
+		}
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventDone, Reason: output.StopReason, Message: output})
 		stream.End()
 	}()
@@ -1228,71 +1231,51 @@ func transformAnthropicOutputFormat(body map[string]any) (map[string]any, error)
 	return out, nil
 }
 
-// anthropicInputTransformation is one entry of Anthropic's
-// `input_transformations`: what the server dropped or rewrote from the prompt
-// before sampling (pi BetaThinkingDroppedInputTransformation). Every field is
-// optional and pi maps an explicit null to "absent" (`?? undefined`), so an
-// absent, null and present value must stay distinguishable.
-//
-// The fields are `any` rather than `*string` because pi's only guard on the
-// whole value is `Array.isArray`: it reads `.type/.path/.reason` off whatever
-// each entry turns out to be and forwards what it finds into the diagnostic
-// unexamined. A stricter decode here would not merely drop a bad field, it
-// would reject the array — see parseAnthropicInputTransformations.
-type anthropicInputTransformation struct {
-	Type   any
-	Path   any
-	Reason any
-}
-
-// parseAnthropicInputTransformations decodes an `input_transformations` value,
-// reporting whether it was an array — pi's `Array.isArray(...)` guard, which
-// lets a non-array (including null) leave the previous list standing while an
-// empty array retracts it. The field is held as raw JSON so a malformed value
-// costs only itself instead of failing the whole event decode.
-//
-// The guard is `Array.isArray` and nothing else: ANY array is accepted, and an
-// entry that is not an object simply contributes no fields. Refusing a
-// wrong-shaped entry would cost far more than the entry — the event would stop
-// being a replacement and would resurrect the list a previous event set.
-func parseAnthropicInputTransformations(raw json.RawMessage) ([]anthropicInputTransformation, bool) {
-	trimmed := bytes.TrimSpace(raw)
-	if len(trimmed) == 0 || trimmed[0] != '[' {
+// parseAnthropicInputTransformations reads an `input_transformations` value
+// (what the server dropped or rewrote from the prompt before sampling, pi's
+// BetaThinkingDroppedInputTransformation list), reporting whether it was an
+// array — pi's `Array.isArray(...)` guard, which lets a non-array (null
+// included) leave the previous list standing while an empty array retracts
+// it. The guard is the only check: ANY array replaces the list, whatever its
+// entries hold. Each entry is kept as JSON.parse made it
+// (ai.DecodeOrderedValue: a number past float64's range is Infinity, not a
+// failure), so no entry can cost the array its place as the replacement; what
+// pi's later reads make of an entry is appendAnthropicInputTransformationsDiagnostic's.
+func parseAnthropicInputTransformations(raw json.RawMessage) ([]any, bool) {
+	if jsonValueKind(raw) != '[' {
 		return nil, false
 	}
-	var entries []any
-	if err := json.Unmarshal(trimmed, &entries); err != nil {
-		return nil, false
+	value, err := ai.DecodeOrderedValue(raw)
+	if err != nil {
+		return nil, false // unreachable: raw is a member of a decoded document
 	}
-	list := make([]anthropicInputTransformation, len(entries))
-	for i, entry := range entries {
-		obj, ok := entry.(map[string]any)
-		if !ok {
-			continue
-		}
-		list[i] = anthropicInputTransformation{Type: obj["type"], Path: obj["path"], Reason: obj["reason"]}
-	}
-	return list, true
+	list, ok := value.([]any)
+	return list, ok
 }
 
 // appendAnthropicInputTransformationsDiagnostic records what the server dropped
 // from the prompt, so a turn whose thinking blocks were silently discarded is
-// visible after the fact (pi's `anthropic_input_transformations` diagnostic).
-// An absent field is omitted rather than written empty, matching pi's
-// `?? undefined` in a JSON payload.
-func appendAnthropicInputTransformationsDiagnostic(output *ai.AssistantMessage, list []anthropicInputTransformation) {
+// visible after the fact (pi's `anthropic_input_transformations` diagnostic):
+// each entry becomes pi's literal {type, path, reason}, in that order, each
+// member `entry.x ?? undefined` — omitted when null or absent, kept whatever
+// else it is (false, 0, "", a value of the wrong type, Infinity, which is
+// written null). An entry that is not an object has none of the three, so it
+// is {}; a null entry makes pi's `.type` read throw V8's TypeError, which is
+// the error returned — it fails the stream.
+func appendAnthropicInputTransformationsDiagnostic(output *ai.AssistantMessage, list []any) error {
 	if len(list) == 0 {
-		return
+		return nil
 	}
 	details := make([]any, len(list))
 	for i, transformation := range list {
-		// pi's literal {type, path, reason}, in that order. `?? undefined`
-		// omits only null and absent; a present false, 0 or "" is kept, and
-		// so is a value of the wrong type.
+		if transformation == nil {
+			return errors.New("Cannot read properties of null (reading 'type')")
+		}
+		obj, _ := transformation.(ai.OrderedObject)
 		entry := ai.OrderedObject{}
-		for _, f := range []ai.OrderedField{{Key: "type", Value: transformation.Type}, {Key: "path", Value: transformation.Path}, {Key: "reason", Value: transformation.Reason}} {
-			if f.Value != nil {
-				entry = append(entry, f)
+		for _, key := range []string{"type", "path", "reason"} {
+			if v, _ := obj.Get(key); v != nil {
+				entry = append(entry, ai.OrderedField{Key: key, Value: v})
 			}
 		}
 		details[i] = entry
@@ -1302,6 +1285,7 @@ func appendAnthropicInputTransformationsDiagnostic(output *ai.AssistantMessage, 
 		Timestamp: nowMillis(),
 		Details:   ai.OrderedObject{{Key: "transformations", Value: details}},
 	})
+	return nil
 }
 
 // insertAnthropicThinkingLevelMessages is pi's insertThinkingLevelMessages: an

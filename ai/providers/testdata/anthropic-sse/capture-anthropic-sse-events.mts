@@ -26,7 +26,8 @@
 //              text, so key order is part of the expectation;
 //   pushed     the type of every event the stream pushed (null: no type);
 //   message    stopReason, errorMessage, responseId, content and usage of the
-//              result;
+//              result, and the type and details of each diagnostic (not its
+//              timestamp), when it has any;
 //   v8Cause    true when errorMessage embeds a V8 JSON.parse message, which
 //              the port does not reproduce: only the text around it is pi's.
 // A row may make the observer throw ("observer boom") on the observed event at
@@ -88,6 +89,19 @@ const messageDelta = ev(
 );
 const messageStop = ev("message_stop", JSON.stringify({ type: "message_stop" }));
 const minimal = [messageStart, blockStart, textDelta("Hello"), blockStop, messageDelta, messageStop];
+
+// A message_start and a message_delta whose input_transformations are the
+// given JSON text (written as text: JSON.stringify cannot write 1e400).
+const startTransforming = (transformations: string) =>
+	ev(
+		"message_start",
+		`{"type":"message_start","message":{"id":"msg_test","input_transformations":${transformations},"usage":{"input_tokens":12,"output_tokens":0}}}`,
+	);
+const deltaTransforming = (transformations: string, stopReason = "end_turn") =>
+	ev(
+		"message_delta",
+		`{"type":"message_delta","input_transformations":${transformations},"delta":{"stop_reason":"${stopReason}"},"usage":{"output_tokens":5}}`,
+	);
 
 type Case = { name: string; sse: string; v8Cause?: boolean; throwAt?: number; abortFirst?: boolean; oauth?: boolean };
 const B = String.fromCharCode(92); // a backslash, spelled so no tool decodes an escape
@@ -353,6 +367,66 @@ const cases: Case[] = [
 		oauth: true,
 		sse: frames(messageStart, ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":5,"input":{}}}')),
 	},
+	// input_transformations: any array replaces the list (Array.isArray is the
+	// only guard), and on a turn that succeeds each entry becomes {type, path,
+	// reason}, each `?? undefined`. A null entry makes that `.type` read throw
+	// V8's TypeError, failing the stream — whether message_start or a
+	// message_delta restating the list carried it.
+	{
+		name: "inputTransformationsNullEntryFails",
+		sse: frames(startTransforming("[null]"), blockStart, textDelta("Hello"), blockStop, messageDelta, messageStop),
+	},
+	{
+		name: "inputTransformationsDeltaRestatesWithANullEntry",
+		sse: frames(
+			startTransforming('[{"type":"a"}]'),
+			blockStart,
+			textDelta("Hello"),
+			blockStop,
+			deltaTransforming('[{"type":"b"},null]'),
+			messageStop,
+		),
+	},
+	// ...but a refused turn throws first, so its null entry is never read.
+	{
+		name: "inputTransformationsNullEntryOnARefusedTurn",
+		sse: frames(startTransforming("[null]"), deltaTransforming("[null]", "refusal"), messageStop),
+	},
+	// A number past float64's range is Infinity to JSON.parse, not a failure:
+	// the list it is in still replaces the last one, and the diagnostic writes
+	// it null.
+	{
+		name: "inputTransformationsDeltaRestatesWithAnOverflow",
+		sse: frames(
+			startTransforming('[{"type":"a"}]'),
+			blockStart,
+			textDelta("Hello"),
+			blockStop,
+			deltaTransforming('[{"type":"b","path":1e400}]'),
+			messageStop,
+		),
+	},
+	{
+		name: "inputTransformationsOverflowingEntry",
+		sse: frames(startTransforming("[1e400]"), blockStart, textDelta("Hello"), blockStop, messageDelta, messageStop),
+	},
+	// Each entry is written {type, path, reason} in that order, each member as
+	// JSON.parse made it (its own key order, JavaScript numbers); an entry
+	// that is not an object, and a member that is null, contribute nothing,
+	// while false and 0 are kept.
+	{
+		name: "inputTransformationsEntriesAsPiWritesThem",
+		sse: frames(
+			startTransforming(
+				'[{"reason":{"z":1,"a":10.0},"type":"x","path":[1e3,-0],"extra":1},5,"s",true,[1],{},{"type":null,"path":false,"reason":0}]',
+			),
+			blockStart,
+			textDelta("Hello"),
+			blockStop,
+			messageDelta,
+			messageStop,
+		),
+	},
 	// A throwing observer fails the stream with its message (pi awaits the
 	// callback inside the adapter's try): on the first event...
 	{ name: "observerThrowsOnFirstEvent", sse: frames(...minimal), throwAt: 0 },
@@ -423,6 +497,14 @@ for (const c of cases) {
 			responseId: message.responseId ?? null,
 			content: message.content,
 			usage: message.usage,
+			...(message.diagnostics
+				? {
+						diagnostics: message.diagnostics.map((d: { type: string; details?: unknown }) => ({
+							type: d.type,
+							details: d.details ?? null,
+						})),
+					}
+				: {}),
 		},
 	});
 }
