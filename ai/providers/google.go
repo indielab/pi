@@ -419,21 +419,18 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			// providerHeadersToRecord({"User-Agent": getPiUserAgent(),
 			// ...model.headers, ...optionsHeaders}) (upstream 87af49dec added
 			// the leading user agent; google sent none before).
-			// Merging before converting is what lets a deletion marker cancel a
-			// value an earlier source supplied; the conversion then drops the
-			// markers rather than deleting, because this adapter builds the
-			// request itself and cannot unset a header the SDK owns
-			// (x-goog-api-key, content-type). That is also why a marker on the
-			// user agent behaves differently here than on the SDK adapters: it
-			// cancels pi's default only when it collides with it by name, and
-			// never removes a header this adapter set literally.
+			// The conversion folds names case-insensitively (upstream
+			// a328aa89a): the last slot for a name wins, so a marker cancels pi's
+			// default or an earlier source's value whatever its spelling. It
+			// never deletes from the request, because this adapter builds the
+			// request itself and a marker cannot unset a header the SDK owns
+			// (x-goog-api-key, content-type).
 			//
-			// This is the one adapter where the merged object's slot order does
-			// NOT fully decide the wire value: @google/genai builds its request
-			// headers with Headers.append, so two case-variant names arrive
-			// comma-joined there and as the last slot's value alone here. That
-			// gap is recorded in docs/UPSTREAM.md; the slot order at least
-			// picks the same winner pi puts last in the join.
+			// The merged object's slot order still does not fully decide the
+			// wire value: @google/genai seeds its own default headers and
+			// appends the record to them with Headers.append, so a record entry
+			// spelled differently from one of those defaults arrives comma-joined
+			// with it there. That gap is recorded in docs/UPSTREAM.md.
 			o := &headerObject{}
 			o.merge(piUserAgentHeaders())
 			o.mergeStrings(getSessionAttributionHeaders(model, opts.SessionID))

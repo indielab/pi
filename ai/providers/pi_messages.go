@@ -936,11 +936,12 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 		httpReq.Header.Set("content-type", "application/json")
 		// pi merges only providerHeadersToRecord(options.headers) — no attribution
 		// bundle, no model.headers — after the three fixed headers. The record
-		// conversion drops deletion markers instead of deleting: pi spreads it
-		// into an object literal that already holds the fixed headers, so a
-		// marker cannot unset the authorization this adapter just wrote.
-		// headerObject carries the merge order so a consumer map holding two
-		// spellings of one name cannot let Go's map iteration pick the winner.
+		// folds names case-insensitively, so a marker deletes an earlier
+		// spelling of its name inside the record, but pi spreads the record into
+		// an object literal that already holds the fixed headers, so a marker
+		// cannot unset the authorization this adapter just wrote. headerObject
+		// carries the merge order so a consumer map holding two spellings of one
+		// name cannot let Go's map iteration pick the winner.
 		o := &headerObject{}
 		o.merge(opts.Headers)
 		o.applyAsRecord(httpReq.Header)

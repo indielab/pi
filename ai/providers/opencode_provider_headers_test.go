@@ -45,10 +45,11 @@ type opencodeAdapter struct {
 	api       ai.Api
 	providers []ai.ProviderId // the opencode providers whose table names this api
 	// deletesOnMarker reports whether a caller's case-variant deletion marker
-	// suppresses the header on this adapter. False for google alone: pi's
-	// providerHeadersToRecord DROPS a null instead of applying it, so the port's
-	// attribution value survives there while post-commit pi's bare-SDK path
-	// sends nothing. That is entry 15's cell, and it is left unasserted.
+	// suppresses the header on this adapter. True for all four since upstream
+	// a328aa89a: google's providerHeadersToRecord now folds names
+	// case-insensitively, so the caller's null deletes the differently-spelled
+	// session header on pi's host path too, agreeing with pi's bare path, whose
+	// hasHeader already declined to inject it.
 	deletesOnMarker bool
 	capture         func(t *testing.T, model *ai.Model, opts ai.StreamOptions) http.Header
 }
@@ -63,7 +64,7 @@ func opencodeAdapters() []opencodeAdapter {
 		}},
 		// google-generative-ai is in opencode's table only (opencode-go.ts names
 		// the other three).
-		{ai.APIGoogleGenerativeAI, []ai.ProviderId{"opencode"}, false, captureGoogleHeaders},
+		{ai.APIGoogleGenerativeAI, []ai.ProviderId{"opencode"}, true, captureGoogleHeaders},
 	}
 }
 
@@ -151,8 +152,8 @@ func TestOpenCodeSessionHeaderCallerOverride(t *testing.T) {
 }
 
 // pi: the same test's null case. A caller deletion marker is preserved rather
-// than substituted, and downstream that means the header is not sent at all.
-// google is excluded and unasserted — see opencodeAdapter.deletesOnMarker.
+// than substituted, and downstream that means the header is not sent at all —
+// on google too since a328aa89a (see opencodeAdapter.deletesOnMarker).
 func TestOpenCodeSessionHeaderCallerDeletionMarker(t *testing.T) {
 	for _, adapter := range opencodeAdapters() {
 		if !adapter.deletesOnMarker {

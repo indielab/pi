@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
@@ -275,6 +276,94 @@ func TestPiMessagesHeaderStates(t *testing.T) {
 	}
 	if _, ok := got["X-Empty"]; !ok {
 		t.Fatal("an empty string must still be sent")
+	}
+}
+
+// capturePiMessagesHeaders runs one pi-messages request against a local server
+// and returns the headers that reached the wire.
+func capturePiMessagesHeaders(t *testing.T, headers ai.ProviderHeaders) http.Header {
+	t.Helper()
+	var got http.Header
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = r.Header.Clone()
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, piMessagesSSE(
+			`{"type":"start"}`,
+			`{"type":"done","reason":"stop","usage":`+piMessagesUsageJSON+`,"responseId":"resp_1"}`,
+		))
+	}))
+	defer server.Close()
+	final := StreamPiMessages(context.Background(), piMessagesTestModel(server.URL+"/v1"), ai.NormalizeContext(
+		piMessagesTestContext()),
+		&PiMessagesOptions{StreamOptions: ai.StreamOptions{
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key", Headers: headers},
+		}}).
+		Result()
+	if final.StopReason == ai.StopError {
+		t.Fatalf("stream failed: %s", final.ErrorMessage)
+	}
+	return got
+}
+
+// A marker deletes a differently-spelled value inside the same source too:
+// providerHeadersToRecord folds {"X-A": "1", "x-a": null} to nothing (upstream
+// a328aa89a; measured on pi's wire through fetch — no x-a header). Within one
+// Go map the slot order is sorted name order, and "x-a" sorts last, as it is
+// last in the JS literal.
+func TestPiMessagesCaseVariantMarkerDeletesWithinSource(t *testing.T) {
+	h := capturePiMessagesHeaders(t, ai.ProviderHeaders{"X-A": strPtr("1"), "x-a": nil})
+	if values, present := h["X-A"]; present {
+		t.Fatalf("X-A = %q, want it absent: the marker in the last slot deletes the earlier spelling", values)
+	}
+	if got := h.Get("authorization"); got != "Bearer test-key" {
+		t.Fatalf("authorization = %q, want the adapter's own value", got)
+	}
+}
+
+// headerObject.record is pi's providerHeadersToRecord since upstream a328aa89a.
+// Each case is google's one spread object, built source by source; every want
+// is the output of a328aa89a's providerHeadersToRecord executed under node
+// over the same sources in the same order.
+func TestHeaderObjectRecordMatchesPi(t *testing.T) {
+	ua := "pi (x)"
+	for _, tc := range []struct {
+		name    string
+		sources []ai.ProviderHeaders
+		want    []recordEntry
+	}{
+		{"lowercase override",
+			[]ai.ProviderHeaders{{"User-Agent": &ua}, {"user-agent": strPtr("custom")}},
+			[]recordEntry{{"user-agent", "custom"}}},
+		{"lowercase marker",
+			[]ai.ProviderHeaders{{"User-Agent": &ua}, {"user-agent": nil}},
+			nil},
+		{"cross-source marker",
+			[]ai.ProviderHeaders{{"User-Agent": &ua}, {"X-Trace": strPtr("model")}, {"x-trace": nil}},
+			[]recordEntry{{"User-Agent", ua}}},
+		// JS spread updates "User-Agent" in its first slot, so "user-agent"
+		// still holds the last slot and wins.
+		{"exact re-spelling keeps its slot",
+			[]ai.ProviderHeaders{{"User-Agent": &ua}, {"user-agent": strPtr("m")}, {"User-Agent": strPtr("o")}},
+			[]recordEntry{{"user-agent", "m"}}},
+		{"re-set moves to the end",
+			[]ai.ProviderHeaders{{"A": strPtr("1")}, {"B": strPtr("2")}, {"a": strPtr("3")}},
+			[]recordEntry{{"B", "2"}, {"a", "3"}}},
+		{"empty string kept",
+			[]ai.ProviderHeaders{{"X-Empty": strPtr("")}},
+			[]recordEntry{{"X-Empty", ""}}},
+		{"marker then value",
+			[]ai.ProviderHeaders{{"X-A": nil}, {"x-a": strPtr("v")}},
+			[]recordEntry{{"x-a", "v"}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			o := &headerObject{}
+			for _, source := range tc.sources {
+				o.merge(source)
+			}
+			if got := o.record(); !slices.Equal(got, tc.want) {
+				t.Fatalf("record = %+v, want %+v", got, tc.want)
+			}
+		})
 	}
 }
 

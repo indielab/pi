@@ -328,11 +328,11 @@ func TestOptionsHeadersOverridePiUserAgentAndModelHeaders(t *testing.T) {
 	})
 }
 
-// A deletion marker still wins over the new default. The two adapter families
-// differ, exactly as pi's do: adapters that hand the merged headers to an SDK
-// as `defaultHeaders` let a null DELETE the header, while google converts
-// through providerHeadersToRecord, where a null only means "this entry is not
-// sent" and therefore cancels pi's default only by colliding with its name.
+// A deletion marker still wins over the new default. Adapters that hand the
+// merged headers to an SDK as `defaultHeaders` let a null DELETE the header;
+// google converts through providerHeadersToRecord, which since upstream
+// a328aa89a folds names case-insensitively, so a null there removes pi's
+// default whatever its spelling.
 func TestUserAgentMarkerBeatsPiDefault(t *testing.T) {
 	t.Run("anthropic", func(t *testing.T) {
 		h := captureAnthropicHeaders(t, anthropicUAModel(), anthropicUAOptions(ai.ProviderRequestOptions{
@@ -397,11 +397,15 @@ func TestUserAgentMarkerBeatsPiDefault(t *testing.T) {
 			t.Fatalf("a marker on the same name must drop pi's default, got %q", got)
 		}
 	})
-	// google, differently-spelled marker: pi's object keeps BOTH keys, the
-	// record drops only the null one, and pi's default survives. This is the
-	// pointed difference from the SDK adapters above, where the same input
-	// deletes the header.
-	t.Run("google non-colliding marker keeps the default", func(t *testing.T) {
+	// google, differently-spelled marker: pi's object holds both keys, and the
+	// record folds them — the null sits in the last slot for "user-agent", so
+	// it deletes pi's default instead of being skipped beside it (upstream
+	// a328aa89a; before it pi's default survived here). Measured against
+	// @google/genai 2.21.0: the record is then empty and the wire carries
+	// genai's own `google-genai-sdk/2.21.0 gl-node/<node>`. The port sends
+	// net/http's agent instead — the D12 substitution class, which is why only
+	// pi's own agent is ruled out here.
+	t.Run("google case-variant marker drops the default", func(t *testing.T) {
 		model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google",
 			Input: []string{"text"}, MaxTokens: 4096}
 		h := captureGoogleHeaders(t, model, ai.StreamOptions{
@@ -410,8 +414,32 @@ func TestUserAgentMarkerBeatsPiDefault(t *testing.T) {
 				Headers: ai.ProviderHeaders{"user-agent": nil},
 			},
 		})
-		wantUserAgent(t, h, piUserAgent())
+		if got := h.Get("User-Agent"); got == piUserAgent() {
+			t.Fatalf("a case-variant marker must drop pi's default, got %q", got)
+		}
 	})
+}
+
+// A marker in a later source deletes a differently-spelled value an earlier
+// source put in the record, not only its own spelling. pi's record for
+// model.headers {"X-Trace": "model"} and options.headers {"x-trace": null} is
+// {"User-Agent": <pi>}: measured by executing a328aa89a's
+// providerHeadersToRecord over google's merged object under node, and on the
+// wire through @google/genai 2.21.0 (no x-trace header).
+func TestGoogleCaseVariantMarkerDeletesEarlierSource(t *testing.T) {
+	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google",
+		Input: []string{"text"}, MaxTokens: 4096,
+		Headers: ai.ProviderHeaders{"X-Trace": strPtr("model")}}
+	h := captureGoogleHeaders(t, model, ai.StreamOptions{
+		ProviderRequestOptions: ai.ProviderRequestOptions{
+			APIKey:  "g-key",
+			Headers: ai.ProviderHeaders{"x-trace": nil},
+		},
+	})
+	if values, present := h["X-Trace"]; present {
+		t.Fatalf("X-Trace = %q, want it absent: the later marker deletes the model's spelling", values)
+	}
+	wantUserAgent(t, h, piUserAgent())
 }
 
 // Cloudflare attribution is a separate surface and still outranks the default:
@@ -429,14 +457,14 @@ func TestCloudflareAttributionUserAgentBeatsPiDefault(t *testing.T) {
 
 // The record path must not depend on Go map iteration order either. Two
 // spellings inside ONE source have no order to reproduce, so sorted name order
-// is the tie-break (see headerObject.merge).
+// is the tie-break (see headerObject.merge): "user-agent" sorts after
+// "User-Agent", so it takes the last slot and the fold keeps it alone.
 func TestHeaderObjectRecordCaseCollisionIsDeterministic(t *testing.T) {
 	source := ai.ProviderHeaders{
 		"User-Agent": strPtr(piUserAgent()),
 		"user-agent": strPtr("from-model"),
 		"X-Keep":     strPtr("keep"),
-		// A marker is DROPPED on this path rather than deleting, so it must not
-		// take the win from the value sorting after it.
+		// A marker with no other spelling leaves nothing to write.
 		"X-Trace": nil,
 	}
 	// One run cannot tell a sorted implementation from a lucky one: Go
@@ -466,10 +494,14 @@ func TestHeaderObjectRecordCaseCollisionIsDeterministic(t *testing.T) {
 // spelling sorts like. "USER-AGENT" sorts BEFORE "User-Agent" and used to lose
 // here for that reason alone.
 //
-// pi's wire value is not reachable on this adapter: @google/genai appends, so
-// it sends `pi (…), model-agent` where the port sends the winner alone
-// (executed against @google/genai 1.52.0 from ~/.cache/pi-npm/0.84.2 —
-// recorded in docs/UPSTREAM.md, not asserted here).
+// What this pins is pi's record, which since upstream a328aa89a holds the
+// later spelling alone: {"user-agent": "model-agent"}. pi's wire value is not
+// reachable on this adapter: @google/genai seeds its own "User-Agent" default
+// and appends the record to it, so pi sends
+// `google-genai-sdk/2.21.0 gl-node/<node>, model-agent` (measured against
+// @google/genai 2.21.0, the version a328aa89a's package-lock names) where the
+// port sends the record's value alone — docs/UPSTREAM.md D10/D12, not asserted
+// here.
 func TestGoogleCaseCollidingModelUserAgentWins(t *testing.T) {
 	for _, name := range []string{"user-agent", "USER-AGENT", "User-agent"} {
 		t.Run(name, func(t *testing.T) {

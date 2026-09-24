@@ -2,7 +2,9 @@ package providers
 
 import (
 	"net/http"
+	"slices"
 	"sort"
+	"strings"
 
 	"github.com/sky-valley/pi/ai"
 )
@@ -17,15 +19,18 @@ import (
 //     have sent. headerObject.applyAsDefaultHeaders is that path.
 //   - Adapters that build the request themselves (google-generative-ai,
 //     pi-messages) run the merged headers through providerHeadersToRecord
-//     (pi utils/headers.ts), which drops null entries. A null there means "not
-//     sent", and it cannot remove a header the adapter set literally.
-//     headerObject.applyAsRecord is that path.
+//     (pi utils/headers.ts), which folds names case-insensitively: the last
+//     slot for a name wins, and a null there deletes every earlier spelling
+//     of it from the record (upstream a328aa89a). The record is then spread
+//     over the adapter's own literal headers, so a null still cannot remove a
+//     header the adapter set literally. headerObject.applyAsRecord is that
+//     path.
 //
 // Two divergences live in here and are recorded in docs/UPSTREAM.md rather than
 // papered over: an empty-string value is dropped entirely by net/http on the
 // User-Agent header where pi sends it present-and-empty, and @google/genai
-// transmits case-variant names comma-joined where this package transmits the
-// winner alone.
+// comma-joins a record entry onto its own default header of the same name
+// spelled differently, where this package sends the record's value alone.
 
 // headerObject models the ONE header object pi builds per provider request.
 //
@@ -115,16 +120,41 @@ func (o *headerObject) applyAsDefaultHeaders(h http.Header) {
 	}
 }
 
-// applyAsRecord writes the object onto h with a marker DROPPED rather than
-// deleting, mirroring pi's providerHeadersToRecord (utils/headers.ts) for the
-// adapters that build the request themselves. A null means "this entry is not
-// sent"; it cannot remove a header the adapter wrote literally, and it cancels
-// an earlier source's value only because the merge already overwrote it.
-func (o *headerObject) applyAsRecord(h http.Header) {
+// recordEntry is one header of pi's providerHeadersToRecord result: the
+// spelling that survived for its case-folded name, and its value.
+type recordEntry struct{ name, value string }
+
+// record folds the object the way pi's providerHeadersToRecord does since
+// upstream a328aa89a. Names fold case-insensitively in slot order: each slot
+// deletes whatever an earlier slot left under its folded name, then stores its
+// own spelling and value — unless its value is a marker, which leaves the
+// folded name deleted. So the LAST slot for a name decides it, a marker there
+// removes every earlier spelling instead of merely being skipped, and a
+// re-stored name moves to the end, as a JS Map's delete-then-set does.
+//
+// Header names are ASCII tokens, so strings.ToLower agrees with JavaScript's
+// toLowerCase on every name a request can carry.
+func (o *headerObject) record() []recordEntry {
+	var out []recordEntry
 	for _, name := range o.names {
+		folded := strings.ToLower(name)
+		out = slices.DeleteFunc(out, func(e recordEntry) bool { return strings.ToLower(e.name) == folded })
 		if value := o.values[name]; value != nil {
-			h.Set(name, *value)
+			out = append(out, recordEntry{name: name, value: *value})
 		}
+	}
+	return out
+}
+
+// applyAsRecord writes pi's providerHeadersToRecord result onto h, for the
+// adapters that build the request themselves. The record is folded before it
+// reaches h (see record), so a marker cancels every spelling an earlier slot
+// gave its name. It never deletes from h: the record is spread over the
+// headers the adapter wrote literally, which are not part of it, so a marker
+// cannot remove one of those.
+func (o *headerObject) applyAsRecord(h http.Header) {
+	for _, e := range o.record() {
+		h.Set(e.name, e.value)
 	}
 }
 
