@@ -35,11 +35,12 @@ import (
 // trailing newline work as it does in pi instead of failing the stream.
 //
 // Two divergences live in here and are recorded in docs/UPSTREAM.md rather than
-// papered over: an empty-string value is dropped entirely by net/http on the
-// User-Agent header where pi sends it present-and-empty, and @google/genai
-// comma-joins a record entry onto its own User-Agent or x-goog-api-client
-// default when the entry spells the name differently, where this package —
-// which sends neither default — sends the record's value alone.
+// papered over: an empty or whitespace-only User-Agent value is dropped
+// entirely where pi sends the header present-and-empty (setHeader normalizes a
+// whitespace-only value to empty, and net/http omits an empty User-Agent), and
+// @google/genai comma-joins a record entry onto its own User-Agent or
+// x-goog-api-client default when the entry spells the name differently, where
+// this package — which sends neither default — sends the record's value alone.
 
 // headerObject models the ONE header object pi builds per provider request.
 //
@@ -205,6 +206,8 @@ func (o *headerObject) applyAsRecord(h http.Header, literals ...recordEntry) {
 // setHeader writes one header value the way a fetch Headers object stores it:
 // normalized (see trimHTTPWhitespace). Every header value an adapter writes
 // goes through here, because in pi every one goes through a Headers object.
+// A whitespace-only User-Agent normalizes to empty, which net/http then omits:
+// docs/UPSTREAM.md D11, which pi sends present and empty.
 func setHeader(h http.Header, name, value string) { h.Set(name, trimHTTPWhitespace(value)) }
 
 // trimHTTPWhitespace strips what the Fetch standard calls HTTP whitespace —
