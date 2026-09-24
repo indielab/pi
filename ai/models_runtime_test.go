@@ -149,11 +149,16 @@ func TestModelsApplyAuthBaseURLHeadersEnv(t *testing.T) {
 	}
 }
 
+// pi's lazyStream reports a setup failure as error.message, and a
+// ModelsError's message carries no code: "Unknown provider: ghost", exactly.
 func TestModelsUnknownProvider(t *testing.T) {
 	m := CreateModels(nil)
 	res := m.Stream(context.Background(), &Model{Provider: "ghost", ID: "x", Api: "api"}, Context{}, nil).Result()
 	if res.StopReason != StopError {
 		t.Fatalf("unknown provider should error, got %v", res.StopReason)
+	}
+	if res.ErrorMessage != "Unknown provider: ghost" {
+		t.Fatalf("errorMessage = %q, want pi's %q", res.ErrorMessage, "Unknown provider: ghost")
 	}
 }
 
@@ -175,7 +180,7 @@ func TestModelsGetAuthUnconfigured(t *testing.T) {
 	// Streaming against an unconfigured provider is an error (ff28097a: the
 	// pre-facade runtime passed the request through untouched).
 	sres := m.Stream(context.Background(), &Model{Provider: "p", ID: "m", Api: "api"}, Context{}, nil).Result()
-	if sres.StopReason != StopError || !strings.Contains(sres.ErrorMessage, "Provider is not configured: p") {
+	if sres.StopReason != StopError || sres.ErrorMessage != "Provider is not configured: p" {
 		t.Fatalf("unconfigured stream should error with pi's message, got %q / %q", sres.StopReason, sres.ErrorMessage)
 	}
 }
@@ -390,9 +395,8 @@ func TestModelsRefreshOAuthBeforeModels(t *testing.T) {
 }
 
 // TestModelsErrorKeepsCause mirrors pi "keeps the underlying reason in wrapped
-// oauth refresh errors" (upstream 4cf0a729). Go's ModelsError.Error() already
-// composes code + message + cause, so the wrapped reason is surfaced to callers
-// that print err.Error(); this locks that a failed OAuth refresh keeps its cause.
+// oauth refresh errors" (upstream 4cf0a729): the cause's text rides in the
+// message itself, after the wrapper's own words.
 func TestModelsErrorKeepsCause(t *testing.T) {
 	creds := NewInMemoryCredentialStore()
 	_, _ = creds.Modify(context.Background(), "p1", func(*Credential) (*Credential, error) {
@@ -415,11 +419,38 @@ func TestModelsErrorKeepsCause(t *testing.T) {
 	if !errors.As(err, &me) || me.Code != ErrOAuth {
 		t.Fatalf("want an ErrOAuth ModelsError, got %v", err)
 	}
-	if !strings.Contains(err.Error(), "OAuth refresh failed for p1") {
-		t.Fatalf("error must keep the wrapper message: %q", err.Error())
+	const want = "OAuth refresh failed for p1: token refresh failed (400): invalid_grant"
+	if err.Error() != want {
+		t.Fatalf("error = %q, want pi's %q", err.Error(), want)
 	}
-	if !strings.Contains(err.Error(), "token refresh failed (400): invalid_grant") {
-		t.Fatalf("error must keep the underlying cause: %q", err.Error())
+}
+
+// ModelsError's text is pi's ModelsError.message (utils/models-error.ts
+// withCauseDetail at a328aa89a): no code, and a cause's text appended only when
+// it is non-empty after a JavaScript trim and not already in the message.
+func TestModelsErrorMessageMatchesPi(t *testing.T) {
+	feff := string(rune(0xFEFF)) // JS trims it; strings.TrimSpace does not
+	nel := string(rune(0x85))    // strings.TrimSpace trims it; JS does not
+	for _, tc := range []struct {
+		name string
+		err  *ModelsError
+		want string
+	}{
+		{"no cause", newModelsError(ErrProvider, "Unknown provider: ghost", nil), "Unknown provider: ghost"},
+		{"cause appended", newModelsError(ErrAuth, "API key auth failed for provider p", errors.New("nope")),
+			"API key auth failed for provider p: nope"},
+		{"cause trimmed", newModelsError(ErrAuth, "m", errors.New("  spaced\n")), "m: spaced"},
+		{"blank cause", newModelsError(ErrAuth, "m", errors.New(" \t\n")), "m"},
+		{"cause already in the message", newModelsError(ErrAuth, "refresh failed: invalid_grant", errors.New("invalid_grant")),
+			"refresh failed: invalid_grant"},
+		{"BOM is JS whitespace", newModelsError(ErrAuth, "m", errors.New(feff+"x"+feff)), "m: x"},
+		{"NEL is not JS whitespace", newModelsError(ErrAuth, "m", errors.New(nel+"x")), "m: " + nel + "x"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.err.Error(); got != tc.want {
+				t.Fatalf("Error() = %q, want %q", got, tc.want)
+			}
+		})
 	}
 }
 

@@ -3,11 +3,14 @@ package ai
 import (
 	"context"
 	"errors"
-	"fmt"
+	"strings"
 	"time"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
-// ModelsErrorCode classifies a ModelsError (pi packages/ai/src/auth/resolve.ts).
+// ModelsErrorCode classifies a ModelsError (pi utils/models-error.ts, which
+// auth/resolve.ts re-exports since upstream a328aa89a).
 type ModelsErrorCode string
 
 const (
@@ -19,18 +22,35 @@ const (
 	ErrOAuth           ModelsErrorCode = "oauth"
 )
 
-// ModelsError is a coded error from model/auth resolution. Cause is unwrappable.
+// ModelsError is a coded error from model/auth resolution (pi ModelsError).
+// Cause is unwrappable.
 type ModelsError struct {
 	Code    ModelsErrorCode
 	Message string
 	Cause   error
 }
 
+// Error is pi's ModelsError.message, which is all pi's callers surface — an
+// error stream's errorMessage, a rejected cancelDeferred. The code is not part
+// of it; callers that need the code read the Code field.
+//
+// A cause is kept in the text the way pi's withCauseDetail keeps "the
+// underlying reason in it": the cause's text, trimmed as JavaScript trims
+// (jstext.Trim, not strings.TrimSpace — see docs/UPSTREAM.md D16), is appended
+// after ": " unless it is empty or the message already contains it.
+//
+// One case Go cannot see: pi formats an Error cause as `message || name`, so a
+// cause whose message is empty still contributes its name (": Error"). A Go
+// error has no name, so a cause whose text is empty contributes nothing.
 func (e *ModelsError) Error() string {
-	if e.Cause != nil {
-		return fmt.Sprintf("%s: %s: %v", e.Code, e.Message, e.Cause)
+	if e.Cause == nil {
+		return e.Message
 	}
-	return fmt.Sprintf("%s: %s", e.Code, e.Message)
+	detail := jstext.Trim(e.Cause.Error())
+	if detail == "" || strings.Contains(e.Message, detail) {
+		return e.Message
+	}
+	return e.Message + ": " + detail
 }
 
 func (e *ModelsError) Unwrap() error { return e.Cause }
