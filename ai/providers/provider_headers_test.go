@@ -340,6 +340,7 @@ func TestPiMessagesRecordJoinsCaseVariantFixedHeaders(t *testing.T) {
 		{"accept joins", ai.ProviderHeaders{"Accept": strPtr("application/json")}, "accept", "text/event-stream, application/json"},
 		{"content-type joins", ai.ProviderHeaders{"Content-Type": strPtr("text/plain")}, "content-type", "application/json, text/plain"},
 		{"each joined value is trimmed", ai.ProviderHeaders{"Authorization": strPtr("  x  ")}, "authorization", "Bearer test-key, x"},
+		{"each joined value is tab-trimmed", ai.ProviderHeaders{"Authorization": strPtr("\tx\t")}, "authorization", "Bearer test-key, x"},
 		{"an empty value still joins", ai.ProviderHeaders{"Authorization": strPtr("")}, "authorization", "Bearer test-key,"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
