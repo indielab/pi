@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
-	"math/big"
 	"regexp"
 	"slices"
 	"sort"
@@ -629,125 +628,12 @@ func toFloat(value any) (float64, bool) {
 	}
 }
 
-// jsNumber mirrors ECMA-262 StringToNumber (the JS Number(string) coercion).
-// ok=false means the result is NaN. Note ok=true may still yield ±Inf
-// ("Infinity", "1e1000"); callers gate with Number.isFinite/isInteger
-// semantics. Verified against node: " 12 "→12, "0x10"→16, "0b101"→5,
-// "0o17"→15, "+5"→5, "1e3"→1000, ".5"→0.5, "5."→5, ""→0, "1_0"→NaN,
-// "0x1p4"→NaN, "-0x10"→NaN, "12abc"→NaN, "NaN"→NaN.
+// jsNumber is jstext.StringToNumber with NaN reported as ok=false. Note ok=true
+// may still yield ±Inf ("Infinity", "1e1000"); callers gate with
+// Number.isFinite/isInteger semantics.
 func jsNumber(value string) (float64, bool) {
-	s := jstext.Trim(value) // StringToNumber trims StrWhiteSpaceChar, trim's set
-	if s == "" {
-		return 0, true // Number("") === 0
-	}
-
-	// Non-decimal integer literals: 0x/0X, 0b/0B, 0o/0O. No sign allowed.
-	if len(s) > 2 && s[0] == '0' {
-		var base int
-		switch s[1] {
-		case 'x', 'X':
-			base = 16
-		case 'b', 'B':
-			base = 2
-		case 'o', 'O':
-			base = 8
-		}
-		if base != 0 {
-			digits := s[2:]
-			if !validDigits(digits, base) {
-				return 0, false
-			}
-			// Arbitrary precision (JS allows >2^64), rounded to float64.
-			n, ok := new(big.Int).SetString(digits, base)
-			if !ok {
-				return 0, false
-			}
-			f, _ := new(big.Float).SetInt(n).Float64()
-			return f, true
-		}
-	}
-
-	sign := 1.0
-	rest := s
-	switch s[0] {
-	case '+':
-		rest = s[1:]
-	case '-':
-		sign, rest = -1, s[1:]
-	}
-	if rest == "Infinity" {
-		return sign * math.Inf(1), true
-	}
-	// Validate StrUnsignedDecimalLiteral strictly before ParseFloat: Go's
-	// ParseFloat accepts JS-invalid forms ("1_0", "0x1p4", "inf", "nan").
-	if !isStrUnsignedDecimalLiteral(rest) {
-		return 0, false
-	}
-	f, err := strconv.ParseFloat(rest, 64)
-	if err != nil {
-		if ne, isNum := err.(*strconv.NumError); isNum && ne.Err == strconv.ErrRange {
-			// Overflow → ±Inf (like JS "1e1000" → Infinity); underflow → ~0.
-			return sign * f, true
-		}
-		return 0, false
-	}
-	return sign * f, true
-}
-
-func validDigits(s string, base int) bool {
-	if s == "" {
-		return false
-	}
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		var d byte
-		switch {
-		case c >= '0' && c <= '9':
-			d = c - '0'
-		case c >= 'a' && c <= 'z':
-			d = c - 'a' + 10
-		case c >= 'A' && c <= 'Z':
-			d = c - 'A' + 10
-		default:
-			return false
-		}
-		if int(d) >= base {
-			return false
-		}
-	}
-	return true
-}
-
-// isStrUnsignedDecimalLiteral validates ECMA-262 StrUnsignedDecimalLiteral:
-// digits [. digits] [ExponentPart] | . digits [ExponentPart].
-func isStrUnsignedDecimalLiteral(s string) bool {
-	i := 0
-	digits := func() int {
-		start := i
-		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
-			i++
-		}
-		return i - start
-	}
-	intLen := digits()
-	fracLen := 0
-	if i < len(s) && s[i] == '.' {
-		i++
-		fracLen = digits()
-	}
-	if intLen == 0 && fracLen == 0 {
-		return false
-	}
-	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
-		i++
-		if i < len(s) && (s[i] == '+' || s[i] == '-') {
-			i++
-		}
-		if digits() == 0 {
-			return false
-		}
-	}
-	return i == len(s)
+	f := jstext.StringToNumber(value)
+	return f, !math.IsNaN(f)
 }
 
 func coercePrimitiveByType(value any, typ string) any {

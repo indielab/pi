@@ -1072,12 +1072,6 @@ func mapGoogleStopReason(reason string) (ai.StopReason, error) {
 
 // ---- SSE chunk types ----
 
-type googleChunkError struct {
-	Code    int    `json:"code"`
-	Message string `json:"message"`
-	Status  string `json:"status"`
-}
-
 type googleChunk struct {
 	ResponseID string `json:"responseId"`
 	Candidates []struct {
@@ -1093,7 +1087,6 @@ type googleChunk struct {
 		ThoughtsTokenCount      int `json:"thoughtsTokenCount"`
 		TotalTokenCount         int `json:"totalTokenCount"`
 	} `json:"usageMetadata"`
-	Error *googleChunkError `json:"error"`
 }
 
 type googlePart struct {
@@ -1109,22 +1102,72 @@ type googlePart struct {
 	} `json:"functionCall"`
 }
 
-// googleAPIError formats a {code,message,status} error payload the way the
-// @google/genai SDK does (api_client processStreamResponse → ApiError:
-// "got status: ${status}. ${JSON.stringify(chunkJson)}"). It returns nil when
-// the code is outside the SDK's 400..599 throw range.
-func googleAPIError(e *googleChunkError, rawChunk string) error {
-	if e == nil || e.Code < 400 || e.Code >= 600 {
+// googleBareJSONError is the check @google/genai 2.21.0 runs on every network
+// read before buffering it (processStreamResponse): when the whole read
+// parses as JSON holding an "error" key, it computes
+//
+//	`got status: ${error.status}. ${JSON.stringify(chunkJson)}`
+//
+// and throws that as an ApiError when error.code >= 400 && error.code < 600,
+// with JavaScript's coercions ("500" and [429] qualify; an absent status reads
+// "undefined"). Anything else thrown inside the check — a property read on a
+// primitive or null, a value with no primitive form — is swallowed by the
+// SDK's catch, which rethrows only ApiErrors; so is a read that is not JSON.
+func googleBareJSONError(read string) error {
+	parsed, err := jstext.Parse([]byte(read))
+	if err != nil {
 		return nil
 	}
-	return fmt.Errorf("got status: %s. %s", e.Status, rawChunk)
+	chunk, ok := parsed.(map[string]any)
+	if !ok {
+		return nil // `'error' in` a primitive throws; an array has no "error"
+	}
+	e, ok := chunk["error"]
+	if !ok {
+		return nil
+	}
+	fields, ok := e.(map[string]any)
+	if !ok {
+		return nil // null throws reading .status; any other value reads undefined twice
+	}
+	status := "undefined"
+	if v, present := fields["status"]; present {
+		if status, ok = jstext.ToString(v); !ok {
+			return nil
+		}
+	}
+	code, present := fields["code"]
+	if !present {
+		return nil
+	}
+	if n, ok := jstext.ToNumber(code); !ok || !(n >= 400 && n < 600) {
+		return nil
+	}
+	return fmt.Errorf("got status: %s. %s", status, googleStringifyRead(read, parsed))
+}
+
+// googleStringifyRead is JSON.stringify of a read JSON.parse accepted: the
+// wire's key order, the compact spacing and JavaScript's number spelling.
+func googleStringifyRead(read string, parsed any) string {
+	var out string
+	if ordered, err := ai.DecodeOrderedValue([]byte(read)); err == nil {
+		out, err = jstext.Stringify(ordered)
+		if err == nil {
+			return out
+		}
+	}
+	// Only a number past float64's range fails the ordered decode; the
+	// unordered value still says what the chunk held.
+	out, _ = jstext.Stringify(parsed)
+	return out
 }
 
 // iterateGoogleSSE consumes the alt=sse stream the way the @google/genai SDK
-// does (processStreamResponse): events are split on \n\n, \r\r, or \r\n\r\n;
-// only "data:"-prefixed events are decoded; a bare (non-data:) JSON error
-// payload fails the stream like the SDK's ApiError; and a trailing unconsumed
-// segment fails with the SDK's "Incomplete JSON segment at the end".
+// does (processStreamResponse): each network read is first checked whole for
+// a bare JSON error payload (googleBareJSONError), then buffered; events are
+// split on \n\n, \r\r, or \r\n\r\n; only "data:"-prefixed events are decoded;
+// and a trailing unconsumed segment fails with the SDK's "Incomplete JSON
+// segment at the end".
 func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChunk) error) error {
 	delimiters := []string{"\n\n", "\r\r", "\r\n\r\n"}
 	buf := make([]byte, 32*1024)
@@ -1133,16 +1176,6 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 	processEvent := func(event string) error {
 		trimmed := jstext.Trim(event)
 		if !strings.HasPrefix(trimmed, "data:") {
-			// The SDK detects bare (non-SSE) JSON error chunks before buffering;
-			// a 4xx/5xx error payload fails the stream as an ApiError.
-			if trimmed != "" {
-				var chunk googleChunk
-				if json.Unmarshal([]byte(trimmed), &chunk) == nil {
-					if err := googleAPIError(chunk.Error, trimmed); err != nil {
-						return err
-					}
-				}
-			}
 			return nil
 		}
 		data := jstext.Trim(strings.TrimPrefix(trimmed, "data:"))
@@ -1165,7 +1198,11 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 		}
 		n, readErr := body.Read(buf)
 		if n > 0 {
-			pending += string(buf[:n])
+			read := string(buf[:n])
+			if err := googleBareJSONError(read); err != nil {
+				return err
+			}
+			pending += read
 			for {
 				// Earliest delimiter wins (SDK keeps the smallest index).
 				delimIdx, delimLen := -1, 0
@@ -1192,15 +1229,7 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 		}
 	}
 
-	if trimmed := jstext.Trim(pending); trimmed != "" {
-		// A bare JSON error payload arriving without a trailing delimiter still
-		// fails as an ApiError (the SDK checks chunks before buffering them).
-		var chunk googleChunk
-		if json.Unmarshal([]byte(trimmed), &chunk) == nil {
-			if err := googleAPIError(chunk.Error, trimmed); err != nil {
-				return err
-			}
-		}
+	if jstext.Trim(pending) != "" {
 		return fmt.Errorf("Incomplete JSON segment at the end")
 	}
 	return nil

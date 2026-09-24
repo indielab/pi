@@ -849,20 +849,6 @@ func TestGoogleSSEErrorEventDoesNotFailStream(t *testing.T) {
 	})
 }
 
-func TestGoogleBareJSONErrorChunkFailsStream(t *testing.T) {
-	// Google emits mid-stream errors as bare JSON (no data: prefix); the SDK
-	// detects these before SSE parsing and throws an ApiError.
-	errJSON := `{"error":{"code":500,"message":"internal","status":"INTERNAL"}}`
-	sse := "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}]}}]}\n\n" + errJSON
-	final := googleServe(t, "gemini-2.5-flash", sse).Result()
-	if final.StopReason != ai.StopError {
-		t.Fatalf("expected error stop, got %s", final.StopReason)
-	}
-	if final.ErrorMessage != "got status: INTERNAL. "+errJSON {
-		t.Fatalf("error message wrong: %q", final.ErrorMessage)
-	}
-}
-
 func TestGoogleTruncatedStreamFails(t *testing.T) {
 	// Stream ends with an unconsumed partial segment (no trailing delimiter):
 	// the SDK throws "Incomplete JSON segment at the end".
