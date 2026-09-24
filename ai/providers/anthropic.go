@@ -1284,26 +1284,23 @@ func appendAnthropicInputTransformationsDiagnostic(output *ai.AssistantMessage, 
 	if len(list) == 0 {
 		return
 	}
-	details := make([]map[string]any, len(list))
+	details := make([]any, len(list))
 	for i, transformation := range list {
-		entry := map[string]any{}
-		// `?? undefined` omits only null and absent; a present false, 0 or "" is
-		// kept, and so is a value of the wrong type.
-		if transformation.Type != nil {
-			entry["type"] = transformation.Type
-		}
-		if transformation.Path != nil {
-			entry["path"] = transformation.Path
-		}
-		if transformation.Reason != nil {
-			entry["reason"] = transformation.Reason
+		// pi's literal {type, path, reason}, in that order. `?? undefined`
+		// omits only null and absent; a present false, 0 or "" is kept, and
+		// so is a value of the wrong type.
+		entry := ai.OrderedObject{}
+		for _, f := range []ai.OrderedField{{Key: "type", Value: transformation.Type}, {Key: "path", Value: transformation.Path}, {Key: "reason", Value: transformation.Reason}} {
+			if f.Value != nil {
+				entry = append(entry, f)
+			}
 		}
 		details[i] = entry
 	}
 	output.Diagnostics = append(output.Diagnostics, ai.Diagnostic{
 		Type:      "anthropic_input_transformations",
 		Timestamp: nowMillis(),
-		Details:   map[string]any{"transformations": details},
+		Details:   ai.OrderedObject{{Key: "transformations", Value: details}},
 	})
 }
 

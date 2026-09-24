@@ -18,5 +18,10 @@ type Diagnostic struct {
 	Type      string               `json:"type"`
 	Timestamp int64                `json:"timestamp"`
 	Error     *DiagnosticErrorInfo `json:"error,omitempty"`
-	Details   map[string]any       `json:"details,omitempty"`
+	// Details is pi's details object, in its key order: an OrderedObject
+	// writes its members in that order, as JSON.stringify writes pi's (a
+	// map[string]any would sort them), and its numbers as JSON.stringify
+	// writes them. nil is pi's undefined, which is omitted; an empty, non-nil
+	// object is written {}, as pi writes an empty details object.
+	Details OrderedObject `json:"details,omitzero"`
 }

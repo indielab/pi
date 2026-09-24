@@ -135,3 +135,59 @@ func TestDecodeOrderedValueRejectsIncompleteOrTrailing(t *testing.T) {
 		}
 	}
 }
+
+// TestOrderedObjectMarshalsNumbersAsJSONStringify requires an OrderedObject
+// to write its numbers — in the object, in an array in it, in an object in
+// that — as JSON.stringify writes them: negative zero as 0 (json.Marshal
+// writes -0) and a number that is not finite as null. want is node's
+// JSON.stringify({a:-0, b:[-0, 1.5, Infinity], c:{d:-0, e:-Infinity}, f:NaN}).
+func TestOrderedObjectMarshalsNumbersAsJSONStringify(t *testing.T) {
+	const want = `{"a":0,"b":[0,1.5,null],"c":{"d":0,"e":null},"f":null}`
+	o := OrderedObject{
+		{Key: "a", Value: math.Copysign(0, -1)},
+		{Key: "b", Value: []any{math.Copysign(0, -1), 1.5, math.Inf(1)}},
+		{Key: "c", Value: OrderedObject{{Key: "d", Value: math.Copysign(0, -1)}, {Key: "e", Value: math.Inf(-1)}}},
+		{Key: "f", Value: math.NaN()},
+	}
+	got, err := json.Marshal(o)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != want {
+		t.Fatalf("marshal = %s, want %s", got, want)
+	}
+}
+
+// TestOrderedObjectUnmarshalKeepsJSONParseOrder requires an OrderedObject
+// read back from JSON to list its keys as JSON.parse's object does, at every
+// depth, so what it marshals again is what it read — and a null to leave it
+// nil, while anything that is not an object fails.
+func TestOrderedObjectUnmarshalKeepsJSONParseOrder(t *testing.T) {
+	var holder struct {
+		O OrderedObject `json:"o"`
+	}
+	const in = `{"z":1,"1":{"b":[{"y":2,"x":1}],"a":1e2},"a":"s"}`
+	if err := json.Unmarshal([]byte(`{"o":`+in+`}`), &holder); err != nil {
+		t.Fatal(err)
+	}
+	got, err := json.Marshal(holder.O)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `{"1":{"b":[{"y":2,"x":1}],"a":100},"z":1,"a":"s"}`; string(got) != want {
+		t.Fatalf("read back = %s, want %s", got, want)
+	}
+	if v, ok := holder.O.Get("a"); !ok || v != "s" {
+		t.Errorf(`Get("a") = %v, %v; want "s", true`, v, ok)
+	}
+	if v, ok := holder.O.Get("missing"); ok || v != nil {
+		t.Errorf(`Get("missing") = %v, %v; want nil, false`, v, ok)
+	}
+	holder.O = nil
+	if err := json.Unmarshal([]byte(`{"o":null}`), &holder); err != nil || holder.O != nil {
+		t.Errorf("null read as %#v, %v; want nil", holder.O, err)
+	}
+	if err := json.Unmarshal([]byte(`{"o":[1]}`), &holder); err == nil {
+		t.Error("an array read as an OrderedObject, want an error")
+	}
+}

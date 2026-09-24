@@ -243,8 +243,8 @@ func TestPiMessagesBackendErrorResponse(t *testing.T) {
 	if d.Type != "pi_messages_response_failure" {
 		t.Errorf("diagnostic type = %q", d.Type)
 	}
-	if d.Details["status"] != 401 {
-		t.Errorf("diagnostic details.status = %v, want 401", d.Details["status"])
+	if status, _ := d.Details.Get("status"); status != 401 {
+		t.Errorf("diagnostic details.status = %v, want 401", status)
 	}
 }
 

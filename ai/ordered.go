@@ -47,13 +47,18 @@ func (o OrderedObject) MarshalJSON() ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// marshalOrderedValue writes v as json.Marshal does, except that a non-finite
-// number, directly or in an array, is null.
+// marshalOrderedValue writes v as json.Marshal does, except that a number,
+// directly or in an array, is written as JSON.stringify writes it: null when
+// it is not finite, and 0 for negative zero, which json.Marshal writes -0.
 func marshalOrderedValue(buf *bytes.Buffer, v any) error {
 	switch t := v.(type) {
 	case float64:
 		if math.IsInf(t, 0) || math.IsNaN(t) {
 			buf.WriteString("null")
+			return nil
+		}
+		if t == 0 {
+			buf.WriteByte('0')
 			return nil
 		}
 	case []any:
@@ -78,6 +83,34 @@ func marshalOrderedValue(buf *bytes.Buffer, v any) error {
 	}
 	buf.Write(b)
 	return nil
+}
+
+// UnmarshalJSON reads a JSON object as DecodeOrderedValue does, so an object
+// read back from JSON keeps the key order JSON.parse's object lists, at every
+// depth. null leaves o as it is, as encoding/json's own decode of null does.
+func (o *OrderedObject) UnmarshalJSON(data []byte) error {
+	if string(bytes.TrimSpace(data)) == "null" {
+		return nil
+	}
+	v, err := DecodeOrderedValue(data)
+	if err != nil {
+		return err
+	}
+	obj, ok := v.(OrderedObject)
+	if !ok {
+		return fmt.Errorf("json: cannot unmarshal %.20s into an ai.OrderedObject: the value must be a JSON object", bytes.TrimSpace(data))
+	}
+	*o = obj
+	return nil
+}
+
+// Get returns the value of key, as a property read of the object would, and
+// whether the object has it.
+func (o OrderedObject) Get(key string) (any, bool) {
+	if i := o.indexOf(key); i >= 0 {
+		return o[i].Value, true
+	}
+	return nil, false
 }
 
 // Plain projects the object onto the map form `encoding/json` would have

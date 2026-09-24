@@ -4,11 +4,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -22,7 +24,9 @@ const piMessagesEventsCaptureFile = "testdata/pi-messages/pi-messages-events-867
 
 type piMessagesEventsRow struct {
 	Name string `json:"name"`
-	SSE  string `json:"sse"`
+	// Status, when set, is the response's status, and SSE its JSON body.
+	Status int    `json:"status"`
+	SSE    string `json:"sse"`
 	// V8Error is the frame data whose JSON.parse failure is pi's errorMessage.
 	V8Error    string   `json:"v8Error"`
 	ThrowAt    *int     `json:"throwAt"`
@@ -41,7 +45,14 @@ type piMessagesEventsRow struct {
 		// omitted zero (omitempty) compare equal, as the in-memory values are.
 		Usage       ai.Usage `json:"usage"`
 		Diagnostics []struct {
-			Type    string          `json:"type"`
+			Type  string `json:"type"`
+			Error *struct {
+				Name    string          `json:"name"`
+				Message string          `json:"message"`
+				Code    json.RawMessage `json:"code"`
+			} `json:"error"`
+			// Details is pi's details as JSON.stringify wrote them, a
+			// timestampMs recorded as 0.
 			Details json.RawMessage `json:"details"`
 		} `json:"diagnostics"`
 	} `json:"message"`
@@ -63,6 +74,45 @@ func loadPiMessagesEventsCapture(t *testing.T) []piMessagesEventsRow {
 		t.Fatalf("%s has no rows", piMessagesEventsCaptureFile)
 	}
 	return capture.Rows
+}
+
+// piMessagesCaptureBaseURL is the capture model's baseUrl.
+const piMessagesCaptureBaseURL = "http://pi-messages.invalid/v1"
+
+// cannedDoer answers every request with status and body, as a fetch stub does.
+type cannedDoer struct {
+	status int
+	body   string
+}
+
+func (d cannedDoer) Do(req *http.Request) (*http.Response, error) {
+	return &http.Response{
+		StatusCode: d.status,
+		Status:     fmt.Sprintf("%d %s", d.status, http.StatusText(d.status)),
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(d.body)),
+		Request:    req,
+	}, nil
+}
+
+// streamPiMessagesRow streams a captured row: a status row's body is served
+// with that status from the capture model's baseUrl, which the response
+// failure's details carry, and any other row's through
+// streamPiMessagesEvents.
+func streamPiMessagesRow(t *testing.T, ctx context.Context, row piMessagesEventsRow, opts ai.StreamOptions) (*ai.Model, []ai.AssistantMessageEvent, *ai.AssistantMessage) {
+	t.Helper()
+	if row.Status == 0 {
+		return streamPiMessagesEvents(t, ctx, row.SSE, opts)
+	}
+	model := piMessagesTestModel(piMessagesCaptureBaseURL)
+	opts.APIKey = "test-key"
+	opts.HTTPClient = cannedDoer{status: row.Status, body: row.SSE}
+	stream := StreamSimplePiMessages(ctx, model, ai.NormalizeContext(piMessagesTestContext()), &ai.SimpleStreamOptions{StreamOptions: opts})
+	var pushed []ai.AssistantMessageEvent
+	for ev := range stream.Events() {
+		pushed = append(pushed, ev)
+	}
+	return model, pushed, stream.Result()
 }
 
 // streamPiMessagesEvents streams body through StreamSimplePiMessages on the
@@ -162,23 +212,65 @@ func assertPiMessagesMessageMatchesPi(t *testing.T, row piMessagesEventsRow, fin
 	if final.Usage != want.Usage {
 		t.Errorf("usage = %+v, want %+v", final.Usage, want.Usage)
 	}
-	if len(final.Diagnostics) != len(want.Diagnostics) {
-		t.Fatalf("diagnostics = %+v, want %d", final.Diagnostics, len(want.Diagnostics))
+	assertPiMessagesDiagnosticsMatchPi(t, row, final.Diagnostics)
+	// The message persists as pi's does and reads back unchanged.
+	persisted, err := json.Marshal(final)
+	if err != nil {
+		t.Fatalf("marshal message: %v", err)
 	}
-	for i, d := range final.Diagnostics {
-		gotDetails, err := json.Marshal(d.Details)
-		if err != nil {
-			t.Fatalf("marshal diagnostic details: %v", err)
+	back, err := ai.UnmarshalMessage(persisted)
+	if err != nil {
+		t.Fatalf("the persisted message does not read back: %v", err)
+	}
+	t.Run("readBack", func(t *testing.T) {
+		assertPiMessagesDiagnosticsMatchPi(t, row, back.(ai.AssistantMessage).Diagnostics)
+	})
+}
+
+// assertPiMessagesDiagnosticsMatchPi compares diagnostics with pi's: type,
+// error and the details' JSON text, byte for byte — key order and numbers as
+// JSON.stringify writes them, with a timestampMs taken as 0 as the capture
+// records it. (No captured details hold <, > or &, which encoding/json would
+// escape where JSON.stringify does not.)
+func assertPiMessagesDiagnosticsMatchPi(t *testing.T, row piMessagesEventsRow, diagnostics []ai.Diagnostic) {
+	t.Helper()
+	want := row.Message.Diagnostics
+	if len(diagnostics) != len(want) {
+		t.Fatalf("diagnostics = %+v, want %d", diagnostics, len(want))
+	}
+	for i, d := range diagnostics {
+		details := slices.Clone(d.Details)
+		for j, f := range details {
+			if f.Key == "timestampMs" {
+				details[j].Value = 0
+			}
 		}
-		var gd, wd any
-		if err := json.Unmarshal(gotDetails, &gd); err != nil {
-			t.Fatal(err)
+		gotDetails := []byte("null")
+		if details != nil {
+			var err error
+			if gotDetails, err = json.Marshal(details); err != nil {
+				t.Fatalf("marshal diagnostic details: %v", err)
+			}
 		}
-		if err := json.Unmarshal(want.Diagnostics[i].Details, &wd); err != nil {
-			t.Fatal(err)
+		if d.Type != want[i].Type || string(gotDetails) != string(want[i].Details) {
+			t.Errorf("diagnostic %d = %s %s, want %s %s", i, d.Type, gotDetails, want[i].Type, want[i].Details)
 		}
-		if d.Type != want.Diagnostics[i].Type || !reflect.DeepEqual(gd, wd) {
-			t.Errorf("diagnostic %d = %s %s, want %s %s", i, d.Type, gotDetails, want.Diagnostics[i].Type, want.Diagnostics[i].Details)
+		switch w := want[i].Error; {
+		case w == nil && d.Error != nil:
+			t.Errorf("diagnostic %d has error %+v, want none", i, d.Error)
+		case w != nil && d.Error == nil:
+			t.Errorf("diagnostic %d has no error, want %+v", i, w)
+		case w != nil:
+			code, err := json.Marshal(d.Error.Code)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if d.Error.Code == nil {
+				code = nil
+			}
+			if d.Error.Name != w.Name || d.Error.Message != w.Message || string(code) != string(w.Code) {
+				t.Errorf("diagnostic %d error = {%q %q %s}, want {%q %q %s}", i, d.Error.Name, d.Error.Message, code, w.Name, w.Message, w.Code)
+			}
 		}
 	}
 }
@@ -212,7 +304,7 @@ func TestPiMessagesEventsMatchPi(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			obs := &providerStreamObserver{t: t, throwAt: row.ThrowAt, abortFirst: row.AbortFirst, cancel: cancel}
-			model, pushed, final := streamPiMessagesEvents(t, ctx, row.SSE, ai.StreamOptions{OnProviderStreamEvent: obs.observe})
+			model, pushed, final := streamPiMessagesRow(t, ctx, row, ai.StreamOptions{OnProviderStreamEvent: obs.observe})
 			if !reflect.DeepEqual(obs.observed, row.Observed) && (len(obs.observed) > 0 || len(row.Observed) > 0) {
 				t.Errorf("observed = %q, want %q", obs.observed, row.Observed)
 			}
@@ -223,7 +315,7 @@ func TestPiMessagesEventsMatchPi(t *testing.T) {
 				assertPiMessagesFrameSyntaxError(t, row)
 			}
 			if row.ThrowAt == nil {
-				_, pushed, final := streamPiMessagesEvents(t, context.Background(), row.SSE, ai.StreamOptions{})
+				_, pushed, final := streamPiMessagesRow(t, context.Background(), row, ai.StreamOptions{})
 				t.Run("withoutObserver", func(t *testing.T) {
 					assertPiMessagesPushedMatchesPi(t, row, pushed)
 					assertPiMessagesMessageMatchesPi(t, row, final)

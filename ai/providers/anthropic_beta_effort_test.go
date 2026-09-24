@@ -675,11 +675,20 @@ func TestAnthropicInputTransformationsDiagnostic(t *testing.T) {
 	if d.Type != "anthropic_input_transformations" {
 		t.Fatalf("diagnostic type = %q", d.Type)
 	}
-	want := map[string]any{"transformations": []map[string]any{
-		{"type": "thinking_dropped", "path": "messages.3"},
-	}}
-	if !reflect.DeepEqual(d.Details, want) {
-		t.Fatalf("details = %#v, want %#v", d.Details, want)
+	// pi's details literal: {type, path, reason} in that order.
+	assertDiagnosticDetailsJSON(t, d, `{"transformations":[{"type":"thinking_dropped","path":"messages.3"}]}`)
+}
+
+// assertDiagnosticDetailsJSON requires d's details to marshal to want, the
+// JSON.stringify text of pi's details: its key order and its numbers.
+func assertDiagnosticDetailsJSON(t *testing.T, d ai.Diagnostic, want string) {
+	t.Helper()
+	got, err := json.Marshal(d.Details)
+	if err != nil {
+		t.Fatalf("marshal details: %v", err)
+	}
+	if string(got) != want {
+		t.Fatalf("details = %s, want pi's %s", got, want)
 	}
 }
 
@@ -709,14 +718,7 @@ func TestAnthropicInputTransformationsAcceptAnyArray(t *testing.T) {
 	if len(got.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %#v, want exactly one (the message_delta list replaces message_start's)", got.Diagnostics)
 	}
-	want := map[string]any{"transformations": []map[string]any{
-		{"type": float64(5)},
-		{},
-		{"path": map[string]any{"nested": true}},
-	}}
-	if !reflect.DeepEqual(got.Diagnostics[0].Details, want) {
-		t.Fatalf("details = %#v, want %#v", got.Diagnostics[0].Details, want)
-	}
+	assertDiagnosticDetailsJSON(t, got.Diagnostics[0], `{"transformations":[{"type":5},{},{"path":{"nested":true}}]}`)
 }
 
 // A non-array value is the only thing the guard rejects, and rejecting it leaves
@@ -726,12 +728,10 @@ func TestAnthropicInputTransformationsNonArrayKeepsPreviousList(t *testing.T) {
 		`"input_transformations":[{"type":"thinking_dropped","path":"messages.3"}],`,
 		`"input_transformations":{"type":"thinking_dropped"},`, 1)
 	got := streamAnthropicAgainst(t, anthropicPlainModel(), sse)
-	want := map[string]any{"transformations": []map[string]any{
-		{"type": "thinking_dropped", "path": "messages.1", "reason": "prefix_mismatch"},
-	}}
-	if len(got.Diagnostics) != 1 || !reflect.DeepEqual(got.Diagnostics[0].Details, want) {
+	if len(got.Diagnostics) != 1 {
 		t.Fatalf("diagnostics = %#v, want message_start's list intact", got.Diagnostics)
 	}
+	assertDiagnosticDetailsJSON(t, got.Diagnostics[0], `{"transformations":[{"type":"thinking_dropped","path":"messages.1","reason":"prefix_mismatch"}]}`)
 }
 
 // pi appends the diagnostic at the very END of the success path: the aborted,

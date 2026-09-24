@@ -18,7 +18,7 @@ func TestDiagnosticMarshalMatchesPi(t *testing.T) {
 			Stack:   "at foo",
 			Code:    "ECONN",
 		},
-		Details: map[string]any{"attempt": float64(2)},
+		Details: OrderedObject{{Key: "attempt", Value: float64(2)}},
 	}
 	raw, err := json.Marshal(d)
 	if err != nil {
@@ -57,5 +57,42 @@ func TestDiagnosticErrorCodeNumber(t *testing.T) {
 	want := `{"type":"http","timestamp":1,"error":{"message":"bad","code":429}}`
 	if string(raw) != want {
 		t.Fatalf("numeric code JSON mismatch:\n got: %s\nwant: %s", raw, want)
+	}
+}
+
+// TestDiagnosticDetailsKeepPiOrder requires details to be written in their
+// own key order, as JSON.stringify writes pi's details object, an empty
+// details object to be written {} as pi writes it, and nil (pi's undefined)
+// to be omitted; and a diagnostic read back to write the same text.
+func TestDiagnosticDetailsKeepPiOrder(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		details OrderedObject
+		want    string
+	}{
+		{name: "ordered", details: OrderedObject{{Key: "z", Value: 1}, {Key: "a", Value: OrderedObject{{Key: "y", Value: 2}, {Key: "b", Value: 3}}}}, want: `{"type":"t","timestamp":1,"details":{"z":1,"a":{"y":2,"b":3}}}`},
+		{name: "empty", details: OrderedObject{}, want: `{"type":"t","timestamp":1,"details":{}}`},
+		{name: "undefined", details: nil, want: `{"type":"t","timestamp":1}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(Diagnostic{Type: "t", Timestamp: 1, Details: tc.details})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(raw) != tc.want {
+				t.Fatalf("marshal = %s, want %s", raw, tc.want)
+			}
+			var back Diagnostic
+			if err := json.Unmarshal(raw, &back); err != nil {
+				t.Fatal(err)
+			}
+			again, err := json.Marshal(back)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if string(again) != tc.want {
+				t.Fatalf("read back and marshaled = %s, want %s", again, tc.want)
+			}
+		})
 	}
 }

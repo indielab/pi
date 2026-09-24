@@ -21,12 +21,16 @@
 //   pushed     the type of every event the stream pushed (null: no type);
 //   pushedIndex the contentIndex every pushed event carries (null: none);
 //   message    stopReason, errorMessage, responseId, content and usage of the
-//              result, and the type and details of each diagnostic (not their
-//              timestamps);
+//              result, and the type, error and details of each diagnostic (not
+//              its timestamp, nor its error's stack; a details timestampMs,
+//              Date.now(), is recorded as 0 in its place);
 //   v8Error    the frame data whose JSON.parse failure is the errorMessage:
 //              V8's text, which the port does not reproduce.
 // A row may make the observer throw ("observer boom") on the observed event at
-// index throwAt, after aborting the request when abortFirst is set.
+// index throwAt, after aborting the request when abortFirst is set. A row with
+// a status is served with that status, the reason phrase a server sends for
+// it (the port's statusText is Go's http.StatusText) and an application/json
+// content type, from the suite model's baseUrl, which the details' url shows.
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -79,7 +83,15 @@ const [start, textStart, textDelta, textEnd, done] = wireEvents;
 // &, and U+2028 and U+2029 (spelled so no tool decodes an escape).
 const markup = `<b>&x> ${String.fromCharCode(0x2028)} ${String.fromCharCode(0x2029)} end`;
 
-type Case = { name: string; sse: string; v8Error?: string; throwAt?: number; abortFirst?: boolean };
+type Case = {
+	name: string;
+	sse: string;
+	v8Error?: string;
+	throwAt?: number;
+	abortFirst?: boolean;
+	status?: number;
+	statusText?: string;
+};
 const cases: Case[] = [
 	{ name: "forwardsWireEventsInOrder", sse: framed(...wireEvents) },
 	// `if (event)`: a frame parsing to a JS-falsy value is neither observed nor
@@ -296,6 +308,62 @@ const cases: Case[] = [
 			frame('{"type":"toolcall_end","contentIndex":0,"toolCall":{"type":"toolCall","id":"t1","name":"read","arguments":{}}}') +
 			framed(done),
 	},
+	// The rewrite diagnostic's details are `{ ...rewrite }`: the spread lists
+	// array-index keys first, ascending, then the rest in wire order, at every
+	// depth, and JSON.stringify writes its numbers as JavaScript numbers — 10.0
+	// as 10, 1e3 as 1000, -0 as 0, and a number past float64's range, which
+	// JSON.parse reads as Infinity, as null.
+	{
+		name: "rewriteDetailsAreTheSpreadAsJSONStringifyWritesIt",
+		sse:
+			framed(start, textStart, textDelta, textEnd) +
+			frame(
+				'{"type":"done","reason":"stop","usage":' +
+					JSON.stringify(usage) +
+					',"rewrite":{"z":1,"saved":10.0,"big":1e400,"neg":-1e400,"negz":-0,"k":1e3,"tiny":1e-400,"a":2,"7":"seven","1":"one",' +
+					'"n":{"x":1e400,"y":10.0,"b":1,"0":2,"arr":[1e400,-0,2.50]}}}',
+			),
+	},
+	// An array spreads its elements under their indices, in index order, and a
+	// string its UTF-16 code units: "10" and "11" come after "9".
+	{
+		name: "rewriteArraySpreadsItsIndicesInOrder",
+		sse: framed(start, { ...done, rewrite: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] }),
+	},
+	{ name: "rewriteStringSpreadsItsCodeUnitsInOrder", sse: framed(start, { ...done, rewrite: "abcdefghijkl" }) },
+	// A truthy number or true spreads nothing: the diagnostic's details are an
+	// empty object, which is still written.
+	{ name: "rewriteNumberSpreadsNothing", sse: framed(start, { ...done, rewrite: 5 }) },
+	{
+		name: "rewriteTrueOnAnErrorSpreadsNothing",
+		sse: framed(start, { type: "error", reason: "error", usage, errorMessage: "backend failed", rewrite: true }),
+	},
+	// A non-2xx response fails with pi_messages_response_failure, whose details
+	// list version, provider, model, url, status, statusText, then the body's
+	// error object as JSON.parse builds it (its order, its numbers) or else the
+	// body, then timestampMs.
+	{
+		name: "responseFailureDetailsKeepTheirOrder",
+		status: 401,
+		statusText: "Unauthorized",
+		sse: '{"error":{"message":"Token expired","code":"unauthorized","details":{"z":1,"a":[1e400,10.0]},"retryAfter":1e3,"1":"x"}}',
+	},
+	// An empty-string code is still the code: no suffix, but the diagnostic's
+	// error carries it.
+	{
+		name: "responseFailureEmptyCodeIsKept",
+		status: 403,
+		statusText: "Forbidden",
+		sse: '{"error":{"message":"no","code":""}}',
+	},
+	// An error member that is not an object leaves the body as the details'
+	// body and the message's suffix.
+	{
+		name: "responseFailureWithoutAnErrorObjectKeepsTheBody",
+		status: 500,
+		statusText: "Internal Server Error",
+		sse: '{"error":[1]}',
+	},
 	// A throwing observer fails the stream with its message: on the first event,
 	{ name: "observerThrowsOnFirstEvent", sse: framed(...wireEvents), throwAt: 0 },
 	// on the terminal done event, which then never converts to done,
@@ -312,7 +380,12 @@ for (const c of cases) {
 	const s = streamSimple(model, context, {
 		apiKey: "test-key",
 		signal: controller.signal,
-		fetch: async () => new Response(c.sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+		fetch: async () =>
+			new Response(c.sse, {
+				status: c.status ?? 200,
+				statusText: c.statusText ?? "",
+				headers: { "content-type": c.status === undefined ? "text/event-stream" : "application/json" },
+			}),
 		onProviderStreamEvent: async (event: unknown, eventModel: unknown) => {
 			await Promise.resolve();
 			if (eventModel !== model) throw new Error(`${c.name}: observer got another model`);
@@ -335,6 +408,7 @@ for (const c of cases) {
 	}
 	rows.push({
 		name: c.name,
+		...(c.status !== undefined ? { status: c.status } : {}),
 		sse: c.sse,
 		...(c.v8Error !== undefined ? { v8Error: c.v8Error } : {}),
 		...(c.throwAt !== undefined ? { throwAt: c.throwAt } : {}),
@@ -348,10 +422,17 @@ for (const c of cases) {
 			responseId: message.responseId ?? null,
 			content: message.content,
 			usage: message.usage,
-			diagnostics: (message.diagnostics ?? []).map((d: { type: string; details?: unknown }) => ({
-				type: d.type,
-				details: d.details ?? null,
-			})),
+			diagnostics: (message.diagnostics ?? []).map(
+				(d: { type: string; error?: { name?: string; message: string; code?: unknown }; details?: Record<string, unknown> }) => {
+					if (d.details && "timestampMs" in d.details) d.details.timestampMs = 0;
+					const error = d.error && {
+						name: d.error.name,
+						message: d.error.message,
+						...(d.error.code !== undefined ? { code: d.error.code } : {}),
+					};
+					return { type: d.type, ...(error ? { error } : {}), details: d.details ?? null };
+				},
+			),
 		},
 	});
 }

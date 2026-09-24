@@ -78,7 +78,7 @@ type piMessagesEvent struct {
 	ErrorMessage          string
 	// Rewrite is the details of the pi_messages_rewrite diagnostic, nil when
 	// the event carries no rewrite (see piMessagesRewriteDetails).
-	Rewrite map[string]any
+	Rewrite ai.OrderedObject
 }
 
 // piMessagesEventOf reads an object frame's members as pi's converter reads
@@ -138,29 +138,31 @@ func piMessagesUsage(raw json.RawMessage) *ai.Usage {
 
 // piMessagesRewriteDetails is pi appendRewriteDiagnostic's `if (!rewrite)`
 // and `{ ...rewrite }`: nil for a falsy rewrite (no diagnostic), else what the
-// spread copies — an object's members, whatever they are (numbers as
-// json.Number, jstext.Parse's form); an array's elements under their indices;
+// spread copies, in the order it copies it — an object's members, as
+// JSON.parse lists them (ai.DecodeOrderedValue: numbers are JS numbers, a
+// nested object keeps its order); an array's elements under their indices;
 // a string's UTF-16 code units under theirs (a surrogate half, which a Go
-// string cannot hold, as U+FFFD); nothing from a number or true.
-func piMessagesRewriteDetails(raw json.RawMessage) map[string]any {
+// string cannot hold, as U+FFFD); nothing from a number or true, which spread
+// into an empty object.
+func piMessagesRewriteDetails(raw json.RawMessage) ai.OrderedObject {
 	if !rawTruthy(raw) {
 		return nil
 	}
-	details := map[string]any{}
-	value, err := jstext.Parse(raw)
+	details := ai.OrderedObject{}
+	value, err := ai.DecodeOrderedValue(raw)
 	if err != nil {
 		return details // unreachable: raw is a member of a decoded document
 	}
 	switch v := value.(type) {
-	case map[string]any:
+	case ai.OrderedObject:
 		return v
 	case []any:
 		for i, e := range v {
-			details[strconv.Itoa(i)] = e
+			details = append(details, ai.OrderedField{Key: strconv.Itoa(i), Value: e})
 		}
 	case string:
 		for i, unit := range utf16.Encode([]rune(v)) {
-			details[strconv.Itoa(i)] = string(rune(unit))
+			details = append(details, ai.OrderedField{Key: strconv.Itoa(i), Value: string(rune(unit))})
 		}
 	}
 	return details
@@ -169,30 +171,29 @@ func piMessagesRewriteDetails(raw json.RawMessage) map[string]any {
 // piMessagesResponseError is a non-2xx HTTP failure carrying redacted diagnostic
 // details. Port of PiMessagesResponseError.
 type piMessagesResponseError struct {
-	message           string
-	code              string
-	diagnosticDetails map[string]any
+	message string
+	// code is the error body's error.code when it is a string, else nil (pi's
+	// undefined).
+	code              any
+	diagnosticDetails ai.OrderedObject
 }
 
 func (e *piMessagesResponseError) Error() string { return e.message }
 
-// parsePiMessagesErrorBody parses a JSON error body, returning the nested
-// `error` object only when the top level and its `error` are both JSON objects
-// (pi's isRecord && isRecord(error) guard). Port of parsePiMessagesErrorBody.
-func parsePiMessagesErrorBody(body string) (map[string]any, bool) {
-	var top map[string]json.RawMessage
-	if json.Unmarshal([]byte(body), &top) != nil {
-		return nil, false
+// parsePiMessagesErrorBody is pi's JSON.parse of an error body and its guard:
+// the body's `error` member when the body is an object and that member is an
+// object too (not null, not an array); nil otherwise, a body that is not JSON
+// included. The object is as JSON.parse builds it (ai.DecodeOrderedValue), so
+// the diagnostic that carries it keeps its key order and numbers.
+func parsePiMessagesErrorBody(body string) ai.OrderedObject {
+	parsed, err := ai.DecodeOrderedValue([]byte(body))
+	if err != nil {
+		return nil
 	}
-	raw, ok := top["error"]
-	if !ok {
-		return nil, false
-	}
-	var errObj map[string]any
-	if json.Unmarshal(raw, &errObj) != nil || errObj == nil {
-		return nil, false
-	}
-	return errObj, true
+	top, _ := parsed.(ai.OrderedObject)
+	errObj, _ := top.Get("error")
+	obj, _ := errObj.(ai.OrderedObject)
+	return obj
 }
 
 // truncateDiagnosticString caps a raw body at 8192 UTF-16 code units, appending
@@ -221,44 +222,49 @@ func truncateDiagnosticString(value string) string {
 // formatPiMessagesResponseError builds "<status> <statusText>: <message or
 // body><(code)>". Go has no Response.statusText, so http.StatusText(status)
 // stands in. Port of formatPiMessagesResponseError.
-func formatPiMessagesResponseError(status int, body string, errObj map[string]any) string {
+func formatPiMessagesResponseError(status int, body string, errObj ai.OrderedObject) string {
 	suffix := body
-	if msg, ok := errObj["message"].(string); ok {
-		suffix = msg
+	if msg, _ := errObj.Get("message"); msg != nil {
+		if s, ok := msg.(string); ok {
+			suffix = s
+		}
 	}
 	codeSuffix := ""
-	if code, ok := errObj["code"].(string); ok && code != "" {
-		codeSuffix = fmt.Sprintf(" (%s)", code)
+	if code, _ := errObj.Get("code"); code != nil {
+		if s, ok := code.(string); ok && s != "" {
+			codeSuffix = fmt.Sprintf(" (%s)", s)
+		}
 	}
 	return fmt.Sprintf("%d %s: %s%s", status, http.StatusText(status), suffix, codeSuffix)
 }
 
 // createPiMessagesResponseError builds the error + its diagnostic details from a
-// non-2xx response. Port of createPiMessagesResponseError.
+// non-2xx response, the details in pi's key order. Port of
+// createPiMessagesResponseError.
 func createPiMessagesResponseError(model *ai.Model, url string, status int, body string) *piMessagesResponseError {
-	errObj, hasErr := parsePiMessagesErrorBody(body)
-	code := ""
-	if hasErr {
-		if c, ok := errObj["code"].(string); ok {
-			code = c
+	errObj := parsePiMessagesErrorBody(body)
+	var code any
+	if c, _ := errObj.Get("code"); c != nil {
+		if s, ok := c.(string); ok {
+			code = s
 		}
 	}
-	details := map[string]any{
-		"version":     1,
-		"provider":    model.Provider,
-		"model":       model.ID,
-		"url":         url,
-		"status":      status,
-		"statusText":  http.StatusText(status),
-		"timestampMs": nowMillis(),
+	details := ai.OrderedObject{
+		{Key: "version", Value: 1},
+		{Key: "provider", Value: model.Provider},
+		{Key: "model", Value: model.ID},
+		{Key: "url", Value: url},
+		{Key: "status", Value: status},
+		{Key: "statusText", Value: http.StatusText(status)},
 	}
-	// pi sets error:errorBody?.error and body:errorBody?undefined:truncated —
-	// exactly one is present on the wire; the other is dropped as undefined.
-	if hasErr {
-		details["error"] = errObj
+	// pi spreads error:errorBody.error when there is an error body and
+	// body:truncated when there is none: exactly one is present.
+	if errObj != nil {
+		details = append(details, ai.OrderedField{Key: "error", Value: errObj})
 	} else {
-		details["body"] = truncateDiagnosticString(body)
+		details = append(details, ai.OrderedField{Key: "body", Value: truncateDiagnosticString(body)})
 	}
+	details = append(details, ai.OrderedField{Key: "timestampMs", Value: nowMillis()})
 	return &piMessagesResponseError{
 		message:           formatPiMessagesResponseError(status, body, errObj),
 		code:              code,
@@ -269,7 +275,7 @@ func createPiMessagesResponseError(model *ai.Model, url string, status int, body
 // appendPiMessagesRewriteDiagnostic mirrors pi appendRewriteDiagnostic: attach a
 // "pi_messages_rewrite" diagnostic whose details are what the event's rewrite
 // spreads into (piMessagesRewriteDetails); nil details attach nothing.
-func appendPiMessagesRewriteDiagnostic(msg *ai.AssistantMessage, details map[string]any) {
+func appendPiMessagesRewriteDiagnostic(msg *ai.AssistantMessage, details ai.OrderedObject) {
 	if details == nil {
 		return
 	}
@@ -794,21 +800,12 @@ func createPiMessagesErrorEvent(model *ai.Model, err error, aborted bool) ai.Ass
 			msg.Diagnostics = append(msg.Diagnostics, ai.Diagnostic{
 				Type:      "pi_messages_response_failure",
 				Timestamp: nowMillis(),
-				Error:     &ai.DiagnosticErrorInfo{Name: "PiMessagesResponseError", Message: re.message, Code: piMessagesErrorCode(re.code)},
+				Error:     &ai.DiagnosticErrorInfo{Name: "PiMessagesResponseError", Message: re.message, Code: re.code},
 				Details:   re.diagnosticDetails,
 			})
 		}
 	}
 	return ai.AssistantMessageEvent{Type: ai.EventError, Reason: reason, Error: msg}
-}
-
-// piMessagesErrorCode returns the code as any (nil when empty), matching pi's
-// optional code field (dropped when undefined).
-func piMessagesErrorCode(code string) any {
-	if code == "" {
-		return nil
-	}
-	return code
 }
 
 // resolvePiMessagesCacheRetention mirrors pi resolveCacheRetention: an explicit
