@@ -40,6 +40,7 @@ func apiKeyEnvVars(provider string) []string {
 		"groq":                       "GROQ_API_KEY",
 		"cerebras":                   "CEREBRAS_API_KEY",
 		"xai":                        "XAI_API_KEY",
+		"typesafe":                   "TYPESAFE_API_KEY", // pi a328aa89a; the classifier provider itself is queued
 		"radius":                     "RADIUS_API_KEY",
 		"openrouter":                 "OPENROUTER_API_KEY",
 		"vercel-ai-gateway":          "AI_GATEWAY_API_KEY",
