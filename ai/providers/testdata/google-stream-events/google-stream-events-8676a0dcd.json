@@ -1435,6 +1435,72 @@
 			}
 		},
 		{
+			"name": "five content codings are undone",
+			"note": "undici rejects only past five",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzip, gzip, gzip, gzip, gzip"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"five\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAEwGwAE//H4sIAAAAAAAAE5Pv5mAAA2HGboaS//Jw7uT3zxIYmBPz/WXP6zpqH9rz51zF/C+MRSWHzUo3itb+eyP65Wb2qVmhwTtbdu0VmRUS3mXFoXe3KC34xKVowU3e4n9nCi9KyM9bn/VqX9Hsm9sy795aq9rvanYu4tQeV9f6za2b2l66cVfX8VrOdP/EHbHN0GjOJZvfScoXrBjCjH/vrAC6YK31swndQBoAfqYHaaIAAADZKY/SsAAAAA==",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"five\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip, gzip, gzip, gzip, gzip\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip, gzip, gzip, gzip, gzip\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "five"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"five!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
 			"name": "six content codings fail the request",
 			"note": "undici rejects the fetch past five codings",
 			"framing": "close",
@@ -3268,6 +3334,262 @@
 				],
 				"stopReason": "stop",
 				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "an HTTP/1.0 response with a content-length",
+			"note": "HTTP/1.0 closes by default, but no Connection header was sent, and the record has none",
+			"status": "HTTP/1.0 200 OK",
+			"framing": "close",
+			"contentLength": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"one-oh\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"one-oh\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-length\":\"179\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-length\":\"179\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "one-oh"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"one-oh!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "an HTTP/1.0 response that runs to the close",
+			"status": "HTTP/1.0 200 OK",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"one-oh\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"one-oh\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "one-oh"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"one-oh!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "an HTTP/1.0 response's connection header is kept as sent",
+			"status": "HTTP/1.0 200 OK",
+			"framing": "close",
+			"contentLength": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Connection",
+					"Close"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"one-oh\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"one-oh\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"connection\":\"Close\",\"content-length\":\"179\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"connection\":\"Close\",\"content-length\":\"179\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "one-oh"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"one-oh!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "an HTTP/1.0 keep-alive response",
+			"status": "HTTP/1.0 200 OK",
+			"framing": "close",
+			"contentLength": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Connection",
+					"keep-alive"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"one-oh\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"one-oh\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"connection\":\"keep-alive\",\"content-length\":\"179\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"connection\":\"keep-alive\",\"content-length\":\"179\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "one-oh"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"one-oh!\"}]",
 				"usage": {
 					"input": 0,
 					"output": 0,
