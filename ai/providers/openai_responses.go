@@ -1481,6 +1481,11 @@ func orEmptyJSON(s string) string {
 	return s
 }
 
+// errNoPrimitiveValue is V8's TypeError for a template literal (or String())
+// meeting an object with its own toString member, which JSON cannot make
+// callable; pi's catch block surfaces its message.
+var errNoPrimitiveValue = errors.New("Cannot convert object to primitive value")
+
 // errorEventMessage is the error pi throws for an `error` event:
 // `Error Code ${event.code}: ${event.message}`. A template literal writes any
 // value — "undefined" for an absent member, "null", a number as JS formats it,
@@ -1489,11 +1494,11 @@ func orEmptyJSON(s string) string {
 func errorEventMessage(ev responsesEvent) error {
 	code, ok := jsTemplateValue(ev.Code)
 	if !ok {
-		return errors.New("Cannot convert object to primitive value")
+		return errNoPrimitiveValue
 	}
 	message, ok := jsTemplateValue(ev.Message)
 	if !ok {
-		return errors.New("Cannot convert object to primitive value")
+		return errNoPrimitiveValue
 	}
 	return errors.New("Error Code " + code + ": " + message)
 }
@@ -1515,7 +1520,7 @@ func jsTemplateValue(raw json.RawMessage) (string, bool) {
 //	  : "Unknown error (no error details in response)"
 //
 // over event.response's error and incomplete_details, with JS truthiness and
-// template-literal writing throughout (jsTemplateValue): an error that is not
+// template-literal writing throughout (jstext.ToString): an error that is not
 // an object reads its members as undefined, and a member no template literal
 // can write throws V8's TypeError, which pi's catch block surfaces.
 func responsesFailedMessage(ev responsesEvent) error {
@@ -1532,18 +1537,18 @@ func responsesFailedMessage(ev responsesEvent) error {
 	if rawTruthy(errorValue) {
 		code, ok := orDefault(jsMember(errorValue, "code"), "unknown")
 		if !ok {
-			return errors.New("Cannot convert object to primitive value")
+			return errNoPrimitiveValue
 		}
 		message, ok := orDefault(jsMember(errorValue, "message"), "no message")
 		if !ok {
-			return errors.New("Cannot convert object to primitive value")
+			return errNoPrimitiveValue
 		}
 		return errors.New(code + ": " + message)
 	}
 	if reason := jsMember(details, "reason"); jstext.Truthy(reason) {
 		text, ok := jstext.ToString(reason)
 		if !ok {
-			return errors.New("Cannot convert object to primitive value")
+			return errNoPrimitiveValue
 		}
 		return errors.New("incomplete: " + text)
 	}

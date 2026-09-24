@@ -1615,17 +1615,17 @@ type openAIChunk struct {
 // iterateOpenAISSE reads a /chat/completions stream the way pi iterates the
 // openai SDK's Stream (iterateOpenAIStream). Each item goes to onEvent (when
 // set) first, as pi's loop opens with onProviderStreamEvent — whatever the
-// item is — and then, as a chunk, to handle. An item that does not decode as a
-// chunk — null, a scalar, an array — is not handled, which is where pi's
-// `!chunk || typeof chunk !== "object"` check and its reads of absent fields
-// leave it too.
+// item is — and then, as a chunk, to handle. null is not handled (pi's
+// `!chunk` skip), nor is an item that does not decode as a chunk — a scalar,
+// an array — which pi's `typeof chunk !== "object"` skip and its reads of
+// absent fields leave alone too.
 func iterateOpenAISSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(openAIChunk) error) error {
 	return iterateOpenAIStream(body, ctx, openaiStreamJSONWithRepair, func(item []byte) error {
 		if err := observeOpenAIStreamItem(onEvent, item); err != nil {
 			return err
 		}
 		var chunk openAIChunk
-		if json.Unmarshal(item, &chunk) != nil {
+		if isJSONNull(item) || json.Unmarshal(item, &chunk) != nil {
 			return nil
 		}
 		return handle(chunk)

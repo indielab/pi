@@ -38,6 +38,11 @@ const utf8BOM = "\xef\xbb\xbf"
 // data; `data` lines join with "\n"; a line starting with ":" is a comment;
 // every other field (id, retry, …) is ignored. An event the body ends before
 // its blank line is never dispatched.
+//
+// A field's value is everything after the line's first colon less exactly one
+// leading space. Nothing else is trimmed, and JSON.parse accepts only JSON's
+// own whitespace around a value, so data padded with anything else (U+00A0,
+// U+FEFF, U+0085, VT, FF) does not parse.
 func readOpenAISSE(body io.Reader, ctx context.Context, dispatch func(openaiSSEEvent) error) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
