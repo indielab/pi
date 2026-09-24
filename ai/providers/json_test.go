@@ -1,6 +1,7 @@
 package providers
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 )
@@ -26,6 +27,28 @@ func TestParseStreamingJSONTrailingCommaInsideString(t *testing.T) {
 	for _, c := range cases {
 		if got, _ := parseStreamingJSON(c.in); !reflect.DeepEqual(got, c.want) {
 			t.Errorf("parseStreamingJSON(%q) = %#v want %#v", c.in, got, c.want)
+		}
+	}
+}
+
+// The arguments a streamed tool call replays keep the key order of the object
+// pi's parseStreamingJson builds: array-index keys first, ascending, at every
+// depth. Each want is node's JSON.stringify(parseStreamingJson(in)) at pi
+// 002fc8385 (partial-json 0.1.7).
+func TestParseStreamingJSONKeyOrderMatchesPi(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`{"b":1,"2":"x","1":"y"}`, `{"1":"y","2":"x","b":1}`},
+		{`{"b":1,"2":"x","1":"y`, `{"1":"y","2":"x","b":1}`},
+		{`{"cmd":"ls","10":{"b":0,"0":1},"9":[{"1":1,"0":0}]}`, `{"9":[{"0":0,"1":1}],"10":{"0":1,"b":0},"cmd":"ls"}`},
+	}
+	for _, c := range cases {
+		_, ordered := parseStreamingJSON(c.in)
+		got, err := json.Marshal(ordered)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != c.want {
+			t.Errorf("parseStreamingJSON(%q) orders as %s, pi %s", c.in, got, c.want)
 		}
 	}
 }

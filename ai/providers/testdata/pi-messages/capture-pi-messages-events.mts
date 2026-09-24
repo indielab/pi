@@ -123,6 +123,16 @@ const cases: Case[] = [
 		name: "unknownTypeIsObservedAndPushed",
 		sse: framed(start, { type: "gateway_note", note: "n" }, textStart, textDelta, textEnd, done),
 	},
+	// JSON.parse builds an ordinary object, which enumerates array-index keys
+	// first, ascending, then the rest in wire order, at every depth: observed
+	// shows it.
+	{
+		name: "observedKeysEnumerateIndicesFirst",
+		sse:
+			framed(start, textStart) +
+			frame('{"type":"text_delta","contentIndex":0,"delta":"Hello","7":1,"b":{"z":1,"0":2},"1":3}') +
+			framed(textEnd, done),
+	},
 	// observed is JSON.stringify text: <, >, &, U+2028 and U+2029 are written as
 	// themselves, however deep in the event they sit.
 	{

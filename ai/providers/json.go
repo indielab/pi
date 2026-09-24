@@ -254,7 +254,7 @@ func jsStringifyObjectBody(dec *json.Decoder, b *strings.Builder) error {
 			continue
 		}
 		positions[name] = len(members)
-		index, isIndex := jsArrayIndexKey(name)
+		index, isIndex := jstext.ArrayIndexKey(name)
 		members = append(members, member{key: name, index: index, value: value.String(), isIndex: isIndex})
 	}
 
@@ -282,30 +282,6 @@ func jsStringifyObjectBody(dec *json.Decoder, b *strings.Builder) error {
 	}
 	b.WriteByte('}')
 	return nil
-}
-
-// jsArrayIndexKey reports whether name is an array index in the ECMAScript
-// sense — `ToString(ToUint32(name)) === name` and the value is not 2^32-1 — and
-// returns that value. Those are the keys OrdinaryOwnPropertyKeys hoists to the
-// front, so "0" and "12" qualify while "01", "-1", "1.0" and "4294967295" are
-// ordinary string keys.
-func jsArrayIndexKey(name string) (uint32, bool) {
-	if name == "" || len(name) > 10 {
-		return 0, false
-	}
-	if name[0] == '0' && len(name) > 1 {
-		return 0, false // canonical form has no leading zeros
-	}
-	for i := 0; i < len(name); i++ {
-		if name[i] < '0' || name[i] > '9' {
-			return 0, false
-		}
-	}
-	value, err := strconv.ParseUint(name, 10, 64)
-	if err != nil || value >= math.MaxUint32 {
-		return 0, false
-	}
-	return uint32(value), true
 }
 
 // jsNumber renders a JSON number the way JavaScript's Number-to-String

@@ -2,9 +2,13 @@ package ai
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // OrderedField is one key/value pair of an OrderedObject.
@@ -71,7 +75,8 @@ func plainValue(v any) any {
 // DecodeOrderedObject decodes a JSON object into both the map `encoding/json`
 // would produce and an order-preserving twin. Numbers decode to float64 and
 // nulls to nil exactly as json.Unmarshal into `any` does, so the two forms
-// differ only in whether key order survives.
+// differ only in whether key order survives. The order is the one JSON.parse's
+// object lists its keys in (decodeOrderedObjectBody), not always the wire's.
 //
 // Anything that is not a single, complete JSON object is an error, matching
 // json.Unmarshal into a map[string]any.
@@ -112,9 +117,13 @@ func DecodeOrderedValue(data []byte) (any, error) {
 	return v, nil
 }
 
-// decodeOrderedObjectBody reads members up to and including the closing brace.
+// decodeOrderedObjectBody reads members up to and including the closing brace,
+// in the order the object JSON.parse builds from them lists its keys
+// (OrdinaryOwnPropertyKeys): array-index keys first, ascending, then every
+// other key in the order it first appeared.
 func decodeOrderedObjectBody(dec *json.Decoder) (OrderedObject, error) {
 	obj := OrderedObject{}
+	indexKeys := 0 // obj[:indexKeys] are the array-index keys, ascending
 	for dec.More() {
 		keyTok, err := dec.Token()
 		if err != nil {
@@ -128,13 +137,24 @@ func decodeOrderedObjectBody(dec *json.Decoder) (OrderedObject, error) {
 		if err != nil {
 			return nil, err
 		}
-		// A repeated key keeps its first position and takes the last value,
-		// which is what a JS object literal and json.Unmarshal both do.
+		// A repeated key keeps its place and takes the last value, which is
+		// what JSON.parse and json.Unmarshal both do.
 		if i := obj.indexOf(key); i >= 0 {
 			obj[i].Value = value
-		} else {
-			obj = append(obj, OrderedField{Key: key, Value: value})
+			continue
 		}
+		field := OrderedField{Key: key, Value: value}
+		index, isIndex := jstext.ArrayIndexKey(key)
+		if !isIndex {
+			obj = append(obj, field)
+			continue
+		}
+		at, _ := slices.BinarySearchFunc(obj[:indexKeys], index, func(f OrderedField, target uint32) int {
+			n, _ := jstext.ArrayIndexKey(f.Key)
+			return cmp.Compare(n, target)
+		})
+		obj = slices.Insert(obj, at, field)
+		indexKeys++
 	}
 	if _, err := dec.Token(); err != nil { // closing '}'
 		return nil, err

@@ -179,6 +179,23 @@ const cases: Case[] = [
 		v8Cause: true,
 		sse: messageStart + "\n" + ": c\nevent: message_start\ndata: nul",
 	},
+	// JSON.parse builds an ordinary object, which enumerates array-index keys
+	// first, ascending, then the rest in wire order, at every depth: observed
+	// shows it.
+	{
+		name: "observedKeysEnumerateIndicesFirst",
+		sse: frames(
+			messageStart,
+			blockStart,
+			ev(
+				"content_block_delta",
+				'{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello","1":"x"},"10":1,"2":2,"a":3}',
+			),
+			blockStop,
+			messageDelta,
+			messageStop,
+		),
+	},
 	// observed is JSON.stringify text: <, >, &, U+2028 and U+2029 are written as
 	// themselves, however deep in the event they sit.
 	{

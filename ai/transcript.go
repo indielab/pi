@@ -5,8 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
-	"strconv"
 	"strings"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // Transcript replay, ported from pi packages/ai/src/utils/transcript.ts
@@ -120,33 +121,14 @@ func (s SystemSections) unique() []SystemSection {
 func (s SystemSections) Entries() []SystemSection {
 	entries := s.unique()
 	sort.SliceStable(entries, func(i, j int) bool {
-		a, aIndex := jsArrayIndex(entries[i].Name)
-		b, bIndex := jsArrayIndex(entries[j].Name)
+		a, aIndex := jstext.ArrayIndexKey(entries[i].Name)
+		b, bIndex := jstext.ArrayIndexKey(entries[j].Name)
 		if aIndex && bIndex {
 			return a < b
 		}
 		return aIndex && !bIndex
 	})
 	return entries
-}
-
-// jsArrayIndex reports whether name is a JS array index — the canonical decimal
-// form of an integer in [0, 2^32-2] — which a JS object orders ahead of every
-// other own property, ascending.
-func jsArrayIndex(name string) (uint64, bool) {
-	if name == "" || len(name) > 10 || (len(name) > 1 && name[0] == '0') {
-		return 0, false
-	}
-	for i := 0; i < len(name); i++ {
-		if name[i] < '0' || name[i] > '9' {
-			return 0, false
-		}
-	}
-	n, err := strconv.ParseUint(name, 10, 64)
-	if err != nil || n > 1<<32-2 {
-		return 0, false
-	}
-	return n, true
 }
 
 // MarshalJSON writes the sections as a JSON object in JS own-property order; a
