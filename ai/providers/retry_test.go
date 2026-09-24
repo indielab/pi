@@ -465,8 +465,8 @@ func TestServerRetryDelayOverflowClamped(t *testing.T) {
 	}
 }
 
-// wrapCfg builds a retryConfig for a provider pi wraps with
-// retryProviderRequest, i.e. one where an oversized server delay fails fast.
+// wrapCfg builds a retryConfig for a provider whose SDK error carries the
+// response headers, i.e. one where an oversized server delay fails fast.
 func wrapCfg(maxRetryDelayMs int) retryConfig {
 	return retryConfig{maxRetryDelayMs: maxRetryDelayMs, providerError: openaiSDKErrorMessage}
 }

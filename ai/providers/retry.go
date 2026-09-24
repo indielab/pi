@@ -34,15 +34,14 @@ type retryConfig struct {
 	maxRetryDelayMs int
 	timeoutMs       int
 	// providerError renders the SDK APIError message that pi interpolates into
-	// the fail-fast error, and selects whether fail-fast applies at all. pi
-	// wraps only the providers whose requests go through retryProviderRequest
-	// (anthropic-messages, openai-completions, openai-responses); its Google
-	// provider streams via @google/genai and was untouched by 7af8533c. A nil
-	// renderer therefore means "pi does not fail fast here", and an oversized
-	// server delay keeps the pre-7af8533c behavior of falling back to backoff.
-	// b9d360a2c later routed Google through retryProviderRequest too, but its
-	// ApiError carries no headers, so no server delay ever reaches the check
-	// and the nil renderer still describes it.
+	// the fail-fast error, and selects whether fail-fast applies at all. It is
+	// set for the providers whose SDK error carries the response headers
+	// (anthropic-messages, openai-completions, openai-responses): pi's
+	// retryProviderRequest reads a server-requested delay from them and fails
+	// fast on one above maxRetryDelayMs. It is nil for google: pi runs google
+	// through retryProviderRequest too (retryGoogleRequest), but
+	// @google/genai's ApiError carries no headers, so pi never reads a server
+	// delay there and never fails fast.
 	providerError func(status int, body []byte) string
 	// httpClient overrides the shared client (pi StreamOptions.fetch). Nil keeps
 	// sharedClient, whose transport carries the timeoutMs response-header cap.
@@ -363,8 +362,9 @@ var errRequestAborted = errors.New("Request aborted")
 // response, or a non-2xx one, which the SDKs throw — and a retry wait both
 // end with errRequestAborted.
 //
-// For providers pi wraps (cfg.providerError non-nil) a server-requested delay
-// above cfg.maxRetryDelayMs terminates the loop with the fail-fast error from
+// For providers whose SDK error carries the response headers
+// (cfg.providerError non-nil) a server-requested delay above
+// cfg.maxRetryDelayMs terminates the loop with the fail-fast error from
 // validateServerRetryDelay.
 func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg retryConfig) (*http.Response, error) {
 	client := cfg.httpClient
