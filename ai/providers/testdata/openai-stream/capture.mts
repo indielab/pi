@@ -309,6 +309,10 @@ const dispatch: Record<string, Body> = {
 	"key-order": `data: ${J({ z: 1, id: "k", a: { y: [{ q: 1, b: 2 }], x: null }, choices: [{ index: 0, delta: { content: "<&>" } }] })}\n\ndata: ${FIN}\n\n`,
 	// Written out, not J(): a JS object literal would already list its
 	// array-index keys first, ascending, as JSON.parse's object does.
+	// JSON.parse reads a number past float64's range as ±Infinity, which
+	// JSON.stringify writes as null; written out, since J() would already
+	// have made it null.
+	"numbers-past-float64": `data: {"id":"a","x":1e400,"y":-1e400,"z":1e-400,"w":[1e400,{"v":-1e400}],"choices":[{"index":0,"delta":{"content":"x"}}]}\n\ndata: 1e400\n\ndata: -0\n\ndata: ${FIN}\n\n`,
 	"index-keys": `data: {"z":1,"id":"k","2":"x","1":"y","-1":0,"01":2,"4294967295":3,"4294967294":4,"choices":[{"index":0,"delta":{"content":"i"},"logprobs":{"2":1,"1":2}}]}\n\ndata: ${FIN}\n\n`,
 	"error-chunk-openrouter": errorChunk({ message: "boom", code: 502, metadata: { raw: "upstream exploded", provider_name: "p" } }),
 	"error-chunk-raw-contained": errorChunk({ message: "boom: upstream exploded", metadata: { raw: "upstream exploded" } }),
@@ -418,6 +422,7 @@ const responsesBodies: Record<string, string> = {
 	"error-event-object-message": errorEvent({ code: "x", message: { a: 1 } }),
 	"error-event-array-code": errorEvent({ code: [1, [2, null]], message: "m" }),
 	"error-event-uncoercible-code": errorEvent({ code: { toString: 1 }, message: "m" }),
+	"error-event-code-past-float64": `${created}data: {"type":"error","code":1e400,"message":"m"}\n\n${completed}`,
 	"response-failed":
 		created +
 		R({

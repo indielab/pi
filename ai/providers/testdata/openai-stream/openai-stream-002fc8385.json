@@ -1226,6 +1226,67 @@
 				"responseId": ""
 			}
 		},
+		"numbers-past-float64": {
+			"sse": "data: {\"id\":\"a\",\"x\":1e400,\"y\":-1e400,\"z\":1e-400,\"w\":[1e400,{\"v\":-1e400}],\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: 1e400\n\ndata: -0\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"x\":null,\"y\":null,\"z\":0,\"w\":[null,{\"v\":null}],\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"null",
+					"0",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"x\":null,\"y\":null,\"z\":0,\"w\":[null,{\"v\":null}],\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"null",
+						"0",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"x\":null,\"y\":null,\"z\":0,\"w\":[null,{\"v\":null}],\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"null",
+						"0",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"x\":null,\"y\":null,\"z\":0,\"w\":[null,{\"v\":null}],\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"null",
+					"0",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x",
+				"responseId": "a"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"x\":null,\"y\":null,\"z\":0,\"w\":[null,{\"v\":null}],\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"null",
+					"0",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
 		"index-keys": {
 			"sse": "data: {\"z\":1,\"id\":\"k\",\"2\":\"x\",\"1\":\"y\",\"-1\":0,\"01\":2,\"4294967295\":3,\"4294967294\":4,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"i\"},\"logprobs\":{\"2\":1,\"1\":2}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
 			"sdk": {
@@ -3299,6 +3360,21 @@
 				"onResponseCalls": 1,
 				"stopReason": "error",
 				"errorMessage": "Cannot convert object to primitive value",
+				"text": "",
+				"responseId": "resp_1"
+			}
+		},
+		"error-event-code-past-float64": {
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"error\",\"code\":1e400,\"message\":\"m\"}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"responses": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"error\",\"code\":null,\"message\":\"m\"}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error Code Infinity: m",
 				"text": "",
 				"responseId": "resp_1"
 			}

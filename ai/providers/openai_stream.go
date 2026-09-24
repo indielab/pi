@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"strings"
 
@@ -224,18 +225,18 @@ func iterateOpenAIStream(body io.Reader, ctx context.Context, parse func(data st
 }
 
 // observeOpenAIStreamItem hands onEvent, when set, the item as pi's
-// onProviderStreamEvent receives it: the value JSON.parse made of it, so an
-// object arrives as an ai.OrderedObject in wire order and null, scalars and
-// arrays arrive too. Its error fails the stream. An item DecodeOrderedValue
-// cannot represent — only a number past float64's range, which JSON.parse
-// reads as ±Infinity — is not observed.
+// onProviderStreamEvent receives it: the value JSON.parse made of it
+// (ai.DecodeOrderedValue), so an object arrives as an ai.OrderedObject in its
+// JS key order, null, scalars and arrays arrive too, and a number past
+// float64's range is ±Inf. Its error fails the stream.
 func observeOpenAIStreamItem(onEvent func(any) error, item []byte) error {
 	if onEvent == nil {
 		return nil
 	}
 	data, err := ai.DecodeOrderedValue(item)
 	if err != nil {
-		return nil
+		// Unreachable: the item passed JSON.parse's acceptance test.
+		return fmt.Errorf("decoding a provider stream event pi's JSON.parse accepted: %w; this is a port bug, report it with the event", err)
 	}
 	return onEvent(data)
 }
