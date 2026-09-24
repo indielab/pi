@@ -484,14 +484,10 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		// which owns the fetch, and its google adapter never calls onResponse.
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			data, _ := io.ReadAll(respBody)
-			// Upstream 6fbeba51's google change is a no-op for the on-the-wire
-			// HTTP-error case: the @google/genai SDK's ApiError already folds the
-			// full body into error.message (JSON.stringify(errorBody)), so
-			// normalizeProviderError sets messageCarriesBody=true and
-			// formatProviderError returns the message unchanged (no status/body
-			// reshaping, no truncation). Go reads the raw body here directly, so
-			// no behavior delta to port; the existing structured-message shape is
-			// retained. (Truncation lives in formatProviderError for parity.)
+			// Not pi's message: pi surfaces @google/genai's ApiError message,
+			// JSON.stringify of the error body, whole and without the status;
+			// this says "Google API error <status>: <message>", capped at 4,000
+			// units. Measured and tracked as docs/UPSTREAM.md K18.
 			fail(formatProviderError("Google", resp.StatusCode, data))
 			return
 		}
