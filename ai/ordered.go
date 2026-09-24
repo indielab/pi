@@ -137,14 +137,14 @@ func plainValue(v any) any {
 }
 
 // DecodeOrderedObject decodes a JSON object into both the map `encoding/json`
-// would produce and an order-preserving twin. Numbers decode to float64 and
-// nulls to nil exactly as json.Unmarshal into `any` does, so the two forms
-// differ only in whether key order survives. The order is the one JSON.parse's
-// object lists its keys in (see parseOrdered), not always the wire's.
+// would produce and an order-preserving twin, holding what JSON.parse returns
+// (DecodeOrderedValue's values): the twin lists the keys in the order
+// JSON.parse's object does (see parseOrdered), numbers are float64 — ±Inf past
+// float64's range, where json.Unmarshal fails — and nulls nil. The two forms
+// differ only in whether key order survives.
 //
 // Anything that is not a single, complete JSON object is an error, matching
-// json.Unmarshal into a map[string]any, and so is a number past float64's
-// range, which json.Unmarshal refuses where JSON.parse reads ±Infinity.
+// json.Unmarshal into a map[string]any.
 func DecodeOrderedObject(data []byte) (map[string]any, OrderedObject, error) {
 	v, err := parseOrdered(data)
 	if err != nil {
@@ -153,9 +153,6 @@ func DecodeOrderedObject(data []byte) (map[string]any, OrderedObject, error) {
 	obj, ok := v.(OrderedObject)
 	if !ok {
 		return nil, nil, fmt.Errorf("expected a JSON object, got %s", bytes.TrimSpace(data)[:1])
-	}
-	if hasNonFinite(obj) {
-		return nil, nil, fmt.Errorf("the JSON object holds a number past float64's range, which json.Unmarshal cannot decode; DecodeOrderedValue reads it as JSON.parse does, as ±Inf")
 	}
 	return obj.Plain(), obj, nil
 }

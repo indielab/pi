@@ -3,7 +3,6 @@ package ai
 import (
 	"errors"
 	"fmt"
-	"math"
 	"sort"
 	"strconv"
 	"unicode"
@@ -406,26 +405,4 @@ func boolIndex(b bool) int {
 		return 1
 	}
 	return 0
-}
-
-// hasNonFinite reports whether v, a parsed value, holds ±Inf or NaN at any
-// depth.
-func hasNonFinite(v any) bool {
-	switch t := v.(type) {
-	case float64:
-		return math.IsInf(t, 0) || math.IsNaN(t)
-	case []any:
-		for _, e := range t {
-			if hasNonFinite(e) {
-				return true
-			}
-		}
-	case OrderedObject:
-		for _, f := range t {
-			if hasNonFinite(f.Value) {
-				return true
-			}
-		}
-	}
-	return false
 }

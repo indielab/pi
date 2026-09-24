@@ -221,3 +221,29 @@ func TestParseOrderedRefusesDeepNesting(t *testing.T) {
 		t.Fatalf("%d levels parsed", maxOrderedDepth+1)
 	}
 }
+
+// A number past float64's range reads as JSON.parse reads it, ±Infinity, in
+// both of DecodeOrderedObject's forms, and a tool call holding one — as a
+// session edited by hand might — decodes and replays it as JSON.stringify
+// writes Infinity: null. json.Unmarshal refuses the number. The wants are
+// node's JSON.stringify(JSON.parse(text)).
+func TestDecodeOrderedObjectReadsNumbersAsJSONParse(t *testing.T) {
+	plain, ordered, err := DecodeOrderedObject([]byte(`{"a":1e400,"b":[-1e400,{"c":1e400}],"d":1e-400}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text, err := jstext.Stringify(ordered); err != nil || text != `{"a":null,"b":[null,{"c":null}],"d":0}` {
+		t.Fatalf("ordered = %s, %v; JSON.stringify(JSON.parse(...)) is {\"a\":null,\"b\":[null,{\"c\":null}],\"d\":0}", text, err)
+	}
+	if a, _ := plain["a"].(float64); !math.IsInf(a, 1) {
+		t.Fatalf("plain a = %v, want +Inf", plain["a"])
+	}
+	var call ToolCall
+	if err := json.Unmarshal([]byte(`{"id":"c","name":"n","arguments":{"n":1e400,"m":1}}`), &call); err != nil {
+		t.Fatalf("a tool call whose arguments hold 1e400: %v", err)
+	}
+	raw, err := json.Marshal(call)
+	if err != nil || string(raw) != `{"id":"c","name":"n","arguments":{"n":null,"m":1}}` {
+		t.Fatalf("tool call round trip = %s, %v; JSON.stringify(JSON.parse(...)) is {\"id\":\"c\",\"name\":\"n\",\"arguments\":{\"n\":null,\"m\":1}}", raw, err)
+	}
+}
