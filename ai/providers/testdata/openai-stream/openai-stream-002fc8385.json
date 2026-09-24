@@ -339,6 +339,77 @@
 				"responseId": ""
 			}
 		},
+		"crlf-multi-line-data": {
+			"sse": "data: {\"id\":\"m\",\r\ndata: \"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}\r\n\r\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\r\n\r\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "joined",
+				"responseId": "m"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
+		"crlf-thread-event": {
+			"sse": "event: thread.message\r\ndata: {\"id\":\"t\"}\r\n\r\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\r\n\r\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\r\n\r\n",
+			"sdk": {
+				"yields": [
+					"{\"event\":\"thread.message\",\"data\":{\"id\":\"t\"}}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null
+			},
+			"completions": {
+				"observed": [
+					"{\"event\":\"thread.message\",\"data\":{\"id\":\"t\"}}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x",
+				"responseId": "a"
+			},
+			"responses": {
+				"observed": [
+					"{\"event\":\"thread.message\",\"data\":{\"id\":\"t\"}}",
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
 		"comments-and-other-fields": {
 			"sse": ": keepalive\n\nid: 7\nretry: 100\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\n: ping\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
 			"sdk": {

@@ -17,8 +17,9 @@
 //
 //   dispatch  SSE bodies read three ways: `sdk` is what the SDK's stream
 //             iterator yields (each item JSON.stringify'd) and what it throws,
-//             through chat.completions.create and responses.create alike (the
-//             script fails if the two differ); `completions` and `responses`
+//             through chat.completions.create and responses.create alike, and
+//             over the body delivered one byte per read (the script fails if
+//             any two differ); `completions` and `responses`
 //             are pi's adapters over the same body: the provider stream events
 //             onProviderStreamEvent observed, and how the stream ended.
 //   completions / responses
@@ -43,6 +44,7 @@ const responses = await load("api/openai-responses.ts");
 const openaiDir = path.join(extraction, "node_modules/openai");
 const openaiVersion = JSON.parse(fs.readFileSync(path.join(openaiDir, "package.json"), "utf8")).version;
 const { default: OpenAI } = await import(pathToFileURL(path.join(openaiDir, "index.mjs")).href);
+const { Stream } = await import(pathToFileURL(path.join(openaiDir, "core/streaming.mjs")).href);
 
 // ---- the loopback server ---------------------------------------------------
 
@@ -96,6 +98,29 @@ async function sdkRead(body: string, open: (client: any) => Promise<AsyncIterabl
 	return { yields, threw: null };
 }
 
+// sdkReadBytewise is the SDK's Stream over the body delivered one byte per
+// read, so a line ending split across reads ("\r" | "\n") is measured rather
+// than assumed to read like the whole body.
+async function sdkReadBytewise(body: string): Promise<SDKReading> {
+	const bytes = new TextEncoder().encode(body);
+	let at = 0;
+	const byteStream = new ReadableStream<Uint8Array>({
+		pull(controller) {
+			if (at < bytes.length) controller.enqueue(bytes.slice(at, ++at));
+			else controller.close();
+		},
+	});
+	const yields: string[] = [];
+	try {
+		for await (const item of Stream.fromSSEResponse(new Response(byteStream), new AbortController())) {
+			yields.push(JSON.stringify(item));
+		}
+	} catch (error) {
+		return { yields, threw: thrown(error) };
+	}
+	return { yields, threw: null };
+}
+
 // The SDK logs an unparseable event before rethrowing; keep the capture quiet.
 const consoleError = console.error;
 async function sdkReading(body: string): Promise<SDKReading> {
@@ -105,6 +130,10 @@ async function sdkReading(body: string): Promise<SDKReading> {
 		const resp = await sdkRead(body, (c) => c.responses.create({ model: "m", input: "hi", stream: true }));
 		if (JSON.stringify(chat) !== JSON.stringify(resp)) {
 			throw new Error(`chat and responses streams read differently:\n${JSON.stringify(chat)}\n${JSON.stringify(resp)}`);
+		}
+		const bytewise = await sdkReadBytewise(body);
+		if (JSON.stringify(chat) !== JSON.stringify(bytewise)) {
+			throw new Error(`the body read whole and one byte at a time differ:\n${JSON.stringify(chat)}\n${JSON.stringify(bytewise)}`);
 		}
 		return chat;
 	} finally {
@@ -211,6 +240,10 @@ const dispatch: Record<string, string> = {
 	crlf: `data: ${A}\r\n\r\ndata: ${B}\r\n\r\ndata: ${FIN}\r\n\r\n`,
 	"lone-cr": `data: ${A}\r\rdata: ${B}\r\rdata: ${FIN}\r\r`,
 	"mixed-line-endings": `data: ${A}\r\n\ndata: ${B}\n\r\ndata: ${FIN}\r\r\n`,
+	// "\r\n" is one line ending, so an event's fields stay one event: a second
+	// line ending inside it would dispatch the half read so far.
+	"crlf-multi-line-data": `data: {"id":"m",\r\ndata: "choices":[{"index":0,"delta":{"content":"joined"}}]}\r\n\r\ndata: ${FIN}\r\n\r\n`,
+	"crlf-thread-event": `event: thread.message\r\ndata: {"id":"t"}\r\n\r\ndata: ${A}\r\n\r\ndata: ${FIN}\r\n\r\n`,
 	"comments-and-other-fields": `: keepalive\n\nid: 7\nretry: 100\ndata: ${A}\n\n: ping\n\ndata: ${FIN}\n\n`,
 	"field-value-spacing": `data:${A}\n\ndata:  ${FIN}\n\n`,
 	"data-field-without-colon": `data\ndata: ${A}\n\ndata: ${FIN}\n\n`,

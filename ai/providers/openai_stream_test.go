@@ -11,6 +11,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/sky-valley/pi/ai"
 	"github.com/sky-valley/pi/internal/jstext"
@@ -196,46 +197,64 @@ var openaiStreamParsers = map[string]func(string) ([]byte, bool){
 	"responses":   openaiStreamJSON,
 }
 
+// openaiStreamReads are the ways a test hands a body to the loops: in one read,
+// and one byte per read, so that every line ending also arrives split across
+// reads ("\r" | "\n"). The capture measured that the SDK reads a body the same
+// either way.
+var openaiStreamReads = map[string]func(string) io.Reader{
+	"whole":    func(body string) io.Reader { return strings.NewReader(body) },
+	"one-byte": func(body string) io.Reader { return iotest.OneByteReader(strings.NewReader(body)) },
+}
+
 // Both loops read a body into exactly the items the openai SDK's stream
 // iterator yields — blank-line dispatch, joined multi-line data, every line
-// ending, a "[DONE]" prefix ending the stream, no dispatch of an event the body
-// ends inside, "thread.*" events wrapped — and fail on an item carrying an
-// error with the SDK's APIError message. Where the SDK's JSON.parse throws, the
-// port skips the event instead (a deliberate leniency); only the items before
-// it are compared.
+// ending wherever the reads split it, a "[DONE]" prefix ending the stream, no
+// dispatch of an event the body ends inside, "thread.*" events wrapped — and
+// fail on an item carrying an error with the SDK's APIError message. Where the
+// SDK's JSON.parse throws, the port skips the event instead (a deliberate
+// leniency); only the items before it are compared.
 func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
 	c := loadOpenAIStreamCapture(t)
 	for name, row := range c.Dispatch {
 		for loop, parse := range openaiStreamParsers {
-			t.Run(name+"/"+loop, func(t *testing.T) {
-				var got []string
-				err := iterateOpenAIStream(strings.NewReader(row.SSE), nil, parse, func(item []byte) error {
-					text, ok := jsStringify(item)
-					if !ok {
-						t.Fatalf("yielded item %q is not one JSON value", item)
-					}
-					got = append(got, text)
-					return nil
+			for read, reader := range openaiStreamReads {
+				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
+					readOpenAIStreamLikeTheSDK(t, reader(row.SSE), parse, row)
 				})
-				want := row.SDK
-				switch {
-				case want.Threw != nil && want.Threw.Name == "SyntaxError":
-					if len(got) < len(want.Yields) || !slices.Equal(got[:len(want.Yields)], want.Yields) {
-						t.Fatalf("items before the SDK's SyntaxError:\n got %q\nsdk %q", got, want.Yields)
-					}
-					return
-				case want.Threw != nil:
-					if err == nil || err.Error() != want.Threw.Message {
-						t.Errorf("error = %v, sdk threw %s %q", err, want.Threw.Name, want.Threw.Message)
-					}
-				case err != nil:
-					t.Errorf("error = %v, sdk threw nothing", err)
-				}
-				if !slices.Equal(got, want.Yields) {
-					t.Errorf("items:\n got %q\nsdk %q", got, want.Yields)
-				}
-			})
+			}
 		}
+	}
+}
+
+// readOpenAIStreamLikeTheSDK iterates body and compares the items and the
+// error with what the SDK made of the row's body.
+func readOpenAIStreamLikeTheSDK(t *testing.T, body io.Reader, parse func(string) ([]byte, bool), row openaiStreamRow) {
+	t.Helper()
+	var got []string
+	err := iterateOpenAIStream(body, nil, parse, func(item []byte) error {
+		text, ok := jsStringify(item)
+		if !ok {
+			t.Fatalf("yielded item %q is not one JSON value", item)
+		}
+		got = append(got, text)
+		return nil
+	})
+	want := row.SDK
+	switch {
+	case want.Threw != nil && want.Threw.Name == "SyntaxError":
+		if len(got) < len(want.Yields) || !slices.Equal(got[:len(want.Yields)], want.Yields) {
+			t.Fatalf("items before the SDK's SyntaxError:\n got %q\nsdk %q", got, want.Yields)
+		}
+		return
+	case want.Threw != nil:
+		if err == nil || err.Error() != want.Threw.Message {
+			t.Errorf("error = %v, sdk threw %s %q", err, want.Threw.Name, want.Threw.Message)
+		}
+	case err != nil:
+		t.Errorf("error = %v, sdk threw nothing", err)
+	}
+	if !slices.Equal(got, want.Yields) {
+		t.Errorf("items:\n got %q\nsdk %q", got, want.Yields)
 	}
 }
 
