@@ -88,6 +88,10 @@ const minimal = [messageStart, blockStart, textDelta("Hello"), blockStop, messag
 
 type Case = { name: string; sse: string; v8Cause?: boolean; throwAt?: number; abortFirst?: boolean };
 const B = String.fromCharCode(92); // a backslash, spelled so no tool decodes an escape
+// U+2028 and U+2029, spelled so no tool decodes an escape: JSON.stringify writes
+// both literally, as it does <, > and &.
+const LS = String.fromCharCode(0x2028);
+const PS = String.fromCharCode(0x2029);
 const cases: Case[] = [
 	// 'forwards parsed provider stream events in order'.
 	{ name: "forwardsInOrder", sse: frames(...minimal) },
@@ -174,6 +178,12 @@ const cases: Case[] = [
 		name: "syntaxErrorAtEOF",
 		v8Cause: true,
 		sse: messageStart + "\n" + ": c\nevent: message_start\ndata: nul",
+	},
+	// observed is JSON.stringify text: <, >, &, U+2028 and U+2029 are written as
+	// themselves, however deep in the event they sit.
+	{
+		name: "observedTextIsNotHTMLEscaped",
+		sse: frames(messageStart, blockStart, textDelta(`<b>&x> ${LS} ${PS} end`), blockStop, messageDelta, messageStop),
 	},
 	// A throwing observer fails the stream with its message (pi awaits the
 	// callback inside the adapter's try): on the first event...

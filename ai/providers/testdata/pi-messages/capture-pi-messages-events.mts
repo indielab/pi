@@ -72,6 +72,9 @@ const wireEvents = [
 const frame = (data: string) => `data: ${data}\n\n`;
 const framed = (...events: unknown[]) => events.map((event) => frame(JSON.stringify(event))).join("");
 const [start, textStart, textDelta, textEnd, done] = wireEvents;
+// Text JSON.stringify writes as itself where encoding/json escapes it: <, > and
+// &, and U+2028 and U+2029 (spelled so no tool decodes an escape).
+const markup = `<b>&x> ${String.fromCharCode(0x2028)} ${String.fromCharCode(0x2029)} end`;
 
 type Case = { name: string; sse: string; v8Error?: string; throwAt?: number; abortFirst?: boolean };
 const cases: Case[] = [
@@ -119,6 +122,12 @@ const cases: Case[] = [
 	{
 		name: "unknownTypeIsObservedAndPushed",
 		sse: framed(start, { type: "gateway_note", note: "n" }, textStart, textDelta, textEnd, done),
+	},
+	// observed is JSON.stringify text: <, >, &, U+2028 and U+2029 are written as
+	// themselves, however deep in the event they sit.
+	{
+		name: "observedTextIsNotHTMLEscaped",
+		sse: framed(start, textStart, { ...textDelta, delta: markup }, { ...textEnd, content: markup }, done),
 	},
 	// A throwing observer fails the stream with its message: on the first event,
 	{ name: "observerThrowsOnFirstEvent", sse: framed(...wireEvents), throwAt: 0 },
