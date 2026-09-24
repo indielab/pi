@@ -3,7 +3,6 @@ package providers
 import (
 	"bufio"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +14,7 @@ import (
 	"os"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
@@ -34,13 +34,23 @@ type googleStreamScenario struct {
 	Name       string `json:"name"`
 	Divergence string `json:"divergence"`
 	Framing    string `json:"framing"` // "close" or "chunked"
-	Gzip       bool   `json:"gzip"`
 	// Headers is the response head, one [name, value] per line.
 	Headers [][2]string `json:"headers"`
 	// Segments are the body, each written as its own network read.
-	Segments     []string `json:"segments"`
-	ThrowOn      *int     `json:"throwOn"`
-	ThrowMessage string   `json:"throwMessage"`
+	Segments []string `json:"segments"`
+	// EncodedBody, when set, is the whole body as written instead (a gzip,
+	// deflate or brotli encoding of the joined segments, whole or damaged).
+	EncodedBody []byte `json:"encodedBody"`
+	// ContentLength adds a Content-Length for the body as written.
+	ContentLength bool `json:"contentLength"`
+	// OneWrite sends each segment as its own HTTP chunk, all in one write.
+	OneWrite bool `json:"oneWrite"`
+	// AbruptEnd drops the connection after the body, unterminated.
+	AbruptEnd bool `json:"abruptEnd"`
+	// RequestHeaders are the options.headers the caller passes.
+	RequestHeaders map[string]string `json:"requestHeaders"`
+	ThrowOn        *int              `json:"throwOn"`
+	ThrowMessage   string            `json:"throwMessage"`
 	// AbortOn is the callback call that aborts the request's signal.
 	AbortOn *int `json:"abortOn"`
 	// ReadBoundariesMatter reports whether pi's outcome changes when the
@@ -50,9 +60,11 @@ type googleStreamScenario struct {
 	// no Go field can (a numeric delta or response id, a string token
 	// count), so those are kept as JSON and compared by value.
 	Pi struct {
-		Events    []string `json:"events"`
-		SameModel bool     `json:"sameModel"`
-		Stream    []struct {
+		// AcceptEncoding is the accept-encoding header the server received.
+		AcceptEncoding string   `json:"acceptEncoding"`
+		Events         []string `json:"events"`
+		SameModel      bool     `json:"sameModel"`
+		Stream         []struct {
 			Type  string          `json:"type"`
 			Delta json.RawMessage `json:"delta"`
 		} `json:"stream"`
@@ -132,20 +144,51 @@ func (r *readsReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// googleScenarioResponse is the *http.Response Go's client makes of the
-// scenario's head, read by net/http itself.
-func googleScenarioResponse(t *testing.T, sc googleStreamScenario) *http.Response {
-	t.Helper()
+// googleScenarioWrites is what the scenario's server writes for the body
+// (before any chunk framing): the encoded body, else each segment when they
+// share one write, else the joined segments — pi's outcome too for every
+// scenario whose read boundaries do not matter.
+func googleScenarioWrites(sc googleStreamScenario) [][]byte {
+	switch {
+	case sc.EncodedBody != nil:
+		return [][]byte{sc.EncodedBody}
+	case sc.OneWrite:
+		writes := make([][]byte, len(sc.Segments))
+		for i, seg := range sc.Segments {
+			writes[i] = []byte(seg)
+		}
+		return writes
+	}
+	return [][]byte{[]byte(strings.Join(sc.Segments, ""))}
+}
+
+// googleScenarioHead is the scenario's response head, as its server writes
+// it.
+func googleScenarioHead(sc googleStreamScenario) string {
 	var head strings.Builder
 	head.WriteString("HTTP/1.1 200 OK\r\n")
 	for _, h := range sc.Headers {
 		fmt.Fprintf(&head, "%s: %s\r\n", h[0], h[1])
 	}
+	if sc.ContentLength {
+		n := 0
+		for _, w := range googleScenarioWrites(sc) {
+			n += len(w)
+		}
+		fmt.Fprintf(&head, "Content-Length: %d\r\n", n)
+	}
 	if sc.Framing == "chunked" {
 		head.WriteString("Transfer-Encoding: chunked\r\n")
 	}
 	head.WriteString("\r\n")
-	resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(head.String())), nil)
+	return head.String()
+}
+
+// googleScenarioResponse is the *http.Response Go's client makes of the
+// scenario's head, read by net/http itself.
+func googleScenarioResponse(t *testing.T, sc googleStreamScenario) *http.Response {
+	t.Helper()
+	resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(googleScenarioHead(sc))), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,7 +206,7 @@ func TestGoogleSSEReadChunksMatchPi(t *testing.T) {
 	ran := 0
 	for _, sc := range loadGoogleStreamCapture(t).Scenarios {
 		msg := sc.Pi.ErrorMessage
-		if sc.Divergence != "" || !(strings.HasPrefix(msg, "got status: ") || msg == "Incomplete JSON segment at the end" || msg == "This operation was aborted") {
+		if sc.Divergence != "" || sc.EncodedBody != nil || !(strings.HasPrefix(msg, "got status: ") || msg == "Incomplete JSON segment at the end" || msg == "This operation was aborted") {
 			continue
 		}
 		ran++
@@ -238,36 +281,31 @@ func TestGoogleToolCallArgumentsKeepModelOrder(t *testing.T) {
 	}
 }
 
-// serveGoogleScenario answers every request with the scenario's raw response:
-// the captured head line for line, then the whole body in one write (gzipped
-// when sc.Gzip, as one HTTP chunk when chunked) — the joined form, which is
-// pi's outcome too for every scenario whose read boundaries do not matter.
-func serveGoogleScenario(t *testing.T, sc googleStreamScenario) string {
+// serveGoogleScenario answers every request with the scenario's raw
+// response — the captured head line for line, then its body
+// (googleScenarioWrites, each write one HTTP chunk when chunked), all in one
+// write — and reports the Accept-Encoding the last request carried.
+func serveGoogleScenario(t *testing.T, sc googleStreamScenario) (baseURL string, acceptEncoding func() string) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ln.Close() })
-	body := []byte(strings.Join(sc.Segments, ""))
-	if sc.Gzip {
-		var zipped bytes.Buffer
-		zw := gzip.NewWriter(&zipped)
-		zw.Write(body)
-		zw.Close()
-		body = zipped.Bytes()
-	}
 	var resp bytes.Buffer
-	resp.WriteString("HTTP/1.1 200 OK\r\n")
-	for _, h := range sc.Headers {
-		fmt.Fprintf(&resp, "%s: %s\r\n", h[0], h[1])
+	resp.WriteString(googleScenarioHead(sc))
+	for _, w := range googleScenarioWrites(sc) {
+		if sc.Framing == "chunked" {
+			fmt.Fprintf(&resp, "%x\r\n%s\r\n", len(w), w)
+		} else {
+			resp.Write(w)
+		}
 	}
-	if sc.Framing == "chunked" {
-		fmt.Fprintf(&resp, "Transfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n0\r\n\r\n", len(body), body)
-	} else {
-		resp.WriteString("\r\n")
-		resp.Write(body)
+	if sc.Framing == "chunked" && !sc.AbruptEnd {
+		resp.WriteString("0\r\n\r\n")
 	}
+	var mu sync.Mutex
+	var gotAcceptEncoding string
 	go func() {
 		for {
 			conn, err := ln.Accept()
@@ -280,12 +318,19 @@ func serveGoogleScenario(t *testing.T, sc googleStreamScenario) string {
 				if err != nil {
 					return
 				}
+				mu.Lock()
+				gotAcceptEncoding = strings.Join(req.Header.Values("Accept-Encoding"), ", ")
+				mu.Unlock()
 				io.Copy(io.Discard, req.Body)
 				conn.Write(resp.Bytes())
 			}()
 		}
 	}()
-	return "http://" + ln.Addr().String()
+	return "http://" + ln.Addr().String(), func() string {
+		mu.Lock()
+		defer mu.Unlock()
+		return gotAcceptEncoding
+	}
 }
 
 // googleCaptureModel is the literal model capture.mts streams with.
@@ -308,12 +353,20 @@ func googleCaptureModel(baseURL string) *ai.Model {
 // the port reproduces pi.
 func replayGoogleScenario(t *testing.T, sc googleStreamScenario) []string {
 	t.Helper()
-	model := googleCaptureModel(serveGoogleScenario(t, sc))
+	baseURL, acceptEncoding := serveGoogleScenario(t, sc)
+	model := googleCaptureModel(baseURL)
 	req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
 	events := []string{}
 	sameModel, calls := true, 0
+	var headers ai.ProviderHeaders
+	for name, value := range sc.RequestHeaders {
+		if headers == nil {
+			headers = ai.ProviderHeaders{}
+		}
+		headers[name] = ai.HeaderValue(value)
+	}
 	stream := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{
-		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key"},
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key", Headers: headers},
 		OnProviderStreamEvent: func(data any, eventModel *ai.Model) error {
 			if eventModel != model {
 				sameModel = false
@@ -360,6 +413,9 @@ func replayGoogleScenario(t *testing.T, sc googleStreamScenario) []string {
 	}
 	if !sameGoogleUsage(final.Usage, sc.Pi.Usage) {
 		diffs = append(diffs, fmt.Sprintf("usage %+v, pi %v", final.Usage, sc.Pi.Usage))
+	}
+	if got := acceptEncoding(); got != sc.Pi.AcceptEncoding {
+		diffs = append(diffs, fmt.Sprintf("request accept-encoding %q, pi %q", got, sc.Pi.AcceptEncoding))
 	}
 	return diffs
 }
@@ -509,4 +565,38 @@ func TestGoogleDivergencesMatchPiWhereTheyCan(t *testing.T) {
 			t.Fatalf("toolcall_delta %q\npi:            %q", deltas, piDeltas)
 		}
 	})
+}
+
+// TestGoogleEachChunkGetsItsOwnHeaderRecord: @google/genai builds the
+// sdkHttpResponse.headers record afresh for every chunk (a new HttpResponse
+// per data: event), so an observer that writes to one chunk's record leaves
+// the next chunk's as pi's capture has it.
+func TestGoogleEachChunkGetsItsOwnHeaderRecord(t *testing.T) {
+	sc := googleCaptureScenario(t, "upstream two chunks")
+	baseURL, _ := serveGoogleScenario(t, sc)
+	model := googleCaptureModel(baseURL)
+	req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+	var events []string
+	stream := StreamGoogle(context.Background(), model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key"},
+		OnProviderStreamEvent: func(data any, _ *ai.Model) error {
+			text, err := jstext.Stringify(data)
+			events = append(events, text)
+			// Write into this chunk's record, after recording it.
+			for _, f := range data.(ai.OrderedObject) {
+				if f.Key == "sdkHttpResponse" {
+					headers := f.Value.(ai.OrderedObject)[0].Value.(ai.OrderedObject)
+					for i := range headers {
+						headers[i].Value = "written by the observer"
+					}
+				}
+			}
+			return err
+		},
+	}})
+	for range stream.Events() {
+	}
+	if !slices.Equal(events, sc.Pi.Events) {
+		t.Fatalf("observed %q\npi:       %q", events, sc.Pi.Events)
+	}
 }

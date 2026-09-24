@@ -16,6 +16,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}],\"responseId\":\"resp_google\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}",
 					"{\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":1,\"totalTokenCount\":3},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
@@ -66,6 +67,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"c2ln\",\"text\":\"a\",\"extraPart\":true}]},\"citationMetadata\":{\"citations\":[{\"startIndex\":1,\"uri\":\"u\"}]},\"tokenCount\":0,\"groundingMetadata\":{\"g\":true},\"avgLogprobs\":0,\"index\":0,\"logprobsResult\":{\"x\":[1]},\"safetyRatings\":[{\"category\":\"C\",\"probability\":\"LOW\"}],\"urlContextMetadata\":{\"u\":1}}],\"modelVersion\":\"gemini-x\",\"promptFeedback\":{\"blockReason\":null,\"safetyRatings\":[]},\"responseId\":\"\",\"usageMetadata\":{\"totalTokenCount\":5,\"promptTokenCount\":2,\"futureCount\":{\"z\":1,\"a\":2}},\"modelStatus\":{\"m\":1},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}},\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"b\"}]},\"citationMetadata\":{}}]}",
@@ -129,6 +131,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":{\"only\":{\"content\":{\"parts\":[{\"text\":\"hidden\"}]}}},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":\"str\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
@@ -186,6 +189,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
@@ -241,6 +245,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"before \"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
@@ -300,6 +305,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -383,6 +389,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"h\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"alt-svc\":\"h3=\\\":443\\\"\",\"content-type\":\"text/plain;charset=UTF-8\",\"server-timing\":\"gfet4t7; dur=100\",\"set-cookie\":\"d=2\",\"transfer-encoding\":\"chunked\",\"x-empty\":\"\",\"x-goog-trace\":\"padded\",\"x-latin\":\"cafÃ©\",\"x-multi\":\"a, b\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"alt-svc\":\"h3=\\\":443\\\"\",\"content-type\":\"text/plain;charset=UTF-8\",\"server-timing\":\"gfet4t7; dur=100\",\"set-cookie\":\"d=2\",\"transfer-encoding\":\"chunked\",\"x-empty\":\"\",\"x-goog-trace\":\"padded\",\"x-latin\":\"cafÃ©\",\"x-multi\":\"a, b\"}}}"
@@ -447,6 +454,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream; charset=UTF-8\",\"vary\":\"Origin, X-Origin, Referer\"}}}"
 				],
@@ -496,6 +504,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"plan\",\"thought\":true,\"thoughtSignature\":\"dGhpbms=\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"calling\"},{\"functionCall\":{\"id\":\"call_1\",\"name\":\"lookup\",\"args\":{\"zeta\":1,\"alpha\":{\"y\":[{\"b\":1,\"a\":2}],\"x\":null},\"mid\":\"m\"}},\"thoughtSignature\":\"c2ln\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"thoughtsTokenCount\":2,\"cachedContentTokenCount\":1,\"totalTokenCount\":18},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
@@ -565,6 +574,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"7\":\"seven\",\"parts\":[{\"functionCall\":{\"id\":\"c1\",\"name\":\"f\",\"args\":{\"0\":2,\"2\":\"x\",\"10\":[{\"3\":0,\"y\":1}],\"b\":1,\"a\":{\"1\":2,\"z\":1}}}}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"0\":9,\"totalTokenCount\":3,\"promptTokenCount\":2},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -613,6 +623,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hi\"}]}}],\"responseId\":\"r1\",\"usageMetadata\":{\"promptTokenCount\":2,\"futureCount\":null},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":\"c1\",\"name\":\"f\",\"args\":{\"x\":null,\"y\":null,\"z\":0}}}]},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -662,7 +673,6 @@
 			"name": "a gzip body",
 			"note": "the SDK sees the decoded text; content-encoding stays in the record",
 			"framing": "close",
-			"gzip": true,
 			"headers": [
 				[
 					"Content-Type",
@@ -676,8 +686,10 @@
 			"segments": [
 				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
 			],
+			"encodedBody": "H4sIAAAAAAAAE0tJLEm0UqhWSk7MS8lMSSxJLVayigZy8/NKUvNKlKyqlQoSi0oggiWpFUARparMgoLUFKXaWB2lovycVKBIbn5Kao5SbW1sLRdXCukGKmIxS0cpLTMvszgjKDWxOD8PKB4c4h+gBLYBANLGzWqzAAAA",
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-type\":\"text/event-stream\"}}}"
@@ -717,6 +729,881 @@
 			}
 		},
 		{
+			"name": "a gzip body with a content-length",
+			"note": "fetch undoes the coding and keeps content-encoding and content-length in the record",
+			"framing": "close",
+			"contentLength": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzip"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAE0tJLEm0UqhWSk7MS8lMSSxJLVayigZy8/NKUvNKlKyqlQoSi0oggiWpFUARparMgoLUFKXaWB2lovycVKBIbn5Kao5SbW1sLRdXCukGKmIxS0cpLTMvszgjKDWxOD8PKB4c4h+gBLYBANLGzWqzAAAA",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-length\":\"123\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-length\":\"123\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "zipped"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"zipped!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a gzip body when the caller names its own accept-encoding",
+			"note": "fetch sends the caller's accept-encoding and still undoes the coding",
+			"framing": "chunked",
+			"requestHeaders": {
+				"Accept-Encoding": "gzip"
+			},
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzip"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAE0tJLEm0UqhWSk7MS8lMSSxJLVayigZy8/NKUvNKlKyqlQoSi0oggiWpFUARparMgoLUFKXaWB2lovycVKBIbn5Kao5SbW1sLRdXCukGKmIxS0cpLTMvszgjKDWxOD8PKB4c4h+gBLYBANLGzWqzAAAA",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "zipped"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"zipped!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "an x-gzip body",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"x-gzip"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAE0tJLEm0UqhWSk7MS8lMSSxJLVayigZy8/NKUvNKlKyqlQoSi0oggiWpFUARparMgoLUFKXaWB2lovycVKBIbn5Kao5SbW1sLRdXCukGKmIxS0cpLTMvszgjKDWxOD8PKB4c4h+gBLYBANLGzWqzAAAA",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"x-gzip\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"x-gzip\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "zipped"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"zipped!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a zlib deflate body",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"deflate"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"deflated\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "eJxLSSxJtFKoVkpOzEvJTEksSS1WsooGcvPzSlLzSpSsqpUKEotKIIIlqRVAEaWU1LQcoMIUpdpYHaWi/JxUoFhufkpqjlJtbWwtF1cK6UYqYjFLRyktMy+zOCMoNbE4Pw8oHhziH6AEtgEAJ4Q89g==",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"deflated\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"deflate\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"deflate\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "deflated"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"deflated!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a raw deflate body",
+			"note": "undici tells raw deflate from zlib by the first byte",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"Deflate"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"raw\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "S0ksSbRSqFZKTsxLyUxJLEktVrKKBnLz80pS80qUrKqVChKLSiCCJakVQBGlosRypdpYHaWi/JxUIDc3PyU1R6m2NraWiyuFdNMUsZilo5SWmZdZnBGUmlicnwcUDw7xD1AC2wAA",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"raw\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"Deflate\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"Deflate\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "raw"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"raw!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "two codings are undone last first",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"deflate"
+				],
+				[
+					"Content-Encoding",
+					" GZIP "
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"twice\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAEwFtAJL/eJyVzTEKhDAQheHeU+irPUEuoax2YjE4s2xAJ2IGFCR3N2hrs+X7iv8xGbnyxETKnskkwg15BjVRgzux0mYPmhxZYLufBGmssYVZMiyBZUZKYyoK/r9XvbRqfL36+PsIxaDZu75pcT9cYrc72dU/JlptAAAA",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"twice\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"deflate, GZIP\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"deflate, GZIP\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "twice"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"twice!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "an unknown coding leaves the body as sent",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"identity"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"plain\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"plain\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"identity\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"identity\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "plain"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"plain!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "six content codings fail the request",
+			"note": "undici rejects the fetch past five codings",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzip, gzip, gzip, gzip, gzip, gzip"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"never\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAE5Pv5mAAA2HGTQy+/+Xh3MnvnyUwMCcei2tb9P9Twbsn388LScwQ/vw39fxrqyz5W5+fxxz9o9/jqtp+1su869q/auVfT9O+rYxceNA6uuyt6ExRoXupRxeWb7f4uunFpaW3pwYte/3XKMw/s6RvtrScmPyE6de3rzv06NfLL5Hzcr/fO3ur9M31nLuay+yeBZrbpc+3yDTW/Hdg2b3Ozvv5+bpm6VdSE1+kxn9ewfWC7d9eL6+9DlIM9hy7/ywBOrTs1drfm4A0AA/OKQHJAAAA",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "fetch failed",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a truncated gzip body reads what it decodes",
+			"note": "undici's gunzip finishes with Z_SYNC_FLUSH, so a cut-off stream ends without an error",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzip"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"kept\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"tail\"}],\"role\":\"model\"}}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAE52OMQ6DMBAEe14RtuYF/gRRSBdRnLiLsGLOCF+BhPx3LNGGAsqZYnaZjNxjw0DKnskkwX0KRjVRg9sw02KHNFmLwU9mQ+4bLDFI4SmyBOTc56ri67n6T6vB16tP40soRS2+e7dP3F0w8g==",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"kept\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "kept"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Incomplete JSON segment at the end",
+				"content": "[{\"type\":\"text\",\"text\":\"kept!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a gzip body with a bad checksum fails the read",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzip"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"checked\"}],\"role\":\"model\"}}]}\n\n"
+			],
+			"encodedBody": "H4sIAAAAAAAAEyXIQQqAIBAF0L2niL/uBF4lXAzOhyLTsFkEMndPaPmeiklcBrJUPVSMD+I22aqxGuLALd3+NL5zkHfmkwpPK3ornHU1ZYF78hA+B0fex1IAAAA=",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "terminated",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "the connection drops mid-body",
+			"note": "the body read rejects with undici's TypeError: terminated",
+			"framing": "chunked",
+			"abruptEnd": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"before the drop\"}],\"role\":\"model\"}}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"before the drop\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "before the drop"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "terminated",
+				"content": "[{\"type\":\"text\",\"text\":\"before the drop\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "connection close on a chunked body",
+			"framing": "chunked",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Connection",
+					"close"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"connection\":\"close\",\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a trailer on a chunked body",
+			"framing": "chunked",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Trailer",
+					"X-T"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"trailer\":\"X-T\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: connection close on a close-delimited body",
+			"divergence": "net/http deletes a Connection header carrying close, and a close-delimited body closes either way, so the port cannot tell the header was there: pi's record has connection: close, the port's does not",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Connection",
+					"close"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"connection\":\"close\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: a trailer named in lowercase",
+			"divergence": "net/http moves the Trailer header into Response.Trailer under canonical names, so the port's record has trailer: X-T where pi's keeps the text sent, x-t",
+			"framing": "chunked",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Trailer",
+					"x-t"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"trailer\":\"x-t\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: a brotli body the caller asked for",
+			"divergence": "undici undoes br (and zstd); Go's standard library has no brotli or zstd decoder, so the port fails the stream where pi reads it",
+			"framing": "close",
+			"requestHeaders": {
+				"Accept-Encoding": "br"
+			},
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"br"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"brotli\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"encodedBody": "G7IAAKwOeBPrqoSTGwl1tHMn9KXI1l4rsHT1aZ0+sZAFItciOnR4WiSN7e2zo4VZgPgKlbU0CaEd8ekN393KsoxbNHy0OQ2NUEzeEwz869+i5AWYNOl6KLqm5GtCGy2trp9ZCvxhLNwYAA==",
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "br",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"brotli\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"br\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"br\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "brotli"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"brotli!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
 			"name": "a bare JSON error in its own read throws",
 			"framing": "close",
 			"headers": [
@@ -731,6 +1618,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -777,6 +1665,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -823,6 +1712,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [],
 				"sameModel": true,
 				"stream": [
@@ -861,6 +1751,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -907,6 +1798,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -953,6 +1845,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1000,6 +1893,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1046,6 +1940,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1093,6 +1988,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1139,6 +2035,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1185,6 +2082,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1231,6 +2129,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1277,6 +2176,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1323,6 +2223,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1369,6 +2270,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1415,6 +2317,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1461,6 +2364,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1508,6 +2412,7 @@
 			],
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1554,6 +2459,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1600,6 +2506,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}],\"role\":\"model\"},\"finishReason\":\"SOMETHING_NEW\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1648,6 +2555,7 @@
 			"abortOn": 0,
 			"readBoundariesMatter": true,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"in hand\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1695,6 +2603,7 @@
 			"throwMessage": "observer boom",
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [],
 				"sameModel": true,
 				"stream": [
@@ -1733,6 +2642,7 @@
 			"throwMessage": "second event refused",
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"kept\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1779,6 +2689,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"before\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1824,6 +2735,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [],
 				"sameModel": true,
 				"stream": [
@@ -1861,6 +2773,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [],
 				"sameModel": true,
 				"stream": [
@@ -1897,6 +2810,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [],
 				"sameModel": true,
 				"stream": [
@@ -1933,6 +2847,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"kept\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -1978,6 +2893,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [],
 				"sameModel": true,
 				"stream": [
@@ -2014,6 +2930,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [],
 				"sameModel": true,
 				"stream": [
@@ -2051,6 +2968,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"responseId\":\"r\",\"usageMetadata\":{\"promptTokenCount\":\"2\"},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -2105,6 +3023,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"usageMetadata\":{\"promptTokenCount\":true,\"candidatesTokenCount\":[3]},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":\"str\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -2153,6 +3072,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"usageMetadata\":{\"promptTokenCount\":4,\"totalTokenCount\":4},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":0,\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -2202,6 +3122,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"responseId\":\"\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}]},\"finishReason\":\"STOP\"}],\"responseId\":\"r2\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
@@ -2257,6 +3178,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":{\"0\":{\"content\":{\"parts\":[{\"text\":\"via key\"}]},\"finishReason\":\"STOP\"}},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -2305,6 +3227,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":\"str\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":\"x\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
@@ -2356,6 +3279,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":{\"text\":\"x\"}}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -2402,6 +3326,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[null]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -2449,6 +3374,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":{\"toString\":1}}]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -2491,6 +3417,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\",\"thought\":\"true\",\"thoughtSignature\":5}]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -2543,6 +3470,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":5}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -2589,6 +3517,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":[\"STOP\"]}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -2634,6 +3563,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":{\"toString\":1}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -2680,6 +3610,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":5,\"cachedContentTokenCount\":\"1\",\"candidatesTokenCount\":\"2\",\"thoughtsTokenCount\":1,\"totalTokenCount\":\"8\"},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -2728,6 +3659,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":null,\"candidatesTokenCount\":1,\"totalTokenCount\":3.7},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],
@@ -2776,6 +3708,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"responseId\":5,\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}]},\"finishReason\":\"STOP\"}],\"responseId\":\"later\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -2830,6 +3763,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":null},{\"text\":5},{\"text\":[1,[2,null],{}]}]}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
@@ -2898,6 +3832,7 @@
 			],
 			"readBoundariesMatter": false,
 			"pi": {
+				"acceptEncoding": "gzip, deflate",
 				"events": [
 					"{\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"id\":7,\"name\":5,\"args\":[1,{\"b\":2}]},\"thoughtSignature\":7},{\"functionCall\":{\"id\":\"c2\",\"name\":\"f\",\"args\":\"s\"}},{\"functionCall\":{\"id\":\"c3\",\"name\":\"\",\"args\":null}}]},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
 				],

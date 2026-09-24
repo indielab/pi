@@ -1,7 +1,11 @@
 package providers
 
 import (
+	"bufio"
 	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"compress/zlib"
 	"context"
 	"encoding/json"
 	"errors"
@@ -430,6 +434,17 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			o.merge(model.Headers)
 			o.merge(opts.Headers)
 			o.applyAsRecord(r.Header)
+			// fetch asks for the codings it undoes unless the request names
+			// its own: undici sends "gzip, deflate" over http and "br, gzip,
+			// deflate, zstd" over https. The port undoes gzip and deflate
+			// itself (googleResponseBody) — Go's standard library has no
+			// brotli or zstd decoder, so it never offers those — and naming
+			// the header also keeps net/http from undoing gzip behind the
+			// header record's back (it would drop Content-Encoding and
+			// Content-Length).
+			if _, named := r.Header["Accept-Encoding"]; !named {
+				r.Header.Set("Accept-Encoding", "gzip, deflate")
+			}
 			return r, nil
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, nil))
@@ -438,10 +453,15 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			return
 		}
 		defer resp.Body.Close()
+		respBody, err := googleResponseBody(resp)
+		if err != nil {
+			fail(err)
+			return
+		}
 		// No OnResponse: pi hands the request to the @google/genai client,
 		// which owns the fetch, and its google adapter never calls onResponse.
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			data, _ := io.ReadAll(resp.Body)
+			data, _ := io.ReadAll(respBody)
 			// Upstream 6fbeba51's google change is a no-op for the on-the-wire
 			// HTTP-error case: the @google/genai SDK's ApiError already folds the
 			// full body into error.message (JSON.stringify(errorBody)), so
@@ -515,7 +535,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		// testdata/google-stream-events tags those cases as divergences.
 		responseIDTruthy := false
 		toolCallIDs := map[int]any{} // builder index -> the id pi compares with ===
-		err = iterateGoogleSSE(resp.Body, ctx, observe, func(payload any) error {
+		err = iterateGoogleSSE(respBody, ctx, observe, func(payload any) error {
 			chunk := googleGenerateContentResponse(payload, nil)
 			// output.responseId ||= chunk.responseId
 			if !responseIDTruthy {
@@ -1281,7 +1301,10 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload 
 			if err := abortErr(); err != nil {
 				return err
 			}
-			return readErr
+			// Any other failure once the body has started — the connection
+			// dropping, a coding that does not decode — rejects the read with
+			// undici's TypeError: terminated.
+			return errors.New("terminated")
 		}
 	}
 
@@ -1477,9 +1500,13 @@ func googleTokenCount(v any) int {
 //   - a response without content-type gets the "text/plain;charset=UTF-8" a
 //     string-bodied Response adds.
 //
-// Go's transport moves Transfer-Encoding out of the header map and, when it
-// transparently gunzips, drops Content-Encoding; undici keeps both, so they
-// are put back.
+// net/http rewrites a few headers undici keeps as sent, so they are put
+// back: Transfer-Encoding moves to resp.TransferEncoding; a Trailer header
+// moves to resp.Trailer, under canonical names; and on HTTP/1.1 a Connection
+// header carrying "close" is deleted, leaving resp.Close — which a
+// close-delimited body sets too, so only a body with a length or chunks tells
+// the header was there. (Content-Encoding and Content-Length survive: the
+// request names its own Accept-Encoding, so net/http never gunzips.)
 func googleSDKResponseHeaders(resp *http.Response) ai.OrderedObject {
 	values := map[string][]string{}
 	for _, name := range slices.Sorted(maps.Keys(resp.Header)) {
@@ -1489,6 +1516,15 @@ func googleSDKResponseHeaders(resp *http.Response) ai.OrderedObject {
 	if _, ok := values["transfer-encoding"]; !ok && len(resp.TransferEncoding) > 0 {
 		values["transfer-encoding"] = []string{strings.Join(resp.TransferEncoding, ", ")}
 	}
+	if _, ok := values["trailer"]; !ok && len(resp.Trailer) > 0 {
+		values["trailer"] = []string{strings.Join(slices.Sorted(maps.Keys(resp.Trailer)), ", ")}
+	}
+	bounded := resp.ContentLength >= 0 || slices.Contains(resp.TransferEncoding, "chunked")
+	if _, ok := values["connection"]; !ok && resp.Close && bounded && resp.ProtoAtLeast(1, 1) && resp.ProtoMajor == 1 {
+		values["connection"] = []string{"close"}
+	}
+	// Only a caller's empty Accept-Encoding leaves net/http free to gunzip,
+	// which drops Content-Encoding; undici would have kept it.
 	if _, ok := values["content-encoding"]; !ok && resp.Uncompressed {
 		values["content-encoding"] = []string{"gzip"}
 	}
@@ -1506,6 +1542,96 @@ func googleSDKResponseHeaders(resp *http.Response) ai.OrderedObject {
 		out = append(out, ai.OrderedField{Key: name, Value: latin1(value)})
 	}
 	return out
+}
+
+// googleResponseBody is the body fetch (undici 8) hands @google/genai: undici
+// undoes the response's Content-Encoding itself. The codings, lowercased and
+// comma-split, are undone last first: gzip and x-gzip, deflate (zlib-wrapped
+// or raw, told apart by the first byte), br and zstd; the first coding it
+// does not know leaves the whole body as sent; more than five reject the
+// fetch ("fetch failed"). Go has no brotli or zstd decoder, so a body that
+// needs one fails here, where pi reads it.
+func googleResponseBody(resp *http.Response) (io.Reader, error) {
+	value := strings.Join(resp.Header.Values("Content-Encoding"), ", ")
+	if value == "" {
+		return resp.Body, nil
+	}
+	codings := strings.Split(strings.ToLower(value), ",")
+	if len(codings) > 5 {
+		return nil, errors.New("fetch failed")
+	}
+	var chain []string
+	for i := len(codings) - 1; i >= 0; i-- {
+		switch coding := jstext.Trim(codings[i]); coding {
+		case "gzip", "x-gzip", "deflate", "br", "zstd":
+			chain = append(chain, coding)
+		default:
+			return resp.Body, nil
+		}
+	}
+	var body io.Reader = resp.Body
+	for _, coding := range chain {
+		switch coding {
+		case "gzip", "x-gzip":
+			body = &lazyDecoder{src: body, open: func(r io.Reader) (io.Reader, error) { return gzip.NewReader(r) }}
+		case "deflate":
+			body = &lazyDecoder{src: body, open: openInflate}
+		default:
+			return nil, fmt.Errorf("the google response body is %s-encoded, and Go's standard library cannot decode %s; remove the Accept-Encoding header that asked for it, or ask for gzip or deflate", coding, coding)
+		}
+	}
+	return body, nil
+}
+
+// openInflate is undici's InflateStream: zlib-wrapped when the first byte's
+// low nibble is 8 (the deflate method), raw deflate otherwise.
+func openInflate(r io.Reader) (io.Reader, error) {
+	br := bufio.NewReader(r)
+	first, err := br.Peek(1)
+	if err != nil {
+		return nil, err
+	}
+	if first[0]&0x0f == 0x08 {
+		return zlib.NewReader(br)
+	}
+	return flate.NewReader(br), nil
+}
+
+// lazyDecoder opens its decoder on the first Read, so a response's headers
+// are handled before its body is waited on, as undici's decoding pipeline
+// is. It reads as undici's zlib streams do (they finish with Z_SYNC_FLUSH):
+// a stream that stops early ends quietly with what it decoded, and a read
+// that meets a corrupt stream fails without handing over the bytes decoded
+// alongside the error.
+type lazyDecoder struct {
+	src  io.Reader
+	open func(io.Reader) (io.Reader, error)
+	dec  io.Reader
+	err  error
+}
+
+func (d *lazyDecoder) Read(p []byte) (int, error) {
+	if d.err != nil {
+		return 0, d.err
+	}
+	if d.dec == nil {
+		if d.dec, d.err = d.open(d.src); d.err != nil {
+			if d.err == io.EOF || d.err == io.ErrUnexpectedEOF {
+				d.err = io.EOF
+			}
+			return 0, d.err
+		}
+	}
+	n, err := d.dec.Read(p)
+	switch {
+	case err == nil || err == io.EOF:
+		return n, err
+	case err == io.ErrUnexpectedEOF:
+		d.err = io.EOF
+		return n, io.EOF
+	}
+	d.err = err
+	return 0, err
 }
 
 // latin1 reads each byte of s as the character with that code point, the way

@@ -23,7 +23,14 @@
 // runs per read). Nothing else is added to the head — no Date, no
 // Connection — so the header record the SDK builds is fully determined by the
 // scenario. `framing` is "close" (the body runs to EOF) or "chunked" (each
-// segment is one HTTP chunk); `gzip` compresses the whole body into one write.
+// segment is one HTTP chunk). `encode` turns the whole body into the bytes
+// written in one write (a gzip, deflate or brotli body, whole or damaged),
+// recorded as `encodedBody` so a replay serves the same bytes;
+// `contentLength` adds a Content-Length for what is written; `oneWrite` sends
+// every segment as its own HTTP chunk but all in one socket write;
+// `abruptEnd` destroys the socket after the segments instead of ending the
+// body. `requestHeaders` are the options.headers pi's caller passes, and
+// `acceptEncoding` records the accept-encoding the server received.
 //
 // Every scenario runs twice: as separate reads, and with its segments joined
 // into one write. `readBoundariesMatter` records whether the two differ; the
@@ -79,7 +86,12 @@ type Scenario = {
 	framing: "close" | "chunked";
 	headers: Array<[string, string]>;
 	segments: string[];
-	gzip?: boolean;
+	// The bytes written for the whole body, in one write.
+	encode?: (body: Buffer) => Buffer;
+	contentLength?: boolean;
+	oneWrite?: boolean;
+	abruptEnd?: boolean;
+	requestHeaders?: Record<string, string>;
 	divergence?: string;
 	// Throw Error(throwMessage) from the callback on its Nth call (0-based).
 	throwOn?: number;
@@ -229,12 +241,169 @@ const scenarios: Scenario[] = [
 		name: "a gzip body",
 		note: "the SDK sees the decoded text; content-encoding stays in the record",
 		framing: "close",
-		gzip: true,
+		encode: (b) => zlib.gzipSync(b),
 		headers: [
 			["Content-Type", "text/event-stream"],
 			["Content-Encoding", "gzip"],
 		],
 		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "a gzip body with a content-length",
+		note: "fetch undoes the coding and keeps content-encoding and content-length in the record",
+		framing: "close",
+		encode: (b) => zlib.gzipSync(b),
+		contentLength: true,
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "a gzip body when the caller names its own accept-encoding",
+		note: "fetch sends the caller's accept-encoding and still undoes the coding",
+		framing: "chunked",
+		encode: (b) => zlib.gzipSync(b),
+		requestHeaders: { "Accept-Encoding": "gzip" },
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "an x-gzip body",
+		framing: "close",
+		encode: (b) => zlib.gzipSync(b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "x-gzip"],
+		],
+		segments: [sse(text("zipped"), stop)],
+	},
+	{
+		name: "a zlib deflate body",
+		framing: "close",
+		encode: (b) => zlib.deflateSync(b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+		],
+		segments: [sse(text("deflated"), stop)],
+	},
+	{
+		name: "a raw deflate body",
+		note: "undici tells raw deflate from zlib by the first byte",
+		framing: "close",
+		encode: (b) => zlib.deflateRawSync(b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "Deflate"],
+		],
+		segments: [sse(text("raw"), stop)],
+	},
+	{
+		name: "two codings are undone last first",
+		framing: "close",
+		encode: (b) => zlib.gzipSync(zlib.deflateSync(b)),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "deflate"],
+			["Content-Encoding", " GZIP "],
+		],
+		segments: [sse(text("twice"), stop)],
+	},
+	{
+		name: "an unknown coding leaves the body as sent",
+		framing: "close",
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "identity"],
+		],
+		segments: [sse(text("plain"), stop)],
+	},
+	{
+		name: "six content codings fail the request",
+		note: "undici rejects the fetch past five codings",
+		framing: "close",
+		encode: (b) => [1, 2, 3, 4, 5, 6].reduce((x) => zlib.gzipSync(x), b),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip, gzip, gzip, gzip, gzip, gzip"],
+		],
+		segments: [sse(text("never"), stop)],
+	},
+	{
+		name: "a truncated gzip body reads what it decodes",
+		note: "undici's gunzip finishes with Z_SYNC_FLUSH, so a cut-off stream ends without an error",
+		framing: "close",
+		encode: (b) => zlib.gzipSync(b).subarray(0, -12),
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("kept"), stop, text("tail"))],
+	},
+	{
+		name: "a gzip body with a bad checksum fails the read",
+		framing: "close",
+		encode: (b) => {
+			const z = zlib.gzipSync(b);
+			z[z.length - 8] ^= 1; // the CRC-32's low byte
+			return z;
+		},
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "gzip"],
+		],
+		segments: [sse(text("checked"))],
+	},
+	{
+		name: "the connection drops mid-body",
+		note: "the body read rejects with undici's TypeError: terminated",
+		framing: "chunked",
+		abruptEnd: true,
+		headers: eventStream,
+		segments: [sse(text("before the drop"))],
+	},
+	{
+		name: "connection close on a chunked body",
+		framing: "chunked",
+		headers: [...eventStream, ["Connection", "close"]],
+		segments: [sse(stop)],
+	},
+	{
+		name: "a trailer on a chunked body",
+		framing: "chunked",
+		headers: [...eventStream, ["Trailer", "X-T"]],
+		segments: [sse(stop)],
+	},
+	{
+		name: "divergence: connection close on a close-delimited body",
+		divergence: "net/http deletes a Connection header carrying close, and a close-delimited body closes either way, so the port cannot tell the header was there: pi's record has connection: close, the port's does not",
+		framing: "close",
+		headers: [...eventStream, ["Connection", "close"]],
+		segments: [sse(stop)],
+	},
+	{
+		name: "divergence: a trailer named in lowercase",
+		divergence: "net/http moves the Trailer header into Response.Trailer under canonical names, so the port's record has trailer: X-T where pi's keeps the text sent, x-t",
+		framing: "chunked",
+		headers: [...eventStream, ["Trailer", "x-t"]],
+		segments: [sse(stop)],
+	},
+	{
+		name: "divergence: a brotli body the caller asked for",
+		divergence: "undici undoes br (and zstd); Go's standard library has no brotli or zstd decoder, so the port fails the stream where pi reads it",
+		framing: "close",
+		encode: (b) => zlib.brotliCompressSync(b),
+		requestHeaders: { "Accept-Encoding": "br" },
+		headers: [
+			["Content-Type", "text/event-stream"],
+			["Content-Encoding", "br"],
+		],
+		segments: [sse(text("brotli"), stop)],
 	},
 	{
 		name: "a bare JSON error in its own read throws",
@@ -567,7 +736,12 @@ const scenarios: Scenario[] = [
 	},
 ];
 
-function serve(s: Scenario, segments: string[]): Promise<{ port: number; close: () => void }> {
+function serve(
+	s: Scenario,
+	segments: string[],
+	encoded: Buffer | undefined,
+): Promise<{ port: number; close: () => void; acceptEncoding: () => string | undefined }> {
+	let acceptEncoding: string | undefined;
 	return new Promise((resolve) => {
 		const server = net.createServer((sock) => {
 			let buf = Buffer.alloc(0);
@@ -576,26 +750,37 @@ function serve(s: Scenario, segments: string[]): Promise<{ port: number; close: 
 				buf = Buffer.concat([buf, d]);
 				const headEnd = buf.indexOf("\r\n\r\n");
 				if (responded || headEnd < 0) return;
-				const len = Number(/content-length:\s*(\d+)/i.exec(buf.subarray(0, headEnd).toString())?.[1] ?? 0);
+				const requestHead = buf.subarray(0, headEnd).toString();
+				const len = Number(/content-length:\s*(\d+)/i.exec(requestHead)?.[1] ?? 0);
 				if (buf.length < headEnd + 4 + len) return;
 				responded = true;
+				acceptEncoding = /^accept-encoding:[ \t]*(.*?)[ \t]*$/im.exec(requestHead)?.[1];
+				const writes: Buffer[] = encoded ? [encoded] : segments.map((seg) => Buffer.from(seg));
 				const head = ["HTTP/1.1 200 OK", ...s.headers.map(([k, v]) => `${k}: ${v}`)];
+				if (s.contentLength) head.push(`Content-Length: ${writes.reduce((n, w) => n + w.length, 0)}`);
 				if (s.framing === "chunked") head.push("Transfer-Encoding: chunked");
 				sock.write(`${head.join("\r\n")}\r\n\r\n`);
-				const writes: Buffer[] = s.gzip
-					? [zlib.gzipSync(Buffer.from(segments.join("")))]
-					: segments.map((seg) => Buffer.from(seg));
-				for (const w of writes) {
+				const frame = (w: Buffer) =>
+					s.framing === "chunked" ? Buffer.concat([Buffer.from(`${w.length.toString(16)}\r\n`), w, Buffer.from("\r\n")]) : w;
+				for (const w of s.oneWrite ? [Buffer.concat(writes.map(frame))] : writes.map(frame)) {
 					await new Promise((r) => setTimeout(r, 50));
-					sock.write(s.framing === "chunked" ? Buffer.concat([Buffer.from(`${w.length.toString(16)}\r\n`), w, Buffer.from("\r\n")]) : w);
+					sock.write(w);
 				}
 				await new Promise((r) => setTimeout(r, 50));
+				if (s.abruptEnd) {
+					sock.destroy();
+					return;
+				}
 				if (s.framing === "chunked") sock.write("0\r\n\r\n");
 				sock.end();
 			});
 		});
 		server.listen(0, "127.0.0.1", () => {
-			resolve({ port: (server.address() as net.AddressInfo).port, close: () => server.close() });
+			resolve({
+				port: (server.address() as net.AddressInfo).port,
+				close: () => server.close(),
+				acceptEncoding: () => acceptEncoding,
+			});
 		});
 	});
 }
@@ -615,8 +800,8 @@ const googleModel = {
 };
 const context = { messages: [{ role: "user", content: "hi", timestamp: 1 }] };
 
-async function run(s: Scenario, segments: string[]) {
-	const { port, close } = await serve(s, segments);
+async function run(s: Scenario, segments: string[], encoded: Buffer | undefined) {
+	const { port, close, acceptEncoding } = await serve(s, segments, encoded);
 	const model = { ...googleModel, baseUrl: `http://127.0.0.1:${port}` };
 	const events: string[] = [];
 	let sameModel = true;
@@ -625,6 +810,7 @@ async function run(s: Scenario, segments: string[]) {
 	const out = stream(model, context, {
 		apiKey: "test-api-key",
 		signal: controller.signal,
+		...(s.requestHeaders && { headers: s.requestHeaders }),
 		onProviderStreamEvent: async (data: unknown, eventModel: unknown) => {
 			const call = calls++;
 			if (eventModel !== model) sameModel = false;
@@ -638,6 +824,7 @@ async function run(s: Scenario, segments: string[]) {
 	const msg = await out.result();
 	close();
 	return {
+		acceptEncoding: acceptEncoding(),
 		events,
 		sameModel,
 		stream: streamed,
@@ -657,11 +844,13 @@ async function run(s: Scenario, segments: string[]) {
 
 const results = [];
 for (const s of scenarios) {
-	const pi = await run(s, s.segments);
-	const joined = await run(s, [s.segments.join("")]);
-	const { throwOn, throwMessage, abortOn, ...scenario } = s;
+	const encoded = s.encode?.(Buffer.from(s.segments.join("")));
+	const pi = await run(s, s.segments, encoded);
+	const joined = await run(s, [s.segments.join("")], encoded);
+	const { throwOn, throwMessage, abortOn, encode, ...scenario } = s;
 	results.push({
 		...scenario,
+		...(encoded && { encodedBody: encoded.toString("base64") }),
 		...(throwOn !== undefined && { throwOn, throwMessage }),
 		...(abortOn !== undefined && { abortOn }),
 		readBoundariesMatter: JSON.stringify(pi) !== JSON.stringify(joined),
