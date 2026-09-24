@@ -324,11 +324,13 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) ai.AssistantMessageEve
 	return ai.AssistantMessageEvent{Type: ai.EventType(ev.Type), Partial: c.partial.Clone()}
 }
 
-// parsePiMessagesFrame extracts the JSON of a single SSE frame's `data:` line,
-// ignoring `[DONE]`. Returns ok=false when the frame carries no parseable event.
-// Port of parsePiMessagesEvent.
-func parsePiMessagesFrame(raw string) (piMessagesEvent, bool) {
-	var data string
+// parsePiMessagesFrame extracts the event a single SSE frame yields (pi
+// parsePiMessagesEvent plus readPiMessagesEvents' `if (event)`): the JSON of
+// its first `data:` line, JS-trimmed, as its text and its parsed value. ok is
+// false when the frame yields nothing — no data line, an empty one, `[DONE]`,
+// or a JS-falsy value (null, false, 0, ""). err is the failure pi's
+// JSON.parse throws on a line that is not JSON, which fails the stream.
+func parsePiMessagesFrame(raw string) (data string, value any, ok bool, err error) {
 	found := false
 	for _, line := range strings.Split(raw, "\n") {
 		if strings.HasPrefix(line, "data:") {
@@ -338,7 +340,29 @@ func parsePiMessagesFrame(raw string) (piMessagesEvent, bool) {
 		}
 	}
 	if !found || data == "" || data == "[DONE]" {
-		return piMessagesEvent{}, false
+		return "", nil, false, nil
+	}
+	if !json.Valid([]byte(data)) {
+		var v any
+		return "", nil, false, json.Unmarshal([]byte(data), &v)
+	}
+	value, err = ai.DecodeOrderedValue([]byte(data))
+	if err != nil {
+		return "", nil, false, err
+	}
+	if !jsTruthy(value) {
+		return "", nil, false, nil
+	}
+	return data, value, true, nil
+}
+
+// piMessagesEventOf is the typed view of a yielded frame. An object decodes
+// into piMessagesEvent; any other truthy value converts as an event with no
+// type, as pi's `{...event, partial}` spread of it has none. ok is false for an
+// object whose fields do not decode into the typed event, which is skipped.
+func piMessagesEventOf(data string, value any) (piMessagesEvent, bool) {
+	if _, isObject := value.(ai.OrderedObject); !isObject {
+		return piMessagesEvent{}, true
 	}
 	var ev piMessagesEvent
 	if json.Unmarshal([]byte(data), &ev) != nil {
@@ -349,9 +373,22 @@ func parsePiMessagesFrame(raw string) (piMessagesEvent, bool) {
 
 // readPiMessagesEvents consumes the SSE body: frames are separated by "\n\n",
 // CRLF is normalized to "\n", and a trailing non-terminal buffer is flushed.
-// handle returns false to stop early (a terminal event was seen). Port of
+// handle returns false to stop early (a terminal event was seen). A frame that
+// is not JSON fails the read, as pi's JSON.parse throw does. Port of
 // readPiMessagesEvents.
 func readPiMessagesEvents(body io.Reader, ctx context.Context, handle func(piMessagesEvent) bool) error {
+	// emit handles one frame and reports whether to keep reading.
+	emit := func(frame string) (bool, error) {
+		data, value, ok, err := parsePiMessagesFrame(frame)
+		if err != nil || !ok {
+			return true, err
+		}
+		ev, ok := piMessagesEventOf(data, value)
+		if !ok {
+			return true, nil
+		}
+		return handle(ev), nil
+	}
 	buf := make([]byte, 32*1024)
 	var pending string
 	for {
@@ -371,10 +408,12 @@ func readPiMessagesEvents(body io.Reader, ctx context.Context, handle func(piMes
 				}
 				frame := pending[:split]
 				pending = pending[split+2:]
-				if ev, ok := parsePiMessagesFrame(frame); ok {
-					if !handle(ev) {
-						return nil
-					}
+				more, err := emit(frame)
+				if err != nil {
+					return err
+				}
+				if !more {
+					return nil
 				}
 			}
 		}
@@ -386,8 +425,8 @@ func readPiMessagesEvents(body io.Reader, ctx context.Context, handle func(piMes
 		}
 	}
 	if jstext.Trim(pending) != "" {
-		if ev, ok := parsePiMessagesFrame(pending); ok {
-			handle(ev)
+		if _, err := emit(pending); err != nil {
+			return err
 		}
 	}
 	return nil
