@@ -734,6 +734,10 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// and a property read from a missing or null sub-object throws V8's
 		// TypeError in pi's read order, failing the stream.
 		sawStart, sawStop := false, false
+		// errorMessageSet is whether pi's output.errorMessage is truthy: once a
+		// stop reason assigned one, however empty its text (see
+		// mapAnthropicStopReason).
+		errorMessageSet := false
 		err = iterateAnthropicSSE(resp.Body, ctx, onEvent, func(ev rawObject) error {
 			typ, _ := rawString(ev["type"])
 			switch typ {
@@ -920,8 +924,9 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 						return err
 					}
 					output.StopReason = sr
-					if errMsg != "" {
-						output.ErrorMessage = errMsg
+					if errMsg != nil {
+						output.ErrorMessage = *errMsg
+						errorMessageSet = true
 					}
 				}
 				// Only update usage fields if present (not null), preserving
@@ -954,11 +959,12 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 			return
 		}
 		if output.StopReason == ai.StopAborted || output.StopReason == ai.StopError {
-			msg := output.ErrorMessage
-			if msg == "" {
-				msg = "An unknown error occurred"
+			// pi: `new Error(output.errorMessage || "An unknown error occurred")`.
+			msg := "An unknown error occurred"
+			if errorMessageSet {
+				msg = output.ErrorMessage
 			}
-			fail(fmt.Errorf("%s", msg))
+			fail(errors.New(msg))
 			return
 		}
 		// Appended only on a stream that completed successfully — pi's throws for
@@ -1958,15 +1964,21 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 // error message (pi anthropic.ts mapStopReason returns {stopReason,
 // errorMessage?}). reason is the truthy value the event carries: pi's switch
 // matches strings only, and any other value is unhandled.
-func mapAnthropicStopReason(reason, stopDetails json.RawMessage) (ai.StopReason, string, error) {
+//
+// errorMessage is nil where pi's is undefined. Where it is set it is truthy in
+// pi — the handler's `if (stopReasonResult.errorMessage)` assigns it, and the
+// stream's `errorMessage || "An unknown error occurred"` keeps it — even when
+// its String() is empty, as an empty array's is.
+func mapAnthropicStopReason(reason, stopDetails json.RawMessage) (ai.StopReason, *string, error) {
+	message := func(text string) *string { return &text }
 	name, _ := rawString(reason)
 	switch name {
 	case "end_turn":
-		return ai.StopStop, "", nil
+		return ai.StopStop, nil, nil
 	case "max_tokens":
-		return ai.StopLength, "", nil
+		return ai.StopLength, nil, nil
 	case "tool_use":
-		return ai.StopToolUse, "", nil
+		return ai.StopToolUse, nil, nil
 	case "refusal":
 		// pi: `stopDetails?.explanation || "The model refused..."`. The
 		// explanation reaches the stream's error through `new Error(...)`,
@@ -1974,24 +1986,24 @@ func mapAnthropicStopReason(reason, stopDetails json.RawMessage) (ai.StopReason,
 		// throw V8's TypeError, whose text then is the error.
 		explanation := rawOptional(stopDetails)["explanation"]
 		if !rawTruthy(explanation) {
-			return ai.StopError, "The model refused to complete the request", nil
+			return ai.StopError, message("The model refused to complete the request"), nil
 		}
 		text, err := rawToString(explanation)
 		if err != nil {
 			text = err.Error()
 		}
-		return ai.StopError, text, nil
+		return ai.StopError, &text, nil
 	case "pause_turn", "stop_sequence":
-		return ai.StopStop, "", nil
+		return ai.StopStop, nil, nil
 	case "sensitive": // Content flagged by safety filters (not yet in SDK types)
-		return ai.StopError, providerStoppedPrefix + "sensitive", nil
+		return ai.StopError, message(providerStoppedPrefix + "sensitive"), nil
 	default:
 		// `Unhandled stop reason: ${reason}` — the template takes String().
 		text, err := rawToString(reason)
 		if err != nil {
-			return "", "", err
+			return "", nil, err
 		}
-		return "", "", fmt.Errorf("Unhandled stop reason: %s", text)
+		return "", nil, fmt.Errorf("Unhandled stop reason: %s", text)
 	}
 }
 

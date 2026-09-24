@@ -299,6 +299,17 @@ const cases: Case[] = [
 			messageStop,
 		),
 	},
+	// The explanation is kept when it is truthy, not when its String() is
+	// non-empty: an empty array is truthy, so the error is its String(), "",
+	// and not the "An unknown error occurred" an empty message falls back to.
+	{
+		name: "refusalExplanationTruthyButEmpty",
+		sse: frames(
+			messageStart,
+			ev("message_delta", '{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"explanation":[]}}}'),
+			messageStop,
+		),
+	},
 	// A property read from a missing or null sub-object throws V8's TypeError,
 	// in pi's read order: message.id before message.usage.input_tokens, the
 	// block's type, the delta's type or stop_reason. What was assigned before
