@@ -519,3 +519,201 @@ func TestAnthropicBetaHeaderIsAByteStringLikeFetch(t *testing.T) {
 		})
 	}
 }
+
+// invalidValueError is the TypeError undici's Headers throws for a value that
+// still holds a NUL, CR or LF once normalized; it quotes the normalized value.
+func invalidValueError(value string) string {
+	return fmt.Sprintf("Headers.append: \"%s\" is an invalid header value.", value)
+}
+
+// invalidNameError is the TypeError undici's Headers throws for a name that is
+// not an HTTP token. It names the method that refused the name: Headers.delete
+// on the SDK path, whose buildHeaders deletes a name before it first appends
+// one, and Headers.append on the record paths.
+func invalidNameError(sdk bool, name string) string {
+	op := "Headers.append"
+	if sdk {
+		op = "Headers.delete"
+	}
+	return fmt.Sprintf("%s: \"%s\" is an invalid header name.", op, name)
+}
+
+// sdkPath reports whether adapter hands its headers to a vendor SDK as
+// `defaultHeaders`.
+func sdkPath(adapter wireAdapter) bool {
+	return adapter.name != "pi-messages" && adapter.name != "google-generative-ai"
+}
+
+// After it normalizes a value, a Headers object refuses a value that still
+// holds a NUL, CR or LF, and a name that is not an HTTP token. The request fails
+// at once, before anything is sent, where net/http failed the round trip with
+// its own text (and, with MaxRetries set, the retry loop tried it again).
+func TestHeaderValuesAreRefusedLikeFetch(t *testing.T) {
+	for _, adapter := range wireAdapters() {
+		for _, tc := range []struct{ name, value, err string }{
+			{"LF inside", "a\nb", invalidValueError("a\nb")},
+			{"CR inside", "a\rb", invalidValueError("a\rb")},
+			{"NUL inside", "a\x00b", invalidValueError("a\x00b")},
+			{"quoted normalized", " a\nb\t", invalidValueError("a\nb")},
+			{"quoted as text", string(rune(0xe9)) + "\nb", invalidValueError(string(rune(0xe9)) + "\nb")},
+		} {
+			t.Run(adapter.name+"/"+tc.name, func(t *testing.T) {
+				h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+					APIKey: "test-key", Headers: ai.ProviderHeaders{"X-A": strPtr(tc.value)},
+				}})
+				wantNotSent(t, h, final, tc.err)
+			})
+		}
+	}
+}
+
+func TestHeaderNamesAreRefusedLikeFetch(t *testing.T) {
+	for _, adapter := range wireAdapters() {
+		for _, name := range []string{"", "X A", "X-" + string(rune(0xe9))} {
+			t.Run(adapter.name+"/"+name, func(t *testing.T) {
+				h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+					APIKey: "test-key", Headers: ai.ProviderHeaders{name: strPtr("v")},
+				}})
+				wantNotSent(t, h, final, invalidNameError(sdkPath(adapter), name))
+			})
+		}
+		// A marker's name reaches a Headers only on the SDK path.
+		t.Run(adapter.name+"/marker", func(t *testing.T) {
+			name := "X-" + string(rune(0xe9))
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "test-key", Headers: ai.ProviderHeaders{name: nil},
+			}})
+			if !sdkPath(adapter) {
+				if final.StopReason == ai.StopError || h == nil {
+					t.Fatalf("stream = %s %q, want the request sent", final.StopReason, final.ErrorMessage)
+				}
+				return
+			}
+			wantNotSent(t, h, final, invalidNameError(true, name))
+		})
+	}
+}
+
+// The api key and the anthropic-beta value are refused like any other value,
+// the key with the "Bearer " prefix it is joined to.
+func TestAPIKeyAndBetaValuesAreRefusedLikeFetch(t *testing.T) {
+	for _, adapter := range wireAdapters() {
+		t.Run(adapter.name+"/key", func(t *testing.T) {
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k\nk"}})
+			want := invalidValueError("k\nk")
+			if adapter.bearer {
+				want = invalidValueError("Bearer k\nk")
+			}
+			wantNotSent(t, h, final, want)
+		})
+		if adapter.name != "anthropic-messages" {
+			continue
+		}
+		t.Run(adapter.name+"/anthropic-beta", func(t *testing.T) {
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "test-key",
+				OnPayload: func(payload any, _ *ai.Model) (any, error) {
+					body := payload.(map[string]any)
+					body["betas"] = "a\nb"
+					return body, nil
+				},
+			}})
+			wantNotSent(t, h, final, invalidValueError("a\nb"))
+		})
+	}
+}
+
+// A contribution joined onto a literal is refused on its own.
+func TestJoinedHeaderValueIsRefusedLikeFetch(t *testing.T) {
+	for _, adapter := range wireAdapters() {
+		if adapter.name != "pi-messages" {
+			continue
+		}
+		h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+			APIKey: "test-key", Headers: ai.ProviderHeaders{"Authorization": strPtr("a\nb")},
+		}})
+		wantNotSent(t, h, final, invalidValueError("a\nb"))
+	}
+}
+
+// Which failure wins follows the order pi's Headers meets them in. The SDKs
+// check one entry's name and value before the next entry's, and genai does too.
+// fetch converts pi-messages' whole init before it checks any entry, so there
+// a later entry that does not convert beats an earlier one that is refused.
+func TestHeaderRefusalsFollowPisOrder(t *testing.T) {
+	for _, adapter := range wireAdapters() {
+		for _, tc := range []struct {
+			name    string
+			headers ai.ProviderHeaders
+			want    string
+		}{
+			{"refused value, then a value that does not convert",
+				ai.ProviderHeaders{"X-B": strPtr("a\nb"), "X-C": strPtr(string(rune(cjk)))},
+				invalidValueError("a\nb")},
+			{"refused name, then a value that does not convert",
+				ai.ProviderHeaders{"X A": strPtr("v"), "X-C": strPtr(string(rune(cjk)))},
+				invalidNameError(sdkPath(adapter), "X A")},
+		} {
+			if adapter.name == "pi-messages" {
+				tc.want = byteStringError(0, cjk)
+			}
+			t.Run(adapter.name+"/"+tc.name, func(t *testing.T) {
+				h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+					APIKey: "test-key", Headers: tc.headers,
+				}})
+				wantNotSent(t, h, final, tc.want)
+			})
+		}
+	}
+}
+
+// countingDoer counts the requests an adapter hands its transport, and fails
+// each one.
+type countingDoer struct{ calls int }
+
+func (d *countingDoer) Do(*http.Request) (*http.Response, error) {
+	d.calls++
+	return nil, fmt.Errorf("transport call %d", d.calls)
+}
+
+// A refused header never reaches the transport, so there is nothing to retry:
+// pi's SDKs throw from buildHeaders, outside their retry loop. Measured with a
+// counting fetch and maxRetries 2 on openai-completions, openai-responses and
+// anthropic-messages: zero fetch calls. google takes no custom transport.
+func TestRefusedHeaderNeverReachesTheTransport(t *testing.T) {
+	req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+	const baseURL = "http://127.0.0.1:1"
+	model := func(api ai.Api, provider ai.ProviderId) *ai.Model {
+		return &ai.Model{ID: "m", Api: api, Provider: provider, BaseURL: baseURL, Input: []string{"text"}, MaxTokens: 4096}
+	}
+	for _, tc := range []struct {
+		name string
+		run  func(ai.StreamOptions) *ai.AssistantMessage
+	}{
+		{"pi-messages", func(o ai.StreamOptions) *ai.AssistantMessage {
+			return StreamPiMessages(context.Background(), piMessagesTestModel(baseURL+"/v1"), req, &PiMessagesOptions{StreamOptions: o}).Result()
+		}},
+		{"openai-completions", func(o ai.StreamOptions) *ai.AssistantMessage {
+			return StreamOpenAICompletions(context.Background(), model(ai.APIOpenAICompletions, "openai"), req, &OpenAIOptions{StreamOptions: o}).Result()
+		}},
+		{"openai-responses", func(o ai.StreamOptions) *ai.AssistantMessage {
+			return StreamOpenAIResponses(context.Background(), model(ai.APIOpenAIResponses, "openai"), req, &OpenAIResponsesOptions{StreamOptions: o}).Result()
+		}},
+		{"anthropic-messages", func(o ai.StreamOptions) *ai.AssistantMessage {
+			return StreamAnthropic(context.Background(), model(ai.APIAnthropicMessages, "anthropic"), req, &AnthropicOptions{StreamOptions: o}).Result()
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doer := &countingDoer{}
+			final := tc.run(ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "test-key", HTTPClient: doer, MaxRetries: 2, Headers: ai.ProviderHeaders{"X-A": strPtr("a\nb")},
+			}})
+			if doer.calls != 0 {
+				t.Fatalf("transport calls = %d, want 0: the request must fail before it is sent", doer.calls)
+			}
+			if want := invalidValueError("a\nb"); final.StopReason != ai.StopError || final.ErrorMessage != want {
+				t.Fatalf("stream = %s %q, want error %q", final.StopReason, final.ErrorMessage, want)
+			}
+		})
+	}
+}

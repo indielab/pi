@@ -26,8 +26,8 @@ import (
 //     slot for a name wins, and a null there deletes every earlier spelling
 //     of it from the record (upstream a328aa89a). The record is then spread
 //     over the adapter's own literal headers, so a null still cannot remove a
-//     header the adapter set literally. headerObject.applyAsRecord is that
-//     path.
+//     header the adapter set literally. headerObject.applyAsRecord (google)
+//     and applyAsFetchInit (pi-messages) are that path.
 //
 // Both paths end in a fetch Headers object in pi — the SDK's, or the one fetch
 // builds from pi-messages' plain object — and Headers.append/set normalize
@@ -40,9 +40,13 @@ import (
 // Before it normalizes anything, a Headers object converts each name and value
 // it is given to a WebIDL ByteString (see byteString): a character above U+00FF
 // fails the request before it is sent, and U+0080..U+00FF go out as one Latin-1
-// byte each, where net/http would send the UTF-8 bytes of any string. Every
-// name and value is converted here, in the order pi's Headers sees them, so the
-// same input fails with the same message and is sent as the same bytes.
+// byte each, where net/http would send the UTF-8 bytes of any string. After it
+// normalizes a value, it refuses a name that is not an HTTP token and a value
+// holding a NUL, CR or LF, with a TypeError of its own (see checkHeaderToken,
+// normalizeHeaderValue), where net/http fails the round trip with its text and
+// the retry loop tries it again. Every name and value is converted and checked
+// here, in the order pi's Headers sees them, so the same input fails with the
+// same message, at once, or is sent as the same bytes.
 //
 // Two divergences live in here and are recorded in docs/UPSTREAM.md rather than
 // papered over: an empty or whitespace-only User-Agent value is dropped
@@ -150,8 +154,9 @@ func (o *headerObject) mergeStrings(source map[string]string) {
 //
 // It fails where the SDK's buildHeaders throws, before anything is sent: on
 // the SDK's own auth value first (see setSDKAuth), then slot by slot, on the
-// name (buildHeaders deletes a name from its Headers before it first appends
-// one, and a marker is that delete alone) and then on the value.
+// name and then on the value. buildHeaders deletes a name from its Headers
+// before it first appends one, and a marker is that delete alone, so the name
+// is checked, and refused, by Headers.delete.
 func (o *headerObject) applyAsDefaultHeaders(h http.Header) error {
 	for _, value := range o.sdkAuth {
 		if _, err := headerValue(value); err != nil {
@@ -159,7 +164,7 @@ func (o *headerObject) applyAsDefaultHeaders(h http.Header) error {
 		}
 	}
 	for _, name := range o.names {
-		if err := checkHeaderName(name); err != nil {
+		if err := checkHeaderName("Headers.delete", name); err != nil {
 			return err
 		}
 		value := o.values[name]
@@ -221,33 +226,100 @@ func (o *headerObject) record() []recordEntry {
 // calling this (google's x-goog-api-key, which genai appends only when the
 // Headers holds none yet).
 //
-// The Headers pi builds converts each entry's name and value to ByteStrings
-// (see byteString) in object order, so the first entry that does not convert
-// fails the request before it is sent.
+// This is google's order: genai appends the object to its Headers entry by
+// entry, so each entry is converted (see byteString) and then checked before
+// the next is looked at, and the first entry that fails fails the request
+// before it is sent. pi-messages hands the object to fetch instead, which
+// orders the two steps differently: see applyAsFetchInit.
 func (o *headerObject) applyAsRecord(h http.Header, literals ...recordEntry) error {
-	appended := make(map[string]bool, len(literals))
+	a := recordAppender{h: h, appended: make(map[string]bool, len(literals))}
 	for _, e := range o.spread(literals) {
-		if err := checkHeaderName(e.name); err != nil {
-			return err
-		}
-		value, err := headerValue(e.value)
+		c, err := convertEntry(e)
 		if err != nil {
 			return err
 		}
-		key := http.CanonicalHeaderKey(e.name)
-		if appended[key] {
-			// Headers.append normalizes the value it appends and joins it onto
-			// the one already held with ", ". An empty second value leaves the
-			// separator's space at the end: genai re-normalizes the joined value
-			// and sends none, and pi-messages' HTTP/1.1 wire carries it as
-			// whitespace outside the field value. HTTP/2 forbids a value ending
-			// in whitespace, so the joined value is normalized as genai's is.
-			h[key] = []string{trimHTTPWhitespace(h[key][0] + ", " + value)}
-			continue
+		if err := a.append(c); err != nil {
+			return err
 		}
-		h.Set(e.name, value)
-		appended[key] = true
 	}
+	return nil
+}
+
+// applyAsFetchInit is applyAsRecord for pi-messages, which passes the object to
+// fetch as `headers`. fetch converts the whole init, every name and value in
+// object order, before its Headers appends any entry, so an entry that does not
+// convert fails the request ahead of an earlier entry that converts but is
+// refused. Measured with node fetch: {"X-B": "a\nb", "X-C": U+65E5} fails on
+// X-C's conversion here, and on X-B's LF on every other adapter.
+func (o *headerObject) applyAsFetchInit(h http.Header, literals ...recordEntry) error {
+	object := o.spread(literals)
+	converted := make([]convertedEntry, len(object))
+	for i, e := range object {
+		c, err := convertEntry(e)
+		if err != nil {
+			return err
+		}
+		converted[i] = c
+	}
+	a := recordAppender{h: h, appended: make(map[string]bool, len(object))}
+	for _, c := range converted {
+		if err := a.append(c); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// convertedEntry is an entry of the object pi hands to a Headers, once its
+// name and value converted to ByteStrings.
+type convertedEntry struct {
+	recordEntry
+	// wire is the value's ByteString, the bytes the wire carries.
+	wire string
+}
+
+// convertEntry converts e's name, then its value (see byteString).
+func convertEntry(e recordEntry) (convertedEntry, error) {
+	if _, err := byteString(e.name); err != nil {
+		return convertedEntry{}, err
+	}
+	wire, err := byteString(e.value)
+	if err != nil {
+		return convertedEntry{}, err
+	}
+	return convertedEntry{recordEntry: e, wire: wire}, nil
+}
+
+// recordAppender writes converted entries onto h as Headers.append does with
+// arguments it has converted: it normalizes the value, checks the name and
+// then the value, and joins a value onto one the Headers already holds under
+// the name.
+type recordAppender struct {
+	h        http.Header
+	appended map[string]bool
+}
+
+func (a *recordAppender) append(e convertedEntry) error {
+	if err := checkHeaderToken("Headers.append", e.name); err != nil {
+		return err
+	}
+	value, err := normalizeHeaderValue(e.value, e.wire)
+	if err != nil {
+		return err
+	}
+	key := http.CanonicalHeaderKey(e.name)
+	if a.appended[key] {
+		// Headers.append normalizes the value it appends and joins it onto the
+		// one already held with ", ". An empty second value leaves the
+		// separator's space at the end: genai re-normalizes the joined value and
+		// sends none, and pi-messages' HTTP/1.1 wire carries it as whitespace
+		// outside the field value. HTTP/2 forbids a value ending in whitespace,
+		// so the joined value is normalized as genai's is.
+		a.h[key] = []string{trimHTTPWhitespace(a.h[key][0] + ", " + value)}
+		return nil
+	}
+	a.h.Set(e.name, value)
+	a.appended[key] = true
 	return nil
 }
 
@@ -283,20 +355,61 @@ func setHeader(h http.Header, name, value string) error {
 
 // headerValue is what a fetch Headers object makes of a value it is given: the
 // value converted to a ByteString, whose bytes are what the wire carries, then
-// normalized (see trimHTTPWhitespace).
+// normalized and checked (see normalizeHeaderValue).
 func headerValue(value string) (string, error) {
 	wire, err := byteString(value)
 	if err != nil {
 		return "", err
 	}
-	return trimHTTPWhitespace(wire), nil
+	return normalizeHeaderValue(value, wire)
 }
 
-// checkHeaderName fails on a header name a fetch Headers object refuses to
-// convert (see byteString).
-func checkHeaderName(name string) error {
-	_, err := byteString(name)
-	return err
+// normalizeHeaderValue finishes what Headers.append does to a value once it
+// converted to wire (see byteString): it normalizes it (see
+// trimHTTPWhitespace), then refuses it if a NUL, CR or LF is left inside, with
+// the TypeError text undici throws. That text quotes the normalized value as
+// the caller spelled it, which is value trimmed.
+func normalizeHeaderValue(value, wire string) (string, error) {
+	wire = trimHTTPWhitespace(wire)
+	if strings.ContainsAny(wire, "\x00\r\n") {
+		return "", fmt.Errorf("Headers.append: \"%s\" is an invalid header value.", trimHTTPWhitespace(value))
+	}
+	return wire, nil
+}
+
+// checkHeaderName fails on a header name a fetch Headers object refuses: one it
+// cannot convert (see byteString), or one that is not a token (see
+// checkHeaderToken). op is the Headers method that sees the name first.
+func checkHeaderName(op, name string) error {
+	if _, err := byteString(name); err != nil {
+		return err
+	}
+	return checkHeaderToken(op, name)
+}
+
+// checkHeaderToken refuses a converted name that is not an HTTP token with the
+// TypeError text undici's Headers throws, which names the method, op, that
+// refused it.
+func checkHeaderToken(op, name string) error {
+	if !isHTTPToken(name) {
+		return fmt.Errorf("%s: \"%s\" is an invalid header name.", op, name)
+	}
+	return nil
+}
+
+// isHTTPToken reports whether name is a non-empty run of tchar (RFC 9110
+// section 5.6.2): a visible ASCII character other than a delimiter. A
+// character above U+007F is not one, whatever its encoding.
+func isHTTPToken(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i := 0; i < len(name); i++ {
+		if c := name[i]; c <= ' ' || c >= 0x7f || strings.IndexByte(`"(),/:;<=>?@[\]{}`, c) >= 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // byteString converts s the way WebIDL's ByteString conversion converts a
@@ -340,8 +453,8 @@ func byteString(s string) (string, error) {
 
 // trimHTTPWhitespace strips what the Fetch standard calls HTTP whitespace —
 // space, tab, CR and LF — from both ends, as Headers.append and Headers.set do
-// to a value (the Fetch standard's "normalize"). A CR or LF left inside a value
-// still fails the request, as Headers.append throws on one.
+// to a value (the Fetch standard's "normalize"). A CR or LF left inside is
+// refused afterwards (see normalizeHeaderValue).
 func trimHTTPWhitespace(v string) string { return strings.Trim(v, " \t\r\n") }
 
 // sortedNames returns m's keys in sorted order, the tie-break every source-local
