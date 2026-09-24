@@ -480,6 +480,158 @@
 			}
 		},
 		{
+			"name": "array-index header names come first in the record",
+			"note": "HttpResponse fills a plain object with headers[name] = value: canonical decimals below 2^32-1 come first, ascending; 01 and 4294967295 are ordinary names",
+			"framing": "chunked",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"10",
+					"a"
+				],
+				[
+					"5",
+					"b"
+				],
+				[
+					"!x",
+					"c"
+				],
+				[
+					"4294967295",
+					"big"
+				],
+				[
+					"4294967294",
+					"max"
+				],
+				[
+					"0",
+					"zero"
+				],
+				[
+					"01",
+					"lead"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"0\":\"zero\",\"5\":\"b\",\"10\":\"a\",\"4294967294\":\"max\",\"!x\":\"c\",\"01\":\"lead\",\"4294967295\":\"big\",\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "a __proto__ header is never a key of the record",
+			"note": "headers[\"__proto__\"] = value hits Object.prototype's setter, which ignores a string; constructor and toString are ordinary keys",
+			"framing": "chunked",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"__proto__",
+					"x"
+				],
+				[
+					"constructor",
+					"y"
+				],
+				[
+					"toString",
+					"z"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"constructor\":\"y\",\"content-type\":\"text/event-stream\",\"tostring\":\"z\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
 			"name": "response content-type is kept as sent",
 			"framing": "close",
 			"headers": [

@@ -3,6 +3,7 @@ package providers
 import (
 	"bufio"
 	"bytes"
+	"cmp"
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
@@ -1524,7 +1525,11 @@ func googleTokenCount(v any) int {
 //     whose values iterate one by one so the last one wins;
 //   - values are the header bytes read as latin1, as undici decodes them;
 //   - a response without content-type gets the "text/plain;charset=UTF-8" a
-//     string-bodied Response adds.
+//     string-bodied Response adds;
+//   - the record is a plain object filled with `headers[name] = value`, so a
+//     name that is an array index (a canonical decimal below 2^32-1) comes
+//     first, in ascending numeric order, and "__proto__" is never a key: the
+//     assignment hits Object.prototype's setter, which ignores a string.
 //
 // net/http rewrites a few headers undici keeps as sent, so they are put
 // back: Transfer-Encoding moves to resp.TransferEncoding; a Trailer header
@@ -1557,7 +1562,21 @@ func googleSDKResponseHeaders(resp *http.Response) ai.OrderedObject {
 	if _, ok := values["content-type"]; !ok {
 		values["content-type"] = []string{"text/plain;charset=UTF-8"}
 	}
+	delete(values, "__proto__")
 	names := slices.Sorted(maps.Keys(values))
+	slices.SortStableFunc(names, func(a, b string) int {
+		x, aIndex := jsArrayIndexKey(a)
+		y, bIndex := jsArrayIndexKey(b)
+		switch {
+		case aIndex && bIndex:
+			return cmp.Compare(x, y)
+		case aIndex:
+			return -1
+		case bIndex:
+			return 1
+		}
+		return 0
+	})
 	out := make(ai.OrderedObject, 0, len(names))
 	for _, name := range names {
 		vs := values[name]

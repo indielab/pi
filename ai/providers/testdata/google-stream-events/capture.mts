@@ -202,6 +202,29 @@ const scenarios: Scenario[] = [
 		segments: [sse(text("h")), sse(stop)],
 	},
 	{
+		name: "array-index header names come first in the record",
+		note: "HttpResponse fills a plain object with headers[name] = value: canonical decimals below 2^32-1 come first, ascending; 01 and 4294967295 are ordinary names",
+		framing: "chunked",
+		headers: [
+			...eventStream,
+			["10", "a"],
+			["5", "b"],
+			["!x", "c"],
+			["4294967295", "big"],
+			["4294967294", "max"],
+			["0", "zero"],
+			["01", "lead"],
+		],
+		segments: [sse(stop)],
+	},
+	{
+		name: "a __proto__ header is never a key of the record",
+		note: "headers[\"__proto__\"] = value hits Object.prototype's setter, which ignores a string; constructor and toString are ordinary keys",
+		framing: "chunked",
+		headers: [...eventStream, ["__proto__", "x"], ["constructor", "y"], ["toString", "z"]],
+		segments: [sse(stop)],
+	},
+	{
 		name: "response content-type is kept as sent",
 		framing: "close",
 		headers: [
