@@ -1,0 +1,1398 @@
+{
+	"source": "upstream 8676a0dcd packages/ai/src/api/google-generative-ai.ts (onProviderStreamEvent, 002fc8385), @google/genai 2.21.0 sha512-+PDtco2/Z0ONdzCGekCoCT+O1VJS9xJQNN4XzQpXG/t3El/SWWMkCWlFRO1KmivOHPa4Q0VjUYu1HBKCZ/v33Q==, node v26.4.0",
+	"scenarios": [
+		{
+			"name": "upstream two chunks",
+			"framing": "chunked",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"responseId\":\"resp_google\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}]}\n\n",
+				"data: {\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":1,\"totalTokenCount\":3}}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"hello\"}]}}],\"responseId\":\"resp_google\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}",
+					"{\"candidates\":[{\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":2,\"candidatesTokenCount\":1,\"totalTokenCount\":3},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "hello"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"responseId": "resp_google",
+				"content": "[{\"type\":\"text\",\"text\":\"hello\"}]",
+				"usage": {
+					"input": 2,
+					"output": 1,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 3
+				}
+			}
+		},
+		{
+			"name": "converter keeps its own fields in its own order",
+			"note": "wire order scrambled; unknown fields at every level; null dropped, falsy kept; citationSources renamed; a wire sdkHttpResponse keeps the first slot",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"usageMetadata\":{\"totalTokenCount\":5,\"promptTokenCount\":2,\"futureCount\":{\"z\":1,\"a\":2}},\"unknownTop\":{\"b\":1,\"a\":2},\"responseId\":\"\",\"candidates\":[{\"unknownCand\":1,\"urlContextMetadata\":{\"u\":1},\"safetyRatings\":[{\"category\":\"C\",\"probability\":\"LOW\"}],\"logprobsResult\":{\"x\":[1]},\"index\":0,\"avgLogprobs\":0,\"groundingMetadata\":{\"g\":true},\"finishReason\":null,\"tokenCount\":0,\"citationMetadata\":{\"other\":1,\"citationSources\":[{\"startIndex\":1,\"uri\":\"u\"}]},\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"c2ln\",\"text\":\"a\",\"extraPart\":true}]}}],\"modelStatus\":{\"m\":1},\"promptFeedback\":{\"blockReason\":null,\"safetyRatings\":[]},\"modelVersion\":\"gemini-x\",\"error\":{\"code\":1}}\n\ndata: {\"sdkHttpResponse\":{\"wire\":true},\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"b\"}]},\"citationMetadata\":{\"citationSources\":null,\"other\":2}}],\"responseId\":null}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"c\"}]},\"citationMetadata\":\"not an object\"}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"thoughtSignature\":\"c2ln\",\"text\":\"a\",\"extraPart\":true}]},\"citationMetadata\":{\"citations\":[{\"startIndex\":1,\"uri\":\"u\"}]},\"tokenCount\":0,\"groundingMetadata\":{\"g\":true},\"avgLogprobs\":0,\"index\":0,\"logprobsResult\":{\"x\":[1]},\"safetyRatings\":[{\"category\":\"C\",\"probability\":\"LOW\"}],\"urlContextMetadata\":{\"u\":1}}],\"modelVersion\":\"gemini-x\",\"promptFeedback\":{\"blockReason\":null,\"safetyRatings\":[]},\"responseId\":\"\",\"usageMetadata\":{\"totalTokenCount\":5,\"promptTokenCount\":2,\"futureCount\":{\"z\":1,\"a\":2}},\"modelStatus\":{\"m\":1},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}},\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"b\"}]},\"citationMetadata\":{}}]}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"c\"}]},\"citationMetadata\":{}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "a"
+					},
+					{
+						"type": "text_delta",
+						"delta": "b"
+					},
+					{
+						"type": "text_delta",
+						"delta": "c"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"abc!\",\"textSignature\":\"c2ln\"}]",
+				"usage": {
+					"input": 2,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 5
+				}
+			}
+		},
+		{
+			"name": "candidates that are not an array or not objects",
+			"note": "a non-array candidates is copied as-is; each non-object candidate converts to {}; pi normalizes only candidates[0]",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":{\"only\":{\"content\":{\"parts\":[{\"text\":\"hidden\"}]}}}}\n\ndata: {\"candidates\":\"str\"}\n\ndata: {\"candidates\":[null,\"s\",5,true,[1],{}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}]}},{\"content\":{\"parts\":[{\"text\":\"second candidate\"}]}}],\"responseId\":\"r1\"}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":{\"only\":{\"content\":{\"parts\":[{\"text\":\"hidden\"}]}}},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":\"str\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{},{},{},{},{},{}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}]}},{\"content\":{\"parts\":[{\"text\":\"second candidate\"}]}}],\"responseId\":\"r1\",\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"responseId": "r1",
+				"content": "[{\"type\":\"text\",\"text\":\"x!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "non-object data values",
+			"note": "null, scalars and arrays convert to an object holding only sdkHttpResponse",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: null\n\ndata: 5\n\ndata: \"s\"\n\ndata: true\n\ndata: false\n\ndata: [{\"candidates\":[]}]\n\ndata: {}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "an SSE-framed error event is observed and the stream continues",
+			"note": "parity-sweep-2 F3 recorded that this throws; @google/genai only checks whole network reads that are bare JSON",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"before \"}],\"role\":\"model\"}}]}\n\ndata: {\"error\":{\"code\":429,\"message\":\"quota exceeded\",\"status\":\"RESOURCE_EXHAUSTED\"}}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"after\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"before \"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"after\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "before "
+					},
+					{
+						"type": "text_delta",
+						"delta": "after"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"before after!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "an SSE-framed error event as the last event",
+			"note": "TestGoogleErrorChunkFailsStream's fixture: no throw, so the stream ends without a finish reason",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}],\"role\":\"model\"}}]}\n\ndata: {\"error\":{\"code\":429,\"message\":\"quota exceeded\",\"status\":\"RESOURCE_EXHAUSTED\"}}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "partial"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Google stream ended without a finish reason",
+				"content": "[{\"type\":\"text\",\"text\":\"partial\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "response header record",
+			"note": "lowercase names in sorted order; repeats joined with ', '; set-cookie keeps the last; empty values kept; bytes read as latin1; no content-type means the per-chunk Response injects text/plain",
+			"framing": "chunked",
+			"headers": [
+				[
+					"X-Multi",
+					"a"
+				],
+				[
+					"x-multi",
+					"b"
+				],
+				[
+					"Set-Cookie",
+					"c=1"
+				],
+				[
+					"Set-Cookie",
+					"d=2"
+				],
+				[
+					"X-Empty",
+					""
+				],
+				[
+					"Alt-Svc",
+					"h3=\":443\""
+				],
+				[
+					"X-Goog-Trace",
+					"  padded  "
+				],
+				[
+					"Server-Timing",
+					"gfet4t7; dur=100"
+				],
+				[
+					"X-Latin",
+					"café"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"h\"}],\"role\":\"model\"}}]}\n\n",
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"h\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"alt-svc\":\"h3=\\\":443\\\"\",\"content-type\":\"text/plain;charset=UTF-8\",\"server-timing\":\"gfet4t7; dur=100\",\"set-cookie\":\"d=2\",\"transfer-encoding\":\"chunked\",\"x-empty\":\"\",\"x-goog-trace\":\"padded\",\"x-latin\":\"cafÃ©\",\"x-multi\":\"a, b\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"alt-svc\":\"h3=\\\":443\\\"\",\"content-type\":\"text/plain;charset=UTF-8\",\"server-timing\":\"gfet4t7; dur=100\",\"set-cookie\":\"d=2\",\"transfer-encoding\":\"chunked\",\"x-empty\":\"\",\"x-goog-trace\":\"padded\",\"x-latin\":\"cafÃ©\",\"x-multi\":\"a, b\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "h"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"h!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "response content-type is kept as sent",
+			"framing": "close",
+			"headers": [
+				[
+					"content-type",
+					"text/event-stream; charset=UTF-8"
+				],
+				[
+					"Vary",
+					"Origin"
+				],
+				[
+					"vary",
+					"X-Origin"
+				],
+				[
+					"Vary",
+					"Referer"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream; charset=UTF-8\",\"vary\":\"Origin, X-Origin, Referer\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "thinking, text and a function call",
+			"note": "nested key order survives in the observed value, the tool-call delta and the arguments",
+			"framing": "chunked",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"plan\",\"thought\":true,\"thoughtSignature\":\"dGhpbms=\"}],\"role\":\"model\"}}]}\n\n",
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"calling\"},{\"functionCall\":{\"id\":\"call_1\",\"name\":\"lookup\",\"args\":{\"zeta\":1,\"alpha\":{\"y\":[{\"b\":1,\"a\":2}],\"x\":null},\"mid\":\"m\"}},\"thoughtSignature\":\"c2ln\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"thoughtsTokenCount\":2,\"cachedContentTokenCount\":1,\"totalTokenCount\":18}}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"plan\",\"thought\":true,\"thoughtSignature\":\"dGhpbms=\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"calling\"},{\"functionCall\":{\"id\":\"call_1\",\"name\":\"lookup\",\"args\":{\"zeta\":1,\"alpha\":{\"y\":[{\"b\":1,\"a\":2}],\"x\":null},\"mid\":\"m\"}},\"thoughtSignature\":\"c2ln\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":10,\"candidatesTokenCount\":5,\"thoughtsTokenCount\":2,\"cachedContentTokenCount\":1,\"totalTokenCount\":18},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "thinking_start"
+					},
+					{
+						"type": "thinking_delta",
+						"delta": "plan"
+					},
+					{
+						"type": "thinking_end"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "calling"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "toolcall_start"
+					},
+					{
+						"type": "toolcall_delta",
+						"delta": "{\"zeta\":1,\"alpha\":{\"y\":[{\"b\":1,\"a\":2}],\"x\":null},\"mid\":\"m\"}"
+					},
+					{
+						"type": "toolcall_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "toolUse",
+				"content": "[{\"type\":\"thinking\",\"thinking\":\"plan\",\"thinkingSignature\":\"dGhpbms=\"},{\"type\":\"text\",\"text\":\"calling\"},{\"type\":\"toolCall\",\"id\":\"call_1\",\"name\":\"lookup\",\"arguments\":{\"zeta\":1,\"alpha\":{\"y\":[{\"b\":1,\"a\":2}],\"x\":null},\"mid\":\"m\"},\"thoughtSignature\":\"c2ln\"}]",
+				"usage": {
+					"input": 9,
+					"output": 7,
+					"cacheRead": 1,
+					"cacheWrite": 0,
+					"totalTokens": 18
+				}
+			}
+		},
+		{
+			"name": "a gzip body",
+			"note": "the SDK sees the decoded text; content-encoding stays in the record",
+			"framing": "close",
+			"gzip": true,
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Encoding",
+					"gzip"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"zipped\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-encoding\":\"gzip\",\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "zipped"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"zipped!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON error in its own read throws",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n",
+				"{\"error\":{\"code\":500,\"message\":\"internal\",\"status\":\"INTERNAL\"}}"
+			],
+			"readBoundariesMatter": true,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "got status: INTERNAL. {\"error\":{\"code\":500,\"message\":\"internal\",\"status\":\"INTERNAL\"}}",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON error sharing a read with an event does not",
+			"note": "TestGoogleBareJSONErrorChunkFailsStream's fixture as one write: the read is not JSON, so the tail is an incomplete segment",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n{\"error\":{\"code\":500,\"message\":\"internal\",\"status\":\"INTERNAL\"}}"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Incomplete JSON segment at the end",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON error is quoted re-serialized",
+			"note": "the message carries JSON.stringify of the parsed read, not its text",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"{\n  \"error\": {\n    \"code\": 503,\n    \"message\": \"over\\u006coaded\",\n    \"status\": \"UNAVAILABLE\"\n  },\n  \"extra\": [1.50, 1e2]\n}\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "got status: UNAVAILABLE. {\"error\":{\"code\":503,\"message\":\"overloaded\",\"status\":\"UNAVAILABLE\"},\"extra\":[1.5,100]}",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON error with a string code throws",
+			"note": "code >= 400 && code < 600 coerces the string",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n",
+				"{\"error\":{\"code\":\"500\",\"status\":\"INTERNAL\"}}"
+			],
+			"readBoundariesMatter": true,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "got status: INTERNAL. {\"error\":{\"code\":\"500\",\"status\":\"INTERNAL\"}}",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON error without a status",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n",
+				"{\"error\":{\"code\":404}}"
+			],
+			"readBoundariesMatter": true,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "got status: undefined. {\"error\":{\"code\":404}}",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON error with a non-string status",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n",
+				"{\"error\":{\"code\":[429],\"status\":{\"s\":1}}}"
+			],
+			"readBoundariesMatter": true,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "got status: [object Object]. {\"error\":{\"code\":[429],\"status\":{\"s\":1}}}",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON error outside 400..599 does not throw",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n",
+				"{\"error\":{\"code\":200,\"status\":\"OK\"}}"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Incomplete JSON segment at the end",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON read with a null error does not throw",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n",
+				"{\"error\":null}"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Incomplete JSON segment at the end",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON read that is an array does not throw",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n",
+				"[{\"error\":{\"code\":500,\"status\":\"INTERNAL\"}}]"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Incomplete JSON segment at the end",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a bare JSON error followed by a delimiter",
+			"note": "JSON.parse accepts the trailing blank line; the throw precedes buffering",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\n",
+				"{\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\"}}\n\n"
+			],
+			"readBoundariesMatter": true,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "got status: RESOURCE_EXHAUSTED. {\"error\":{\"code\":429,\"status\":\"RESOURCE_EXHAUSTED\"}}",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "a truncated stream fails",
+			"note": "TestGoogleTruncatedStreamFails's fixture",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"par"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"x\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "x"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Incomplete JSON segment at the end",
+				"content": "[{\"type\":\"text\",\"text\":\"x\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "the callback's error fails the stream",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"never seen\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"throwOn": 0,
+			"throwMessage": "observer boom",
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "observer boom",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "the callback's error mid-stream keeps what came before",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"kept\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" dropped\"}],\"role\":\"model\"}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"throwOn": 1,
+			"throwMessage": "second event refused",
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"kept\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "kept"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "second event refused",
+				"content": "[{\"type\":\"text\",\"text\":\"kept\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: an empty data payload",
+			"divergence": "pi parses every data payload with Response.json() (strict JSON.parse) and fails the stream with V8's SyntaxError text; the port skips an empty payload",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data:\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Unexpected end of JSON input",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: an unparseable data payload",
+			"divergence": "pi fails the stream with V8's SyntaxError text; the port skips a payload it cannot parse",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {not json}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: a multi-line data event",
+			"divergence": "the SDK parses everything after the first \"data:\" as one payload, so pi fails with V8's SyntaxError text; the port skips it",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[]}\ndata: {\"candidates\":[]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Unexpected non-whitespace character after JSON at position 18 (line 2 column 1)",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: a raw control character in a string",
+			"divergence": "pi fails with V8's SyntaxError text; the port repairs the string and handles the event",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"a\tb\"}]}}]}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "Bad control character in string literal in JSON at position 46 (line 1 column 47)",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
+			"name": "divergence: a field of an unexpected type",
+			"divergence": "pi reads the fields it can; the port's typed decode drops the whole event",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"responseId\":\"r\",\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"usageMetadata\":{\"promptTokenCount\":\"2\"}}\n\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"t\"}]}}],\"responseId\":\"r\",\"usageMetadata\":{\"promptTokenCount\":\"2\"},\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}",
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "t"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"responseId": "r",
+				"content": "[{\"type\":\"text\",\"text\":\"t!\"}]",
+				"usage": {
+					"input": 2,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		}
+	]
+}

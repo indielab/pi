@@ -1122,9 +1122,9 @@ func googleAPIError(e *googleChunkError, rawChunk string) error {
 
 // iterateGoogleSSE consumes the alt=sse stream the way the @google/genai SDK
 // does (processStreamResponse): events are split on \n\n, \r\r, or \r\n\r\n;
-// only "data:"-prefixed events are decoded; a chunk carrying an error payload
-// fails the stream like the SDK's ApiError; and a trailing unconsumed segment
-// fails with the SDK's "Incomplete JSON segment at the end".
+// only "data:"-prefixed events are decoded; a bare (non-data:) JSON error
+// payload fails the stream like the SDK's ApiError; and a trailing unconsumed
+// segment fails with the SDK's "Incomplete JSON segment at the end".
 func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChunk) error) error {
 	delimiters := []string{"\n\n", "\r\r", "\r\n\r\n"}
 	buf := make([]byte, 32*1024)
@@ -1153,9 +1153,9 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, handle func(googleChu
 		if err := parseJSONWithRepair(data, &chunk); err != nil {
 			return nil
 		}
-		if err := googleAPIError(chunk.Error, data); err != nil {
-			return err
-		}
+		// No error check here: the SDK checks only whole reads that are bare
+		// JSON, and generateContentResponseFromMldev keeps no "error" field, so
+		// a data: event carrying one reaches pi as an empty chunk.
 		return handle(chunk)
 	}
 

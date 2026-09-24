@@ -818,29 +818,35 @@ func TestGoogleEmptyStringTextPartIsPresent(t *testing.T) {
 
 // --- F3: mid-stream error chunks + truncated streams ---
 
-func TestGoogleErrorChunkFailsStream(t *testing.T) {
-	errJSON := `{"error":{"code":429,"message":"quota exceeded","status":"RESOURCE_EXHAUSTED"}}`
-	sse := "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"partial\"}]}}]}\n\n" +
-		"data: " + errJSON + "\n\n"
-	stream := googleServe(t, "gemini-2.5-flash", sse)
-	sawDone := false
-	for ev := range stream.Events() {
-		if ev.Type == ai.EventDone {
-			sawDone = true
+// TestGoogleSSEErrorEventDoesNotFailStream: @google/genai 2.21.0 checks for an
+// {"error":...} payload only when a whole network read is bare JSON
+// (processStreamResponse); a data: event is parsed and converted by
+// generateContentResponseFromMldev, which keeps no "error" field, so pi sees an
+// empty chunk and reads on. Measured by testdata/google-stream-events
+// (scenarios "an SSE-framed error event ..."). parity-sweep-2 F3 had recorded
+// the opposite as SDK behaviour.
+func TestGoogleSSEErrorEventDoesNotFailStream(t *testing.T) {
+	errEvent := "data: {\"error\":{\"code\":429,\"message\":\"quota exceeded\",\"status\":\"RESOURCE_EXHAUSTED\"}}\n\n"
+	text := func(s string) string {
+		return "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"" + s + "\"}]}}]}\n\n"
+	}
+	stop := "data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}]},\"finishReason\":\"STOP\"}]}\n\n"
+
+	t.Run("the stream reads on", func(t *testing.T) {
+		final := googleServe(t, "gemini-2.5-flash", text("before ")+errEvent+text("after")+stop).Result()
+		if final.StopReason != ai.StopStop {
+			t.Fatalf("stop reason %s (%s), want stop", final.StopReason, final.ErrorMessage)
 		}
-	}
-	final := stream.Result()
-	if sawDone {
-		t.Fatalf("error chunk must not produce a clean done event")
-	}
-	if final.StopReason != ai.StopError {
-		t.Fatalf("expected error stop, got %s", final.StopReason)
-	}
-	// genai SDK ApiError surface: "got status: ${status}. ${JSON.stringify(chunk)}".
-	want := "got status: RESOURCE_EXHAUSTED. " + errJSON
-	if final.ErrorMessage != want {
-		t.Fatalf("error message wrong:\n got %q\nwant %q", final.ErrorMessage, want)
-	}
+		if got := final.Content[0].(ai.TextContent).Text; got != "before after!" {
+			t.Fatalf("text %q, want %q", got, "before after!")
+		}
+	})
+	t.Run("as the last event", func(t *testing.T) {
+		final := googleServe(t, "gemini-2.5-flash", text("partial")+errEvent).Result()
+		if final.StopReason != ai.StopError || final.ErrorMessage != "Google stream ended without a finish reason" {
+			t.Fatalf("got %s %q, want error %q", final.StopReason, final.ErrorMessage, "Google stream ended without a finish reason")
+		}
+	})
 }
 
 func TestGoogleBareJSONErrorChunkFailsStream(t *testing.T) {
