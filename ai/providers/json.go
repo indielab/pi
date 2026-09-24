@@ -406,6 +406,8 @@ func completePartialJSON(s string) (string, bool) {
 	inString := false
 	escaped := false
 	stringStart := -1
+	// closedStart and closedEnd bound the last string that closed.
+	closedStart, closedEnd := -1, -1
 	for i := 0; i < len(s); i++ {
 		ch := s[i]
 		if inString {
@@ -419,6 +421,7 @@ func completePartialJSON(s string) (string, bool) {
 			}
 			if ch == '"' {
 				inString = false
+				closedStart, closedEnd = stringStart, i+1
 			}
 			continue
 		}
@@ -438,22 +441,23 @@ func completePartialJSON(s string) (string, bool) {
 	}
 
 	completed := s
-	if inString && isDanglingObjectKey(s, stack, stringStart) {
+	switch {
+	case inString && isDanglingObjectKey(s, stack, stringStart):
 		// An open string in object-KEY position can't be completed into a
 		// member; partial-json drops the incomplete key entirely.
-		completed = strings.TrimRight(s[:stringStart], " \t\r\n")
-		completed = strings.TrimRight(completed, ",")
-		completed = trimDanglingColon(completed)
-	} else if inString {
+		completed = dropDanglingMember(s[:stringStart])
+	case inString:
 		// A trailing comma inside an open string is string CONTENT, not a
 		// dangling token — close the string without stripping it.
 		completed += "\""
-	} else {
-		// Drop a dangling token that can't be completed (trailing comma, colon,
-		// or a key with no value). Strip trailing comma.
-		completed = strings.TrimRight(completed, ",")
-		// Trim a dangling "key": with no value or trailing colon.
-		completed = trimDanglingColon(completed)
+	case closedStart >= 0 && isDanglingObjectKey(s, stack, closedStart) && isDanglingColon(s[closedEnd:]):
+		// A complete key whose value has not started — `"key"` or
+		// `"key":` — cannot be completed either; partial-json drops the
+		// member, and the comma before it, keeping the members before it.
+		completed = dropDanglingMember(s[:closedStart])
+	default:
+		// A trailing comma is a dangling token too.
+		completed = dropDanglingMember(completed)
 	}
 
 	for i := len(stack) - 1; i >= 0; i-- {
@@ -484,16 +488,17 @@ func isDanglingObjectKey(s string, stack []byte, stringStart int) bool {
 	return false
 }
 
-func trimDanglingColon(s string) string {
-	t := strings.TrimRight(s, " \t\r\n")
-	if strings.HasSuffix(t, ":") {
-		// remove "key": with the key, back to the previous { , or [
-		idx := strings.LastIndexAny(t, "{[,")
-		if idx >= 0 {
-			return t[:idx+1]
-		}
-	}
-	return s
+// isDanglingColon reports whether rest, the text after an object key, is at
+// most the colon that starts its value, with whitespace around it.
+func isDanglingColon(rest string) bool {
+	rest = strings.Trim(rest, " \t\r\n")
+	return rest == "" || rest == ":"
+}
+
+// dropDanglingMember trims the text before a member that cannot be completed:
+// the whitespace and the one comma that separated it from the members before.
+func dropDanglingMember(s string) string {
+	return strings.TrimSuffix(strings.TrimRight(s, " \t\r\n"), ",")
 }
 
 // sanitizeSurrogates removes unpaired UTF-16 surrogate code units (port of

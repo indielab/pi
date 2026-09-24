@@ -53,6 +53,44 @@ func TestParseStreamingJSONKeyOrderMatchesPi(t *testing.T) {
 	}
 }
 
+// A member whose key is complete but whose value has not started — `"key"` or
+// `"key":` — is dropped with the comma before it, and the members before it
+// stay, whatever the key holds (a comma, an escaped quote). Each want is
+// node's JSON.stringify(parseStreamingJson(in)) at pi 002fc8385
+// (partial-json 0.1.7).
+func TestParseStreamingJSONDropsADanglingMemberLikePi(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`{"b":1,"a":"x","c":`, `{"b":1,"a":"x"}`},
+		{`{"b":1,"a":"x","c" :`, `{"b":1,"a":"x"}`},
+		{`{"b":1,"a":"x" , "c": `, `{"b":1,"a":"x"}`},
+		{`{"key":`, `{}`},
+		{`{"a":{"b":`, `{"a":{}}`},
+		{`{"a":{"x":1,"b":`, `{"a":{"x":1}}`},
+		{`{"x":1,"a,b":`, `{"x":1}`},
+		{`{"x":1,"a\",b":`, `{"x":1}`},
+		{`{"x":[1,{"y":`, `{"x":[1,{}]}`},
+		{`{"x":"v:","y":`, `{"x":"v:"}`},
+		{`{"b":1,"2":"x","1":`, `{"2":"x","b":1}`},
+		{`{"b":1,"c"`, `{"b":1}`},
+		{`{"b":1,"c" `, `{"b":1}`},
+		// A string in value position is a value, however the text ends.
+		{`{"a":"x"`, `{"a":"x"}`},
+		{`{"a":["x"`, `{"a":["x"]}`},
+		{`{"a":"x","b":"y"`, `{"a":"x","b":"y"}`},
+		{`{"a":{"k":"v"`, `{"a":{"k":"v"}}`},
+	}
+	for _, c := range cases {
+		_, ordered := parseStreamingJSON(c.in)
+		got, err := json.Marshal(ordered)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if string(got) != c.want {
+			t.Errorf("parseStreamingJSON(%q) = %s, pi %s", c.in, got, c.want)
+		}
+	}
+}
+
 // D7g: unpaired surrogates are DELETED (pi replaces them with ""), not
 // substituted with U+FFFD; properly paired surrogates are preserved.
 func TestSanitizeSurrogatesDeletesUnpaired(t *testing.T) {
