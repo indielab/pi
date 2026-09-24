@@ -2,6 +2,7 @@ package providers
 
 import (
 	"fmt"
+	"math"
 	"net/http"
 	"os"
 	"slices"
@@ -92,16 +93,61 @@ func (o *headerObject) set(name, value string) {
 	o.setValue(name, &value)
 }
 
-// setValue records name at its existing slot, or appends a new slot for a name
-// the object does not hold yet — JS assignment semantics.
+// setValue records name at its existing slot, or adds a slot for a name the
+// object does not hold yet where a JS object enumerates it (see insertOwnKey)
+// — JS assignment semantics.
 func (o *headerObject) setValue(name string, value *string) {
 	if o.values == nil {
 		o.values = make(map[string]*string, 8)
 	}
 	if _, held := o.values[name]; !held {
-		o.names = append(o.names, name)
+		o.names = insertOwnKey(o.names, name, func(name string) string { return name })
 	}
 	o.values[name] = value
+}
+
+// insertOwnKey adds item to items, an object's own keys in the order a JS
+// object enumerates them, where that order puts a new key: an array index (see
+// arrayIndex) among the leading array indexes, in ascending numeric order, and
+// any other string after every key already there. key reads an item's key.
+//
+// So a header named "1" converts, and fails, ahead of every header named
+// otherwise, whatever slot it was added in, and "9" ahead of "10". Measured on
+// pi's wire: model {"X-A": U+65E5} with opts {"1": U+0100} fails on the
+// U+0100.
+func insertOwnKey[T any](items []T, item T, key func(T) string) []T {
+	n, isIndex := arrayIndex(key(item))
+	if !isIndex {
+		return append(items, item)
+	}
+	i := 0
+	for ; i < len(items); i++ {
+		if m, ok := arrayIndex(key(items[i])); !ok || m > n {
+			break
+		}
+	}
+	return slices.Insert(items, i, item)
+}
+
+// arrayIndex reports whether name is an array index, and its value: the
+// canonical decimal form of an integer from 0 to 2^32-2, so "01", "+1" and
+// "4294967295" are not.
+func arrayIndex(name string) (uint32, bool) {
+	if name == "" || len(name) > 10 || (len(name) > 1 && name[0] == '0') {
+		return 0, false
+	}
+	var n uint64
+	for i := 0; i < len(name); i++ {
+		c := name[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + uint64(c-'0')
+	}
+	if n > math.MaxUint32-1 {
+		return 0, false
+	}
+	return uint32(n), true
 }
 
 // merge folds one ProviderHeaders source in, the way pi spreads one into the
@@ -114,7 +160,8 @@ func (o *headerObject) setValue(name string, value *string) {
 // has no key order to reproduce: that is the standing tie-break for this
 // divergence class (2026-08-04 ruling), shared with mergeHeaders in
 // ai/models_runtime.go, and it now only decides ties between two spellings
-// inside a single ai.ProviderHeaders literal.
+// inside a single ai.ProviderHeaders literal. An array-index name takes the
+// slot a JS object gives it whatever the order (see insertOwnKey).
 func (o *headerObject) merge(source ai.ProviderHeaders) {
 	for _, name := range sortedNames(source) {
 		o.setValue(name, source[name])
@@ -375,7 +422,9 @@ type recordEntry struct{ name, value string }
 // own spelling and value — unless its value is a marker, which leaves the
 // folded name deleted. So the LAST slot for a name decides it, a marker there
 // removes every earlier spelling instead of merely being skipped, and a
-// re-stored name moves to the end, as a JS Map's delete-then-set does.
+// re-stored name moves to the end, as a JS Map's delete-then-set does. An
+// array-index name has no other spelling, so it keeps the leading slot the
+// object gave it, where pi's Object.fromEntries enumerates it too.
 //
 // The fold is JavaScript's toLowerCase (jstext.ToLower), and it runs on every
 // slot before any name is converted: on a marker's name, which never is, and on
@@ -514,14 +563,16 @@ func (a *recordAppender) append(e convertedEntry) error {
 
 // spread is the plain object pi hands to its Headers: the literals, with the
 // record spread over them. A record entry whose name matches a literal exactly
-// replaces its value in place; any other entry is appended.
+// replaces its value in place; any other entry is added where the object
+// enumerates it (see insertOwnKey), so an array-index name goes ahead of the
+// literals.
 func (o *headerObject) spread(literals []recordEntry) []recordEntry {
 	object := slices.Clone(literals)
 	for _, e := range o.record() {
 		if i := slices.IndexFunc(object, func(l recordEntry) bool { return l.name == e.name }); i >= 0 {
 			object[i].value = e.value
 		} else {
-			object = append(object, e)
+			object = insertOwnKey(object, e, func(e recordEntry) string { return e.name })
 		}
 	}
 	return object
