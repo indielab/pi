@@ -284,8 +284,8 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 
 The `backend` column above is a snapshot. Scenarios flip `src` -> `dist` as releases
 ship the surface they cover, so re-read `scenarios/*.json` rather than this table when
-the distinction matters. **As of 2026-09-23 (the 0.87.1 re-pin) the suite is 60
-scenarios, all `dist`.** The nine transcript-model scenarios (`9e05370b2`: the three
+the distinction matters. **As of 2026-09-24 the suite is 61 scenarios, all
+`dist`** (60 at the 0.87.1 re-pin, plus `replayed-args-index-keys-openai-completions`). The nine transcript-model scenarios (`9e05370b2`: the three
 `responses-deferred-*`, `anthropic-native-tool-changes`,
 `kimi-k3-anchored-tool-additions` and the four `responses-midconvo-*`) had been owed
 the flip since 0.86.1 shipped the transcript model, and

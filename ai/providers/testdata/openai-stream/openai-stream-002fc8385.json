@@ -1226,6 +1226,57 @@
 				"responseId": ""
 			}
 		},
+		"index-keys": {
+			"sse": "data: {\"z\":1,\"id\":\"k\",\"2\":\"x\",\"1\":\"y\",\"-1\":0,\"01\":2,\"4294967295\":3,\"4294967294\":4,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"i\"},\"logprobs\":{\"2\":1,\"1\":2}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"1\":\"y\",\"2\":\"x\",\"4294967294\":4,\"z\":1,\"id\":\"k\",\"-1\":0,\"01\":2,\"4294967295\":3,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"i\"},\"logprobs\":{\"1\":2,\"2\":1}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"1\":\"y\",\"2\":\"x\",\"4294967294\":4,\"z\":1,\"id\":\"k\",\"-1\":0,\"01\":2,\"4294967295\":3,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"i\"},\"logprobs\":{\"1\":2,\"2\":1}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"1\":\"y\",\"2\":\"x\",\"4294967294\":4,\"z\":1,\"id\":\"k\",\"-1\":0,\"01\":2,\"4294967295\":3,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"i\"},\"logprobs\":{\"1\":2,\"2\":1}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"1\":\"y\",\"2\":\"x\",\"4294967294\":4,\"z\":1,\"id\":\"k\",\"-1\":0,\"01\":2,\"4294967295\":3,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"i\"},\"logprobs\":{\"1\":2,\"2\":1}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "i",
+				"responseId": "k"
+			},
+			"responses": {
+				"observed": [
+					"{\"1\":\"y\",\"2\":\"x\",\"4294967294\":4,\"z\":1,\"id\":\"k\",\"-1\":0,\"01\":2,\"4294967295\":3,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"i\"},\"logprobs\":{\"1\":2,\"2\":1}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": ""
+			}
+		},
 		"error-chunk-openrouter": {
 			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"error\":{\"message\":\"boom\",\"code\":502,\"metadata\":{\"raw\":\"upstream exploded\",\"provider_name\":\"p\"}}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
 			"sdk": {

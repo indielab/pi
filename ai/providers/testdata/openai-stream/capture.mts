@@ -307,6 +307,9 @@ const dispatch: Record<string, Body> = {
 	"null-event": `data: ${A}\n\ndata: null\n\ndata: ${FIN}\n\n`,
 	"no-choices-chunks": `data: ${A}\n\ndata: ${J({ id: "u", choices: [], usage: { prompt_tokens: 3, completion_tokens: 1, total_tokens: 4 } })}\n\ndata: ${J({ id: "o", openrouter_metadata: { strategy: "direct" } })}\n\ndata: ${FIN}\n\n`,
 	"key-order": `data: ${J({ z: 1, id: "k", a: { y: [{ q: 1, b: 2 }], x: null }, choices: [{ index: 0, delta: { content: "<&>" } }] })}\n\ndata: ${FIN}\n\n`,
+	// Written out, not J(): a JS object literal would already list its
+	// array-index keys first, ascending, as JSON.parse's object does.
+	"index-keys": `data: {"z":1,"id":"k","2":"x","1":"y","-1":0,"01":2,"4294967295":3,"4294967294":4,"choices":[{"index":0,"delta":{"content":"i"},"logprobs":{"2":1,"1":2}}]}\n\ndata: ${FIN}\n\n`,
 	"error-chunk-openrouter": errorChunk({ message: "boom", code: 502, metadata: { raw: "upstream exploded", provider_name: "p" } }),
 	"error-chunk-raw-contained": errorChunk({ message: "boom: upstream exploded", metadata: { raw: "upstream exploded" } }),
 	"error-chunk-raw-number": errorChunk({ message: "boom", metadata: { raw: 5 } }),
