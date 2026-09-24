@@ -29,8 +29,9 @@ import (
 // Two divergences live in here and are recorded in docs/UPSTREAM.md rather than
 // papered over: an empty-string value is dropped entirely by net/http on the
 // User-Agent header where pi sends it present-and-empty, and @google/genai
-// comma-joins a record entry onto its own default header of the same name
-// spelled differently, where this package sends the record's value alone.
+// comma-joins a record entry onto its own User-Agent or x-goog-api-client
+// default when the entry spells the name differently, where this package —
+// which sends neither default — sends the record's value alone.
 
 // headerObject models the ONE header object pi builds per provider request.
 //
@@ -149,14 +150,50 @@ func (o *headerObject) record() []recordEntry {
 // applyAsRecord writes pi's providerHeadersToRecord result onto h, for the
 // adapters that build the request themselves. The record is folded before it
 // reaches h (see record), so a marker cancels every spelling an earlier slot
-// gave its name. It never deletes from h: the record is spread over the
-// headers the adapter wrote literally, which are not part of it, so a marker
-// cannot remove one of those.
-func (o *headerObject) applyAsRecord(h http.Header) {
+// gave its name.
+//
+// pi spreads the record over the adapter's literal headers — pi-messages'
+// `{authorization, accept, "content-type", ...record}`, or @google/genai's own
+// defaults — and the transport builds its Headers from that plain object with
+// Headers.append. literals are those headers, spelled exactly as pi's object
+// spells them, and this replays both steps: a record entry whose name matches
+// a literal EXACTLY replaces its value in place (JS spread), while one that
+// matches only case-insensitively is a second key there, and Headers.append
+// joins the two with ", " in slot order — literal first. Measured with node
+// fetch: opts {"Authorization": "x"} on pi-messages sends
+// `authorization: Bearer <key>, x`, where {"authorization": "x"} sends `x`.
+//
+// It never deletes from h: a marker is not part of the record, so it cannot
+// remove a literal, nor a header the adapter set on h before calling this
+// (google's x-goog-api-key, which genai adds only when the record lacks one —
+// a record entry of any spelling replaces it here, as it does there).
+func (o *headerObject) applyAsRecord(h http.Header, literals ...recordEntry) {
+	object := slices.Clone(literals)
 	for _, e := range o.record() {
+		if i := slices.IndexFunc(object, func(l recordEntry) bool { return l.name == e.name }); i >= 0 {
+			object[i].value = e.value
+		} else {
+			object = append(object, e)
+		}
+	}
+	appended := make(map[string]bool, len(object))
+	for _, e := range object {
+		key := http.CanonicalHeaderKey(e.name)
+		if appended[key] {
+			// Headers.append normalizes each value (strips leading and trailing
+			// HTTP whitespace) before joining; net/http trims only the ends of
+			// the joined value, so the inner boundary is trimmed here.
+			h[key] = []string{trimHTTPWhitespace(h[key][0]) + ", " + trimHTTPWhitespace(e.value)}
+			continue
+		}
 		h.Set(e.name, e.value)
+		appended[key] = true
 	}
 }
+
+// trimHTTPWhitespace strips what the Fetch standard calls HTTP whitespace —
+// space, tab, CR and LF — from both ends, as Headers.append does to a value.
+func trimHTTPWhitespace(v string) string { return strings.Trim(v, " \t\r\n") }
 
 // sortedNames returns m's keys in sorted order, the tie-break every source-local
 // header ordering in this package uses.

@@ -320,6 +320,68 @@ func TestPiMessagesCaseVariantMarkerDeletesWithinSource(t *testing.T) {
 	}
 }
 
+// pi-messages hands fetch `{authorization, accept, "content-type", ...record}`.
+// A record entry spelled exactly like a fixed header replaces it in the JS
+// object; one spelled differently is a second key, and fetch's Headers.append
+// joins the two, fixed header first, after trimming each value. Every want is
+// what node's fetch put on the wire for the same record (a328aa89a's
+// providerHeadersToRecord, parsed by node's http server — which also trims the
+// trailing space undici sends after an empty joined value).
+func TestPiMessagesRecordJoinsCaseVariantFixedHeaders(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		headers ai.ProviderHeaders
+		header  string
+		want    string
+	}{
+		{"case-variant authorization joins", ai.ProviderHeaders{"Authorization": strPtr("x")}, "authorization", "Bearer test-key, x"},
+		{"upper-case authorization joins", ai.ProviderHeaders{"AUTHORIZATION": strPtr("x")}, "authorization", "Bearer test-key, x"},
+		{"exact spelling replaces", ai.ProviderHeaders{"authorization": strPtr("x")}, "authorization", "x"},
+		{"accept joins", ai.ProviderHeaders{"Accept": strPtr("application/json")}, "accept", "text/event-stream, application/json"},
+		{"content-type joins", ai.ProviderHeaders{"Content-Type": strPtr("text/plain")}, "content-type", "application/json, text/plain"},
+		{"each joined value is trimmed", ai.ProviderHeaders{"Authorization": strPtr("  x  ")}, "authorization", "Bearer test-key, x"},
+		{"an empty value still joins", ai.ProviderHeaders{"Authorization": strPtr("")}, "authorization", "Bearer test-key,"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h := capturePiMessagesHeaders(t, tc.headers)
+			if got := h.Values(tc.header); len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("%s = %q, want exactly [%q]", tc.header, got, tc.want)
+			}
+		})
+	}
+}
+
+// @google/genai spreads the record over its own defaults and builds the
+// request with Headers.append, so Content-Type — the one genai default the
+// port sends — joins with a record entry spelled differently and is replaced
+// by one spelled exactly "Content-Type". The api key genai adds only when the
+// record lacks one, so a record entry of any spelling replaces it. Every want
+// was measured on the wire through @google/genai 2.21.0.
+func TestGoogleRecordOverGenaiDefaults(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		headers ai.ProviderHeaders
+		header  string
+		want    string
+	}{
+		{"case-variant content-type joins", ai.ProviderHeaders{"content-type": strPtr("text/plain")}, "content-type", "application/json, text/plain"},
+		{"exact Content-Type replaces", ai.ProviderHeaders{"Content-Type": strPtr("text/plain")}, "content-type", "text/plain"},
+		{"api key replaced in genai's spelling", ai.ProviderHeaders{"x-goog-api-key": strPtr("other")}, "x-goog-api-key", "other"},
+		{"api key replaced in any spelling", ai.ProviderHeaders{"X-Goog-Api-Key": strPtr("other")}, "x-goog-api-key", "other"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google",
+				Input: []string{"text"}, MaxTokens: 4096}
+			h := captureGoogleHeaders(t, model, ai.StreamOptions{
+				ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "g-key", Headers: tc.headers},
+			})
+			if got := h.Values(tc.header); len(got) != 1 || got[0] != tc.want {
+				t.Fatalf("%s = %q, want exactly [%q]", tc.header, got, tc.want)
+			}
+		})
+	}
+}
+
 // headerObject.record is pi's providerHeadersToRecord since upstream a328aa89a.
 // Each case is google's one spread object, built source by source; every want
 // is the output of a328aa89a's providerHeadersToRecord executed under node

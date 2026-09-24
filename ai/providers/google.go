@@ -411,7 +411,6 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			if err != nil {
 				return nil, err
 			}
-			r.Header.Set("content-type", "application/json")
 			r.Header.Set("x-goog-api-key", opts.APIKey)
 			// pi builds one merged object — mergeProviderAttributionHeaders puts
 			// the attribution bundle at the bottom, then model.headers, then the
@@ -426,18 +425,25 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			// request itself and a marker cannot unset a header the SDK owns
 			// (x-goog-api-key, content-type).
 			//
-			// The merged object's slot order still does not fully decide the
-			// wire value: @google/genai seeds its own default headers and
-			// appends the record to them with Headers.append, so a record entry
-			// spelled differently from one of those defaults arrives comma-joined
-			// with it there. That gap is recorded in docs/UPSTREAM.md.
+			// @google/genai spreads the record over its own defaults
+			// ({"User-Agent", "x-goog-api-client", "Content-Type"}) and builds
+			// the request with Headers.append, so a record entry spelled exactly
+			// like a default replaces it and one spelled differently arrives
+			// comma-joined with it. Measured against genai 2.21.0: record
+			// {"content-type": "text/plain"} sends `application/json, text/plain`,
+			// {"Content-Type": "text/plain"} sends `text/plain`. Content-Type is
+			// the one default this adapter sends, so it is the literal passed
+			// below; genai's User-Agent and x-goog-api-client defaults are not
+			// sent at all (docs/UPSTREAM.md D10/D12). The api key is appended by
+			// genai only when the record lacks one, which a record entry of any
+			// spelling replacing it here reproduces.
 			o := &headerObject{}
 			o.merge(piUserAgentHeaders())
 			o.mergeStrings(getSessionAttributionHeaders(model, opts.SessionID))
 			o.mergeStrings(getDefaultAttributionHeaders(model))
 			o.merge(model.Headers)
 			o.merge(opts.Headers)
-			o.applyAsRecord(r.Header)
+			o.applyAsRecord(r.Header, recordEntry{"Content-Type", "application/json"})
 			// fetch asks for the codings it undoes unless the request names
 			// its own: undici sends "gzip, deflate" over http and "br, gzip,
 			// deflate, zstd" over https. The port undoes gzip and deflate
