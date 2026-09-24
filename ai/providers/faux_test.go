@@ -3,6 +3,8 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -410,5 +412,87 @@ func TestFauxAssistantMessageKeepsSetOptionalFields(t *testing.T) {
 		t.Errorf("deferred: %v", err)
 	} else if handle.ID != "def_1" {
 		t.Errorf("deferred.id = %q, want def_1", handle.ID)
+	}
+}
+
+// TestFauxProviderOnResponseErrorFailsStream locks pi's faux provider awaiting
+// onResponse inside each call's try (faux.ts:512 stream, :579 fetchDeferred,
+// :643 cancelDeferred at 8676a0dcd). Measured by running that source under
+// node: a throw from stream's onResponse pushes only an error event — reason
+// "error" even when the request was aborted, the thrown message, empty content
+// and the default usage — and the scripted step it took stays consumed; a
+// throw from fetchDeferred's fails that fetch alone, and the deferred response
+// is still redeemable; a throw from cancelDeferred's rejects the cancel, which
+// is recorded all the same.
+func TestFauxProviderOnResponseErrorFailsStream(t *testing.T) {
+	reg := RegisterFauxProvider(RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+	reg.SetResponses([]FauxResponseStep{
+		FauxStatic(FauxAssistantMessage(ai.ContentList{FauxText("one")}, ai.StopStop)),
+		FauxStatic(FauxAssistantMessage(ai.ContentList{FauxText("two")}, ai.StopStop)),
+		FauxStatic(FauxAssistantMessage(ai.ContentList{FauxText("three")}, ai.StopStop)),
+	})
+	model := reg.GetModel()
+	api, _ := ai.GetApiProvider(model.Api)
+	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
+	veto := func(msg string) func(ai.ProviderResponse, *ai.Model) error {
+		return func(ai.ProviderResponse, *ai.Model) error { return errors.New(msg) }
+	}
+	collect := func(s *ai.AssistantMessageEventStream) ([]ai.EventType, *ai.AssistantMessage) {
+		var types []ai.EventType
+		for ev := range s.Events() {
+			types = append(types, ev.Type)
+		}
+		return types, s.Result()
+	}
+	assertFailed := func(label string, types []ai.EventType, msg *ai.AssistantMessage, want string) {
+		t.Helper()
+		if !slices.Equal(types, []ai.EventType{ai.EventError}) {
+			t.Errorf("%s: pushed %v, want only an error event", label, types)
+		}
+		if msg.StopReason != ai.StopError || msg.ErrorMessage != want {
+			t.Errorf("%s: stop %q (%q), want error (%q)", label, msg.StopReason, msg.ErrorMessage, want)
+		}
+		if len(msg.Content) != 0 || msg.Usage != (ai.Usage{}) {
+			t.Errorf("%s: content %v, usage %+v; want none and the default usage", label, msg.Content, msg.Usage)
+		}
+	}
+
+	types, msg := collect(ai.StreamSimple(context.Background(), model, req, &ai.SimpleStreamOptions{
+		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{OnResponse: veto("response veto")}},
+	}))
+	assertFailed("stream", types, msg, "response veto")
+	if reg.PendingResponseCount() != 2 || reg.State.CallCount != 1 {
+		t.Errorf("pending %d, calls %d after a vetoed stream; want the step consumed (2, 1)", reg.PendingResponseCount(), reg.State.CallCount)
+	}
+
+	aborted, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, msg = collect(ai.StreamSimple(aborted, model, req, &ai.SimpleStreamOptions{
+		StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{OnResponse: veto("veto aborted")}},
+	}))
+	if msg.StopReason != ai.StopError || msg.ErrorMessage != "veto aborted" {
+		t.Errorf("aborted stream: stop %q (%q), want error (veto aborted)", msg.StopReason, msg.ErrorMessage)
+	}
+
+	accepted := ai.StreamSimple(context.Background(), model, req, &ai.SimpleStreamOptions{Deferred: &ai.DeferredRequest{}}).Result()
+	if accepted.Deferred == nil {
+		t.Fatalf("deferral must produce a handle, got %q (%s)", accepted.StopReason, accepted.ErrorMessage)
+	}
+	handle := *accepted.Deferred
+	types, msg = collect(api.FetchDeferred(context.Background(), model, handle, &ai.DeferredFetchOptions{
+		ProviderRequestOptions: ai.ProviderRequestOptions{OnResponse: veto("fetch veto")},
+	}))
+	assertFailed("fetch", types, msg, "fetch veto")
+	if redeemed := api.FetchDeferred(context.Background(), model, handle, &ai.DeferredFetchOptions{}).Result(); redeemed.StopReason != ai.StopStop {
+		t.Errorf("a vetoed fetch must leave the response redeemable, got %q (%s)", redeemed.StopReason, redeemed.ErrorMessage)
+	}
+
+	err := api.CancelDeferred(context.Background(), model, handle, &ai.DeferredCancelOptions{OnResponse: veto("cancel veto")})
+	if err == nil || err.Error() != "cancel veto" {
+		t.Errorf("cancel returned %v, want the hook's error", err)
+	}
+	if len(reg.State.CancelledDeferred) != 1 {
+		t.Errorf("a vetoed cancel must still be recorded, got %d", len(reg.State.CancelledDeferred))
 	}
 }

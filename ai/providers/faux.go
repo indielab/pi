@@ -285,8 +285,13 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 		reg.mu.Unlock()
 
 		go func() {
+			// pi awaits onResponse inside the stream's try: a throw lands in its
+			// catch, which fails the stream (the step stays consumed).
 			if opts != nil && opts.OnResponse != nil {
-				_ = opts.OnResponse(ai.ProviderResponse{Status: 200, Headers: map[string]string{}}, model)
+				if err := opts.OnResponse(ai.ProviderResponse{Status: 200, Headers: map[string]string{}}, model); err != nil {
+					reg.failStream(outer, err, model)
+					return
+				}
 			}
 			if step == nil {
 				msg := fauxErrorMessage(fmt.Errorf("No more faux responses queued"), api, provider, model.ID)
@@ -329,13 +334,14 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 
 		go func() {
 			if opts != nil && opts.OnResponse != nil {
-				_ = opts.OnResponse(ai.ProviderResponse{Status: 200, Headers: map[string]string{}}, model)
+				if err := opts.OnResponse(ai.ProviderResponse{Status: 200, Headers: map[string]string{}}, model); err != nil {
+					reg.failStream(outer, err, model)
+					return
+				}
 			}
 			message, err := reg.redeem(model, handle)
 			if err != nil {
-				msg := fauxErrorMessage(err, api, provider, model.ID)
-				outer.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: ai.StopError, Error: msg})
-				outer.End()
+				reg.failStream(outer, err, model)
 				return
 			}
 			reg.streamWithDeltas(ctx, outer, message)
@@ -374,6 +380,15 @@ func RegisterFauxProvider(options RegisterFauxProviderOptions) *FauxProviderRegi
 	}, reg.sourceID)
 
 	return reg
+}
+
+// failStream ends a faux stream the way pi's catch does: an error event with
+// reason "error" — even for an aborted request — carrying the thrown message,
+// empty content and the default usage.
+func (r *FauxProviderRegistration) failStream(stream *ai.AssistantMessageEventStream, err error, model *ai.Model) {
+	msg := fauxErrorMessage(err, r.Api, r.provider, model.ID)
+	stream.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: ai.StopError, Error: msg})
+	stream.End()
 }
 
 // resolveResponse runs one scripted step and finishes the message the way a

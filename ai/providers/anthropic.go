@@ -665,13 +665,19 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		}
 		defer resp.Body.Close()
 
-		if opts.OnResponse != nil {
-			_ = opts.OnResponse(ai.ProviderResponse{Status: resp.StatusCode, Headers: flattenHeaders(resp.Header)}, model)
-		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			data, _ := io.ReadAll(resp.Body)
 			fail(formatProviderError("Anthropic", resp.StatusCode, data))
 			return
+		}
+		// pi awaits onResponse once the SDK has returned the response — the SDK
+		// throws on a non-2xx status first, so an error response never reaches
+		// it — and before pushing start; a throw fails the stream.
+		if opts.OnResponse != nil {
+			if err := opts.OnResponse(ai.ProviderResponse{Status: resp.StatusCode, Headers: flattenHeaders(resp.Header)}, model); err != nil {
+				fail(err)
+				return
+			}
 		}
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
