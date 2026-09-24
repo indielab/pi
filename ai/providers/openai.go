@@ -193,7 +193,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			// The SDK auth header sits below every merged source, so a deletion
 			// marker in them can suppress it (pi passes the merged headers as
 			// `defaultHeaders`, which the OpenAI SDK applies over its own auth).
-			o.set("authorization", "Bearer "+apiKey)
+			o.setSDKAuth("authorization", "Bearer "+apiKey)
 			// pi mergeProviderAttributionHeaders (sdk.ts) puts the attribution
 			// bundle at the bottom of the precedence stack: emit session +
 			// default attribution first so model.headers and options.headers
@@ -232,7 +232,9 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			// defaults — a deletion marker here suppresses any of them.
 			o.merge(opts.Headers)
 
-			o.applyAsDefaultHeaders(r.Header)
+			if err := o.applyAsDefaultHeaders(r.Header); err != nil {
+				return nil, err
+			}
 			return r, nil
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, openaiSDKErrorMessage))

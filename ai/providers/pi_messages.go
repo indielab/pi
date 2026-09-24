@@ -943,10 +943,13 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 		// Go's map iteration pick the winner.
 		o := &headerObject{}
 		o.merge(opts.Headers)
-		o.applyAsRecord(httpReq.Header,
+		if err := o.applyAsRecord(httpReq.Header,
 			recordEntry{"authorization", "Bearer " + apiKey},
 			recordEntry{"accept", "text/event-stream"},
-			recordEntry{"content-type", "application/json"})
+			recordEntry{"content-type", "application/json"}); err != nil {
+			fail(err)
+			return
+		}
 
 		// pi: `(options?.fetch ?? globalThis.fetch)(url, …)` — this provider calls
 		// fetch directly rather than through an SDK, so the default stays

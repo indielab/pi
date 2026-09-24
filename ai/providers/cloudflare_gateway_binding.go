@@ -56,6 +56,8 @@ import (
 	"strings"
 
 	"github.com/sky-valley/pi/ai"
+
+	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // AIGatewayBinding is the Workers AI binding's gateway surface (`env.AI`). pi
@@ -335,7 +337,10 @@ func unexpressibleGatewayRequest(method, rawURL, reason string) error {
 
 // collectGatewayHeaders lowercases entry header names so case-variant duplicates
 // collapse and stripping is uniform, joining multi-value headers the way a fetch
-// Headers iterator yields them.
+// Headers iterator yields them. It reads each value as that iterator does, one
+// character per byte (see isomorphicDecode): the adapters write a value's
+// U+0080..U+00FF characters as single Latin-1 bytes, as pi's Headers holds them
+// (see byteString), and pi hands the binding those characters, not bytes.
 //
 // pi collapses case-variant duplicates in insertion order, which http.Header
 // (a map) does not have. Names are visited in sorted order so the collapse is at
@@ -354,7 +359,7 @@ func collectGatewayHeaders(h http.Header) map[string]string {
 		if gatewayBindingStripHeaders[name] {
 			continue
 		}
-		value := strings.Join(h[key], ", ")
+		value := jstext.IsomorphicDecode(strings.Join(h[key], ", "))
 		if existing, ok := result[name]; ok {
 			value = existing + ", " + value
 		}

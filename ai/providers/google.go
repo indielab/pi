@@ -411,9 +411,6 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			if err != nil {
 				return nil, err
 			}
-			// genai appends the key to its Headers (NodeAuth.addKeyHeader), which
-			// normalizes it like every other value (see setHeader).
-			setHeader(r.Header, "x-goog-api-key", opts.APIKey)
 			// pi builds one merged object — mergeProviderAttributionHeaders puts
 			// the attribution bundle at the bottom, then model.headers, then the
 			// consumer's options.headers — and hands it to the SDK as
@@ -436,16 +433,25 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			// {"Content-Type": "text/plain"} sends `text/plain`. Content-Type is
 			// the one default this adapter sends, so it is the literal passed
 			// below; genai's User-Agent and x-goog-api-client defaults are not
-			// sent at all (docs/UPSTREAM.md D10/D12). The api key is appended by
-			// genai only when the record lacks one, which a record entry of any
-			// spelling replacing it here reproduces.
+			// sent at all (docs/UPSTREAM.md D10/D12).
 			o := &headerObject{}
 			o.merge(piUserAgentHeaders())
 			o.mergeStrings(getSessionAttributionHeaders(model, opts.SessionID))
 			o.mergeStrings(getDefaultAttributionHeaders(model))
 			o.merge(model.Headers)
 			o.merge(opts.Headers)
-			o.applyAsRecord(r.Header, recordEntry{"Content-Type", "application/json"})
+			if err := o.applyAsRecord(r.Header, recordEntry{"Content-Type", "application/json"}); err != nil {
+				return nil, err
+			}
+			// genai appends the key after the record (NodeAuth.addKeyHeader), and
+			// only when its Headers holds no x-goog-api-key yet, so a record entry
+			// of any spelling keeps the key off the wire, and the key is converted
+			// like every other value (see setHeader) only when it is appended.
+			if _, held := r.Header["X-Goog-Api-Key"]; !held {
+				if err := setHeader(r.Header, "x-goog-api-key", opts.APIKey); err != nil {
+					return nil, err
+				}
+			}
 			// fetch asks for the codings it undoes unless the request names
 			// its own: undici sends "gzip, deflate" over http and "br, gzip,
 			// deflate, zstd" over https. The port undoes gzip and deflate

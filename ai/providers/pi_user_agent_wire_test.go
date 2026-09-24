@@ -475,7 +475,9 @@ func TestHeaderObjectRecordCaseCollisionIsDeterministic(t *testing.T) {
 		h := http.Header{}
 		o := &headerObject{}
 		o.merge(source)
-		o.applyAsRecord(h)
+		if err := o.applyAsRecord(h); err != nil {
+			t.Fatal(err)
+		}
 		if got := h.Values("User-Agent"); len(got) != 1 || got[0] != "from-model" {
 			t.Fatalf("run %d: user-agent = %v, want exactly [%q] — the name sorting last must win", i, got, "from-model")
 		}

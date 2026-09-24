@@ -2,6 +2,7 @@ package providers
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -86,6 +87,18 @@ func wireAdapters() []wireAdapter {
 // adapter is http1 — and returns the headers that reached the server.
 func captureWireHeaders(t *testing.T, adapter wireAdapter, opts ai.StreamOptions) http.Header {
 	t.Helper()
+	got, final := runWire(t, adapter, opts)
+	if final.StopReason == ai.StopError {
+		t.Fatalf("stream failed: %s", final.ErrorMessage)
+	}
+	return got
+}
+
+// runWire runs one request through adapter — over HTTP/2 unless the adapter is
+// http1 — and returns the headers that reached the server, nil when no request
+// did, and the stream's final message.
+func runWire(t *testing.T, adapter wireAdapter, opts ai.StreamOptions) (http.Header, *ai.AssistantMessage) {
+	t.Helper()
 	var got http.Header
 	var proto string
 	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -105,13 +118,10 @@ func captureWireHeaders(t *testing.T, adapter wireAdapter, opts ai.StreamOptions
 	}
 	defer server.Close()
 	final := adapter.run(server.URL, client, opts)
-	if final.StopReason == ai.StopError {
-		t.Fatalf("stream failed: %s", final.ErrorMessage)
-	}
-	if proto != wantProto {
+	if got != nil && proto != wantProto {
 		t.Fatalf("the request went over %s, want %s", proto, wantProto)
 	}
-	return got
+	return got, final
 }
 
 func wantOneValue(t *testing.T, h http.Header, name, want string) {
@@ -250,6 +260,262 @@ func TestJoinedHeaderValueIsTrimmedLikeFetch(t *testing.T) {
 				APIKey: "test-key", Headers: tc.headers,
 			}})
 			wantOneValue(t, h, tc.header, tc.want)
+		})
+	}
+}
+
+// A fetch Headers object converts every header name and value it is given to a
+// WebIDL ByteString before it normalizes anything (see byteString). The wants
+// below were measured on pi's wire the same way as the rows above: upstream
+// 8676a0dcd's src under node v26.4.0, with the package-lock versions of openai,
+// @anthropic-ai/sdk and @google/genai, against a raw socket.
+
+// byteStringError is the TypeError text node's fetch throws for a string it
+// cannot convert. Every adapter reports it as the stream's error message.
+func byteStringError(index, value int) string {
+	return fmt.Sprintf("Cannot convert argument to a ByteString because the character at index %d has a value of %d which is greater than 255.", index, value)
+}
+
+// wantNotSent asserts that the stream failed with want before any request
+// reached the server.
+func wantNotSent(t *testing.T, h http.Header, final *ai.AssistantMessage, want string) {
+	t.Helper()
+	if h != nil {
+		t.Fatalf("a request reached the server with headers %v, want none sent", h)
+	}
+	if final.StopReason != ai.StopError || final.ErrorMessage != want {
+		t.Fatalf("stream = %s %q, want error %q", final.StopReason, final.ErrorMessage, want)
+	}
+}
+
+// wantSent asserts that the stream succeeded and that name reached the wire
+// as exactly the bytes want.
+func wantSent(t *testing.T, h http.Header, final *ai.AssistantMessage, name, want string) {
+	t.Helper()
+	if final.StopReason == ai.StopError {
+		t.Fatalf("stream failed: %s", final.ErrorMessage)
+	}
+	wantOneValue(t, h, name, want)
+}
+
+const cjk = 0x65e5 // 日, one UTF-16 code unit above 0xFF
+
+// A value's U+0080..U+00FF characters go out as one Latin-1 byte each, and a
+// character above U+00FF fails the request before it is sent, on the record
+// paths (pi-messages, google) and the SDK defaultHeaders path (openai,
+// anthropic) alike. The index and value count UTF-16 code units, so an astral
+// character reports its high surrogate, and they are counted before the value
+// is normalized.
+func TestHeaderValuesAreByteStringsLikeFetch(t *testing.T) {
+	for _, adapter := range wireAdapters() {
+		for _, tc := range []struct {
+			name, value string
+			wire        string // what reaches the wire when the request is sent
+			err         string // the stream's error when it is not
+			edges       bool
+		}{
+			{name: "latin-1", value: "caf" + string(rune(0xe9)), wire: "caf\xe9"},
+			{name: "C1 control", value: "x" + string(rune(0x80)) + "y", wire: "x\x80y"},
+			{name: "latin-1 inside trimmed edges", value: " \t" + string(rune(0xe9)) + "\t ", wire: "\xe9", edges: true},
+			{name: "above U+00FF", value: string(rune(cjk)), err: byteStringError(0, cjk)},
+			{name: "astral", value: "ab" + string(rune(0x1f600)), err: byteStringError(2, 0xd83d)},
+			{name: "index counted before trimming", value: " " + string(rune(cjk)), err: byteStringError(1, cjk)},
+			{name: "U+0100 after U+00FF", value: string([]rune{0xff, 0x100}), err: byteStringError(1, 0x100)},
+		} {
+			if tc.edges && adapter.http1 {
+				continue
+			}
+			t.Run(adapter.name+"/"+tc.name, func(t *testing.T) {
+				h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+					APIKey: "test-key", Headers: ai.ProviderHeaders{"X-A": strPtr(tc.value)},
+				}})
+				if tc.err != "" {
+					wantNotSent(t, h, final, tc.err)
+					return
+				}
+				wantSent(t, h, final, "x-a", tc.wire)
+			})
+		}
+	}
+}
+
+// A header name is converted as a value is. A marker's name is converted only
+// where the marker reaches a Headers: the SDKs delete the name from theirs,
+// while a record drops the marker before any Headers sees it.
+func TestHeaderNamesAreByteStringsLikeFetch(t *testing.T) {
+	name := "X-" + string(rune(cjk))
+	for _, adapter := range wireAdapters() {
+		t.Run(adapter.name+"/value", func(t *testing.T) {
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "test-key", Headers: ai.ProviderHeaders{name: strPtr("v")},
+			}})
+			wantNotSent(t, h, final, byteStringError(2, cjk))
+		})
+		t.Run(adapter.name+"/marker", func(t *testing.T) {
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "test-key", Headers: ai.ProviderHeaders{name: nil},
+			}})
+			if adapter.name == "pi-messages" || adapter.name == "google-generative-ai" {
+				if final.StopReason == ai.StopError || h == nil {
+					t.Fatalf("stream = %s %q, want the request sent", final.StopReason, final.ErrorMessage)
+				}
+				return
+			}
+			wantNotSent(t, h, final, byteStringError(2, cjk))
+		})
+	}
+}
+
+// The api key is converted with the header it lands in: after the "Bearer "
+// prefix where the adapter adds one, so the index counts the prefix.
+func TestAPIKeyHeaderIsAByteStringLikeFetch(t *testing.T) {
+	for _, adapter := range wireAdapters() {
+		t.Run(adapter.name+"/latin-1", func(t *testing.T) {
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "k" + string(rune(0xe9)),
+			}})
+			want := "k\xe9"
+			if adapter.bearer {
+				want = "Bearer k\xe9"
+			}
+			wantSent(t, h, final, adapter.auth, want)
+		})
+		t.Run(adapter.name+"/above U+00FF", func(t *testing.T) {
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "k" + string(rune(cjk)),
+			}})
+			want := byteStringError(1, cjk)
+			if adapter.bearer {
+				want = byteStringError(8, cjk)
+			}
+			wantNotSent(t, h, final, want)
+		})
+	}
+}
+
+// With two values that cannot be converted, the one pi's Headers sees first
+// decides the error. The SDKs append their auth header before any
+// `defaultHeaders` entry, and pi-messages' Headers is built from
+// `{authorization, ...record}`, so the key fails first there. genai appends its
+// key after the record, so on google the consumer header fails first.
+func TestHeaderConversionFailsInPisOrder(t *testing.T) {
+	for _, adapter := range wireAdapters() {
+		want := byteStringError(2, cjk) // the key "kk日" in x-api-key
+		switch {
+		case adapter.name == "google-generative-ai":
+			want = byteStringError(0, cjk) // the X-A value
+		case adapter.bearer:
+			want = byteStringError(9, cjk) // the key in "Bearer kk日"
+		}
+		t.Run(adapter.name, func(t *testing.T) {
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "kk" + string(rune(cjk)), Headers: ai.ProviderHeaders{"X-A": strPtr(string(rune(cjk)))},
+			}})
+			wantNotSent(t, h, final, want)
+		})
+	}
+}
+
+// Whether the key is converted at all depends on whether the object pi hands a
+// Headers still holds it. The openai and anthropic SDKs build their auth header
+// from their own options and append it before `defaultHeaders`, so a key they
+// cannot convert fails the request whatever the headers say (setSDKAuth).
+// pi-messages' key is a literal of the object its record is spread over: an
+// override spelled exactly like it replaces it unconverted, and a marker, which
+// is not part of the record, leaves it standing. genai appends its key only
+// when the record carries none.
+func TestAPIKeyOverrideDecidesWhetherTheKeyIsConverted(t *testing.T) {
+	key := "k" + string(rune(cjk))
+	override := ai.ProviderHeaders{"authorization": strPtr("ok"), "x-api-key": strPtr("ok"), "x-goog-api-key": strPtr("ok")}
+	marker := ai.ProviderHeaders{"authorization": nil, "x-api-key": nil, "x-goog-api-key": nil}
+	for _, adapter := range wireAdapters() {
+		keyErr := byteStringError(1, cjk)
+		if adapter.bearer {
+			keyErr = byteStringError(8, cjk)
+		}
+		t.Run(adapter.name+"/exact override", func(t *testing.T) {
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: key, Headers: override,
+			}})
+			if adapter.name == "pi-messages" || adapter.name == "google-generative-ai" {
+				wantSent(t, h, final, adapter.auth, "ok")
+				return
+			}
+			wantNotSent(t, h, final, keyErr)
+		})
+		t.Run(adapter.name+"/marker", func(t *testing.T) {
+			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: key, Headers: marker,
+			}})
+			wantNotSent(t, h, final, keyErr)
+		})
+	}
+}
+
+// A record entry joined onto a literal is converted on its own, before the
+// join: its index counts from its own first character, and its Latin-1 bytes
+// follow the literal's.
+func TestJoinedHeaderValueIsAByteStringLikeFetch(t *testing.T) {
+	adapters := map[string]wireAdapter{}
+	for _, adapter := range wireAdapters() {
+		adapters[adapter.name] = adapter
+	}
+	for _, tc := range []struct {
+		name, adapter string
+		headers       ai.ProviderHeaders
+		header        string
+		wire, err     string
+	}{
+		{"latin-1", "pi-messages", ai.ProviderHeaders{"Authorization": strPtr(string(rune(0xe9)))}, "authorization", "Bearer test-key, \xe9", ""},
+		{"above U+00FF", "pi-messages", ai.ProviderHeaders{"Authorization": strPtr(" " + string(rune(cjk)))}, "authorization", "", byteStringError(1, cjk)},
+		{"latin-1", "google-generative-ai", ai.ProviderHeaders{"content-type": strPtr(string(rune(0xe9)))}, "content-type", "application/json, \xe9", ""},
+		{"above U+00FF", "google-generative-ai", ai.ProviderHeaders{"content-type": strPtr(string(rune(cjk)))}, "content-type", "", byteStringError(0, cjk)},
+	} {
+		t.Run(tc.adapter+"/"+tc.name, func(t *testing.T) {
+			h, final := runWire(t, adapters[tc.adapter], ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "test-key", Headers: tc.headers,
+			}})
+			if tc.err != "" {
+				wantNotSent(t, h, final, tc.err)
+				return
+			}
+			wantSent(t, h, final, tc.header, tc.wire)
+		})
+	}
+}
+
+// The anthropic SDK converts the anthropic-beta value it re-emits from the
+// params' `betas` (betas.toString()) like any other.
+func TestAnthropicBetaHeaderIsAByteStringLikeFetch(t *testing.T) {
+	var anthropic wireAdapter
+	for _, adapter := range wireAdapters() {
+		if adapter.name == "anthropic-messages" {
+			anthropic = adapter
+		}
+	}
+	for _, tc := range []struct {
+		name      string
+		betas     any
+		wire, err string
+	}{
+		{"latin-1", []any{"a" + string(rune(0xe9))}, "a\xe9", ""},
+		{"above U+00FF", []any{string(rune(cjk))}, "", byteStringError(0, cjk)},
+		{"index across the joined list", []any{"x", " " + string(rune(cjk))}, "", byteStringError(3, cjk)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, final := runWire(t, anthropic, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "test-key",
+				OnPayload: func(payload any, _ *ai.Model) (any, error) {
+					body := payload.(map[string]any)
+					body["betas"] = tc.betas
+					return body, nil
+				},
+			}})
+			if tc.err != "" {
+				wantNotSent(t, h, final, tc.err)
+				return
+			}
+			wantSent(t, h, final, "anthropic-beta", tc.wire)
 		})
 	}
 }

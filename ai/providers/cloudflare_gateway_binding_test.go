@@ -678,3 +678,40 @@ func TestGatewayBindingComposesWithOpenAICompletions(t *testing.T) {
 		t.Errorf("query body = %s, want it to carry the model", gatewayQueryString(t, entry))
 	}
 }
+
+// A header value's Latin-1 characters reach the binding as the characters pi's
+// shim collected from a Headers iterator, not as the bytes the adapters wrote:
+// in node, iterating `new Headers({"x-a": "café"})` yields the code units
+// 99,97,102,233. The request goes through the real openai-completions adapter,
+// whose Headers stand-in writes é as the single byte 0xE9.
+func TestGatewayBindingDecodesHeaderBytesLikeFetch(t *testing.T) {
+	binding := &fakeGatewayBinding{response: &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(attrDoneSSE)),
+	}}
+	doer, err := NewGatewayBindingDoer(GatewayBindingDoerOptions{
+		Binding: binding, BaseURL: gatewayBindingBaseURL, Gateway: "my-gateway",
+	})
+	if err != nil {
+		t.Fatalf("NewGatewayBindingDoer: %v", err)
+	}
+	model := &ai.Model{ID: "gpt-4o", Api: ai.APIOpenAICompletions, Provider: "openai",
+		BaseURL: gatewayBindingBaseURL + "/openai"}
+	cafe := "caf" + string(rune(0xe9))
+	result := StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(
+		ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+			APIKey: "unused", HTTPClient: doer, Headers: ai.ProviderHeaders{"X-A": strPtr(cafe)},
+		}}}).Result()
+	if result.StopReason == ai.StopError {
+		t.Fatalf("stream failed: %s", result.ErrorMessage)
+	}
+	runs := binding.captured()
+	if len(runs) != 1 {
+		t.Fatalf("binding runs = %d, want 1", len(runs))
+	}
+	if got := runs[0].req.Headers["x-a"]; got != cafe {
+		t.Fatalf("x-a = %q, want %q", got, cafe)
+	}
+}

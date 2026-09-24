@@ -662,16 +662,20 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 			if err != nil {
 				return nil, err
 			}
-			applyAnthropicHeaders(r, model, opts, oauth, apiKey, authToken, normalized.Messages)
+			if err := applyAnthropicHeaders(r, model, opts, oauth, apiKey, authToken, normalized.Messages); err != nil {
+				return nil, err
+			}
 			// The betas header is a PER-REQUEST header in the SDK, so it beats
 			// every default header the merge above produced — including one the
 			// consumer spelled differently, and including the empty-string value an
 			// empty `betas` list produces, which REPLACES the inherited header
 			// rather than leaving it standing. Writing it (Set, not Add) after
 			// applyAsDefaultHeaders is what reproduces that precedence. The SDK's
-			// Headers normalizes the value like every other (see setHeader).
+			// Headers converts the value like every other (see setHeader).
 			if betaHeader != nil {
-				setHeader(r.Header, "anthropic-beta", *betaHeader)
+				if err := setHeader(r.Header, "anthropic-beta", *betaHeader); err != nil {
+					return nil, err
+				}
 			}
 			return r, nil
 		}
@@ -1874,7 +1878,7 @@ func convertContentBlocks(content ai.ContentList) any {
 	return blocks
 }
 
-func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey, authToken string, messages []ai.Message) {
+func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOptions, oauth bool, apiKey, authToken string, messages []ai.Message) error {
 	// pi builds ONE header object per request (mergeClientHeaders,
 	// anthropic-messages.ts at upstream 87af49dec) and hands it to the SDK as
 	// `defaultHeaders`; headerObject is that object, slots and all, so a case
@@ -1937,16 +1941,18 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// getAnthropicBetaFeatures instead.
 	switch {
 	case authToken != "":
+		// pi's resolve() returns this bearer as auth.headers, which enter the
+		// merge as a `defaultHeaders` entry, not as SDK auth: a plain slot.
 		o.set("authorization", "Bearer "+authToken)
 	case model.Provider == "github-copilot":
 		// pi: `authToken: apiKey ?? null`. No key means no Authorization header
 		// at all — the request rides on whatever header owns its auth — not an
 		// empty bearer.
 		if branchKey != "" {
-			o.set("authorization", "Bearer "+branchKey)
+			o.setSDKAuth("authorization", "Bearer "+branchKey)
 		}
 	case oauth:
-		o.set("authorization", "Bearer "+branchKey)
+		o.setSDKAuth("authorization", "Bearer "+branchKey)
 		o.set("user-agent", "claude-cli/"+claudeCodeVersion)
 		o.set("x-app", "cli")
 	default:
@@ -1957,7 +1963,7 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 		// empty branchKey here is pi's null: emit nothing and let the header
 		// that authorized the request do the work.
 		if branchKey != "" {
-			o.set("x-api-key", branchKey)
+			o.setSDKAuth("x-api-key", branchKey)
 		}
 		// pi anthropic.ts:496-497: cacheSessionId is dropped when the effective
 		// cacheRetention is "none", so no session-affinity header is sent under
@@ -1987,7 +1993,7 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 	// marker here suppresses any of them.
 	o.merge(opts.Headers)
 
-	o.applyAsDefaultHeaders(r.Header)
+	return o.applyAsDefaultHeaders(r.Header)
 }
 
 // mapAnthropicStopReason maps an Anthropic stop_reason to the unified

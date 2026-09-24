@@ -460,7 +460,9 @@ func TestHeaderObjectCaseCollisionIsDeterministic(t *testing.T) {
 		h := http.Header{}
 		o := &headerObject{}
 		o.merge(headers)
-		o.applyAsDefaultHeaders(h)
+		if err := o.applyAsDefaultHeaders(h); err != nil {
+			t.Fatal(err)
+		}
 		if got := h.Get("authorization"); got != "Bearer x" {
 			t.Fatalf("run %d: authorization = %q, want %q — the name sorting last must win", i, got, "Bearer x")
 		}
