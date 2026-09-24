@@ -1586,6 +1586,14 @@ func iterateOpenAISSE2(body io.Reader, ctx context.Context, handle func(response
 		if err := json.Unmarshal([]byte(data), &ev); err != nil {
 			continue
 		}
+		// The SDK yields `data: null` as null, and pi's processResponsesStream
+		// reads event.type off every event it iterates, so that read throws and
+		// the stream fails with V8's TypeError text (openai-responses-shared.ts).
+		// A scalar or an array reads as undefined and matches no branch, which the
+		// typed decode's failure above already mirrors.
+		if isJSONNull([]byte(data)) {
+			return errors.New("Cannot read properties of null (reading 'type')")
+		}
 		// Capture the raw item for reasoning-signature round-tripping.
 		var probe struct {
 			Item json.RawMessage `json:"item"`
