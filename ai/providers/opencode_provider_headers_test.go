@@ -35,36 +35,33 @@ import (
 //
 // They assert only the cells where the port matches pi on BOTH of pi's paths.
 // Where pi's two paths disagree the port necessarily matches one and not the
-// other, because one Go function stands in for both; those cells are named
-// below and tracked as Scope queue entry 15, never asserted here, because a
-// green test carrying the port's own value would immunise them.
+// other, because one Go function stands in for both. Those cells are tracked
+// as Scope queue entry 15 and never asserted here, because a green test
+// carrying the port's own value would immunise them. Today they are the three
+// bare-SDK cells: the port also sends x-opencode-client, also honours the
+// opencode.ai host gate, and puts the session header below model.Headers. A
+// cell that closes joins the assertions below (upstream a328aa89a closed a
+// fourth, google's case-variant deletion marker); one that opens is named here.
 
 // opencodeAdapter is one api table upstream's wrapper is attached to, paired
 // with the port's existing wire-capture helper for it.
 type opencodeAdapter struct {
 	api       ai.Api
 	providers []ai.ProviderId // the opencode providers whose table names this api
-	// deletesOnMarker reports whether a caller's case-variant deletion marker
-	// suppresses the header on this adapter. True for all four since upstream
-	// a328aa89a: google's providerHeadersToRecord now folds names
-	// case-insensitively, so the caller's null deletes the differently-spelled
-	// session header on pi's host path too, agreeing with pi's bare path, whose
-	// hasHeader already declined to inject it.
-	deletesOnMarker bool
-	capture         func(t *testing.T, model *ai.Model, opts ai.StreamOptions) http.Header
+	capture   func(t *testing.T, model *ai.Model, opts ai.StreamOptions) http.Header
 }
 
 func opencodeAdapters() []opencodeAdapter {
 	both := []ai.ProviderId{"opencode", "opencode-go"}
 	return []opencodeAdapter{
-		{ai.APIOpenAICompletions, both, true, captureOpenAIHeaders},
-		{ai.APIOpenAIResponses, both, true, captureOpenAIResponsesHeaders},
-		{ai.APIAnthropicMessages, both, true, func(t *testing.T, model *ai.Model, opts ai.StreamOptions) http.Header {
+		{ai.APIOpenAICompletions, both, captureOpenAIHeaders},
+		{ai.APIOpenAIResponses, both, captureOpenAIResponsesHeaders},
+		{ai.APIAnthropicMessages, both, func(t *testing.T, model *ai.Model, opts ai.StreamOptions) http.Header {
 			return captureAnthropicHeaders(t, model, &AnthropicOptions{StreamOptions: opts})
 		}},
 		// google-generative-ai is in opencode's table only (opencode-go.ts names
 		// the other three).
-		{ai.APIGoogleGenerativeAI, []ai.ProviderId{"opencode"}, true, captureGoogleHeaders},
+		{ai.APIGoogleGenerativeAI, []ai.ProviderId{"opencode"}, captureGoogleHeaders},
 	}
 }
 
@@ -152,13 +149,13 @@ func TestOpenCodeSessionHeaderCallerOverride(t *testing.T) {
 }
 
 // pi: the same test's null case. A caller deletion marker is preserved rather
-// than substituted, and downstream that means the header is not sent at all —
-// on google too since a328aa89a (see opencodeAdapter.deletesOnMarker).
+// than substituted, and downstream that means the header is not sent at all.
+// The marker here is spelled differently from the session header, which still
+// deletes it on google since upstream a328aa89a: providerHeadersToRecord now
+// folds names case-insensitively, agreeing with pi's bare path, whose hasHeader
+// already declined to inject the header.
 func TestOpenCodeSessionHeaderCallerDeletionMarker(t *testing.T) {
 	for _, adapter := range opencodeAdapters() {
-		if !adapter.deletesOnMarker {
-			continue
-		}
 		t.Run(string(adapter.api), func(t *testing.T) {
 			h := adapter.capture(t, opencodeModel(adapter.api, "opencode"),
 				opencodeOptions("generated-value", "", ai.ProviderHeaders{"X-OpenCode-Session": nil}))
