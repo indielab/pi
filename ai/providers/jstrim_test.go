@@ -238,11 +238,10 @@ func jstrimText(m *ai.AssistantMessage) string {
 // JavaScript does, while the openai SDK strips exactly one leading space from a
 // field and hands the rest to JSON.parse. Where pi accepted the padded event
 // the whole outcome is compared. Where pi rejected it, pi's stream fails with
-// V8's SyntaxError text, which no Go decoder reproduces, and the port's openai
-// decoders skip an unparseable data line rather than fail; for those the
-// assertion is the decoder's own — the padded line yields no event — and for
-// google and pi-messages the stop reason, with the message wherever it is
-// pi's own.
+// V8's SyntaxError text. The openai loops fail with that text too
+// (jstext.JSONSyntaxError), so their whole outcome is compared either way; for
+// google and pi-messages the assertion is the stop reason, with the message
+// wherever it is pi's own.
 func TestJSTrimStreamDecoding(t *testing.T) {
 	c := loadJSTrimCapture(t)
 	userHi := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
@@ -273,41 +272,14 @@ func TestJSTrimStreamDecoding(t *testing.T) {
 			return StreamSimplePiMessages(context.Background(), model, userHi, opts("test-key")).Result()
 		},
 	}
-	// yieldsPaddedEvent reports whether an openai decoder turned the capture's
-	// padded line (the completions chunk carrying "hi", the responses message
-	// item) into an event.
-	yieldsPaddedEvent := map[string]func(sse string) bool{
-		"completions": func(sse string) bool {
-			found := false
-			_ = iterateOpenAISSE(strings.NewReader(sse), nil, nil, func(chunk openAIChunk) error {
-				for _, choice := range chunk.Choices {
-					found = found || choice.Delta.Content == "hi"
-				}
-				return nil
-			})
-			return found
-		},
-		"responses": func(sse string) bool {
-			found := false
-			_ = iterateOpenAISSE2(strings.NewReader(sse), nil, nil, func(ev responsesEvent) error {
-				found = found || ev.Type == "response.output_item.added"
-				return nil
-			})
-			return found
-		},
-	}
+	// syntaxErrorText are the decoders that fail with V8's SyntaxError text.
+	syntaxErrorText := map[string]bool{"completions": true, "responses": true}
 	for api, cases := range c.Streams {
 		if run[api] == nil {
 			t.Fatalf("capture has streams for %q, which this test does not run", api)
 		}
 		for name, want := range cases {
 			t.Run(api+"/"+name, func(t *testing.T) {
-				if yields := yieldsPaddedEvent[api]; yields != nil && want.StopReason == string(ai.StopError) {
-					if yields(want.SSE) {
-						t.Fatalf("the padded data line decoded to an event; pi's JSON.parse rejected it (%s)", want.ErrorMessage)
-					}
-					return
-				}
 				got := run[api](jstrimServe(t, want.SSE))
 				if text := jstrimText(got); text != want.Text {
 					t.Fatalf("text = %q, pi = %q (stream ended %s: %q)", text, want.Text, got.StopReason, got.ErrorMessage)
@@ -315,7 +287,7 @@ func TestJSTrimStreamDecoding(t *testing.T) {
 				if string(got.StopReason) != want.StopReason {
 					t.Fatalf("stopReason = %s (%q), pi = %s (%q)", got.StopReason, got.ErrorMessage, want.StopReason, want.ErrorMessage)
 				}
-				if !strings.HasPrefix(want.ErrorMessage, "Unexpected ") && got.ErrorMessage != want.ErrorMessage {
+				if (syntaxErrorText[api] || !strings.HasPrefix(want.ErrorMessage, "Unexpected ")) && got.ErrorMessage != want.ErrorMessage {
 					t.Fatalf("errorMessage = %q, pi = %q", got.ErrorMessage, want.ErrorMessage)
 				}
 			})

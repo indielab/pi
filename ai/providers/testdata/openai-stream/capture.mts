@@ -165,9 +165,17 @@ async function sdkReadEndingIn(body: Body, end?: () => Error): Promise<SDKReadin
 
 // The SDK logs an unparseable event before rethrowing; keep the capture quiet.
 const consoleError = console.error;
-async function sdkReading(body: Body): Promise<SDKReadings> {
+async function quietly<T>(run: () => Promise<T>): Promise<T> {
 	console.error = () => {};
 	try {
+		return await run();
+	} finally {
+		console.error = consoleError;
+	}
+}
+
+async function sdkReading(body: Body): Promise<SDKReadings> {
+	return quietly(async () => {
 		const chat = await sdkRead(body, (c) => c.chat.completions.create({ model: "m", messages: [], stream: true }));
 		const resp = await sdkRead(body, (c) => c.responses.create({ model: "m", input: "hi", stream: true }));
 		if (JSON.stringify(chat) !== JSON.stringify(resp)) {
@@ -182,9 +190,7 @@ async function sdkReading(body: Body): Promise<SDKReadings> {
 			aborted: await sdkReadEndingIn(body, () => new DOMException("This operation was aborted", "AbortError")),
 			readFailed: await sdkReadEndingIn(body, () => new TypeError("terminated")),
 		};
-	} finally {
-		console.error = consoleError;
-	}
+	});
 }
 
 // ---- pi's adapters -----------------------------------------------------------
@@ -240,8 +246,8 @@ async function piRun(api: any, baseModel: Record<string, unknown>, baseUrl: stri
 	const observed: string[] = [];
 	let sameModel = true;
 	let onResponseCalls = 0;
-	const final = await api
-		.streamSimple(model, context, {
+	const final = await quietly(() =>
+		api.streamSimple(model, context, {
 			apiKey: "k",
 			signal: controller.signal,
 			onProviderStreamEvent: (data: unknown, eventModel: unknown) => {
@@ -255,8 +261,8 @@ async function piRun(api: any, baseModel: Record<string, unknown>, baseUrl: stri
 				onResponseCalls++;
 				if (hooks.failOnResponse) throw new Error("response veto");
 			},
-		})
-		.result();
+		}).result(),
+	);
 	return {
 		observed,
 		sameModel,
@@ -345,9 +351,17 @@ const dispatch: Record<string, Body> = {
 	"error-values-falsy": `data: ${J({ id: "n", error: null })}\n\ndata: ${J({ id: "e", error: "" })}\n\ndata: ${J({ id: "z", error: 0 })}\n\ndata: ${J({ id: "f", error: false })}\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	"error-key-case": `data: ${J({ Error: { message: "boom" } })}\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	"error-after-done": `data: ${A}\n\ndata: ${FIN}\n\ndata: [DONE]\n\ndata: ${J({ error: { message: "late" } })}\n\n`,
-	// pi throws JSON.parse's SyntaxError on these; the port skips the event.
+	// JSON.parse throws its SyntaxError on these, which fails pi's stream with
+	// V8's message. Nothing is repaired first, however little would fix it: a
+	// raw control character in a string, an escape JSON does not have.
 	"unparseable-data": `data: ${A}\n\ndata: {not json\n\ndata: ${FIN}\n\n`,
 	"event-without-data": `data: ${A}\n\nevent: ping\n\ndata: ${FIN}\n\n`,
+	"control-character-in-string": `data: ${A}\n\ndata: {"id":"c","choices":[{"index":0,"delta":{"content":"a\tb"}}]}\n\ndata: ${FIN}\n\n`,
+	"invalid-escape": `data: ${A}\n\ndata: {"id":"c","choices":[{"index":0,"delta":{"content":"a\\qb"}}]}\n\ndata: ${FIN}\n\n`,
+	"unexpected-token-in-context": `data: ${A}\n\ndata: {"id":"c","choices":[],"n":nul}\n\ndata: ${FIN}\n\n`,
+	"thread-event-unparseable": `data: ${A}\n\nevent: thread.run\ndata: {not json\n\ndata: ${FIN}\n\n`,
+	// After [DONE] the SDK ignores every event before parsing it.
+	"unparseable-after-done": `data: ${A}\n\ndata: ${FIN}\n\ndata: [DONE]\n\ndata: {not json\n\n`,
 	// Each line is decoded by a TextDecoder, which writes one U+FFFD per
 	// maximal subpart of an invalid UTF-8 sequence (WHATWG), not one per byte.
 	"utf8-truncated-3": invalidUTF8Content([0xe2, 0x82]),

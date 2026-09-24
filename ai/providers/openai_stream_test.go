@@ -288,16 +288,10 @@ func TestOpenAIResponsesEndsLikePi(t *testing.T) {
 	}
 }
 
-// openaiStreamParsers are the two loops' JSON acceptance: completions repairs
-// what JSON.parse rejects where repairJSON can, responses never did.
-var openaiStreamParsers = map[string]func(string) ([]byte, bool){
-	"completions": openaiStreamJSONWithRepair,
-	"responses":   openaiStreamJSON,
-}
-
 // openaiStreamReads are the ways a test hands a body to the loops: in one read,
-// and one byte per read, so that every line ending also arrives split across
-// reads ("\r" | "\n"). The capture measured that the SDK reads a body the same
+// and one byte per read, so that every event separator arrives split across
+// reads of the body, for the chunk reader to put back together as the SDK's
+// iterSSEChunks does. The capture measured that the SDK reads a body the same
 // either way.
 var openaiStreamReads = map[string]func(string) io.Reader{
 	"whole":    func(body string) io.Reader { return strings.NewReader(body) },
@@ -308,19 +302,28 @@ var openaiStreamReads = map[string]func(string) io.Reader{
 // iterator yields — blank-line dispatch, joined multi-line data, every line
 // ending wherever the reads split it, a "[DONE]" prefix ending the stream, no
 // dispatch of an event the body ends inside, "thread.*" events wrapped — and
-// fail on an item carrying an error with the SDK's APIError message. Where the
-// SDK's JSON.parse throws, the port skips the event instead (a deliberate
-// leniency); only the items before it are compared.
+// fail where the SDK throws: on an item carrying an error, with its APIError
+// message, and on data JSON.parse rejects, with V8's SyntaxError message.
 func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
 	c := loadOpenAIStreamCapture(t)
 	for name, row := range c.Dispatch {
-		for loop, parse := range openaiStreamParsers {
-			for read, reader := range openaiStreamReads {
-				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
-					readOpenAIStreamLikeTheSDK(t, nil, reader(row.body(t)), parse, row.SDK.openaiSDKReading, nil)
-				})
-			}
+		for read, reader := range openaiStreamReads {
+			t.Run(name+"/"+read, func(t *testing.T) {
+				readOpenAIStreamLikeTheSDK(t, nil, reader(row.body(t)), row.SDK.openaiSDKReading, nil)
+			})
 		}
+	}
+}
+
+// Data nested deeper than the port's JSON decoder reads fails, as JSON.parse's
+// SyntaxError fails pi's stream for this unterminated array, and without
+// working out V8's message, whose ported parser takes a stack frame per level:
+// at the 16 MiB a line may reach that overflows the goroutine stack and kills
+// the process. The message is the port's own (a port limit), so only the
+// failure is asserted.
+func TestOpenAIStreamJSONFailsOnDeepNesting(t *testing.T) {
+	if _, err := openaiStreamJSON(strings.Repeat("[", 16<<20)); err == nil {
+		t.Fatal("16 MiB of \"[\" parsed; JSON.parse rejects it")
 	}
 }
 
@@ -380,13 +383,11 @@ func TestOpenAIStreamAbortedReadEndsLikeTheSDK(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	for name, row := range c.Dispatch {
-		for loop, parse := range openaiStreamParsers {
-			for read, reader := range openaiStreamReads {
-				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
-					body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(ctx.Err()))
-					readOpenAIStreamLikeTheSDK(t, ctx, body, parse, row.SDK.Aborted, nil)
-				})
-			}
+		for read, reader := range openaiStreamReads {
+			t.Run(name+"/"+read, func(t *testing.T) {
+				body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(ctx.Err()))
+				readOpenAIStreamLikeTheSDK(t, ctx, body, row.SDK.Aborted, nil)
+			})
 		}
 	}
 }
@@ -398,13 +399,11 @@ func TestOpenAIStreamFailedReadLikeTheSDK(t *testing.T) {
 	c := loadOpenAIStreamCapture(t)
 	errTerminated := errors.New("terminated")
 	for name, row := range c.Dispatch {
-		for loop, parse := range openaiStreamParsers {
-			for read, reader := range openaiStreamReads {
-				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
-					body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(errTerminated))
-					readOpenAIStreamLikeTheSDK(t, context.Background(), body, parse, row.SDK.ReadFailed, errTerminated)
-				})
-			}
+		for read, reader := range openaiStreamReads {
+			t.Run(name+"/"+read, func(t *testing.T) {
+				body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(errTerminated))
+				readOpenAIStreamLikeTheSDK(t, context.Background(), body, row.SDK.ReadFailed, errTerminated)
+			})
 		}
 	}
 }
@@ -412,10 +411,10 @@ func TestOpenAIStreamFailedReadLikeTheSDK(t *testing.T) {
 // readOpenAIStreamLikeTheSDK iterates body and compares the items and the
 // error with what the SDK made of it. readErr, when set, is the error the
 // body's read fails with, which stands for the SDK's TypeError "terminated".
-func readOpenAIStreamLikeTheSDK(t *testing.T, ctx context.Context, body io.Reader, parse func(string) ([]byte, bool), want openaiSDKReading, readErr error) {
+func readOpenAIStreamLikeTheSDK(t *testing.T, ctx context.Context, body io.Reader, want openaiSDKReading, readErr error) {
 	t.Helper()
 	var got []string
-	err := iterateOpenAIStream(body, ctx, parse, func(item []byte) error {
+	err := iterateOpenAIStream(body, ctx, func(item []byte) error {
 		text, ok := jsStringify(item)
 		if !ok {
 			t.Fatalf("yielded item %q is not one JSON value", item)
@@ -424,11 +423,6 @@ func readOpenAIStreamLikeTheSDK(t *testing.T, ctx context.Context, body io.Reade
 		return nil
 	})
 	switch {
-	case want.Threw != nil && want.Threw.Name == "SyntaxError":
-		if len(got) < len(want.Yields) || !slices.Equal(got[:len(want.Yields)], want.Yields) {
-			t.Fatalf("items before the SDK's SyntaxError:\n got %q\nsdk %q", got, want.Yields)
-		}
-		return
 	case want.Threw != nil && readErr != nil && want.Threw.Name == "TypeError" && want.Threw.Message == readErr.Error():
 		if !errors.Is(err, readErr) {
 			t.Errorf("error = %v, want the failed read's %v", err, readErr)
@@ -452,9 +446,6 @@ func readOpenAIStreamLikeTheSDK(t *testing.T, ctx context.Context, body io.Reade
 func TestOpenAIStreamEndsLikePi(t *testing.T) {
 	c := loadOpenAIStreamCapture(t)
 	for name, row := range c.Dispatch {
-		if row.SDK.Threw != nil && row.SDK.Threw.Name == "SyntaxError" {
-			continue // pi fails with V8's SyntaxError text; the port skips the event
-		}
 		for adapter, want := range map[string]*openaiStreamOutcome{"completions": row.Completions, "responses": row.Responses} {
 			t.Run(name+"/"+adapter, func(t *testing.T) {
 				compareOpenAIStreamEnding(t, runOpenAIStreamAdapter(t, adapter, http.StatusOK, row.body(t), openaiStreamHooks{}), *want)
@@ -536,9 +527,6 @@ func TestOpenAIStreamObservesLikePi(t *testing.T) {
 	}
 	runs := map[string]run{}
 	for name, row := range c.Dispatch {
-		if row.SDK.Threw != nil && row.SDK.Threw.Name == "SyntaxError" {
-			continue // pi fails with V8's SyntaxError text; the port skips the event
-		}
 		runs["dispatch/"+name+"/completions"] = run{"completions", row.body(t), row.Completions}
 		runs["dispatch/"+name+"/responses"] = run{"responses", row.body(t), row.Responses}
 	}

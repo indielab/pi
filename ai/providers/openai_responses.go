@@ -1707,9 +1707,9 @@ func jsTokenCount(value any) int {
 // SDK's Stream (iterateOpenAIStream). Each item goes to onEvent (when set)
 // first, as processResponsesStream's loop opens with onProviderStreamEvent,
 // so an event the loop ignores or fails on is observed too; then it is handed
-// to handle. This loop never repaired its JSON, so neither does its parse.
+// to handle.
 func iterateOpenAISSE2(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(responsesEvent) error) error {
-	return iterateOpenAIStream(body, ctx, openaiStreamJSON, func(item []byte) error {
+	return iterateOpenAIStream(body, ctx, func(item []byte) error {
 		if err := observeOpenAIStreamItem(onEvent, item); err != nil {
 			return err
 		}

@@ -495,8 +495,9 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			// `Array.isArray`, which ignores ONLY this field when a provider sends
 			// something else. Decoding here rather than in openAIChunk is what
 			// contains it the same way: a typed []json.RawMessage would fail the
-			// whole chunk unmarshal, and iterateOpenAISSE's junk-line leniency
-			// would then drop the delta's content and tool calls along with it.
+			// whole chunk unmarshal, and iterateOpenAISSE, which skips an item
+			// that does not decode as a chunk, would then drop the delta's
+			// content and tool calls along with it.
 			var arrivingDetails []json.RawMessage
 			if len(d.ReasoningDetails) > 0 && json.Unmarshal(d.ReasoningDetails, &arrivingDetails) != nil {
 				arrivingDetails = nil
@@ -1620,7 +1621,7 @@ type openAIChunk struct {
 // an array — which pi's `typeof chunk !== "object"` skip and its reads of
 // absent fields leave alone too.
 func iterateOpenAISSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(openAIChunk) error) error {
-	return iterateOpenAIStream(body, ctx, openaiStreamJSONWithRepair, func(item []byte) error {
+	return iterateOpenAIStream(body, ctx, func(item []byte) error {
 		if err := observeOpenAIStreamItem(onEvent, item); err != nil {
 			return err
 		}

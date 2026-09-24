@@ -194,13 +194,13 @@ func scanOpenAISSELines(data []byte, atEOF bool) (advance int, token []byte, err
 //     event after it is ignored. The body is still read to its end, so a read
 //     failure after it still surfaces (an aborted one ends the stream; see
 //     readOpenAISSE).
-//   - Data is JSON-parsed. parse returns the text that parsed, or false where
-//     JSON.parse throws; the port skips such an event rather than failing the
-//     stream (a deliberate leniency: pi fails with V8's SyntaxError text).
+//   - Data is JSON.parse'd (openaiStreamJSON). Data it rejects throws its
+//     SyntaxError, which ends the stream with V8's message, as pi's adapters
+//     surface it; nothing is repaired, and the event is not yielded.
 //   - An event named "thread.*" is yielded as {"event": name, "data": value}.
 //   - Any other event whose value has a truthy `error` member throws the SDK's
 //     APIError, as *openaiStreamChunkError, instead of being yielded.
-func iterateOpenAIStream(body io.Reader, ctx context.Context, parse func(data string) ([]byte, bool), yield func(item []byte) error) error {
+func iterateOpenAIStream(body io.Reader, ctx context.Context, yield func(item []byte) error) error {
 	done := false
 	return readOpenAISSE(body, ctx, func(sse openaiSSEEvent) error {
 		if done {
@@ -210,9 +210,9 @@ func iterateOpenAIStream(body io.Reader, ctx context.Context, parse func(data st
 			done = true
 			return nil
 		}
-		item, ok := parse(sse.data)
-		if !ok {
-			return nil
+		item, err := openaiStreamJSON(sse.data)
+		if err != nil {
+			return err
 		}
 		if strings.HasPrefix(sse.event, "thread.") {
 			name, _ := json.Marshal(sse.event)
@@ -241,24 +241,53 @@ func observeOpenAIStreamItem(onEvent func(any) error, item []byte) error {
 	return onEvent(data)
 }
 
-// openaiStreamJSON is JSON.parse's acceptance test for an event's data.
-func openaiStreamJSON(data string) ([]byte, bool) {
+// openaiStreamJSON is the SDK's `JSON.parse(sse.data)`: the data when
+// JSON.parse accepts it, else the SyntaxError JSON.parse throws.
+//
+// Past encoding/json's nesting limit the port cannot read an event whichever
+// way JSON.parse goes, so such data fails with the port's own error rather
+// than V8's message: jstext.JSONSyntaxError recurses once per level, and a
+// line of the 16 MiB the reader allows would overflow the goroutine stack.
+func openaiStreamJSON(data string) ([]byte, error) {
 	b := []byte(data)
-	return b, json.Valid(b)
+	if json.Valid(b) {
+		return b, nil
+	}
+	if jsonNestsDeeperThan(b, maxJSONNesting) {
+		return nil, fmt.Errorf("an openai stream event nests deeper than %d levels, which the port's JSON decoder cannot read; this is a port limit, report it with the event", maxJSONNesting)
+	}
+	if err := jstext.JSONSyntaxError(data); err != nil {
+		return nil, err
+	}
+	return nil, errors.New("encoding/json rejects an openai stream event that JSON.parse accepts; this is a port bug, report it with the event")
 }
 
-// openaiStreamJSONWithRepair is openaiStreamJSON, falling back to repairJSON's
-// fix-ups: the completions loop has always read chunks through
-// parseJSONWithRepair, and the provider stream event it reports is the
-// repaired value, so what it observes is exactly what it handles.
-func openaiStreamJSONWithRepair(data string) ([]byte, bool) {
-	if b, ok := openaiStreamJSON(data); ok {
-		return b, true
+// maxJSONNesting is encoding/json's nesting limit (its scanner's
+// maxNestingDepth).
+const maxJSONNesting = 10000
+
+// jsonNestsDeeperThan reports whether b opens more than limit arrays and
+// objects inside one another, counting only brackets outside strings.
+func jsonNestsDeeperThan(b []byte, limit int) bool {
+	depth, inString, escaped := 0, false, false
+	for _, c := range b {
+		switch {
+		case escaped:
+			escaped = false
+		case inString:
+			escaped = c == '\\'
+			inString = c != '"'
+		case c == '"':
+			inString = true
+		case c == '[' || c == '{':
+			if depth++; depth > limit {
+				return true
+			}
+		case c == ']' || c == '}':
+			depth--
+		}
 	}
-	if repaired := repairJSON(data); repaired != data {
-		return openaiStreamJSON(repaired)
-	}
-	return nil, false
+	return false
 }
 
 // openaiStreamErrorMember is the SDK's `data && data.error` test: the item's

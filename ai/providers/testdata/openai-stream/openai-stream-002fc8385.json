@@ -2763,6 +2763,275 @@
 				"rawStopReason": ""
 			}
 		},
+		"control-character-in-string": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\tb\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "SyntaxError",
+					"message": "Bad control character in string literal in JSON at position 53 (line 1 column 54)"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Bad control character in string literal in JSON at position 53 (line 1 column 54)"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Bad control character in string literal in JSON at position 53 (line 1 column 54)"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Bad control character in string literal in JSON at position 53 (line 1 column 54)",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": ""
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Bad control character in string literal in JSON at position 53 (line 1 column 54)",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
+		"invalid-escape": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"c\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"a\\qb\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "SyntaxError",
+					"message": "Bad escaped character in JSON at position 54 (line 1 column 55)"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Bad escaped character in JSON at position 54 (line 1 column 55)"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Bad escaped character in JSON at position 54 (line 1 column 55)"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Bad escaped character in JSON at position 54 (line 1 column 55)",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": ""
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Bad escaped character in JSON at position 54 (line 1 column 55)",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
+		"unexpected-token-in-context": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"c\",\"choices\":[],\"n\":nul}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "SyntaxError",
+					"message": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": ""
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
+		"thread-event-unparseable": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: thread.run\ndata: {not json\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "SyntaxError",
+					"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": ""
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
+		"unparseable-after-done": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\ndata: {not json\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "stop"
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
 		"utf8-truncated-3": {
 			"sseBase64": "ZGF0YTogeyJpZCI6InUiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnsiY29udGVudCI6InjignkifX1dfQoKZGF0YTogeyJpZCI6ImYiLCJjaG9pY2VzIjpbeyJpbmRleCI6MCwiZGVsdGEiOnt9LCJmaW5pc2hfcmVhc29uIjoic3RvcCJ9XX0KCg==",
 			"sdk": {
