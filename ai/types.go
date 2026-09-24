@@ -1255,7 +1255,18 @@ type ProviderRequestOptions struct {
 // the request body and its transport.
 type StreamOptions struct {
 	ProviderRequestOptions
-	Temperature *float64
+	// OnProviderStreamEvent observes each parsed provider stream event before
+	// pi normalizes it (pi StreamOptions.onProviderStreamEvent, upstream
+	// 002fc8385). data is the parsed value the adapter works from: for a
+	// JSON-wire adapter, DecodeOrderedValue of the event's data, so an object
+	// arrives as an OrderedObject in wire order; an adapter that pi runs
+	// through a vendor SDK passes that SDK's shape. It is adapter-owned and
+	// must be treated as read-only.
+	// Adapter support is explicit: adapters that do not support it never call
+	// it. Calls are synchronous and in stream order, and a non-nil error fails
+	// the stream with err.Error() as its error message.
+	OnProviderStreamEvent func(data any, model *Model) error
+	Temperature           *float64
 	// SamplingParams are arbitrary sampling parameters merged into the request
 	// body as-is, after the named request fields, so keys here override them.
 	// They let custom OpenAI-compatible servers (llama.cpp, vLLM, SGLang, …)

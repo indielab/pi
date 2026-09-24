@@ -94,6 +94,24 @@ func DecodeOrderedObject(data []byte) (map[string]any, OrderedObject, error) {
 	return obj.Plain(), obj, nil
 }
 
+// DecodeOrderedValue decodes any single, complete JSON value the way
+// json.Unmarshal into `any` would, except that every object (at any depth)
+// becomes an OrderedObject, so JS insertion order survives: a top-level
+// object is an OrderedObject, an array is []any, and scalars are float64,
+// string, bool or nil. It is the value pi hands to an observer of a parsed
+// JSON event, whose key order a JSON.stringify of it would reveal.
+func DecodeOrderedValue(data []byte) (any, error) {
+	dec := json.NewDecoder(bytes.NewReader(data))
+	v, err := decodeOrderedValue(dec)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := dec.Token(); err != io.EOF {
+		return nil, fmt.Errorf("unexpected trailing content after JSON value")
+	}
+	return v, nil
+}
+
 // decodeOrderedObjectBody reads members up to and including the closing brace.
 func decodeOrderedObjectBody(dec *json.Decoder) (OrderedObject, error) {
 	obj := OrderedObject{}
