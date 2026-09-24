@@ -203,6 +203,29 @@ const scenarios: Scenario[] = [
 		],
 	},
 	{
+		name: "array-index keys come first at every depth",
+		note: "a JS object lists its array-index keys first, ascending: in the observed value, the tool-call delta and the arguments",
+		framing: "close",
+		headers: eventStream,
+		segments: [
+			sse(
+				'{"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"f","args":{"b":1,"0":2,"a":{"z":1,"1":2},"10":[{"y":1,"3":0}],"2":"x"}}}],"role":"model","7":"seven"},"finishReason":"STOP"}],"usageMetadata":{"totalTokenCount":3,"0":9,"promptTokenCount":2}}',
+			),
+		],
+	},
+	{
+		name: "a number past float64's range",
+		note: "JSON.parse reads it as Infinity, which JSON.stringify writes null: in the observed value, the tool-call delta and the arguments",
+		framing: "close",
+		headers: eventStream,
+		segments: [
+			sse(
+				'{"responseId":"r1","candidates":[{"content":{"parts":[{"text":"hi"}]}}],"usageMetadata":{"promptTokenCount":2,"futureCount":1e400}}',
+				'{"candidates":[{"content":{"parts":[{"functionCall":{"id":"c1","name":"f","args":{"x":1e400,"y":-1e400,"z":1e-400}}}]},"finishReason":"STOP"}]}',
+			),
+		],
+	},
+	{
 		name: "a gzip body",
 		note: "the SDK sees the decoded text; content-encoding stays in the record",
 		framing: "close",
