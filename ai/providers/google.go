@@ -411,7 +411,9 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			if err != nil {
 				return nil, err
 			}
-			r.Header.Set("x-goog-api-key", opts.APIKey)
+			// genai appends the key to its Headers (NodeAuth.addKeyHeader), which
+			// normalizes it like every other value (see setHeader).
+			setHeader(r.Header, "x-goog-api-key", opts.APIKey)
 			// pi builds one merged object — mergeProviderAttributionHeaders puts
 			// the attribution bundle at the bottom, then model.headers, then the
 			// consumer's options.headers — and hands it to the SDK as

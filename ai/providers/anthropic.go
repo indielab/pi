@@ -668,9 +668,10 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 			// consumer spelled differently, and including the empty-string value an
 			// empty `betas` list produces, which REPLACES the inherited header
 			// rather than leaving it standing. Writing it (Set, not Add) after
-			// applyAsDefaultHeaders is what reproduces that precedence.
+			// applyAsDefaultHeaders is what reproduces that precedence. The SDK's
+			// Headers normalizes the value like every other (see setHeader).
 			if betaHeader != nil {
-				r.Header.Set("anthropic-beta", *betaHeader)
+				setHeader(r.Header, "anthropic-beta", *betaHeader)
 			}
 			return r, nil
 		}

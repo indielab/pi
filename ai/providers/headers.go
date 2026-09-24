@@ -26,6 +26,14 @@ import (
 //     header the adapter set literally. headerObject.applyAsRecord is that
 //     path.
 //
+// Both paths end in a fetch Headers object in pi — the SDK's, or the one fetch
+// builds from pi-messages' plain object — and Headers.append/set normalize
+// every value by stripping its leading and trailing HTTP whitespace. net/http
+// does not: it fails the request on a CR or LF anywhere in a value, and its
+// HTTP/2 encoder sends a value's edges verbatim. So every value is normalized
+// here as it is written (setHeader), which makes a key or token read with a
+// trailing newline work as it does in pi instead of failing the stream.
+//
 // Two divergences live in here and are recorded in docs/UPSTREAM.md rather than
 // papered over: an empty-string value is dropped entirely by net/http on the
 // User-Agent header where pi sends it present-and-empty, and @google/genai
@@ -114,7 +122,7 @@ func (o *headerObject) mergeStrings(source map[string]string) {
 func (o *headerObject) applyAsDefaultHeaders(h http.Header) {
 	for _, name := range o.names {
 		if value := o.values[name]; value != nil {
-			h.Set(name, *value)
+			setHeader(h, name, *value)
 		} else {
 			h.Del(name)
 		}
@@ -180,19 +188,29 @@ func (o *headerObject) applyAsRecord(h http.Header, literals ...recordEntry) {
 	for _, e := range object {
 		key := http.CanonicalHeaderKey(e.name)
 		if appended[key] {
-			// Headers.append normalizes each value (strips leading and trailing
-			// HTTP whitespace) before joining; net/http trims only the ends of
-			// the joined value, so the inner boundary is trimmed here.
-			h[key] = []string{trimHTTPWhitespace(h[key][0]) + ", " + trimHTTPWhitespace(e.value)}
+			// Headers.append normalizes the value it appends and joins it onto
+			// the one already held with ", ". An empty second value leaves the
+			// separator's space at the end: genai re-normalizes the joined value
+			// and sends none, and pi-messages' HTTP/1.1 wire carries it as
+			// whitespace outside the field value. HTTP/2 forbids a value ending
+			// in whitespace, so the joined value is normalized as genai's is.
+			h[key] = []string{trimHTTPWhitespace(h[key][0] + ", " + trimHTTPWhitespace(e.value))}
 			continue
 		}
-		h.Set(e.name, e.value)
+		setHeader(h, e.name, e.value)
 		appended[key] = true
 	}
 }
 
+// setHeader writes one header value the way a fetch Headers object stores it:
+// normalized (see trimHTTPWhitespace). Every header value an adapter writes
+// goes through here, because in pi every one goes through a Headers object.
+func setHeader(h http.Header, name, value string) { h.Set(name, trimHTTPWhitespace(value)) }
+
 // trimHTTPWhitespace strips what the Fetch standard calls HTTP whitespace —
-// space, tab, CR and LF — from both ends, as Headers.append does to a value.
+// space, tab, CR and LF — from both ends, as Headers.append and Headers.set do
+// to a value (the Fetch standard's "normalize"). A CR or LF left inside a value
+// still fails the request, as Headers.append throws on one.
 func trimHTTPWhitespace(v string) string { return strings.Trim(v, " \t\r\n") }
 
 // sortedNames returns m's keys in sorted order, the tie-break every source-local
