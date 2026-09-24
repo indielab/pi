@@ -1144,15 +1144,17 @@ func (a *googleFunctionArgs) UnmarshalJSON(data []byte) error {
 
 // googleBareJSONError is the check @google/genai 2.21.0 runs on every network
 // read before buffering it (processStreamResponse): when the whole read
-// parses as JSON holding an "error" key, it computes
+// parses as JSON holding an "error" key, it reads status and code from
+// JSON.parse(JSON.stringify(chunkJson.error)), computes
 //
-//	`got status: ${error.status}. ${JSON.stringify(chunkJson)}`
+//	`got status: ${status}. ${JSON.stringify(chunkJson)}`
 //
-// and throws that as an ApiError when error.code >= 400 && error.code < 600,
-// with JavaScript's coercions ("500" and [429] qualify; an absent status reads
-// "undefined"). Anything else thrown inside the check — a property read on a
-// primitive or null, a value with no primitive form — is swallowed by the
-// SDK's catch, which rethrows only ApiErrors; so is a read that is not JSON.
+// and throws that as an ApiError when code >= 400 && code < 600, with
+// JavaScript's coercions ("500" and [429] qualify; an absent status reads
+// "undefined"; a number past float64's range is null by then). Anything else
+// thrown inside the check — a property read on a primitive or null, a value
+// with no primitive form — is swallowed by the SDK's catch, which rethrows
+// only ApiErrors; so is a read that is not JSON.
 func googleBareJSONError(read string) error {
 	parsed, err := jstext.Parse([]byte(read))
 	if err != nil {
@@ -1166,7 +1168,7 @@ func googleBareJSONError(read string) error {
 	if !ok {
 		return nil
 	}
-	fields, ok := e.(map[string]any)
+	fields, ok := jstext.Reparse(e).(map[string]any)
 	if !ok {
 		return nil // null throws reading .status; any other value reads undefined twice
 	}
@@ -1183,23 +1185,11 @@ func googleBareJSONError(read string) error {
 	if n, ok := jstext.ToNumber(code); !ok || !(n >= 400 && n < 600) {
 		return nil
 	}
-	return fmt.Errorf("got status: %s. %s", status, googleStringifyRead(read, parsed))
-}
-
-// googleStringifyRead is JSON.stringify of a read JSON.parse accepted: the
-// wire's key order, the compact spacing and JavaScript's number spelling.
-func googleStringifyRead(read string, parsed any) string {
-	var out string
-	if ordered, err := ai.DecodeOrderedValue([]byte(read)); err == nil {
-		out, err = jstext.Stringify(ordered)
-		if err == nil {
-			return out
-		}
-	}
-	// Only a number past float64's range fails the ordered decode; the
-	// unordered value still says what the chunk held.
-	out, _ = jstext.Stringify(parsed)
-	return out
+	// JSON.stringify(chunkJson): the parsed object's own-property order
+	// (array-index keys first), a repeated key once, JavaScript's number
+	// spelling and Infinity as null.
+	text, _ := jsStringify([]byte(read))
+	return fmt.Errorf("got status: %s. %s", status, text)
 }
 
 // iterateGoogleSSE consumes the alt=sse stream the way the @google/genai SDK

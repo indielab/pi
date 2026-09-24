@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"math"
 	"strconv"
 )
@@ -54,4 +55,51 @@ func Truthy(v any) bool {
 		return x != ""
 	}
 	return true
+}
+
+// Reparse is JSON.parse(JSON.stringify(v)) for a value Parse returns. The
+// one change such a round trip makes to parsed JSON that String and Number
+// can see is that a number JSON.parse read as ±Infinity comes back null,
+// since JSON.stringify writes it so; Reparse makes that change at any depth,
+// copying only the containers on the way to one.
+func Reparse(v any) any {
+	out, _ := reparse(v)
+	return out
+}
+
+func reparse(v any) (any, bool) {
+	switch x := v.(type) {
+	case json.Number:
+		if math.IsInf(Number(x), 0) {
+			return nil, true
+		}
+	case []any:
+		var copied []any
+		for i, e := range x {
+			r, changed := reparse(e)
+			if changed && copied == nil {
+				copied = append([]any(nil), x...)
+			}
+			if copied != nil {
+				copied[i] = r
+			}
+		}
+		if copied != nil {
+			return copied, true
+		}
+	case map[string]any:
+		var copied map[string]any
+		for k, e := range x {
+			if r, changed := reparse(e); changed {
+				if copied == nil {
+					copied = maps.Clone(x)
+				}
+				copied[k] = r
+			}
+		}
+		if copied != nil {
+			return copied, true
+		}
+	}
+	return v, false
 }

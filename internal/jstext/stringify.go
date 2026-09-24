@@ -3,8 +3,8 @@ package jstext
 import (
 	"bytes"
 	"encoding/json"
+	"maps"
 	"math"
-	"slices"
 	"strings"
 )
 
@@ -18,20 +18,21 @@ import (
 //     escapes are written back as characters. JSON.stringify never emits any
 //     of the five, so this cannot misfire;
 //   - it writes negative zero as -0 where JSON.stringify writes 0;
-//   - it refuses a number that is not finite, which JSON.stringify writes as
-//     null (a float64 directly in v or in its []any and map[string]any; a
-//     type with its own MarshalJSON writes itself).
+//   - it refuses a non-finite number, which JSON.stringify writes as null, and
+//     it writes a json.Number (Parse's numbers) as its literal text, where
+//     JSON.stringify spells the number the literal denotes ("1.50" is 1.5,
+//     "1e308" is 1e+308, "1e400" is Infinity). A float64 or json.Number
+//     directly in v or inside its []any and map[string]any is written the
+//     JavaScript way (a type's own MarshalJSON handles its own).
 //
 // What remains is encoding/json's: map keys come out sorted where JS keeps
 // insertion order (the length is the same, the text is not), and a Go string
 // cannot hold a lone UTF-16 surrogate, which JS would write as an escape.
 func Stringify(v any) (string, error) {
-	if hasNonFinite(v) {
-		v = nonFiniteAsNull(v)
-	}
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
+	v, _ = jsNumbers(v)
 	if err := enc.Encode(v); err != nil {
 		return "", err
 	}
@@ -70,54 +71,6 @@ func Stringify(v any) (string, error) {
 	return b.String(), nil
 }
 
-// hasNonFinite reports whether v holds a float64 that is not finite, directly
-// or in its []any and map[string]any.
-func hasNonFinite(v any) bool {
-	switch t := v.(type) {
-	case float64:
-		return math.IsInf(t, 0) || math.IsNaN(t)
-	case []any:
-		return slices.ContainsFunc(t, hasNonFinite)
-	case map[string]any:
-		for _, e := range t {
-			if hasNonFinite(e) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-// nonFiniteAsNull is a copy of v with every float64 that is not finite, in it
-// or in its []any and map[string]any, replaced by nil.
-func nonFiniteAsNull(v any) any {
-	switch t := v.(type) {
-	case float64:
-		if math.IsInf(t, 0) || math.IsNaN(t) {
-			return nil
-		}
-	case []any:
-		if t == nil {
-			return t
-		}
-		out := make([]any, len(t))
-		for i, e := range t {
-			out[i] = nonFiniteAsNull(e)
-		}
-		return out
-	case map[string]any:
-		if t == nil {
-			return t
-		}
-		out := make(map[string]any, len(t))
-		for k, e := range t {
-			out[k] = nonFiniteAsNull(e)
-		}
-		return out
-	}
-	return v
-}
-
 // isNegativeZero reports whether rest, the text after a '-' outside a string,
 // is the number 0 itself, not 0.5 or 0e-3.
 func isNegativeZero(rest string) bool {
@@ -130,3 +83,50 @@ func isNegativeZero(rest string) bool {
 // unescaped maps the \uXXXX escapes encoding/json writes and JSON.stringify
 // does not to the characters JSON.stringify writes instead.
 var unescaped = map[string]rune{"003c": '<', "003e": '>', "0026": '&', "2028": '\u2028', "2029": '\u2029'}
+
+// jsNumbers returns v with every number in it — v itself, or an element of
+// its []any and map[string]any at any depth — as JSON.stringify would see it:
+// a json.Number as the float64 it denotes, and a non-finite number as nil.
+// changed reports whether anything was replaced; only the containers on the
+// way to a replacement are copied.
+func jsNumbers(v any) (out any, changed bool) {
+	switch t := v.(type) {
+	case json.Number:
+		if f := Number(t); !math.IsInf(f, 0) && !math.IsNaN(f) {
+			return f, true
+		}
+		return nil, true
+	case float64:
+		if math.IsInf(t, 0) || math.IsNaN(t) {
+			return nil, true
+		}
+	case []any:
+		var copied []any
+		for i, e := range t {
+			f, ch := jsNumbers(e)
+			if ch && copied == nil {
+				copied = append([]any(nil), t...)
+			}
+			if copied != nil {
+				copied[i] = f
+			}
+		}
+		if copied != nil {
+			return copied, true
+		}
+	case map[string]any:
+		var copied map[string]any
+		for k, e := range t {
+			if f, ch := jsNumbers(e); ch {
+				if copied == nil {
+					copied = maps.Clone(t)
+				}
+				copied[k] = f
+			}
+		}
+		if copied != nil {
+			return copied, true
+		}
+	}
+	return v, false
+}

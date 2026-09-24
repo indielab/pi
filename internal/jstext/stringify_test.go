@@ -87,3 +87,20 @@ func TestStringifyNonFiniteIsNull(t *testing.T) {
 		t.Fatalf("Stringify(-Inf) = %q, %v; want null", got, err)
 	}
 }
+
+// JSON.stringify spells a parsed number by its value, not its literal (node
+// v26.4.0: JSON.stringify(JSON.parse('[1.50,1e308,1e400,-0,100e-2]')) is
+// `[1.5,1e+308,null,0,1]`).
+func TestStringifySpellsParsedNumbersLikeJS(t *testing.T) {
+	v, err := Parse([]byte(`[1.50,1e308,1e400,-0,100e-2,{"n":2E1}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Stringify(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `[1.5,1e+308,null,0,1,{"n":20}]`; got != want {
+		t.Fatalf("Stringify = %s, want %s", got, want)
+	}
+}
