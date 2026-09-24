@@ -2,6 +2,7 @@ package providers
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -315,6 +316,32 @@ func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
 	}
 }
 
+// An event's data is read as JSON.parse reads it, in one pass: accepted where
+// node's JSON.parse accepts it, and otherwise failing with V8's SyntaxError
+// message, over every row of jstext's JSON.parse capture.
+func TestOpenAIStreamJSONParsesLikeV8(t *testing.T) {
+	data, err := os.ReadFile("../../internal/jstext/testdata/json-parse-errors-node.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var oracle struct {
+		Rows [][2]*string `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &oracle); err != nil || len(oracle.Rows) < 1000 {
+		t.Fatalf("the JSON.parse capture: %v, %d rows", err, len(oracle.Rows))
+	}
+	for _, row := range oracle.Rows {
+		text, threw := *row[0], row[1]
+		value, err := openaiStreamJSON([]byte(text))
+		switch {
+		case threw == nil && err != nil:
+			t.Errorf("openaiStreamJSON(%q): %v; JSON.parse accepts it", text, err)
+		case threw != nil && (err == nil || err.Error() != *threw):
+			t.Errorf("openaiStreamJSON(%q) = %#v, %v; JSON.parse throws %q", text, value, err, *threw)
+		}
+	}
+}
+
 // Data nested deeper than the port's JSON decoder reads fails, as JSON.parse's
 // SyntaxError fails pi's stream for this unterminated array, and without
 // working out V8's message, whose ported parser takes a stack frame per level:
@@ -322,7 +349,7 @@ func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
 // the process. The message is the port's own (a port limit), so only the
 // failure is asserted.
 func TestOpenAIStreamJSONFailsOnDeepNesting(t *testing.T) {
-	if _, err := openaiStreamJSON(strings.Repeat("[", 16<<20)); err == nil {
+	if _, err := openaiStreamJSON(bytes.Repeat([]byte("["), 16<<20)); err == nil {
 		t.Fatal("16 MiB of \"[\" parsed; JSON.parse rejects it")
 	}
 }
@@ -414,10 +441,10 @@ func TestOpenAIStreamFailedReadLikeTheSDK(t *testing.T) {
 func readOpenAIStreamLikeTheSDK(t *testing.T, ctx context.Context, body io.Reader, want openaiSDKReading, readErr error) {
 	t.Helper()
 	var got []string
-	err := iterateOpenAIStream(body, ctx, func(item []byte) error {
-		text, ok := jsStringify(item)
-		if !ok {
-			t.Fatalf("yielded item %q is not one JSON value", item)
+	err := iterateOpenAIStream(body, ctx, func(item openaiStreamItem) error {
+		text, err := jstext.Stringify(item.value)
+		if err != nil {
+			t.Fatalf("yielded item %#v has no JSON form: %v", item.value, err)
 		}
 		got = append(got, text)
 		return nil

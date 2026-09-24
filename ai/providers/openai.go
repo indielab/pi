@@ -1621,12 +1621,14 @@ type openAIChunk struct {
 // an array — which pi's `typeof chunk !== "object"` skip and its reads of
 // absent fields leave alone too.
 func iterateOpenAISSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(openAIChunk) error) error {
-	return iterateOpenAIStream(body, ctx, func(item []byte) error {
-		if err := observeOpenAIStreamItem(onEvent, item); err != nil {
-			return err
+	return iterateOpenAIStream(body, ctx, func(item openaiStreamItem) error {
+		if onEvent != nil {
+			if err := onEvent(item.value); err != nil {
+				return err
+			}
 		}
 		var chunk openAIChunk
-		if isJSONNull(item) || json.Unmarshal(item, &chunk) != nil {
+		if item.value == nil || json.Unmarshal(item.text, &chunk) != nil {
 			return nil
 		}
 		return handle(chunk)

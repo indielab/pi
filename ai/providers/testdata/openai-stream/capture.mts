@@ -336,6 +336,11 @@ const dispatch: Record<string, Body> = {
 	"error-chunk-raw-array": errorChunk({ message: "boom", metadata: { raw: [1, [2, null], "x"] } }),
 	"error-chunk-raw-true": errorChunk({ message: "boom", metadata: { raw: true } }),
 	"error-chunk-raw-falsy": errorChunk({ message: "boom", metadata: { raw: "" } }),
+	// Falsy raws whose String() the message does not contain: only truthiness
+	// keeps them off it.
+	"error-chunk-raw-zero": errorChunk({ message: "boom", metadata: { raw: 0 } }),
+	"error-chunk-raw-false": errorChunk({ message: "boom", metadata: { raw: false } }),
+	"error-chunk-raw-null": errorChunk({ message: "boom", metadata: { raw: null } }),
 	"error-chunk-metadata-string": errorChunk({ message: "boom", metadata: "raw" }),
 	"error-chunk-no-message": errorChunk({ code: "x", type: "y" }),
 	"error-chunk-message-object": errorChunk({ message: { b: 1, a: 2 } }),

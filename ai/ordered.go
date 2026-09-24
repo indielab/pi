@@ -2,14 +2,9 @@ package ai
 
 import (
 	"bytes"
-	"cmp"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
-	"slices"
-
-	"github.com/sky-valley/pi/internal/jstext"
 )
 
 // OrderedField is one key/value pair of an OrderedObject.
@@ -143,25 +138,22 @@ func plainValue(v any) any {
 // would produce and an order-preserving twin. Numbers decode to float64 and
 // nulls to nil exactly as json.Unmarshal into `any` does, so the two forms
 // differ only in whether key order survives. The order is the one JSON.parse's
-// object lists its keys in (decodeOrderedObjectBody), not always the wire's.
+// object lists its keys in (see parseOrdered), not always the wire's.
 //
 // Anything that is not a single, complete JSON object is an error, matching
-// json.Unmarshal into a map[string]any.
+// json.Unmarshal into a map[string]any, and so is a number past float64's
+// range, which json.Unmarshal refuses where JSON.parse reads ±Infinity.
 func DecodeOrderedObject(data []byte) (map[string]any, OrderedObject, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	tok, err := dec.Token()
+	v, err := parseOrdered(data)
 	if err != nil {
 		return nil, nil, err
 	}
-	if delim, ok := tok.(json.Delim); !ok || delim != '{' {
-		return nil, nil, fmt.Errorf("expected a JSON object, got %v", tok)
+	obj, ok := v.(OrderedObject)
+	if !ok {
+		return nil, nil, fmt.Errorf("expected a JSON object, got %s", bytes.TrimSpace(data)[:1])
 	}
-	obj, err := decodeOrderedObjectBody(dec)
-	if err != nil {
-		return nil, nil, err
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return nil, nil, fmt.Errorf("unexpected trailing content after JSON object")
+	if hasNonFinite(obj) {
+		return nil, nil, fmt.Errorf("the JSON object holds a number past float64's range, which json.Unmarshal cannot decode; DecodeOrderedValue reads it as JSON.parse does, as ±Inf")
 	}
 	return obj.Plain(), obj, nil
 }
@@ -172,103 +164,8 @@ func DecodeOrderedObject(data []byte) (map[string]any, OrderedObject, error) {
 // an array is []any, and scalars are float64, string, bool or nil. A number
 // past float64's range is ±Inf, as JSON.parse reads it, where json.Unmarshal
 // fails. It is the value pi hands to an observer of a parsed JSON event,
-// whose key order a JSON.stringify of it would reveal.
+// whose key order a JSON.stringify of it would reveal. It reads the text in
+// one pass (parseOrdered).
 func DecodeOrderedValue(data []byte) (any, error) {
-	dec := json.NewDecoder(bytes.NewReader(data))
-	dec.UseNumber()
-	v, err := decodeOrderedValue(dec)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := dec.Token(); err != io.EOF {
-		return nil, fmt.Errorf("unexpected trailing content after JSON value")
-	}
-	return v, nil
-}
-
-// decodeOrderedObjectBody reads members up to and including the closing brace,
-// in the order the object JSON.parse builds from them lists its keys
-// (OrdinaryOwnPropertyKeys): array-index keys first, ascending, then every
-// other key in the order it first appeared.
-func decodeOrderedObjectBody(dec *json.Decoder) (OrderedObject, error) {
-	obj := OrderedObject{}
-	indexKeys := 0 // obj[:indexKeys] are the array-index keys, ascending
-	for dec.More() {
-		keyTok, err := dec.Token()
-		if err != nil {
-			return nil, err
-		}
-		key, ok := keyTok.(string)
-		if !ok {
-			return nil, fmt.Errorf("object key is not a string")
-		}
-		value, err := decodeOrderedValue(dec)
-		if err != nil {
-			return nil, err
-		}
-		// A repeated key keeps its place and takes the last value, which is
-		// what JSON.parse and json.Unmarshal both do.
-		if i := obj.indexOf(key); i >= 0 {
-			obj[i].Value = value
-			continue
-		}
-		field := OrderedField{Key: key, Value: value}
-		index, isIndex := jstext.ArrayIndexKey(key)
-		if !isIndex {
-			obj = append(obj, field)
-			continue
-		}
-		at, _ := slices.BinarySearchFunc(obj[:indexKeys], index, func(f OrderedField, target uint32) int {
-			n, _ := jstext.ArrayIndexKey(f.Key)
-			return cmp.Compare(n, target)
-		})
-		obj = slices.Insert(obj, at, field)
-		indexKeys++
-	}
-	if _, err := dec.Token(); err != nil { // closing '}'
-		return nil, err
-	}
-	return obj, nil
-}
-
-func (o OrderedObject) indexOf(key string) int {
-	for i, f := range o {
-		if f.Key == key {
-			return i
-		}
-	}
-	return -1
-}
-
-func decodeOrderedValue(dec *json.Decoder) (any, error) {
-	tok, err := dec.Token()
-	if err != nil {
-		return nil, err
-	}
-	delim, ok := tok.(json.Delim)
-	if !ok {
-		if n, isNumber := tok.(json.Number); isNumber {
-			return jstext.Number(n), nil // DecodeOrderedValue: JSON.parse's number
-		}
-		return tok, nil // string, float64, bool, or nil
-	}
-	switch delim {
-	case '{':
-		return decodeOrderedObjectBody(dec)
-	case '[':
-		arr := []any{}
-		for dec.More() {
-			el, err := decodeOrderedValue(dec)
-			if err != nil {
-				return nil, err
-			}
-			arr = append(arr, el)
-		}
-		if _, err := dec.Token(); err != nil { // closing ']'
-			return nil, err
-		}
-		return arr, nil
-	default:
-		return nil, fmt.Errorf("unexpected delimiter %q", delim)
-	}
+	return parseOrdered(data)
 }

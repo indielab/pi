@@ -571,7 +571,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		backfillReasoningSignatures := func(responseOutput any) error {
 			var items []any
 			switch v := responseOutput.(type) {
-			case nil, string:
+			case nil, jsUndefinedValue, string:
 				return nil // `?? []`; a string's characters are no reasoning items
 			case []any:
 				items = v
@@ -580,10 +580,10 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			}
 			for _, item := range items {
 				if item == nil {
-					return jsReadError(true, "type")
+					return jsReadError(item, "type")
 				}
 				encrypted := jsGet(item, "encrypted_content")
-				if jsGet(item, "type") != "reasoning" || !jstext.Truthy(encrypted) {
+				if jsGet(item, "type") != "reasoning" || !jsTruthy(encrypted) {
 					continue
 				}
 				id, _ := jsGet(item, "id").(string) // the blocks are keyed by string ids
@@ -609,19 +609,19 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		// and response.incomplete, reading event.response with JS semantics:
 		// every member exact-key and of whatever type it holds. Its first read,
 		// `response.output`, throws on a null or absent response.
-		finalizeResponse := func(event map[string]any) error {
+		finalizeResponse := func(event any) error {
 			sawTerminalResponseEvent = true
-			response, present := event["response"]
-			if response == nil {
-				return jsReadError(present, "output")
+			response := jsGet(event, "response")
+			if response == nil || response == jsUndefined {
+				return jsReadError(response, "output")
 			}
 			if err := backfillReasoningSignatures(jsGet(response, "output")); err != nil {
 				return err
 			}
-			if id := jsGet(response, "id"); jstext.Truthy(id) {
+			if id := jsGet(response, "id"); jsTruthy(id) {
 				output.ResponseID = jsStringField(id)
 			}
-			if usage := jsGet(response, "usage"); jstext.Truthy(usage) {
+			if usage := jsGet(response, "usage"); jsTruthy(usage) {
 				details := jsGet(usage, "input_tokens_details")
 				cached := jsTokenCount(jsGet(details, "cached_tokens"))
 				cacheWrite := jsTokenCount(jsGet(details, "cache_write_tokens"))
@@ -642,7 +642,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			// so the response's tier wins unless it is null or absent. One that is
 			// not a string ("" included) matches no tier and prices at ×1.
 			serviceTier := opts.ServiceTier
-			if tier := jsGet(response, "service_tier"); tier != nil {
+			if tier := jsGet(response, "service_tier"); tier != nil && tier != jsUndefined {
 				serviceTier, _ = tier.(string)
 			}
 			applyResponsesServiceTierPricing(&output.Usage, serviceTier, model)
@@ -652,12 +652,12 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			// decides whether "incomplete" is a length stop or an error. pi
 			// assigns rawStopReason before mapping the status, and a template
 			// literal that throws leaves it unassigned.
-			status, statusPresent := jsLookup(response, "status")
+			status := jsGet(response, "status")
 			incompleteReason, _ := jsGet(jsGet(response, "incomplete_details"), "reason").(string)
 			if incompleteReason != "" {
-				statusText, ok := jsTemplate(status, statusPresent)
-				if !ok {
-					return errNoPrimitiveValue
+				statusText, err := jsToString(status)
+				if err != nil {
+					return err
 				}
 				output.RawStopReason = statusText + "." + incompleteReason
 			} else {
@@ -686,9 +686,9 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			case "response.created":
 				// pi: `output.responseId = event.response.id`, which throws on a
 				// null or absent response and assigns whatever id holds.
-				response, present := ev.JS["response"]
-				if response == nil {
-					return jsReadError(present, "id")
+				response := jsGet(ev.JS, "response")
+				if response == nil || response == jsUndefined {
+					return jsReadError(response, "id")
 				}
 				output.ResponseID = jsStringField(jsGet(response, "id"))
 			case "response.output_item.added":
@@ -873,7 +873,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				sawTerminalResponseEvent = true
 				// pi assigns `event.response?.status` unconditionally, so an event
 				// without a response clears any earlier raw stop reason.
-				response := ev.JS["response"]
+				response := jsGet(ev.JS, "response")
 				output.RawStopReason = jsStringField(jsGet(response, "status"))
 				return responsesFailedMessage(response)
 			}
@@ -1508,35 +1508,21 @@ func orEmptyJSON(s string) string {
 	return s
 }
 
-// errNoPrimitiveValue is V8's TypeError for a template literal (or String())
-// meeting an object with its own toString member, which JSON cannot make
-// callable; pi's catch block surfaces its message.
-var errNoPrimitiveValue = errors.New("Cannot convert object to primitive value")
-
 // errorEventMessage is the error pi throws for an `error` event:
 // `Error Code ${event.code}: ${event.message}`. A template literal writes any
 // value — "undefined" for an absent member, "null", a number as JS formats it,
 // an array joined with ",", "[object Object]" — and throws V8's TypeError on
 // an object it cannot convert to a primitive, which pi's catch block surfaces.
-func errorEventMessage(event map[string]any) error {
-	code, ok := jsTemplate(jsLookup(event, "code"))
-	if !ok {
-		return errNoPrimitiveValue
+func errorEventMessage(event any) error {
+	code, err := jsToString(jsGet(event, "code"))
+	if err != nil {
+		return err
 	}
-	message, ok := jsTemplate(jsLookup(event, "message"))
-	if !ok {
-		return errNoPrimitiveValue
+	message, err := jsToString(jsGet(event, "message"))
+	if err != nil {
+		return err
 	}
 	return errors.New("Error Code " + code + ": " + message)
-}
-
-// jsTemplate is what `${value}` writes for a member read off a parsed event,
-// given as jsLookup returns it. ok is false where the conversion throws.
-func jsTemplate(value any, present bool) (string, bool) {
-	if !present {
-		return "undefined", true
-	}
-	return jstext.ToString(value)
 }
 
 // responsesFailedMessage is the error pi throws for a response.failed event:
@@ -1546,33 +1532,33 @@ func jsTemplate(value any, present bool) (string, bool) {
 //	  : "Unknown error (no error details in response)"
 //
 // over event.response's error and incomplete_details, with JS truthiness and
-// template-literal writing throughout (jstext.ToString): a response or an
-// error that is not an object reads its members as undefined, and a member no
+// template-literal writing throughout (jsToString): a response or an error
+// that is not an object reads its members as undefined, and a member no
 // template literal can write throws V8's TypeError, which pi's catch block
 // surfaces.
 func responsesFailedMessage(response any) error {
 	errorValue, details := jsGet(response, "error"), jsGet(response, "incomplete_details")
-	orDefault := func(value any, fallback string) (string, bool) {
-		if !jstext.Truthy(value) {
-			return fallback, true
+	orDefault := func(value any, fallback string) (string, error) {
+		if !jsTruthy(value) {
+			return fallback, nil
 		}
-		return jstext.ToString(value)
+		return jsToString(value)
 	}
-	if jstext.Truthy(errorValue) {
-		code, ok := orDefault(jsGet(errorValue, "code"), "unknown")
-		if !ok {
-			return errNoPrimitiveValue
+	if jsTruthy(errorValue) {
+		code, err := orDefault(jsGet(errorValue, "code"), "unknown")
+		if err != nil {
+			return err
 		}
-		message, ok := orDefault(jsGet(errorValue, "message"), "no message")
-		if !ok {
-			return errNoPrimitiveValue
+		message, err := orDefault(jsGet(errorValue, "message"), "no message")
+		if err != nil {
+			return err
 		}
 		return errors.New(code + ": " + message)
 	}
-	if reason := jsGet(details, "reason"); jstext.Truthy(reason) {
-		text, ok := jstext.ToString(reason)
-		if !ok {
-			return errNoPrimitiveValue
+	if reason := jsGet(details, "reason"); jsTruthy(reason) {
+		text, err := jsToString(reason)
+		if err != nil {
+			return err
 		}
 		return errors.New("incomplete: " + text)
 	}
@@ -1583,15 +1569,15 @@ func responsesFailedMessage(response any) error {
 // `!status` is a stop, a string maps as mapResponsesStatus does, and any
 // other value matches no case and throws `Unhandled stop reason: ${status}`.
 func mapResponsesStatusValue(status any, incompleteReason string) (ai.StopReason, string, error) {
-	if !jstext.Truthy(status) {
+	if !jsTruthy(status) {
 		return ai.StopStop, "", nil
 	}
 	if text, isString := status.(string); isString {
 		return mapResponsesStatus(text, incompleteReason)
 	}
-	text, ok := jstext.ToString(status)
-	if !ok {
-		return ai.StopStop, "", errNoPrimitiveValue
+	text, err := jsToString(status)
+	if err != nil {
+		return ai.StopStop, "", err
 	}
 	return ai.StopStop, "", errors.New("Unhandled stop reason: " + text)
 }
@@ -1616,14 +1602,15 @@ type responsesEvent struct {
 	Part        *responsesContentPart `json:"part"`
 	Item        *responsesItem        `json:"item"`
 	RawItem     json.RawMessage       `json:"-"`
-	// JS is the event as JSON.parse made it (jstext.Parse's shapes). The
-	// handlers for the events that end the stream — response.created's id,
-	// response.completed/incomplete/failed and error — read it with JS
-	// semantics, as pi does: exact keys, and a member of any type read as
-	// whatever it holds, so no member can make the port drop the event. The
-	// typed fields above stay encoding/json's (case-insensitive keys, and a
-	// mistyped member drops the event); only the other events use them.
-	JS map[string]any `json:"-"`
+	// JS is the event as JSON.parse made it (ai.DecodeOrderedValue's
+	// shapes). The handlers for the events that end the stream —
+	// response.created's id, response.completed/incomplete/failed and error —
+	// read it with jsvalue.go's JS semantics, as pi does: exact keys, and a
+	// member of any type read as whatever it holds, so no member can make the
+	// port drop the event. The typed fields above stay encoding/json's
+	// (case-insensitive keys, and a mistyped member drops the event); only
+	// the other events use them.
+	JS any `json:"-"`
 }
 
 type responsesItem struct {
@@ -1644,30 +1631,14 @@ type responsesItem struct {
 	Content          []responsesContentPart `json:"content"`
 }
 
-// jsLookup is `value?.[key]` on a value jstext.Parse returned, with whether
-// the member is there: present is false where JS reads undefined — value is
-// not an object, or holds no such key — and true for a member that is null.
-func jsLookup(value any, key string) (member any, present bool) {
-	object, _ := value.(map[string]any)
-	member, present = object[key]
-	return member, present
-}
-
-// jsGet is jsLookup's member alone, for the reads that treat undefined and
-// null alike.
-func jsGet(value any, key string) any {
-	member, _ := jsLookup(value, key)
-	return member
-}
-
-// jsReadError is V8's TypeError for reading key off a value that is null
-// (present) or undefined, which pi's catch block surfaces as the message.
-func jsReadError(present bool, key string) error {
-	of := "undefined"
-	if present {
-		of = "null"
+// jsReadError is V8's TypeError for reading key off of, a value that is null
+// or undefined, which pi's catch block surfaces as the message.
+func jsReadError(of any, key string) error {
+	name := "undefined"
+	if of == nil {
+		name = "null"
 	}
-	return fmt.Errorf("Cannot read properties of %s (reading '%s')", of, key)
+	return fmt.Errorf("Cannot read properties of %s (reading '%s')", name, key)
 }
 
 // jsStringField is a value pi assigns to one of the message's string fields
@@ -1675,25 +1646,21 @@ func jsReadError(present bool, key string) error {
 // undefined as "", and anything else — which pi stores as the value itself —
 // as String() writes it ("" where String() would throw).
 func jsStringField(value any) string {
-	if value == nil {
+	if value == nil || value == jsUndefined {
 		return ""
 	}
-	text, _ := jstext.ToString(value)
+	text, _ := jsToString(value)
 	return text
 }
 
 // jsTokenCount is a usage member as pi's `member || 0` and its arithmetic read
-// it, as ai.Usage holds it: a JSON number counts as its value, truncated to an
+// it, as ai.Usage holds it: a number counts as its value, truncated to an
 // integer. Any other value counts 0 — where pi coerces a numeric string, which
 // no provider sends.
 func jsTokenCount(value any) int {
-	n, ok := value.(json.Number)
-	if !ok {
-		return 0
-	}
-	f := jstext.Number(n)
+	f, ok := value.(float64)
 	switch {
-	case math.IsNaN(f):
+	case !ok, math.IsNaN(f):
 		return 0
 	case f >= math.MaxInt:
 		return math.MaxInt
@@ -1709,36 +1676,36 @@ func jsTokenCount(value any) int {
 // so an event the loop ignores or fails on is observed too; then it is handed
 // to handle.
 func iterateOpenAISSE2(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(responsesEvent) error) error {
-	return iterateOpenAIStream(body, ctx, func(item []byte) error {
-		if err := observeOpenAIStreamItem(onEvent, item); err != nil {
-			return err
+	return iterateOpenAIStream(body, ctx, func(item openaiStreamItem) error {
+		if onEvent != nil {
+			if err := onEvent(item.value); err != nil {
+				return err
+			}
 		}
 		// The SDK yields `data: null` as null, and pi's processResponsesStream
 		// reads event.type off every event it iterates, so that read throws and
 		// the stream fails with V8's TypeError text (openai-responses-shared.ts).
 		// A scalar or an array reads as undefined and matches no branch.
-		if isJSONNull(item) {
-			return jsReadError(true, "type")
+		if item.value == nil {
+			return jsReadError(nil, "type")
 		}
-		value, _ := jstext.Parse(item) // item passed JSON.parse's acceptance
-		js, isObject := value.(map[string]any)
-		if !isObject {
+		if _, isObject := item.value.(ai.OrderedObject); !isObject {
 			return nil
 		}
-		ev := responsesEvent{JS: js}
-		ev.Type, _ = js["type"].(string)
+		ev := responsesEvent{JS: item.value}
+		ev.Type, _ = jsGet(item.value, "type").(string)
 		switch ev.Type {
 		case "response.created", "response.completed", "response.incomplete", "response.failed", "error":
 			return handle(ev) // these read ev.JS alone
 		}
-		if json.Unmarshal(item, &ev) != nil {
+		if json.Unmarshal(item.text, &ev) != nil {
 			return nil
 		}
 		// Capture the raw item for reasoning-signature round-tripping.
 		var probe struct {
 			Item json.RawMessage `json:"item"`
 		}
-		if json.Unmarshal(item, &probe) == nil {
+		if json.Unmarshal(item.text, &probe) == nil {
 			ev.RawItem = probe.Item
 		}
 		return handle(ev)

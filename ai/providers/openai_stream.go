@@ -187,8 +187,18 @@ func scanOpenAISSELines(data []byte, atEOF bool) (advance int, token []byte, err
 	return 0, nil, nil
 }
 
+// openaiStreamItem is one item the SDK's Stream yields.
+type openaiStreamItem struct {
+	// value is what JSON.parse made of the item, in ai.DecodeOrderedValue's
+	// shapes: the value pi's loops read, with jsvalue.go's JavaScript
+	// semantics, and the value OnProviderStreamEvent receives.
+	value any
+	// text is the item's JSON text.
+	text []byte
+}
+
 // iterateOpenAIStream is the SDK's Stream.fromSSEResponse iterator over
-// readOpenAISSE: it hands yield the JSON text of each item the SDK yields.
+// readOpenAISSE: it hands yield each item the SDK yields, decoded once.
 //
 //   - An event whose data starts with "[DONE]" ends the stream, and every
 //     event after it is ignored. The body is still read to its end, so a read
@@ -200,7 +210,7 @@ func scanOpenAISSELines(data []byte, atEOF bool) (advance int, token []byte, err
 //   - An event named "thread.*" is yielded as {"event": name, "data": value}.
 //   - Any other event whose value has a truthy `error` member throws the SDK's
 //     APIError, as *openaiStreamChunkError, instead of being yielded.
-func iterateOpenAIStream(body io.Reader, ctx context.Context, yield func(item []byte) error) error {
+func iterateOpenAIStream(body io.Reader, ctx context.Context, yield func(openaiStreamItem) error) error {
 	done := false
 	return readOpenAISSE(body, ctx, func(sse openaiSSEEvent) error {
 		if done {
@@ -210,53 +220,41 @@ func iterateOpenAIStream(body io.Reader, ctx context.Context, yield func(item []
 			done = true
 			return nil
 		}
-		item, err := openaiStreamJSON(sse.data)
+		text := []byte(sse.data)
+		value, err := openaiStreamJSON(text)
 		if err != nil {
 			return err
 		}
 		if strings.HasPrefix(sse.event, "thread.") {
 			name, _ := json.Marshal(sse.event)
-			item = bytes.Join([][]byte{[]byte(`{"event":`), name, []byte(`,"data":`), item, []byte(`}`)}, nil)
-		} else if value, ok := openaiStreamErrorMember(item); ok {
-			return &openaiStreamChunkError{value: value}
+			return yield(openaiStreamItem{
+				value: ai.OrderedObject{{Key: "event", Value: sse.event}, {Key: "data", Value: value}},
+				text:  bytes.Join([][]byte{[]byte(`{"event":`), name, []byte(`,"data":`), text, []byte(`}`)}, nil),
+			})
 		}
-		return yield(item)
+		if errorValue := jsGet(value, "error"); jsTruthy(errorValue) {
+			return newOpenAIStreamChunkError(text, errorValue)
+		}
+		return yield(openaiStreamItem{value: value, text: text})
 	})
 }
 
-// observeOpenAIStreamItem hands onEvent, when set, the item as pi's
-// onProviderStreamEvent receives it: the value JSON.parse made of it
-// (ai.DecodeOrderedValue), so an object arrives as an ai.OrderedObject in its
-// JS key order, null, scalars and arrays arrive too, and a number past
-// float64's range is ±Inf. Its error fails the stream.
-func observeOpenAIStreamItem(onEvent func(any) error, item []byte) error {
-	if onEvent == nil {
-		return nil
-	}
-	data, err := ai.DecodeOrderedValue(item)
-	if err != nil {
-		// Unreachable: the item passed JSON.parse's acceptance test.
-		return fmt.Errorf("decoding a provider stream event pi's JSON.parse accepted: %w; this is a port bug, report it with the event", err)
-	}
-	return onEvent(data)
-}
-
-// openaiStreamJSON is the SDK's `JSON.parse(sse.data)`: the data when
-// JSON.parse accepts it, else the SyntaxError JSON.parse throws.
+// openaiStreamJSON is the SDK's `JSON.parse(sse.data)`: the value JSON.parse
+// returns (ai.DecodeOrderedValue), else the SyntaxError it throws.
 //
 // Past encoding/json's nesting limit the port cannot read an event whichever
 // way JSON.parse goes, so such data fails with the port's own error rather
-// than V8's message: jstext.JSONSyntaxError recurses once per level, and a
-// line of the 16 MiB the reader allows would overflow the goroutine stack.
-func openaiStreamJSON(data string) ([]byte, error) {
-	b := []byte(data)
-	if json.Valid(b) {
-		return b, nil
-	}
-	if jsonNestsDeeperThan(b, maxJSONNesting) {
+// than V8's message: the decoder and jstext.JSONSyntaxError recurse once per
+// level, and a line of the 16 MiB the reader allows would overflow the
+// goroutine stack.
+func openaiStreamJSON(data []byte) (any, error) {
+	if jsonNestsDeeperThan(data, maxJSONNesting) {
 		return nil, fmt.Errorf("an openai stream event nests deeper than %d levels, which the port's JSON decoder cannot read; this is a port limit, report it with the event", maxJSONNesting)
 	}
-	if err := jstext.JSONSyntaxError(data); err != nil {
+	if value, err := ai.DecodeOrderedValue(data); err == nil {
+		return value, nil
+	}
+	if err := jstext.JSONSyntaxError(string(data)); err != nil {
 		return nil, err
 	}
 	return nil, errors.New("encoding/json rejects an openai stream event that JSON.parse accepts; this is a port bug, report it with the event")
@@ -290,33 +288,30 @@ func jsonNestsDeeperThan(b []byte, limit int) bool {
 	return false
 }
 
-// openaiStreamErrorMember is the SDK's `data && data.error` test: the item's
-// `error` member when the item is an object whose `error` is truthy. The key
-// match is exact, as a JS property read is.
-func openaiStreamErrorMember(item []byte) (json.RawMessage, bool) {
-	var top map[string]json.RawMessage
-	if json.Unmarshal(item, &top) != nil {
-		return nil, false
-	}
-	value, has := top["error"]
-	return value, has && rawTruthy(value)
-}
-
 // openaiStreamChunkError is the openai SDK's APIError for a stream item
 // carrying an error: `new APIError(undefined, data.error, undefined, headers)`.
 // Its message is makeMessage's with no status, which is also what pi's
 // adapters surface, since formatProviderError adds nothing without one.
 type openaiStreamChunkError struct {
+	message string
 	// value is data.error, the APIError's `error`.
-	value json.RawMessage
+	value any
 }
 
-func (e *openaiStreamChunkError) Error() string {
-	if msg := openaiSDKErrorDetail(e.value); msg != "" {
-		return msg
+// newOpenAIStreamChunkError is the APIError for the item text whose `error`
+// member, value, is truthy. makeMessage reads the member's JSON text through
+// openaiSDKErrorDetail, which the error-body path shares.
+func newOpenAIStreamChunkError(text []byte, value any) *openaiStreamChunkError {
+	var members map[string]json.RawMessage
+	_ = json.Unmarshal(text, &members) // an object JSON.parse accepted; the last "error" wins, as in JS
+	message := openaiSDKErrorDetail(members["error"])
+	if message == "" {
+		message = "(no status code or body)"
 	}
-	return "(no status code or body)"
+	return &openaiStreamChunkError{message: message, value: value}
 }
+
+func (e *openaiStreamChunkError) Error() string { return e.message }
 
 // metadataRaw is pi's `(error as any)?.error?.metadata?.raw` for this error,
 // as the String() the completions catch block appends: ok is false unless raw
@@ -324,17 +319,12 @@ func (e *openaiStreamChunkError) Error() string {
 // member) is not appended; pi's catch block itself throws there and never
 // ends the stream, which the port does not reproduce.
 func (e *openaiStreamChunkError) metadataRaw() (string, bool) {
-	value, err := jstext.Parse(e.value)
-	if err != nil {
+	raw := jsGet(jsGet(e.value, "metadata"), "raw")
+	if !jsTruthy(raw) {
 		return "", false
 	}
-	errObj, _ := value.(map[string]any)
-	metadata, _ := errObj["metadata"].(map[string]any)
-	raw := metadata["raw"]
-	if !jstext.Truthy(raw) {
-		return "", false
-	}
-	return jstext.ToString(raw)
+	text, err := jsToString(raw)
+	return text, err == nil
 }
 
 // withOpenAIErrorMetadataRaw is the openai-completions catch block's append:

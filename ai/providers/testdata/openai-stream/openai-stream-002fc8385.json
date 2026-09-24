@@ -1787,6 +1787,177 @@
 				"rawStopReason": ""
 			}
 		},
+		"error-chunk-raw-zero": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"error\":{\"message\":\"boom\",\"metadata\":{\"raw\":0}}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "boom",
+					"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":0}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":0}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":0}}"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "boom",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": ""
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "boom",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
+		"error-chunk-raw-false": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"error\":{\"message\":\"boom\",\"metadata\":{\"raw\":false}}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "boom",
+					"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":false}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":false}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":false}}"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "boom",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": ""
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "boom",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
+		"error-chunk-raw-null": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"error\":{\"message\":\"boom\",\"metadata\":{\"raw\":null}}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "boom",
+					"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":null}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":null}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":null}}"
+					}
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "boom",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": ""
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "boom",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": ""
+			}
+		},
 		"error-chunk-metadata-string": {
 			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"error\":{\"message\":\"boom\",\"metadata\":\"raw\"}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
 			"sdk": {

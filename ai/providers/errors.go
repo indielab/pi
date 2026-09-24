@@ -248,19 +248,3 @@ func anthropicSDKErrorMessage(status int, body []byte) string {
 	msg = truncateErrorText(msg, maxProviderErrorBodyChars)
 	return fmt.Sprintf("%d %s", status, msg)
 }
-
-// jsTruthy reports JavaScript truthiness for a JSON-decoded value.
-func jsTruthy(v any) bool {
-	switch t := v.(type) {
-	case nil:
-		return false
-	case bool:
-		return t
-	case string:
-		return t != ""
-	case float64:
-		return t != 0
-	default:
-		return true // objects and arrays are always truthy
-	}
-}

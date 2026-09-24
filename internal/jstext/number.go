@@ -3,6 +3,7 @@ package jstext
 import (
 	"encoding/json"
 	"math"
+	"math/big"
 	"strconv"
 	"strings"
 )
@@ -119,4 +120,153 @@ func ToString(v any) (s string, ok bool) {
 		}
 	}
 	return "[object Object]", true
+}
+
+// StringToNumber is ECMA-262 StringToNumber, the Number(string) coercion: the
+// string trimmed of JavaScript whitespace, "" as 0, an unsigned 0x/0b/0o
+// integer of any size, "Infinity" with an optional sign, or a signed decimal
+// literal; anything else is NaN. Verified against node: " 12 "→12,
+// "0x10"→16, "0b101"→5, "0o17"→15, "+5"→5, "1e3"→1000, ".5"→0.5, "5."→5,
+// ""→0, "1e1000"→Infinity, and NaN for "1_0", "0x1p4", "-0x10", "12abc" and
+// "NaN".
+func StringToNumber(value string) float64 {
+	s := Trim(value) // StringToNumber trims StrWhiteSpaceChar, trim's set
+	if s == "" {
+		return 0 // Number("") === 0
+	}
+
+	// Non-decimal integer literals: 0x/0X, 0b/0B, 0o/0O. No sign allowed.
+	if len(s) > 2 && s[0] == '0' {
+		var base int
+		switch s[1] {
+		case 'x', 'X':
+			base = 16
+		case 'b', 'B':
+			base = 2
+		case 'o', 'O':
+			base = 8
+		}
+		if base != 0 {
+			digits := s[2:]
+			if !validDigits(digits, base) {
+				return math.NaN()
+			}
+			// Arbitrary precision (JS allows >2^64), rounded to float64.
+			n, ok := new(big.Int).SetString(digits, base)
+			if !ok {
+				return math.NaN()
+			}
+			f, _ := new(big.Float).SetInt(n).Float64()
+			return f
+		}
+	}
+
+	sign := 1.0
+	rest := s
+	switch s[0] {
+	case '+':
+		rest = s[1:]
+	case '-':
+		sign, rest = -1, s[1:]
+	}
+	if rest == "Infinity" {
+		return sign * math.Inf(1)
+	}
+	// Validate StrUnsignedDecimalLiteral strictly before ParseFloat: Go's
+	// ParseFloat accepts JS-invalid forms ("1_0", "0x1p4", "inf", "nan").
+	if !isStrUnsignedDecimalLiteral(rest) {
+		return math.NaN()
+	}
+	f, err := strconv.ParseFloat(rest, 64)
+	if err != nil {
+		if ne, isNum := err.(*strconv.NumError); isNum && ne.Err == strconv.ErrRange {
+			// Overflow → ±Inf (like JS "1e1000" → Infinity); underflow → ~0.
+			return sign * f
+		}
+		return math.NaN()
+	}
+	return sign * f
+}
+
+func validDigits(s string, base int) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		var d byte
+		switch {
+		case c >= '0' && c <= '9':
+			d = c - '0'
+		case c >= 'a' && c <= 'z':
+			d = c - 'a' + 10
+		case c >= 'A' && c <= 'Z':
+			d = c - 'A' + 10
+		default:
+			return false
+		}
+		if int(d) >= base {
+			return false
+		}
+	}
+	return true
+}
+
+// isStrUnsignedDecimalLiteral validates ECMA-262 StrUnsignedDecimalLiteral:
+// digits [. digits] [ExponentPart] | . digits [ExponentPart].
+func isStrUnsignedDecimalLiteral(s string) bool {
+	i := 0
+	digits := func() int {
+		start := i
+		for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+			i++
+		}
+		return i - start
+	}
+	intLen := digits()
+	fracLen := 0
+	if i < len(s) && s[i] == '.' {
+		i++
+		fracLen = digits()
+	}
+	if intLen == 0 && fracLen == 0 {
+		return false
+	}
+	if i < len(s) && (s[i] == 'e' || s[i] == 'E') {
+		i++
+		if i < len(s) && (s[i] == '+' || s[i] == '-') {
+			i++
+		}
+		if digits() == 0 {
+			return false
+		}
+	}
+	return i == len(s)
+}
+
+// ToNumber is JavaScript's Number(value) for a value Parse returns: null 0,
+// booleans 0 and 1, a number as Number reads it, a string by StringToNumber,
+// and an array or object by the number its string form spells (ToPrimitive
+// with hint number tries valueOf first, which never yields a primitive for
+// JSON, then toString). ok is false where that string form throws — see
+// ToString.
+func ToNumber(v any) (n float64, ok bool) {
+	switch x := v.(type) {
+	case nil:
+		return 0, true
+	case bool:
+		if x {
+			return 1, true
+		}
+		return 0, true
+	case json.Number:
+		return Number(x), true
+	case string:
+		return StringToNumber(x), true
+	}
+	s, ok := ToString(v)
+	if !ok {
+		return math.NaN(), false
+	}
+	return StringToNumber(s), true
 }

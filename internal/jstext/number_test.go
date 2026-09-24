@@ -83,3 +83,51 @@ func TestToStringMatchesNode(t *testing.T) {
 		}
 	}
 }
+
+// String(Number(JSON.parse(text))) in node, for each text; throws marks the
+// texts whose Number() throws "TypeError: Cannot convert object to primitive
+// value".
+func TestToNumberMatchesNode(t *testing.T) {
+	for _, tc := range []struct {
+		text, want string
+		throws     bool
+	}{
+		{text: "null", want: "0"},
+		{text: "true", want: "1"},
+		{text: "false", want: "0"},
+		{text: "5", want: "5"},
+		{text: "1e400", want: "Infinity"},
+		{text: `"500"`, want: "500"},
+		{text: `" 500 "`, want: "500"},
+		{text: `"0x1F"`, want: "31"},
+		{text: `""`, want: "0"},
+		{text: `"abc"`, want: "NaN"},
+		{text: `"1e3"`, want: "1000"},
+		{text: `"Infinity"`, want: "Infinity"},
+		{text: "[]", want: "0"},
+		{text: "[429]", want: "429"},
+		{text: `["429"]`, want: "429"},
+		{text: "[[429]]", want: "429"},
+		{text: "[1,2]", want: "NaN"},
+		{text: "[null]", want: "0"},
+		{text: "{}", want: "NaN"},
+		{text: `{"valueOf":1}`, want: "NaN"},
+		{text: `{"code":500}`, want: "NaN"},
+		{text: `{"toString":1}`, throws: true},
+		{text: `[{"toString":1}]`, throws: true},
+	} {
+		v, err := Parse([]byte(tc.text))
+		if err != nil {
+			t.Fatalf("Parse(%s): %v", tc.text, err)
+		}
+		n, ok := ToNumber(v)
+		switch {
+		case tc.throws && ok:
+			t.Errorf("ToNumber(%s) = %v, but node's Number() throws", tc.text, n)
+		case !tc.throws && !ok:
+			t.Errorf("ToNumber(%s) has no number, node says %s", tc.text, tc.want)
+		case ok && NumberToString(n) != tc.want:
+			t.Errorf("ToNumber(%s) = %s, node says %s", tc.text, NumberToString(n), tc.want)
+		}
+	}
+}
