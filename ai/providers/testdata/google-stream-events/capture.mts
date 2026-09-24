@@ -29,6 +29,9 @@
 // into one write. `readBoundariesMatter` records whether the two differ; the
 // recorded outcome is the separate-read one.
 //
+// The callback records what it receives, and throws or aborts the request's
+// signal on the call a scenario names (`throwOn`, `abortOn`).
+//
 // Recorded per scenario: `events`, JSON.stringify of each value the callback
 // received (key order is part of the contract); `sameModel`, whether every
 // call got the model object pi was called with; `stream`, the assistant
@@ -81,6 +84,8 @@ type Scenario = {
 	// Throw Error(throwMessage) from the callback on its Nth call (0-based).
 	throwOn?: number;
 	throwMessage?: string;
+	// Abort the request's signal from the callback on its Nth call (0-based).
+	abortOn?: number;
 };
 
 const sse = (...events: unknown[]) => events.map((e) => `data: ${typeof e === "string" ? e : JSON.stringify(e)}\n\n`).join("");
@@ -287,6 +292,14 @@ const scenarios: Scenario[] = [
 		segments: [sse(text("t", { finishReason: "SOMETHING_NEW" }))],
 	},
 	{
+		name: "an abort from the callback fails the next read",
+		note: "the chunk in hand is still normalized; the next read rejects with undici's AbortError",
+		framing: "close",
+		headers: eventStream,
+		segments: [sse(text("in hand")), sse(stop)],
+		abortOn: 0,
+	},
+	{
 		name: "the callback's error fails the stream",
 		framing: "close",
 		headers: eventStream,
@@ -393,12 +406,16 @@ async function run(s: Scenario, segments: string[]) {
 	const events: string[] = [];
 	let sameModel = true;
 	let calls = 0;
+	const controller = new AbortController();
 	const out = stream(model, context, {
 		apiKey: "test-api-key",
+		signal: controller.signal,
 		onProviderStreamEvent: async (data: unknown, eventModel: unknown) => {
+			const call = calls++;
 			if (eventModel !== model) sameModel = false;
-			if (s.throwOn === calls++) throw new Error(s.throwMessage);
+			if (s.throwOn === call) throw new Error(s.throwMessage);
 			events.push(JSON.stringify(data));
+			if (s.abortOn === call) controller.abort();
 		},
 	});
 	const streamed: Array<{ type: string; delta?: string }> = [];
@@ -427,10 +444,11 @@ const results = [];
 for (const s of scenarios) {
 	const pi = await run(s, s.segments);
 	const joined = await run(s, [s.segments.join("")]);
-	const { throwOn, throwMessage, ...scenario } = s;
+	const { throwOn, throwMessage, abortOn, ...scenario } = s;
 	results.push({
 		...scenario,
 		...(throwOn !== undefined && { throwOn, throwMessage }),
+		...(abortOn !== undefined && { abortOn }),
 		readBoundariesMatter: JSON.stringify(pi) !== JSON.stringify(joined),
 		pi,
 	});

@@ -1154,6 +1154,54 @@
 			}
 		},
 		{
+			"name": "an abort from the callback fails the next read",
+			"note": "the chunk in hand is still normalized; the next read rejects with undici's AbortError",
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"in hand\"}],\"role\":\"model\"}}]}\n\n",
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"abortOn": 0,
+			"readBoundariesMatter": true,
+			"pi": {
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"in hand\"}],\"role\":\"model\"}}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "in hand"
+					},
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "aborted",
+				"errorMessage": "This operation was aborted",
+				"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0
+				}
+			}
+		},
+		{
 			"name": "the callback's error fails the stream",
 			"framing": "close",
 			"headers": [

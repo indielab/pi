@@ -11,6 +11,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"slices"
 	"strings"
@@ -40,6 +41,8 @@ type googleStreamScenario struct {
 	Segments     []string `json:"segments"`
 	ThrowOn      *int     `json:"throwOn"`
 	ThrowMessage string   `json:"throwMessage"`
+	// AbortOn is the callback call that aborts the request's signal.
+	AbortOn *int `json:"abortOn"`
 	// ReadBoundariesMatter reports whether pi's outcome changes when the
 	// segments arrive as one read.
 	ReadBoundariesMatter bool `json:"readBoundariesMatter"`
@@ -114,27 +117,33 @@ func googleScenarioResponse(t *testing.T, sc googleStreamScenario) *http.Respons
 
 // TestGoogleSSEReadChunksMatchPi replays, read by read, every captured
 // scenario whose outcome the SDK's read loop decides — a bare JSON read that
-// throws ApiError, or a tail left unconsumed — and requires pi's error and
-// the chunks pi observed before it. The SDK checks each network read, before
-// buffering it, for a bare JSON {"error":{...}} payload
-// (processStreamResponse), so where the reads fall is part of the outcome.
+// throws ApiError, a tail left unconsumed, a read rejected by an abort — and
+// requires pi's error and the chunks pi observed before it. The SDK checks
+// each network read, before buffering it, for a bare JSON {"error":{...}}
+// payload (processStreamResponse), so where the reads fall is part of the
+// outcome.
 func TestGoogleSSEReadChunksMatchPi(t *testing.T) {
 	ran := 0
 	for _, sc := range loadGoogleStreamCapture(t).Scenarios {
 		msg := sc.Pi.ErrorMessage
-		if sc.Divergence != "" || !(strings.HasPrefix(msg, "got status: ") || msg == "Incomplete JSON segment at the end") {
+		if sc.Divergence != "" || !(strings.HasPrefix(msg, "got status: ") || msg == "Incomplete JSON segment at the end" || msg == "This operation was aborted") {
 			continue
 		}
 		ran++
 		t.Run(sc.Name, func(t *testing.T) {
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
 			headers := googleSDKResponseHeaders(googleScenarioResponse(t, sc))
 			events := []string{}
 			observe := func(data any) error {
 				text, err := jstext.Stringify(googleGenerateContentResponse(data, headers))
+				if sc.AbortOn != nil && *sc.AbortOn == len(events) {
+					cancel()
+				}
 				events = append(events, text)
 				return err
 			}
-			err := iterateGoogleSSE(&readsReader{reads: append([]string(nil), sc.Segments...)}, context.Background(),
+			err := iterateGoogleSSE(&readsReader{reads: append([]string(nil), sc.Segments...)}, ctx,
 				observe, func(googleChunk) error { return nil })
 			if err == nil || err.Error() != msg {
 				t.Fatalf("error %v\npi:   %s", err, msg)
@@ -328,5 +337,75 @@ func TestGoogleStreamEventsMatchPi(t *testing.T) {
 	}
 	if ran < 15 {
 		t.Fatalf("only %d replayable scenarios in the capture", ran)
+	}
+}
+
+// TestGoogleAbortFromCallbackFailsNextRead is the captured scenario "an abort
+// from the callback fails the next read" end to end: the server sends the
+// first segment and holds the connection, the callback cancels, the chunk in
+// hand is still normalized, and the stream ends aborted with undici's
+// AbortError message and no text_end.
+func TestGoogleAbortFromCallbackFailsNextRead(t *testing.T) {
+	sc := googleCaptureScenario(t, "an abort from the callback fails the next read")
+	release := make(chan struct{})
+	defer close(release)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		io.WriteString(w, sc.Segments[0])
+		w.(http.Flusher).Flush()
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	model := googleCaptureModel(server.URL)
+	req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+	stream := StreamGoogle(ctx, model, req, &GoogleOptions{StreamOptions: ai.StreamOptions{
+		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key"},
+		OnProviderStreamEvent: func(any, *ai.Model) error {
+			cancel()
+			return nil
+		},
+	}})
+	var got, want []string
+	for ev := range stream.Events() {
+		got = append(got, string(ev.Type))
+	}
+	for _, ev := range sc.Pi.Stream {
+		want = append(want, ev.Type)
+	}
+	final := stream.Result()
+	if !slices.Equal(got, want) {
+		t.Errorf("stream %v, pi %v", got, want)
+	}
+	if string(final.StopReason) != sc.Pi.StopReason || final.ErrorMessage != sc.Pi.ErrorMessage {
+		t.Errorf("stop %s %q, pi %s %q", final.StopReason, final.ErrorMessage, sc.Pi.StopReason, sc.Pi.ErrorMessage)
+	}
+	if content, _ := jstext.Stringify(final.Content); content != sc.Pi.Content {
+		t.Errorf("content %s, pi %s", content, sc.Pi.Content)
+	}
+}
+
+// abortingReader cancels its context from inside Read and fails the read, the
+// way an http body read does when its request's context ends mid-read.
+type abortingReader struct{ cancel context.CancelFunc }
+
+func (r abortingReader) Read([]byte) (int, error) {
+	r.cancel()
+	return 0, context.Canceled
+}
+
+// TestGoogleAbortDuringReadIsAbortError: a read that fails because the
+// request was aborted surfaces as undici's AbortError, not the transport's
+// error text.
+func TestGoogleAbortDuringReadIsAbortError(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	err := iterateGoogleSSE(abortingReader{cancel}, ctx, nil, func(googleChunk) error { return nil })
+	if err == nil || err.Error() != "This operation was aborted" {
+		t.Fatalf("error %v, want This operation was aborted", err)
 	}
 }

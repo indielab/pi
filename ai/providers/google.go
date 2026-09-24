@@ -1243,9 +1243,18 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(data any
 		return handle(chunk)
 	}
 
-	for {
+	// An abort rejects the SDK's pending body read with undici's AbortError.
+	// (pi's own "Request was aborted" is thrown only once the stream has run
+	// out, which StreamGoogle checks after the loop.)
+	abortErr := func() error {
 		if ctx != nil && ctx.Err() != nil {
-			return fmt.Errorf("Request was aborted")
+			return errors.New("This operation was aborted")
+		}
+		return nil
+	}
+	for {
+		if err := abortErr(); err != nil {
+			return err
 		}
 		n, readErr := body.Read(buf)
 		if n > 0 {
@@ -1276,6 +1285,9 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(data any
 			break
 		}
 		if readErr != nil {
+			if err := abortErr(); err != nil {
+				return err
+			}
 			return readErr
 		}
 	}
