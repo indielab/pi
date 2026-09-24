@@ -1279,12 +1279,13 @@ data: {"type":"message_stop"}
 `
 	}
 
+	// vitest's toBeCloseTo(x, 10): |got - want| < 10^-10 / 2.
 	closeEnough := func(got, want float64) bool {
 		d := got - want
 		if d < 0 {
 			d = -d
 		}
-		return d < 1e-9
+		return d < 5e-11
 	}
 
 	t.Run("prices the 1h portion at 2x input and the rest at the 5m rate", func(t *testing.T) {
@@ -1303,6 +1304,35 @@ data: {"type":"message_stop"}
 		// 600k * 6.25/Mtok + 400k * (5*2)/Mtok = 3.75 + 4.0 = 7.75
 		if !closeEnough(final.Usage.Cost.CacheWrite, 7.75) {
 			t.Fatalf("cost.cacheWrite = %v, want 7.75", final.Usage.Cost.CacheWrite)
+		}
+	})
+
+	// Regression for #9210 (upstream 667fc3dd3): Vercel AI Gateway sends cache
+	// usage in message_delta, not message_start.
+	t.Run("prices 1h cache writes reported only in message_delta", func(t *testing.T) {
+		m := ai.GetModel("vercel-ai-gateway", "anthropic/claude-haiku-4.5")
+		if m == nil {
+			t.Fatal("vercel-ai-gateway/anthropic/claude-haiku-4.5 missing from catalog")
+		}
+		sse := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_test","usage":{"input_tokens":0,"output_tokens":0}}}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":3,"output_tokens":4,"cache_creation_input_tokens":6535,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":6535}}}
+
+event: message_stop
+data: {"type":"message_stop"}
+`
+		final := streamAnthropicSSE(t, m, sse)
+		if final.Usage.CacheWrite != 6535 {
+			t.Fatalf("cacheWrite = %d, want 6535", final.Usage.CacheWrite)
+		}
+		if final.Usage.CacheWrite1h != 6535 {
+			t.Fatalf("cacheWrite1h = %d, want 6535", final.Usage.CacheWrite1h)
+		}
+		want := float64(6535) * m.Cost.Input * 2 / 1_000_000
+		if !closeEnough(final.Usage.Cost.CacheWrite, want) {
+			t.Fatalf("cost.cacheWrite = %v, want %v", final.Usage.Cost.CacheWrite, want)
 		}
 	})
 

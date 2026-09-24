@@ -463,8 +463,11 @@ type Usage struct {
 	Output     int `json:"output"`
 	CacheRead  int `json:"cacheRead"`
 	CacheWrite int `json:"cacheWrite"`
-	// CacheWrite1h is the subset of CacheWrite written with 1h retention. Only
-	// Anthropic reports this split (pi: Usage.cacheWrite1h, optional).
+	// CacheWrite1h is the part of the cache write done with 1h retention, meant
+	// as a subset of CacheWrite. Only Anthropic reports this split (pi:
+	// Usage.cacheWrite1h, optional). It is not guaranteed to be at most
+	// CacheWrite: a message_delta may carry the breakdown without the total
+	// (upstream 667fc3dd3), and the two are then taken as reported.
 	CacheWrite1h int `json:"cacheWrite1h,omitempty"`
 	// Reasoning is the count of reasoning/thinking tokens, when the provider
 	// reports them. This is a subset of Output: Output already includes these

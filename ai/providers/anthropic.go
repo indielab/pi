@@ -2084,6 +2084,16 @@ func applyUsage(usage *ai.Usage, u anthropicUsage, isStart bool) {
 		if u.CacheCreationInputTokens != nil {
 			usage.CacheWrite = *u.CacheCreationInputTokens
 		}
+		// Vercel AI Gateway reports the TTL breakdown in message_delta too, where
+		// the SDK types it only on message_start (upstream 667fc3dd3, #9210).
+		// pi's `cacheCreation?.ephemeral_1h_input_tokens != null`: an explicit 0
+		// is assigned, while an absent or null cache_creation or key leaves the
+		// earlier value. It does not depend on cache_creation_input_tokens, so a
+		// delta can report more 1h tokens than CacheWrite holds, and CalculateCost
+		// prices that exactly as pi does.
+		if u.CacheCreation != nil && u.CacheCreation.Ephemeral1hInputTokens != nil {
+			usage.CacheWrite1h = *u.CacheCreation.Ephemeral1hInputTokens
+		}
 	}
 	// Anthropic reports reasoning tokens as a subset of output tokens, in
 	// output_tokens_details.thinking_tokens on the final message_delta usage. pi
