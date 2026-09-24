@@ -36,6 +36,9 @@ type anthropicSSEEventsRow struct {
 		ErrorMessage string          `json:"errorMessage"`
 		ResponseID   string          `json:"responseId"`
 		Content      json.RawMessage `json:"content"`
+		// Usage is decoded into ai.Usage, so pi's explicit zero and the port's
+		// omitted zero (omitempty) compare equal, as the in-memory values are.
+		Usage ai.Usage `json:"usage"`
 	} `json:"message"`
 }
 
@@ -118,6 +121,9 @@ func assertAnthropicMessageMatchesPi(t *testing.T, row anthropicSSEEventsRow, fi
 	}
 	if !reflect.DeepEqual(g, w) {
 		t.Errorf("content = %s, want %s", gotContent, want.Content)
+	}
+	if final.Usage != want.Usage {
+		t.Errorf("usage = %+v, want %+v", final.Usage, want.Usage)
 	}
 }
 
@@ -235,8 +241,11 @@ func (o *providerStreamObserver) assertModel(model *ai.Model) {
 // is JSON but not an object are observed and then passed over; a `null` event
 // fails with pi's TypeError text before the observer sees it; a parse failure
 // carries pi's data= and raw= suffix — raw being every line of the event,
-// comments included, joined with a literal backslash-n; and an observer error
-// fails the stream with its message, aborted when the request was cancelled.
+// comments included, joined with a literal backslash-n; an event's members are
+// read as pi reads them, so a mistyped one never fails the event while a
+// property of a missing sub-object fails it with V8's TypeError; and an
+// observer error fails the stream with its message, aborted when the request
+// was cancelled.
 func TestAnthropicSSEEventsMatchPi(t *testing.T) {
 	for _, row := range loadAnthropicSSEEventsCapture(t) {
 		t.Run(row.Name, func(t *testing.T) {
@@ -252,6 +261,14 @@ func TestAnthropicSSEEventsMatchPi(t *testing.T) {
 				t.Errorf("pushed = %q, want %q", pushed, row.Pushed)
 			}
 			assertAnthropicMessageMatchesPi(t, row, final)
+			// pi's pushed events and message do not depend on observing.
+			if row.ThrowAt == nil {
+				_, pushed, final := streamAnthropicSSEEvents(t, context.Background(), row.SSE, ai.StreamOptions{})
+				if !reflect.DeepEqual(pushed, row.Pushed) {
+					t.Errorf("without an observer: pushed = %q, want %q", pushed, row.Pushed)
+				}
+				assertAnthropicMessageMatchesPi(t, row, final)
+			}
 		})
 	}
 }

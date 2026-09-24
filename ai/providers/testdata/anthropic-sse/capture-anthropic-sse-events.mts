@@ -23,7 +23,8 @@
 //   observed   each value onProviderStreamEvent received, as JSON.stringify
 //              text, so key order is part of the expectation;
 //   pushed     the type of every event the stream pushed (null: no type);
-//   message    stopReason, errorMessage, responseId and content of the result;
+//   message    stopReason, errorMessage, responseId, content and usage of the
+//              result;
 //   v8Cause    true when errorMessage embeds a V8 JSON.parse message, which
 //              the port does not reproduce: only the text around it is pi's.
 // A row may make the observer throw ("observer boom") on the observed event at
@@ -217,6 +218,98 @@ const cases: Case[] = [
 		name: "observedTextIsNotHTMLEscaped",
 		sse: frames(messageStart, blockStart, textDelta(`<b>&x> ${LS} ${PS} end`), blockStop, messageDelta, messageStop),
 	},
+	// pi reads each event's properties as whatever they hold, so a member of an
+	// unexpected type never fails the event: a count written 5.0 is 5, a
+	// cache_creation that is not an object has no 1h count, and a string index
+	// is strictly unequal to every block's number, so its delta finds no block.
+	// Every event is observed.
+	{
+		name: "mistypedMembersAreRead",
+		sse: frames(
+			messageStart,
+			blockStart,
+			ev("content_block_delta", '{"type":"content_block_delta","index":"0","delta":{"type":"text_delta","text":"x"}}'),
+			textDelta("Hello"),
+			blockStop,
+			ev(
+				"message_delta",
+				'{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":12,"output_tokens":5.0,"cache_creation":5}}',
+			),
+			messageStop,
+		),
+	},
+	// A delta's text is appended as String() writes it: a missing text as
+	// "undefined", 5 as "5". A tool block starts with the arguments its input
+	// holds, which the stream's failure then leaves in the message.
+	{
+		name: "deltasAppendStringForms",
+		sse: frames(
+			messageStart,
+			blockStart,
+			ev("content_block_delta", '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta"}}'),
+			ev("content_block_delta", '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":5}}'),
+			blockStop,
+			ev(
+				"content_block_start",
+				'{"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"t1","name":"read","input":{"path":"a","2":"b"}}}',
+			),
+			ev("content_block_delta", "null"),
+		),
+	},
+	// content_block_stop deletes the block's index, so a later event with no
+	// index (undefined === undefined) finds that block: its partialJson, also
+	// deleted, is appended to as "undefined", which parses to no arguments.
+	{
+		name: "deletedIndexMatchesAnEventWithoutOne",
+		sse: frames(
+			messageStart,
+			ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"t1","name":"read"}}'),
+			ev("content_block_delta", '{"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\\"a\\":1}"}}'),
+			ev("content_block_stop", '{"type":"content_block_stop","index":0}'),
+			ev("content_block_delta", '{"type":"content_block_delta","delta":{"type":"input_json_delta","partial_json":""}}'),
+			ev("content_block_stop", '{"type":"content_block_stop"}'),
+			messageDelta,
+			messageStop,
+		),
+	},
+	// message_start reads no reasoning breakdown; message_delta's does.
+	{
+		name: "reasoningOnlyFromMessageDelta",
+		sse: frames(
+			ev(
+				"message_start",
+				'{"type":"message_start","message":{"id":"msg_test","usage":{"input_tokens":12,"output_tokens":1,"output_tokens_details":{"thinking_tokens":1}}}}',
+			),
+			blockStart,
+			textDelta("Hello"),
+			blockStop,
+			ev("message_delta", '{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":5}}'),
+			messageStop,
+		),
+	},
+	// A stop reason that is not a string matches no case: its String() is in
+	// the error. A refusal's explanation reaches the error through
+	// `new Error(...)`, which takes String() of it too.
+	{ name: "nonStringStopReasonIsUnhandled", sse: frames(messageStart, ev("message_delta", '{"type":"message_delta","delta":{"stop_reason":5}}')) },
+	{
+		name: "refusalExplanationIsStringified",
+		sse: frames(
+			messageStart,
+			ev("message_delta", '{"type":"message_delta","delta":{"stop_reason":"refusal","stop_details":{"explanation":[1,2]}}}'),
+			messageStop,
+		),
+	},
+	// A property read from a missing or null sub-object throws V8's TypeError,
+	// in pi's read order: message.id before message.usage.input_tokens, the
+	// block's type, the delta's type or stop_reason. What was assigned before
+	// the throw (the response id) stays in the message.
+	{ name: "messageStartWithoutUsageFails", sse: frames(ev("message_start", '{"type":"message_start","message":{"id":"m1"}}')) },
+	{ name: "messageStartNullMessageFails", sse: frames(ev("message_start", '{"type":"message_start","message":null}')) },
+	{ name: "messageStartWithoutMessageFails", sse: frames(ev("message_start", '{"type":"message_start"}')) },
+	{ name: "messageStartScalarMessageFailsOnUsage", sse: frames(ev("message_start", '{"type":"message_start","message":5}')) },
+	{ name: "contentBlockStartWithoutBlockFails", sse: frames(messageStart, ev("content_block_start", '{"type":"content_block_start","index":0}')) },
+	{ name: "contentBlockDeltaWithoutDeltaFails", sse: frames(messageStart, blockStart, ev("content_block_delta", '{"type":"content_block_delta","index":0}')) },
+	{ name: "messageDeltaWithoutDeltaFails", sse: frames(messageStart, ev("message_delta", '{"type":"message_delta","usage":{"output_tokens":5}}')) },
 	// A throwing observer fails the stream with its message (pi awaits the
 	// callback inside the adapter's try): on the first event...
 	{ name: "observerThrowsOnFirstEvent", sse: frames(...minimal), throwAt: 0 },
@@ -265,6 +358,7 @@ for (const c of cases) {
 			errorMessage: message.errorMessage ?? null,
 			responseId: message.responseId ?? null,
 			content: message.content,
+			usage: message.usage,
 		},
 	});
 }

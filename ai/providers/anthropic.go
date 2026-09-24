@@ -682,14 +682,34 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
 
-		builders := []*blockBuilder{}
-		indexMap := map[int]int{}
+		// blocks is pi's `output.content` as its handler holds it: each block's
+		// builder with the two fields pi deletes on content_block_stop — the
+		// event's raw `index` a block is found by (nil once deleted: undefined)
+		// and whether its partialJson is gone.
+		type anthropicBlock struct {
+			*blockBuilder
+			index          json.RawMessage
+			partialDeleted bool
+		}
+		var blocks []*anthropicBlock
 		materialize := func() {
-			content := make(ai.ContentList, len(builders))
-			for i, b := range builders {
+			content := make(ai.ContentList, len(blocks))
+			for i, b := range blocks {
 				content[i] = b.toContent()
 			}
 			output.Content = content
+		}
+		// findBlock is pi's `blocks.findIndex((b) => b.index === event.index)`:
+		// the first block whose index is strictly equal, so a string "0" finds
+		// no block started at 0, and an event with no index finds the first
+		// block whose index is gone.
+		findBlock := func(index json.RawMessage) int {
+			for i, b := range blocks {
+				if rawStrictEqual(b.index, index) {
+					return i
+				}
+			}
+			return -1
 		}
 
 		// The model to cost against, recomputed on every message_start and read by
@@ -709,123 +729,165 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 			onEvent = func(data any) error { return opts.OnProviderStreamEvent(data, model) }
 		}
 
+		// Each branch reads the event's properties as pi's handler does (see
+		// jsread.go): a member of an unexpected type is whatever value it is,
+		// and a property read from a missing or null sub-object throws V8's
+		// TypeError in pi's read order, failing the stream.
 		sawStart, sawStop := false, false
-		err = iterateAnthropicSSE(resp.Body, ctx, onEvent, func(ev anthropicStreamEvent) error {
-			switch ev.Type {
+		err = iterateAnthropicSSE(resp.Body, ctx, onEvent, func(ev rawObject) error {
+			typ, _ := rawString(ev["type"])
+			switch typ {
 			case "message_start":
 				sawStart = true
-				if ev.Message != nil {
-					output.ResponseID = ev.Message.ID
-					if list, ok := parseAnthropicInputTransformations(ev.Message.InputTransformations); ok {
-						inputTransformations = list
-					}
-					// pi 1283afd0d: the message keeps the REQUESTED id, so signed
-					// thinking still replays as this model's own when a relay relabels
-					// the model; a served model that differs (a server-side refusal
-					// fallback, or a relabel) is recorded beside it. A message_start
-					// naming the requested id leaves an earlier one standing, while
-					// one with no model clears it (pi assigns undefined).
-					served := ev.Message.Model
-					if served != model.ID {
-						output.ResponseModel = served
-					}
-					// pi ed867e909: a response a server-side refusal fallback served is
-					// billed at the SERVING model's rates, taken from the catalog.
-					// Assigned unconditionally, as pi's ternary is, so a second
-					// message_start reprices rather than sticking to the first.
-					usageModel = anthropicUsageModel(model, served)
-					applyUsage(&output.Usage, ev.Message.Usage, true)
-					ai.CalculateCost(usageModel, &output.Usage)
+				msg, err := rawRead(ev["message"], "id")
+				if err != nil {
+					return err
 				}
+				output.ResponseID, _ = rawString(msg["id"])
+				if list, ok := parseAnthropicInputTransformations(msg["input_transformations"]); ok {
+					inputTransformations = list
+				}
+				// pi 1283afd0d: the message keeps the REQUESTED id, so signed
+				// thinking still replays as this model's own when a relay relabels
+				// the model; a served model that differs (a server-side refusal
+				// fallback, or a relabel) is recorded beside it. A message_start
+				// naming the requested id leaves an earlier one standing, while
+				// one with no model clears it (pi assigns undefined).
+				served, _ := rawString(msg["model"])
+				if served != model.ID {
+					output.ResponseModel = served
+				}
+				// pi ed867e909: a response a server-side refusal fallback served is
+				// billed at the SERVING model's rates, taken from the catalog.
+				// Assigned unconditionally, as pi's ternary is, so a second
+				// message_start reprices rather than sticking to the first.
+				usageModel = anthropicUsageModel(model, served)
+				usage, err := rawRead(msg["usage"], "input_tokens")
+				if err != nil {
+					return err
+				}
+				applyMessageStartUsage(&output.Usage, usage)
+				ai.CalculateCost(usageModel, &output.Usage)
 			case "content_block_start":
-				if ev.ContentBlock == nil {
-					return nil
+				block, err := rawRead(ev["content_block"], "type")
+				if err != nil {
+					return err
 				}
+				blockType, _ := rawString(block["type"])
 				// A `fallback` block announces that Anthropic served the request
 				// with a different model. Before any content it is informational
 				// and skipped; after content it means the swap happened mid-output,
 				// which pi refuses rather than stitching two models' text together
 				// (upstream 4e69b0c28).
-				if ev.ContentBlock.Type == "fallback" {
-					if len(builders) > 0 {
+				if blockType == "fallback" {
+					if len(blocks) > 0 {
 						return fmt.Errorf("Anthropic performed an unsupported mid-output model fallback")
 					}
 					return nil
 				}
 				var b *blockBuilder
 				var evType ai.EventType
-				switch ev.ContentBlock.Type {
+				switch blockType {
 				case "text":
 					// The start event may already carry the block's first chunk; seed
 					// the builder with it so the deltas that follow append to it.
 					b = &blockBuilder{kind: "text"}
-					b.text.WriteString(ev.ContentBlock.Text)
+					b.text.WriteString(anthropicSeedText(block["text"]))
 					evType = ai.EventTextStart
 				case "thinking":
-					b = &blockBuilder{kind: "thinking", thinkingSig: ev.ContentBlock.Signature}
-					b.thinking.WriteString(ev.ContentBlock.Thinking)
+					b = &blockBuilder{kind: "thinking", thinkingSig: anthropicSeedText(block["signature"])}
+					b.thinking.WriteString(anthropicSeedText(block["thinking"]))
 					evType = ai.EventThinkingStart
 				case "redacted_thinking":
-					b = &blockBuilder{kind: "thinking", redacted: true, thinkingSig: ev.ContentBlock.Data}
+					data, _ := rawString(block["data"])
+					b = &blockBuilder{kind: "thinking", redacted: true, thinkingSig: data}
 					b.thinking.WriteString("[Reasoning redacted]")
 					evType = ai.EventThinkingStart
 				case "tool_use":
-					name := ev.ContentBlock.Name
+					id, _ := rawString(block["id"])
+					name, _ := rawString(block["name"])
 					if oauth {
 						name = fromClaudeCodeName(name, currentTools)
 					}
-					b = &blockBuilder{kind: "toolCall", toolID: ev.ContentBlock.ID, toolName: name, args: map[string]any{}}
+					// pi: `arguments: event.content_block.input ?? {}` — the
+					// arguments stand until the first input_json_delta (or the
+					// block's stop) re-parses them from the streamed JSON.
+					b = &blockBuilder{kind: "toolCall", toolID: id, toolName: name, args: map[string]any{}}
+					if jsonValueKind(block["input"]) == '{' {
+						if args, order, err := ai.DecodeOrderedObject(block["input"]); err == nil {
+							b.args, b.argsOrder = args, order
+						}
+					}
 					evType = ai.EventToolCallStart
 				default:
 					return nil
 				}
-				builders = append(builders, b)
-				indexMap[ev.Index] = len(builders) - 1
+				blocks = append(blocks, &anthropicBlock{blockBuilder: b, index: ev["index"]})
 				materialize()
-				stream.Push(ai.AssistantMessageEvent{Type: evType, ContentIndex: len(builders) - 1, Partial: output.Clone()})
+				stream.Push(ai.AssistantMessageEvent{Type: evType, ContentIndex: len(blocks) - 1, Partial: output.Clone()})
 			case "content_block_delta":
-				idx, ok := indexMap[ev.Index]
-				if !ok || ev.Delta == nil {
+				delta, err := rawRead(ev["delta"], "type")
+				if err != nil {
+					return err
+				}
+				// pi only applies a delta when the indexed block has the matching
+				// type; mismatches are dropped silently.
+				deltaType, _ := rawString(delta["type"])
+				var kind, member string
+				switch deltaType {
+				case "text_delta":
+					kind, member = "text", "text"
+				case "thinking_delta":
+					kind, member = "thinking", "thinking"
+				case "input_json_delta":
+					kind, member = "toolCall", "partial_json"
+				case "signature_delta":
+					kind, member = "thinking", "signature"
+				default:
 					return nil
 				}
-				b := builders[idx]
-				// pi only applies a delta when the indexed block has the matching
-				// type (anthropic.ts:586-627); mismatches are dropped silently.
-				switch ev.Delta.Type {
+				idx := findBlock(ev["index"])
+				if idx < 0 || blocks[idx].kind != kind {
+					return nil
+				}
+				b := blocks[idx]
+				// pi's `+=` appends String() of the member ("undefined" when it is
+				// absent); the pushed event carries the member itself.
+				piece, err := rawToString(delta[member])
+				if err != nil {
+					return err
+				}
+				pushed, _ := rawString(delta[member])
+				switch deltaType {
 				case "text_delta":
-					if b.kind != "text" {
-						return nil
-					}
-					b.text.WriteString(ev.Delta.Text)
+					b.text.WriteString(piece)
 					materialize()
-					stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: idx, Delta: ev.Delta.Text, Partial: output.Clone()})
+					stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: idx, Delta: pushed, Partial: output.Clone()})
 				case "thinking_delta":
-					if b.kind != "thinking" {
-						return nil
-					}
-					b.thinking.WriteString(ev.Delta.Thinking)
+					b.thinking.WriteString(piece)
 					materialize()
-					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: idx, Delta: ev.Delta.Thinking, Partial: output.Clone()})
+					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: idx, Delta: pushed, Partial: output.Clone()})
 				case "input_json_delta":
-					if b.kind != "toolCall" {
-						return nil
+					if b.partialDeleted {
+						// A block's stop deleted partialJson: `undefined += piece`.
+						b.partialJSON.Reset()
+						b.partialJSON.WriteString("undefined")
+						b.partialDeleted = false
 					}
-					b.partialJSON.WriteString(ev.Delta.PartialJSON)
+					b.partialJSON.WriteString(piece)
 					b.args, b.argsOrder = parseStreamingJSON(b.partialJSON.String())
 					materialize()
-					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: ev.Delta.PartialJSON, Partial: output.Clone()})
+					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: pushed, Partial: output.Clone()})
 				case "signature_delta":
-					if b.kind != "thinking" {
-						return nil
-					}
-					b.thinkingSig += ev.Delta.Signature
+					b.thinkingSig += piece
 				}
 			case "content_block_stop":
-				idx, ok := indexMap[ev.Index]
-				if !ok {
+				idx := findBlock(ev["index"])
+				if idx < 0 {
 					return nil
 				}
-				b := builders[idx]
+				b := blocks[idx]
+				b.index = nil // pi: delete block.index
 				materialize()
 				switch b.kind {
 				case "text":
@@ -833,18 +895,27 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 				case "thinking":
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: idx, Content: b.thinking.String(), Partial: output.Clone()})
 				case "toolCall":
-					b.args, b.argsOrder = parseStreamingJSON(b.partialJSON.String())
+					partial := b.partialJSON.String()
+					if b.partialDeleted {
+						partial = "" // parseStreamingJson(undefined) is {}
+					}
+					b.args, b.argsOrder = parseStreamingJSON(partial)
+					b.partialDeleted = true // pi: delete block.partialJson
 					materialize()
 					tc := b.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: idx, ToolCall: &tc, Partial: output.Clone()})
 				}
 			case "message_delta":
-				if list, ok := parseAnthropicInputTransformations(ev.InputTransformations); ok {
+				if list, ok := parseAnthropicInputTransformations(ev["input_transformations"]); ok {
 					inputTransformations = list
 				}
-				if ev.Delta != nil && ev.Delta.StopReason != "" {
-					output.RawStopReason = ev.Delta.StopReason
-					sr, errMsg, err := mapAnthropicStopReason(ev.Delta.StopReason, ev.Delta.StopDetails)
+				delta, err := rawRead(ev["delta"], "stop_reason")
+				if err != nil {
+					return err
+				}
+				if rawTruthy(delta["stop_reason"]) {
+					output.RawStopReason, _ = rawString(delta["stop_reason"])
+					sr, errMsg, err := mapAnthropicStopReason(delta["stop_reason"], delta["stop_details"])
 					if err != nil {
 						return err
 					}
@@ -853,10 +924,13 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 						output.ErrorMessage = errMsg
 					}
 				}
-				if ev.Usage != nil {
-					applyUsage(&output.Usage, *ev.Usage, false)
-					ai.CalculateCost(usageModel, &output.Usage)
+				// Only update usage fields if present (not null), preserving
+				// message_start's input_tokens when a proxy omits it here.
+				if rawTruthy(ev["usage"]) {
+					applyMessageDeltaUsage(&output.Usage, rawOptional(ev["usage"]))
 				}
+				output.Usage.TotalTokens = output.Usage.Input + output.Usage.Output + output.Usage.CacheRead + output.Usage.CacheWrite
+				ai.CalculateCost(usageModel, &output.Usage)
 			case "message_stop":
 				sawStop = true
 			}
@@ -1882,12 +1956,11 @@ func applyAnthropicHeaders(r *http.Request, model *ai.Model, opts *AnthropicOpti
 // mapAnthropicStopReason maps an Anthropic stop_reason to the unified
 // StopReason and, for a refusal, surfaces the stop_details explanation as an
 // error message (pi anthropic.ts mapStopReason returns {stopReason,
-// errorMessage?}).
-func mapAnthropicStopReason(reason string, stopDetails *struct {
-	Type        string `json:"type"`
-	Explanation string `json:"explanation"`
-}) (ai.StopReason, string, error) {
-	switch reason {
+// errorMessage?}). reason is the truthy value the event carries: pi's switch
+// matches strings only, and any other value is unhandled.
+func mapAnthropicStopReason(reason, stopDetails json.RawMessage) (ai.StopReason, string, error) {
+	name, _ := rawString(reason)
+	switch name {
 	case "end_turn":
 		return ai.StopStop, "", nil
 	case "max_tokens":
@@ -1895,87 +1968,34 @@ func mapAnthropicStopReason(reason string, stopDetails *struct {
 	case "tool_use":
 		return ai.StopToolUse, "", nil
 	case "refusal":
-		explanation := "The model refused to complete the request"
-		if stopDetails != nil && stopDetails.Explanation != "" {
-			explanation = stopDetails.Explanation
+		// pi: `stopDetails?.explanation || "The model refused..."`. The
+		// explanation reaches the stream's error through `new Error(...)`,
+		// which takes String() of it; one with no string form makes that
+		// throw V8's TypeError, whose text then is the error.
+		explanation := rawOptional(stopDetails)["explanation"]
+		if !rawTruthy(explanation) {
+			return ai.StopError, "The model refused to complete the request", nil
 		}
-		return ai.StopError, explanation, nil
+		text, err := rawToString(explanation)
+		if err != nil {
+			text = err.Error()
+		}
+		return ai.StopError, text, nil
 	case "pause_turn", "stop_sequence":
 		return ai.StopStop, "", nil
 	case "sensitive": // Content flagged by safety filters (not yet in SDK types)
 		return ai.StopError, providerStoppedPrefix + "sensitive", nil
 	default:
-		return "", "", fmt.Errorf("Unhandled stop reason: %s", reason)
+		// `Unhandled stop reason: ${reason}` — the template takes String().
+		text, err := rawToString(reason)
+		if err != nil {
+			return "", "", err
+		}
+		return "", "", fmt.Errorf("Unhandled stop reason: %s", text)
 	}
 }
 
 // ---- SSE parsing ----
-
-type anthropicUsage struct {
-	InputTokens              *int `json:"input_tokens"`
-	OutputTokens             *int `json:"output_tokens"`
-	CacheReadInputTokens     *int `json:"cache_read_input_tokens"`
-	CacheCreationInputTokens *int `json:"cache_creation_input_tokens"`
-	CacheCreation            *struct {
-		Ephemeral1hInputTokens *int `json:"ephemeral_1h_input_tokens"`
-	} `json:"cache_creation"`
-	// OutputTokensDetails carries the reasoning breakdown on the final
-	// message_delta usage. ThinkingTokens is a subset of OutputTokens. pi used to
-	// reach it through a narrow cast because the SDK's Usage type omitted the
-	// field; upstream 4e69b0c28 reads it directly now that the beta types carry
-	// it. The Go port always modelled it directly, so only the reason for doing
-	// so changed — the field is still applied only when present.
-	OutputTokensDetails *struct {
-		ThinkingTokens *int `json:"thinking_tokens"`
-	} `json:"output_tokens_details"`
-}
-
-type anthropicStreamEvent struct {
-	Type    string `json:"type"`
-	Index   int    `json:"index"`
-	Message *struct {
-		ID string `json:"id"`
-		// Model is the model the server reports serving. It differs from the
-		// requested one when a server-side refusal fallback fired or an
-		// Anthropic-compatible relay relabels the model. A differing value is
-		// recorded as the message's ResponseModel, never its Model (upstream
-		// 1283afd0d), and is what fallback pricing is looked up by.
-		Model string         `json:"model"`
-		Usage anthropicUsage `json:"usage"`
-		// InputTransformations lists what the server dropped or rewrote from the
-		// prompt. Held raw: pi guards it with Array.isArray, so a value of another
-		// shape must be ignored rather than fail the event.
-		InputTransformations json.RawMessage `json:"input_transformations"`
-	} `json:"message"`
-	ContentBlock *struct {
-		Type string `json:"type"`
-		// Text/Thinking/Signature can already carry content on content_block_start;
-		// later deltas append to it rather than replacing it.
-		Text      string          `json:"text"`
-		Thinking  string          `json:"thinking"`
-		Signature string          `json:"signature"`
-		ID        string          `json:"id"`
-		Name      string          `json:"name"`
-		Input     json.RawMessage `json:"input"`
-		Data      string          `json:"data"`
-	} `json:"content_block"`
-	Delta *struct {
-		Type        string `json:"type"`
-		Text        string `json:"text"`
-		Thinking    string `json:"thinking"`
-		PartialJSON string `json:"partial_json"`
-		Signature   string `json:"signature"`
-		StopReason  string `json:"stop_reason"`
-		StopDetails *struct {
-			Type        string `json:"type"`
-			Explanation string `json:"explanation"`
-		} `json:"stop_details"`
-	} `json:"delta"`
-	Usage *anthropicUsage `json:"usage"`
-	// InputTransformations is the message_delta restatement of the same list;
-	// it REPLACES what message_start reported. See the Message field above.
-	InputTransformations json.RawMessage `json:"input_transformations"`
-}
 
 var anthropicMessageEvents = map[string]bool{
 	"message_start": true, "message_delta": true, "message_stop": true,
@@ -2022,7 +2042,10 @@ func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error
 // anything but null, objects and other values alike — before it is handled
 // (pi's onProviderStreamEvent, upstream 002fc8385). It receives the parsed
 // value with objects as ai.OrderedObject, and its error ends the iteration.
-func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(anthropicStreamEvent) error) error {
+// handle gets an object event's members, read as pi reads the event (see
+// jsread.go), so no member of an unexpected type can fail the event before
+// pi's own reads would.
+func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(rawObject) error) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	scanner.Split(scanSSELines)
@@ -2077,9 +2100,9 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 		if kind != '{' {
 			return nil
 		}
-		var ev anthropicStreamEvent
-		if err := json.Unmarshal([]byte(text), &ev); err != nil {
-			return parseFailure(err)
+		ev, err := decodeRawObject([]byte(text))
+		if err != nil {
+			return parseFailure(err) // unreachable: text is valid JSON
 		}
 		return handle(ev)
 	}
@@ -2121,58 +2144,59 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 	return flush()
 }
 
-func applyUsage(usage *ai.Usage, u anthropicUsage, isStart bool) {
-	if isStart {
-		usage.Input = derefOr(u.InputTokens, 0)
-		usage.Output = derefOr(u.OutputTokens, 0)
-		usage.CacheRead = derefOr(u.CacheReadInputTokens, 0)
-		usage.CacheWrite = derefOr(u.CacheCreationInputTokens, 0)
-		// pi assigns `cache_creation?.ephemeral_1h_input_tokens || 0` on EVERY
-		// message_start, so a later start without a breakdown resets an earlier
-		// start's value rather than inheriting it.
-		usage.CacheWrite1h = 0
-		if u.CacheCreation != nil {
-			usage.CacheWrite1h = derefOr(u.CacheCreation.Ephemeral1hInputTokens, 0)
-		}
-	} else {
-		if u.InputTokens != nil {
-			usage.Input = *u.InputTokens
-		}
-		if u.OutputTokens != nil {
-			usage.Output = *u.OutputTokens
-		}
-		if u.CacheReadInputTokens != nil {
-			usage.CacheRead = *u.CacheReadInputTokens
-		}
-		if u.CacheCreationInputTokens != nil {
-			usage.CacheWrite = *u.CacheCreationInputTokens
-		}
-		// Vercel AI Gateway reports the TTL breakdown in message_delta too, where
-		// the SDK types it only on message_start (upstream 667fc3dd3, #9210).
-		// pi's `cacheCreation?.ephemeral_1h_input_tokens != null`: an explicit 0
-		// is assigned, while an absent or null cache_creation or key leaves the
-		// earlier value. It does not depend on cache_creation_input_tokens, so a
-		// delta can report more 1h tokens than CacheWrite holds, and CalculateCost
-		// prices that exactly as pi does.
-		if u.CacheCreation != nil && u.CacheCreation.Ephemeral1hInputTokens != nil {
-			usage.CacheWrite1h = *u.CacheCreation.Ephemeral1hInputTokens
-		}
-	}
-	// Anthropic reports reasoning tokens as a subset of output tokens, in
-	// output_tokens_details.thinking_tokens on the final message_delta usage. pi
-	// only sets reasoning when the field is present; mirror that (don't overwrite
-	// with 0).
-	if u.OutputTokensDetails != nil && u.OutputTokensDetails.ThinkingTokens != nil {
-		usage.Reasoning = *u.OutputTokensDetails.ThinkingTokens
-	}
+// applyMessageStartUsage is message_start's usage reads: pi assigns each count
+// `|| 0` on EVERY message_start, the 1h cache write included, so a later start
+// without a breakdown resets an earlier start's value rather than inheriting
+// it. It reads no reasoning breakdown; only message_delta's usage carries one.
+// A count Go cannot hold (see rawCount) reads as 0.
+func applyMessageStartUsage(usage *ai.Usage, u rawObject) {
+	usage.Input, _ = rawCount(u["input_tokens"])
+	usage.Output, _ = rawCount(u["output_tokens"])
+	usage.CacheRead, _ = rawCount(u["cache_read_input_tokens"])
+	usage.CacheWrite, _ = rawCount(u["cache_creation_input_tokens"])
+	usage.CacheWrite1h, _ = rawCount(rawOptional(u["cache_creation"])["ephemeral_1h_input_tokens"])
 	usage.TotalTokens = usage.Input + usage.Output + usage.CacheRead + usage.CacheWrite
 }
 
-func derefOr(p *int, d int) int {
-	if p != nil {
-		return *p
+// applyMessageDeltaUsage is message_delta's usage reads: each count is
+// assigned only when it is `!= null`, so a proxy that omits one leaves
+// message_start's standing. A count Go cannot hold (see rawCount) is skipped
+// as an absent one is.
+func applyMessageDeltaUsage(usage *ai.Usage, u rawObject) {
+	assign := func(dst *int, raw json.RawMessage) {
+		if n, ok := rawCount(raw); ok {
+			*dst = n
+		}
 	}
-	return d
+	assign(&usage.Input, u["input_tokens"])
+	assign(&usage.Output, u["output_tokens"])
+	assign(&usage.CacheRead, u["cache_read_input_tokens"])
+	assign(&usage.CacheWrite, u["cache_creation_input_tokens"])
+	// Vercel AI Gateway reports the TTL breakdown in message_delta too, where
+	// the SDK types it only on message_start (upstream 667fc3dd3, #9210).
+	// pi's `cacheCreation?.ephemeral_1h_input_tokens != null`: an explicit 0
+	// is assigned, while an absent or null cache_creation or key — or a
+	// cache_creation that is not an object — leaves the earlier value. It does
+	// not depend on cache_creation_input_tokens, so a delta can report more 1h
+	// tokens than CacheWrite holds, and CalculateCost prices that exactly as pi
+	// does.
+	assign(&usage.CacheWrite1h, rawOptional(u["cache_creation"])["ephemeral_1h_input_tokens"])
+	// Anthropic reports reasoning tokens as a subset of output tokens, in
+	// output_tokens_details.thinking_tokens on the final message_delta usage;
+	// pi sets reasoning only when that is present (upstream 4e69b0c28).
+	assign(&usage.Reasoning, rawOptional(u["output_tokens_details"])["thinking_tokens"])
+}
+
+// anthropicSeedText is `value ?? ""` for a text pi then appends deltas to with
+// `+=`: "" for undefined or null, a string's text, and String() of any other
+// value, which is what the first `+=` makes of it (a value with no string
+// form, where that `+=` would throw, seeds nothing).
+func anthropicSeedText(raw json.RawMessage) string {
+	if rawNullish(raw) {
+		return ""
+	}
+	text, _ := rawToString(raw)
+	return text
 }
 
 // flattenHeaders is pi's headersToRecord(response.headers), the record every
