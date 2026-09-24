@@ -1531,13 +1531,23 @@ func googleTokenCount(v any) int {
 //     first, in ascending numeric order, and "__proto__" is never a key: the
 //     assignment hits Object.prototype's setter, which ignores a string.
 //
-// net/http rewrites a few headers undici keeps as sent, so they are put
-// back: Transfer-Encoding moves to resp.TransferEncoding; a Trailer header
-// moves to resp.Trailer, under canonical names; and on HTTP/1.1 a Connection
-// header carrying "close" is deleted, leaving resp.Close — which a
-// close-delimited body sets too, so only a body with a length or chunks tells
-// the header was there. (Content-Encoding and Content-Length survive: the
-// request names its own Accept-Encoding, so net/http never gunzips.)
+// net/http consumes a few headers undici keeps as sent, and keeps only what
+// they meant, so only that can be put back:
+//
+//   - Transfer-Encoding moves to resp.TransferEncoding, which says "chunked"
+//     in lowercase whatever case was sent;
+//   - a Trailer header moves to resp.Trailer, a map, so its names come back
+//     canonical and sorted, whatever their case, order or lines;
+//   - on HTTP/1.1 a Connection header holding a close token, in any case, is
+//     deleted whole, leaving resp.Close, which a close-delimited body sets
+//     too: a body with a length or chunks gets back a lone "close", whatever
+//     else the header held, and a close-delimited one gets nothing back;
+//   - equal repeated Content-Length lines are merged into one, where undici
+//     rejects the response ("fetch failed").
+//
+// Each loss is a tagged divergence in testdata/google-stream-events.
+// (Content-Encoding and Content-Length otherwise survive: the request names
+// its own Accept-Encoding, so net/http never gunzips.)
 func googleSDKResponseHeaders(resp *http.Response) ai.OrderedObject {
 	values := map[string][]string{}
 	for _, name := range slices.Sorted(maps.Keys(resp.Header)) {

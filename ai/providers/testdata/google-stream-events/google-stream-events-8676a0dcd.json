@@ -3792,6 +3792,251 @@
 			}
 		},
 		{
+			"name": "divergence: a connection header holding more than close",
+			"divergence": "net/http deletes a whole HTTP/1.1 Connection header once it holds a close token, in any case, keeping only resp.Close, so the port's record has the lone connection: close it can infer where pi's keeps the header as sent, keep-alive, Close",
+			"divergentFields": [
+				"events"
+			],
+			"framing": "chunked",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Connection",
+					"keep-alive, Close"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"connection\":\"keep-alive, Close\",\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "divergence: trailer names out of order",
+			"divergence": "net/http moves the Trailer header into Response.Trailer, a map, so the port's record lists the names sorted, X-A, X-B, where pi's keeps them as sent, X-B, X-A (their case and repeated lines are lost too)",
+			"divergentFields": [
+				"events"
+			],
+			"framing": "chunked",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Trailer",
+					"X-B, X-A"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"trailer\":\"X-B, X-A\",\"transfer-encoding\":\"chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "divergence: a transfer-encoding sent in another case",
+			"divergence": "net/http consumes Transfer-Encoding and keeps only that the body is chunked, so the port's record has transfer-encoding: chunked where pi's keeps the text sent, Chunked",
+			"divergentFields": [
+				"events"
+			],
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Transfer-Encoding",
+					"Chunked"
+				]
+			],
+			"segments": [
+				"62\r\ndata: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n\r\n0\r\n\r\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [
+					"{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"sdkHttpResponse\":{\"headers\":{\"content-type\":\"text/event-stream\",\"transfer-encoding\":\"Chunked\"}}}"
+				],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "start"
+					},
+					{
+						"type": "text_start"
+					},
+					{
+						"type": "text_delta",
+						"delta": "!"
+					},
+					{
+						"type": "text_end"
+					},
+					{
+						"type": "done"
+					}
+				],
+				"stopReason": "stop",
+				"content": "[{\"type\":\"text\",\"text\":\"!\"}]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
+			"name": "divergence: a repeated content-length",
+			"divergence": "undici rejects a response with two Content-Length lines, even equal ones, and pi fails with fetch failed; net/http merges equal ones into one and the port reads the body to done",
+			"divergentFields": [
+				"stream",
+				"events",
+				"stop",
+				"content"
+			],
+			"framing": "close",
+			"headers": [
+				[
+					"Content-Type",
+					"text/event-stream"
+				],
+				[
+					"Content-Length",
+					"98"
+				],
+				[
+					"Content-Length",
+					"98"
+				]
+			],
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}]}\n\n"
+			],
+			"readBoundariesMatter": false,
+			"pi": {
+				"acceptEncoding": "gzip, deflate",
+				"events": [],
+				"sameModel": true,
+				"stream": [
+					{
+						"type": "error"
+					}
+				],
+				"stopReason": "error",
+				"errorMessage": "fetch failed",
+				"content": "[]",
+				"usage": {
+					"input": 0,
+					"output": 0,
+					"cacheRead": 0,
+					"cacheWrite": 0,
+					"totalTokens": 0,
+					"cost": {
+						"input": 0,
+						"output": 0,
+						"cacheRead": 0,
+						"cacheWrite": 0,
+						"total": 0
+					}
+				}
+			}
+		},
+		{
 			"name": "divergence: a brotli body the caller asked for",
 			"divergence": "undici undoes br (and zstd); Go's standard library has no brotli or zstd decoder, so the port fails the stream where pi reads it",
 			"divergentFields": [
