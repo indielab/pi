@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"testing/iotest"
+	"time"
 
 	"github.com/sky-valley/pi/ai"
 	"github.com/sky-valley/pi/internal/jstext"
@@ -38,11 +39,22 @@ type openaiStreamThrown struct {
 	Error   string `json:"error"`
 }
 
+// openaiSDKReading is what the SDK's stream iterator yielded (each item
+// JSON.stringify'd) and what it threw.
+type openaiSDKReading struct {
+	Yields []string            `json:"yields"`
+	Threw  *openaiStreamThrown `json:"threw"`
+}
+
 type openaiStreamRow struct {
 	SSE string `json:"sse"`
 	SDK *struct {
-		Yields []string            `json:"yields"`
-		Threw  *openaiStreamThrown `json:"threw"`
+		openaiSDKReading
+		// Aborted and ReadFailed are the body read to its end and then
+		// failing: with an AbortError, as a cancelled request's read does, and
+		// with TypeError "terminated".
+		Aborted    openaiSDKReading `json:"aborted"`
+		ReadFailed openaiSDKReading `json:"readFailed"`
 	} `json:"sdk"`
 	Completions *openaiStreamOutcome `json:"completions"`
 	Responses   *openaiStreamOutcome `json:"responses"`
@@ -55,10 +67,14 @@ type openaiStreamCapture struct {
 	Completions map[string]openaiStreamRow `json:"completions"`
 	Responses   map[string]openaiStreamRow `json:"responses"`
 	Hooks       map[string]struct {
-		Adapter string              `json:"adapter"`
-		SSE     string              `json:"sse"`
-		Status  int                 `json:"status"`
-		Outcome openaiStreamOutcome `json:"outcome"`
+		Adapter string `json:"adapter"`
+		SSE     string `json:"sse"`
+		Status  int    `json:"status"`
+		// Hold keeps the connection open after the body; AbortOnEvent aborts
+		// the request as the observer sees that event (1-based, 0 never).
+		Hold         bool                `json:"hold"`
+		AbortOnEvent int                 `json:"abortOnEvent"`
+		Outcome      openaiStreamOutcome `json:"outcome"`
 	} `json:"hooks"`
 }
 
@@ -93,12 +109,17 @@ func openaiStreamModel(adapter, baseURL string) *ai.Model {
 	}
 }
 
-// openaiStreamHooks are capture.mts's Hooks: which of the stream's hooks fail.
+// openaiStreamHooks are capture.mts's Hooks: which of the stream's hooks fail,
+// and whether the server holds the connection open after the body.
 type openaiStreamHooks struct {
 	failOnResponse bool
 	// failOnEvent is "throw" (the provider stream event observer fails) or
 	// "abort-then-throw" (it cancels the request first).
 	failOnEvent string
+	// abortOnEvent cancels the request, without failing, as the observer sees
+	// that event (1-based).
+	abortOnEvent int
+	hold         bool
 }
 
 // runOpenAIStreamAdapter streams body, served with status, through the Go
@@ -113,6 +134,14 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 		}
 		w.WriteHeader(status)
 		_, _ = io.WriteString(w, body)
+		if hooks.hold {
+			w.(http.Flusher).Flush()
+			select {
+			case <-r.Context().Done():
+			case <-time.After(30 * time.Second):
+				t.Errorf("the client never gave up on the held connection")
+			}
+		}
 	}))
 	t.Cleanup(server.Close)
 	model := openaiStreamModel(adapter, server.URL+"/v1")
@@ -130,6 +159,9 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 		}
 		observed = append(observed, text)
 		sameModel = sameModel && eventModel == model
+		if hooks.abortOnEvent == len(observed) {
+			cancel()
+		}
 		if hooks.failOnEvent == "abort-then-throw" {
 			cancel()
 		}
@@ -219,7 +251,47 @@ func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
 		for loop, parse := range openaiStreamParsers {
 			for read, reader := range openaiStreamReads {
 				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
-					readOpenAIStreamLikeTheSDK(t, reader(row.SSE), parse, row)
+					readOpenAIStreamLikeTheSDK(t, nil, reader(row.SSE), parse, row.SDK.openaiSDKReading, nil)
+				})
+			}
+		}
+	}
+}
+
+// A cancelled request's failed body read ends the reading where the SDK's
+// does and without an error: the SDK's Stream swallows the AbortError, so pi's
+// adapter goes on to its post-loop checks. Everything read before it is still
+// dispatched — the SDK looks at the signal only through that read — except
+// what its iterSSEChunks held back past the last event separator and a line
+// its LineDecoder had not yet ended, which only the body's end flushes.
+func TestOpenAIStreamAbortedReadEndsLikeTheSDK(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	for name, row := range c.Dispatch {
+		for loop, parse := range openaiStreamParsers {
+			for read, reader := range openaiStreamReads {
+				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
+					body := io.MultiReader(reader(row.SSE), iotest.ErrReader(ctx.Err()))
+					readOpenAIStreamLikeTheSDK(t, ctx, body, parse, row.SDK.Aborted, nil)
+				})
+			}
+		}
+	}
+}
+
+// A body read that fails while the request is live fails the stream with the
+// read's error, after dispatching exactly what the SDK dispatches before its
+// read throws.
+func TestOpenAIStreamFailedReadLikeTheSDK(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	errTerminated := errors.New("terminated")
+	for name, row := range c.Dispatch {
+		for loop, parse := range openaiStreamParsers {
+			for read, reader := range openaiStreamReads {
+				t.Run(name+"/"+loop+"/"+read, func(t *testing.T) {
+					body := io.MultiReader(reader(row.SSE), iotest.ErrReader(errTerminated))
+					readOpenAIStreamLikeTheSDK(t, context.Background(), body, parse, row.SDK.ReadFailed, errTerminated)
 				})
 			}
 		}
@@ -227,11 +299,12 @@ func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
 }
 
 // readOpenAIStreamLikeTheSDK iterates body and compares the items and the
-// error with what the SDK made of the row's body.
-func readOpenAIStreamLikeTheSDK(t *testing.T, body io.Reader, parse func(string) ([]byte, bool), row openaiStreamRow) {
+// error with what the SDK made of it. readErr, when set, is the error the
+// body's read fails with, which stands for the SDK's TypeError "terminated".
+func readOpenAIStreamLikeTheSDK(t *testing.T, ctx context.Context, body io.Reader, parse func(string) ([]byte, bool), want openaiSDKReading, readErr error) {
 	t.Helper()
 	var got []string
-	err := iterateOpenAIStream(body, nil, parse, func(item []byte) error {
+	err := iterateOpenAIStream(body, ctx, parse, func(item []byte) error {
 		text, ok := jsStringify(item)
 		if !ok {
 			t.Fatalf("yielded item %q is not one JSON value", item)
@@ -239,13 +312,16 @@ func readOpenAIStreamLikeTheSDK(t *testing.T, body io.Reader, parse func(string)
 		got = append(got, text)
 		return nil
 	})
-	want := row.SDK
 	switch {
 	case want.Threw != nil && want.Threw.Name == "SyntaxError":
 		if len(got) < len(want.Yields) || !slices.Equal(got[:len(want.Yields)], want.Yields) {
 			t.Fatalf("items before the SDK's SyntaxError:\n got %q\nsdk %q", got, want.Yields)
 		}
 		return
+	case want.Threw != nil && readErr != nil && want.Threw.Name == "TypeError" && want.Threw.Message == readErr.Error():
+		if !errors.Is(err, readErr) {
+			t.Errorf("error = %v, want the failed read's %v", err, readErr)
+		}
 	case want.Threw != nil:
 		if err == nil || err.Error() != want.Threw.Message {
 			t.Errorf("error = %v, sdk threw %s %q", err, want.Threw.Name, want.Threw.Message)
@@ -273,6 +349,26 @@ func TestOpenAIStreamEndsLikePi(t *testing.T) {
 				compareOpenAIStreamEnding(t, runOpenAIStreamAdapter(t, adapter, http.StatusOK, row.SSE, openaiStreamHooks{}), *want)
 			})
 		}
+	}
+}
+
+// A request cancelled while the server holds the connection open ends like
+// pi's: the SDK's Stream swallows its body read's AbortError, so each adapter
+// runs its post-loop checks — completions finishes its blocks and fails
+// "Request was aborted"; responses fails first for a missing terminal event,
+// and with "Request was aborted" only once it saw one.
+func TestOpenAIStreamAbortLikePi(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	for _, name := range []string{"completions/abort-held", "completions/abort-held-after-finish", "responses/abort-held", "responses/abort-held-after-terminal"} {
+		t.Run(name, func(t *testing.T) {
+			row, ok := c.Hooks[name]
+			if !ok || !row.Hold || row.AbortOnEvent == 0 {
+				t.Fatalf("%s has no held, aborting hooks row %s; rerun capture.mts", openaiStreamCaptureFile, name)
+			}
+			got := runOpenAIStreamAdapter(t, row.Adapter, row.Status, row.SSE, openaiStreamHooks{hold: true, abortOnEvent: row.AbortOnEvent})
+			compareOpenAIStreamObserved(t, got, row.Outcome)
+			compareOpenAIStreamEnding(t, got, row.Outcome)
+		})
 	}
 }
 

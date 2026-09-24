@@ -859,15 +859,17 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			fail(err)
 			return
 		}
-		if ctx != nil && ctx.Err() != nil {
-			fail(fmt.Errorf("Request was aborted"))
-			return
-		}
 		// Upstream cd95c274: a stream that ended without any terminal response
-		// event must fail with this exact message. Checked after the abort guard
-		// so a cancelled context still surfaces "Request was aborted".
+		// event must fail with this exact message. pi checks it at the end of
+		// processResponsesStream, before its adapter's abort guard, so a request
+		// cancelled before any terminal event ends with this message (and the
+		// aborted stop reason fail derives from ctx), not "Request was aborted".
 		if !sawTerminalResponseEvent {
 			fail(fmt.Errorf("OpenAI Responses stream ended before a terminal response event"))
+			return
+		}
+		if ctx != nil && ctx.Err() != nil {
+			fail(fmt.Errorf("Request was aborted"))
 			return
 		}
 		// pi openai-responses.ts (upstream f9a49869): a stream that ended without

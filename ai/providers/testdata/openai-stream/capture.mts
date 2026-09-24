@@ -18,13 +18,16 @@
 //   dispatch  SSE bodies read three ways: `sdk` is what the SDK's stream
 //             iterator yields (each item JSON.stringify'd) and what it throws,
 //             through chat.completions.create and responses.create alike, and
-//             over the body delivered one byte per read (the script fails if
-//             any two differ); `completions` and `responses`
+//             over the body delivered whole and one byte per read (the script
+//             fails if any two differ) — and, the same two ways, over the body
+//             followed by an aborted read and by a failed one; `completions`
+//             and `responses`
 //             are pi's adapters over the same body: the provider stream events
 //             onProviderStreamEvent observed, and how the stream ended.
 //   completions / responses
 //             adapter-specific bodies, with the same record as above.
-//   hooks     the callback and onResponse failing, and a non-2xx response.
+//   hooks     the callback and onResponse failing, a non-2xx response, and
+//             a request aborted while the server holds the connection open.
 import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
@@ -48,8 +51,11 @@ const { Stream } = await import(pathToFileURL(path.join(openaiDir, "core/streami
 
 // ---- the loopback server ---------------------------------------------------
 
-type Reply = { status: number; contentType: string; body: string };
+// A held reply writes its body and keeps the connection open, so the stream
+// can end only through the client giving up on it.
+type Reply = { status: number; contentType: string; body: string; hold?: boolean };
 const replies = new Map<string, Reply>();
+const held = new Set<http.ServerResponse>();
 let nextRoute = 0;
 const server = http.createServer((req, res) => {
 	req.resume();
@@ -61,6 +67,11 @@ const server = http.createServer((req, res) => {
 			return;
 		}
 		res.writeHead(reply.status, { "content-type": reply.contentType });
+		if (reply.hold) {
+			res.write(reply.body);
+			held.add(res);
+			return;
+		}
 		res.end(reply.body);
 	});
 });
@@ -79,6 +90,11 @@ const sse = (body: string) => route({ status: 200, contentType: "text/event-stre
 
 type Thrown = { name: string; message: string; error?: string };
 type SDKReading = { yields: string[]; threw: Thrown | null };
+// A dispatch row's `sdk` also records the body read to its end and then
+// failing: `aborted` with an AbortError, as a cancelled request's body read
+// throws (the SDK's Stream swallows it and simply ends), and `readFailed` with
+// any other error (it propagates).
+type SDKReadings = SDKReading & { aborted: SDKReading; readFailed: SDKReading };
 
 function thrown(error: unknown): Thrown {
 	const e = error as { constructor?: { name?: string }; message?: string; error?: unknown };
@@ -98,16 +114,24 @@ async function sdkRead(body: string, open: (client: any) => Promise<AsyncIterabl
 	return { yields, threw: null };
 }
 
-// sdkReadBytewise is the SDK's Stream over the body delivered one byte per
-// read, so a line ending split across reads ("\r" | "\n") is measured rather
+// sdkReadStream is the SDK's Stream over the body delivered as a stream of
+// reads, whole or one byte per read, and ending cleanly or with a failed read
+// (end). A line ending split across reads ("\r" | "\n") is measured rather
 // than assumed to read like the whole body.
-async function sdkReadBytewise(body: string): Promise<SDKReading> {
+async function sdkReadStream(body: string, bytewise: boolean, end?: Error): Promise<SDKReading> {
 	const bytes = new TextEncoder().encode(body);
 	let at = 0;
 	const byteStream = new ReadableStream<Uint8Array>({
 		pull(controller) {
-			if (at < bytes.length) controller.enqueue(bytes.slice(at, ++at));
-			else controller.close();
+			if (at < bytes.length) {
+				const next = bytewise ? at + 1 : bytes.length;
+				controller.enqueue(bytes.slice(at, next));
+				at = next;
+			} else if (end) {
+				controller.error(end);
+			} else {
+				controller.close();
+			}
 		},
 	});
 	const yields: string[] = [];
@@ -121,9 +145,20 @@ async function sdkReadBytewise(body: string): Promise<SDKReading> {
 	return { yields, threw: null };
 }
 
+// sdkReadEndingIn reads the body whole and one byte per read, ending in end,
+// and fails unless the two agree.
+async function sdkReadEndingIn(body: string, end?: () => Error): Promise<SDKReading> {
+	const whole = await sdkReadStream(body, false, end?.());
+	const bytewise = await sdkReadStream(body, true, end?.());
+	if (JSON.stringify(whole) !== JSON.stringify(bytewise)) {
+		throw new Error(`the body read whole and one byte at a time differ:\n${JSON.stringify(whole)}\n${JSON.stringify(bytewise)}`);
+	}
+	return whole;
+}
+
 // The SDK logs an unparseable event before rethrowing; keep the capture quiet.
 const consoleError = console.error;
-async function sdkReading(body: string): Promise<SDKReading> {
+async function sdkReading(body: string): Promise<SDKReadings> {
 	console.error = () => {};
 	try {
 		const chat = await sdkRead(body, (c) => c.chat.completions.create({ model: "m", messages: [], stream: true }));
@@ -131,11 +166,15 @@ async function sdkReading(body: string): Promise<SDKReading> {
 		if (JSON.stringify(chat) !== JSON.stringify(resp)) {
 			throw new Error(`chat and responses streams read differently:\n${JSON.stringify(chat)}\n${JSON.stringify(resp)}`);
 		}
-		const bytewise = await sdkReadBytewise(body);
-		if (JSON.stringify(chat) !== JSON.stringify(bytewise)) {
-			throw new Error(`the body read whole and one byte at a time differ:\n${JSON.stringify(chat)}\n${JSON.stringify(bytewise)}`);
+		const streamed = await sdkReadEndingIn(body);
+		if (JSON.stringify(chat) !== JSON.stringify(streamed)) {
+			throw new Error(`the body served and streamed read differently:\n${JSON.stringify(chat)}\n${JSON.stringify(streamed)}`);
 		}
-		return chat;
+		return {
+			...chat,
+			aborted: await sdkReadEndingIn(body, () => new DOMException("This operation was aborted", "AbortError")),
+			readFailed: await sdkReadEndingIn(body, () => new TypeError("terminated")),
+		};
 	} finally {
 		console.error = consoleError;
 	}
@@ -180,6 +219,9 @@ type Outcome = {
 type Hooks = {
 	failOnEvent?: "throw" | "abort-then-throw";
 	failOnResponse?: boolean;
+	// abortOnEvent aborts the request, without throwing, as the observer sees
+	// that event (1-based).
+	abortOnEvent?: number;
 };
 
 async function piRun(api: any, baseModel: Record<string, unknown>, baseUrl: string, hooks: Hooks = {}): Promise<Outcome> {
@@ -195,6 +237,7 @@ async function piRun(api: any, baseModel: Record<string, unknown>, baseUrl: stri
 			onProviderStreamEvent: (data: unknown, eventModel: unknown) => {
 				observed.push(JSON.stringify(data));
 				sameModel &&= eventModel === model;
+				if (hooks.abortOnEvent === observed.length) controller.abort();
 				if (hooks.failOnEvent === "abort-then-throw") controller.abort();
 				if (hooks.failOnEvent) throw new Error("observer boom");
 			},
@@ -376,14 +419,17 @@ const responsesBodies: Record<string, string> = {
 
 // ---- capture ---------------------------------------------------------------------
 
-type Row = { sse: string; sdk?: SDKReading; completions?: Outcome; responses?: Outcome };
+type Row = { sse: string; sdk?: SDKReadings; completions?: Outcome; responses?: Outcome };
 const out: {
 	sha: string;
 	openai: string;
 	dispatch: Record<string, Row>;
 	completions: Record<string, Row>;
 	responses: Record<string, Row>;
-	hooks: Record<string, { adapter: string; sse: string; status: number; outcome: Outcome }>;
+	hooks: Record<
+		string,
+		{ adapter: string; sse: string; status: number; hold: boolean; abortOnEvent: number; outcome: Outcome }
+	>;
 } = { sha, openai: openaiVersion, dispatch: {}, completions: {}, responses: {}, hooks: {} };
 
 for (const [name, body] of Object.entries(dispatch)) {
@@ -406,6 +452,22 @@ const adapters = {
 	completions: [completions, completionsModel],
 	responses: [responses, responsesModel],
 } as const;
+// The request is aborted as the observer sees the last event of a held body:
+// the SDK's next body read then throws an AbortError, which its Stream
+// swallows, so the adapter's loop ends and its post-loop checks decide the
+// message. Responses checks for a terminal event before its abort guard.
+const eventCount = (body: string) =>
+	body.split("\n\n").filter((e) => e.startsWith("data: ") && !e.startsWith("data: [DONE]")).length;
+const heldCases: Record<string, Record<string, string>> = {
+	completions: {
+		"abort-held": `data: ${A}\n\n`,
+		"abort-held-after-finish": dispatch["blank-line-dispatch"],
+	},
+	responses: {
+		"abort-held": created + textEvents,
+		"abort-held-after-terminal": responsesBodies.completed,
+	},
+};
 for (const [adapter, [api, model]] of Object.entries(adapters)) {
 	const body = hookBodies[adapter as keyof typeof hookBodies];
 	const cases: Record<string, [Reply, Hooks]> = {
@@ -418,16 +480,25 @@ for (const [adapter, [api, model]] of Object.entries(adapters)) {
 			{ failOnResponse: true },
 		],
 	};
+	for (const [name, heldBody] of Object.entries(heldCases[adapter])) {
+		cases[name] = [
+			{ status: 200, contentType: "text/event-stream", body: heldBody, hold: true },
+			{ abortOnEvent: eventCount(heldBody) },
+		];
+	}
 	for (const [name, [reply, hooks]] of Object.entries(cases)) {
 		out.hooks[`${adapter}/${name}`] = {
 			adapter,
 			sse: reply.body,
 			status: reply.status,
+			hold: reply.hold ?? false,
+			abortOnEvent: hooks.abortOnEvent ?? 0,
 			outcome: await piRun(api, model, route(reply), hooks),
 		};
 	}
 }
 
+for (const res of held) res.destroy();
 server.close();
 fs.writeFileSync(outFile, `${JSON.stringify(out, null, "\t")}\n`);
 console.log(`wrote ${outFile}`);

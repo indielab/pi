@@ -10,7 +10,26 @@
 					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -46,7 +65,24 @@
 					"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -79,7 +115,22 @@
 				"yields": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -110,7 +161,22 @@
 				"yields": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -142,7 +208,24 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -173,7 +256,18 @@
 			"sse": "data: [DONE]\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
 			"sdk": {
 				"yields": [],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [],
@@ -203,6 +297,24 @@
 				"threw": {
 					"name": "SyntaxError",
 					"message": "Unexpected token 'D', \"[DONE\" is not valid JSON"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Unexpected token 'D', \"[DONE\" is not valid JSON"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Unexpected token 'D', \"[DONE\" is not valid JSON"
+					}
 				}
 			},
 			"completions": {
@@ -236,7 +348,26 @@
 					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -273,7 +404,24 @@
 					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -310,7 +458,24 @@
 					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -346,7 +511,24 @@
 					"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -381,7 +563,26 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"event\":\"thread.message\",\"data\":{\"id\":\"t\"}}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"event\":\"thread.message\",\"data\":{\"id\":\"t\"}}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -417,7 +618,24 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -451,7 +669,24 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -485,7 +720,24 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -520,7 +772,26 @@
 					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -556,7 +827,24 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -590,7 +878,24 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -625,7 +930,26 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"event\":\"thread.message\",\"data\":{\"id\":\"t\",\"error\":{\"message\":\"not thrown\"}}}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"event\":\"thread.message\",\"data\":{\"id\":\"t\",\"error\":{\"message\":\"not thrown\"}}}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -667,7 +991,36 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"5",
+						"\"s\"",
+						"[1,{\"k\":2}]",
+						"true",
+						"false",
+						"0",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"5",
+						"\"s\"",
+						"[1,{\"k\":2}]",
+						"true",
+						"false",
+						"0",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -714,7 +1067,26 @@
 					"null",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"null",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"null",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -751,7 +1123,28 @@
 					"{\"id\":\"o\",\"openrouter_metadata\":{\"strategy\":\"direct\"}}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"u\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}",
+						"{\"id\":\"o\",\"openrouter_metadata\":{\"strategy\":\"direct\"}}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"u\",\"choices\":[],\"usage\":{\"prompt_tokens\":3,\"completion_tokens\":1,\"total_tokens\":4}}",
+						"{\"id\":\"o\",\"openrouter_metadata\":{\"strategy\":\"direct\"}}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -789,7 +1182,24 @@
 					"{\"z\":1,\"id\":\"k\",\"a\":{\"y\":[{\"q\":1,\"b\":2}],\"x\":null},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<&>\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"z\":1,\"id\":\"k\",\"a\":{\"y\":[{\"q\":1,\"b\":2}],\"x\":null},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<&>\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"z\":1,\"id\":\"k\",\"a\":{\"y\":[{\"q\":1,\"b\":2}],\"x\":null},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<&>\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -826,6 +1236,26 @@
 					"name": "APIError",
 					"message": "boom",
 					"error": "{\"message\":\"boom\",\"code\":502,\"metadata\":{\"raw\":\"upstream exploded\",\"provider_name\":\"p\"}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"code\":502,\"metadata\":{\"raw\":\"upstream exploded\",\"provider_name\":\"p\"}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"code\":502,\"metadata\":{\"raw\":\"upstream exploded\",\"provider_name\":\"p\"}}"
+					}
 				}
 			},
 			"completions": {
@@ -861,6 +1291,26 @@
 					"name": "APIError",
 					"message": "boom: upstream exploded",
 					"error": "{\"message\":\"boom: upstream exploded\",\"metadata\":{\"raw\":\"upstream exploded\"}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom: upstream exploded",
+						"error": "{\"message\":\"boom: upstream exploded\",\"metadata\":{\"raw\":\"upstream exploded\"}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom: upstream exploded",
+						"error": "{\"message\":\"boom: upstream exploded\",\"metadata\":{\"raw\":\"upstream exploded\"}}"
+					}
 				}
 			},
 			"completions": {
@@ -896,6 +1346,26 @@
 					"name": "APIError",
 					"message": "boom",
 					"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":5}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":5}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":5}}"
+					}
 				}
 			},
 			"completions": {
@@ -931,6 +1401,26 @@
 					"name": "APIError",
 					"message": "boom",
 					"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":{\"a\":1}}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":{\"a\":1}}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":{\"a\":1}}}"
+					}
 				}
 			},
 			"completions": {
@@ -966,6 +1456,26 @@
 					"name": "APIError",
 					"message": "boom",
 					"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":[1,[2,null],\"x\"]}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":[1,[2,null],\"x\"]}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":[1,[2,null],\"x\"]}}"
+					}
 				}
 			},
 			"completions": {
@@ -1001,6 +1511,26 @@
 					"name": "APIError",
 					"message": "boom",
 					"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":true}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":true}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":true}}"
+					}
 				}
 			},
 			"completions": {
@@ -1036,6 +1566,26 @@
 					"name": "APIError",
 					"message": "boom",
 					"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":\"\"}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":\"\"}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":\"\"}}"
+					}
 				}
 			},
 			"completions": {
@@ -1071,6 +1621,26 @@
 					"name": "APIError",
 					"message": "boom",
 					"error": "{\"message\":\"boom\",\"metadata\":\"raw\"}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":\"raw\"}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "boom",
+						"error": "{\"message\":\"boom\",\"metadata\":\"raw\"}"
+					}
 				}
 			},
 			"completions": {
@@ -1106,6 +1676,26 @@
 					"name": "APIError",
 					"message": "{\"code\":\"x\",\"type\":\"y\"}",
 					"error": "{\"code\":\"x\",\"type\":\"y\"}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"code\":\"x\",\"type\":\"y\"}",
+						"error": "{\"code\":\"x\",\"type\":\"y\"}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"code\":\"x\",\"type\":\"y\"}",
+						"error": "{\"code\":\"x\",\"type\":\"y\"}"
+					}
 				}
 			},
 			"completions": {
@@ -1141,6 +1731,26 @@
 					"name": "APIError",
 					"message": "{\"b\":1,\"a\":2}",
 					"error": "{\"message\":{\"b\":1,\"a\":2}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"b\":1,\"a\":2}",
+						"error": "{\"message\":{\"b\":1,\"a\":2}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"b\":1,\"a\":2}",
+						"error": "{\"message\":{\"b\":1,\"a\":2}}"
+					}
 				}
 			},
 			"completions": {
@@ -1176,6 +1786,26 @@
 					"name": "APIError",
 					"message": "42",
 					"error": "{\"message\":42}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "42",
+						"error": "{\"message\":42}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "42",
+						"error": "{\"message\":42}"
+					}
 				}
 			},
 			"completions": {
@@ -1211,6 +1841,26 @@
 					"name": "APIError",
 					"message": "{\"message\":\"\",\"code\":1}",
 					"error": "{\"message\":\"\",\"code\":1}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"message\":\"\",\"code\":1}",
+						"error": "{\"message\":\"\",\"code\":1}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"message\":\"\",\"code\":1}",
+						"error": "{\"message\":\"\",\"code\":1}"
+					}
 				}
 			},
 			"completions": {
@@ -1246,6 +1896,26 @@
 					"name": "APIError",
 					"message": "café </script> \"q\"",
 					"error": "{\"message\":\"café </script> \\\"q\\\"\"}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "café </script> \"q\"",
+						"error": "{\"message\":\"café </script> \\\"q\\\"\"}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "café </script> \"q\"",
+						"error": "{\"message\":\"café </script> \\\"q\\\"\"}"
+					}
 				}
 			},
 			"completions": {
@@ -1281,6 +1951,26 @@
 					"name": "APIError",
 					"message": "\"boom\"",
 					"error": "\"boom\""
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "\"boom\"",
+						"error": "\"boom\""
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "\"boom\"",
+						"error": "\"boom\""
+					}
 				}
 			},
 			"completions": {
@@ -1316,6 +2006,26 @@
 					"name": "APIError",
 					"message": "7",
 					"error": "7"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "7",
+						"error": "7"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "7",
+						"error": "7"
+					}
 				}
 			},
 			"completions": {
@@ -1351,6 +2061,26 @@
 					"name": "APIError",
 					"message": "true",
 					"error": "true"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "true",
+						"error": "true"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "true",
+						"error": "true"
+					}
 				}
 			},
 			"completions": {
@@ -1386,6 +2116,26 @@
 					"name": "APIError",
 					"message": "{}",
 					"error": "{}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{}",
+						"error": "{}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{}",
+						"error": "{}"
+					}
 				}
 			},
 			"completions": {
@@ -1421,6 +2171,26 @@
 					"name": "APIError",
 					"message": "[]",
 					"error": "[]"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "[]",
+						"error": "[]"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "[]",
+						"error": "[]"
+					}
 				}
 			},
 			"completions": {
@@ -1456,6 +2226,26 @@
 					"name": "APIError",
 					"message": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}",
 					"error": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}",
+						"error": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}",
+						"error": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}"
+					}
 				}
 			},
 			"completions": {
@@ -1492,7 +2282,32 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"n\",\"error\":null}",
+						"{\"id\":\"e\",\"error\":\"\"}",
+						"{\"id\":\"z\",\"error\":0}",
+						"{\"id\":\"f\",\"error\":false}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"n\",\"error\":null}",
+						"{\"id\":\"e\",\"error\":\"\"}",
+						"{\"id\":\"z\",\"error\":0}",
+						"{\"id\":\"f\",\"error\":false}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -1535,7 +2350,26 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"Error\":{\"message\":\"boom\"}}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"Error\":{\"message\":\"boom\"}}",
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -1571,7 +2405,24 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				}
 			},
 			"completions": {
 				"observed": [
@@ -1607,6 +2458,24 @@
 				"threw": {
 					"name": "SyntaxError",
 					"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+					}
 				}
 			},
 			"completions": {
@@ -1641,6 +2510,24 @@
 				"threw": {
 					"name": "SyntaxError",
 					"message": "Unexpected end of JSON input"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Unexpected end of JSON input"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Unexpected end of JSON input"
+					}
 				}
 			},
 			"completions": {
@@ -2106,6 +2993,8 @@
 			"adapter": "completions",
 			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
 			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
@@ -2122,6 +3011,8 @@
 			"adapter": "completions",
 			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
 			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
@@ -2138,6 +3029,8 @@
 			"adapter": "completions",
 			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
 			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [],
 				"sameModel": true,
@@ -2152,6 +3045,8 @@
 			"adapter": "completions",
 			"sse": "{\"error\":{\"message\":\"bad request\"}}",
 			"status": 400,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [],
 				"sameModel": true,
@@ -2166,6 +3061,8 @@
 			"adapter": "completions",
 			"sse": "{\"error\":{\"message\":\"bad request\"}}",
 			"status": 400,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [],
 				"sameModel": true,
@@ -2176,10 +3073,50 @@
 				"responseId": ""
 			}
 		},
+		"completions/abort-held": {
+			"adapter": "completions",
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\n",
+			"status": 200,
+			"hold": true,
+			"abortOnEvent": 1,
+			"outcome": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "aborted",
+				"errorMessage": "Request was aborted",
+				"text": "x",
+				"responseId": "a"
+			}
+		},
+		"completions/abort-held-after-finish": {
+			"adapter": "completions",
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+			"status": 200,
+			"hold": true,
+			"abortOnEvent": 3,
+			"outcome": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "aborted",
+				"errorMessage": "Request was aborted",
+				"text": "xy",
+				"responseId": "a"
+			}
+		},
 		"responses/callback-throws": {
 			"adapter": "responses",
 			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
 			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [
 					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}"
@@ -2196,6 +3133,8 @@
 			"adapter": "responses",
 			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
 			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [
 					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}"
@@ -2212,6 +3151,8 @@
 			"adapter": "responses",
 			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
 			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [],
 				"sameModel": true,
@@ -2226,6 +3167,8 @@
 			"adapter": "responses",
 			"sse": "{\"error\":{\"message\":\"bad request\"}}",
 			"status": 400,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [],
 				"sameModel": true,
@@ -2240,6 +3183,8 @@
 			"adapter": "responses",
 			"sse": "{\"error\":{\"message\":\"bad request\"}}",
 			"status": 400,
+			"hold": false,
+			"abortOnEvent": 0,
 			"outcome": {
 				"observed": [],
 				"sameModel": true,
@@ -2248,6 +3193,51 @@
 				"errorMessage": "OpenAI API error (400): {\"message\":\"bad request\"}",
 				"text": "",
 				"responseId": ""
+			}
+		},
+		"responses/abort-held": {
+			"adapter": "responses",
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\n",
+			"status": 200,
+			"hold": true,
+			"abortOnEvent": 5,
+			"outcome": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "aborted",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "hi",
+				"responseId": "resp_1"
+			}
+		},
+		"responses/abort-held-after-terminal": {
+			"adapter": "responses",
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"status": 200,
+			"hold": true,
+			"abortOnEvent": 6,
+			"outcome": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "aborted",
+				"errorMessage": "Request was aborted",
+				"text": "hi",
+				"responseId": "resp_1"
 			}
 		}
 	}

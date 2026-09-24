@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"strings"
 
@@ -31,9 +30,10 @@ type openaiSSEEvent struct {
 // utf8BOM is the byte-order mark the SDK's per-line UTF-8 decode drops.
 const utf8BOM = "\xef\xbb\xbf"
 
-// readOpenAISSE is the SDK's _iterSSEMessages. Lines end at "\n", "\r\n" or a
-// lone "\r" (LineDecoder), and each line is decoded on its own by a
-// TextDecoder, which drops one leading byte-order mark. A blank line
+// readOpenAISSE is the SDK's _iterSSEMessages. The body reaches its line
+// splitting in iterSSEChunks' pieces (openaiSSEChunkReader). Lines end at
+// "\n", "\r\n" or a lone "\r" (LineDecoder), and each line is decoded on its
+// own by a TextDecoder, which drops one leading byte-order mark. A blank line
 // dispatches the event collected so far, unless it has neither a name nor any
 // data; `data` lines join with "\n"; a line starting with ":" is a comment;
 // every other field (id, retry, …) is ignored. An event the body ends before
@@ -43,16 +43,26 @@ const utf8BOM = "\xef\xbb\xbf"
 // leading space. Nothing else is trimmed, and JSON.parse accepts only JSON's
 // own whitespace around a value, so data padded with anything else (U+00A0,
 // U+FEFF, U+0085, VT, FF) does not parse.
+//
+// A read that fails ends the reading where the SDK's does: the LineDecoder is
+// flushed only at the body's end, so a line still waiting for its ending is
+// dropped. A cancelled request ends the stream rather than failing it, as the
+// SDK's Stream swallows the AbortError its body read throws (`if
+// (isAbortError(e)) return;`) and pi's adapter carries on to its post-loop
+// checks. The SDK never looks at the signal between events, only through that
+// read, so what has already been read is still dispatched; here a read that
+// fails once ctx is done is the abort. The adapters' own ctx checks then decide
+// the message.
 func readOpenAISSE(body io.Reader, ctx context.Context, dispatch func(openaiSSEEvent) error) error {
-	scanner := bufio.NewScanner(body)
+	chunks := &openaiSSEChunkReader{body: body}
+	scanner := bufio.NewScanner(chunks)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	scanner.Split(scanOpenAISSELines)
+	scanner.Split(func(data []byte, atEOF bool) (int, []byte, error) {
+		return scanOpenAISSELines(data, atEOF && chunks.err == io.EOF)
+	})
 	var event string
 	var data []string
 	for scanner.Scan() {
-		if ctx != nil && ctx.Err() != nil {
-			return fmt.Errorf("Request was aborted")
-		}
 		line := strings.TrimPrefix(scanner.Text(), utf8BOM)
 		if line == "" {
 			if event == "" && len(data) == 0 {
@@ -77,7 +87,71 @@ func readOpenAISSE(body io.Reader, ctx context.Context, dispatch func(openaiSSEE
 			data = append(data, value)
 		}
 	}
-	return scanner.Err()
+	if err := scanner.Err(); err != nil && (ctx == nil || ctx.Err() == nil) {
+		return err
+	}
+	return nil
+}
+
+// openaiSSEChunkReader is the SDK's iterSSEChunks: it passes the body on only
+// up to the end of its last event separator ("\n\n", "\r\r" or "\r\n\r\n",
+// findDoubleNewlineIndex), holding the rest back until more arrives or the
+// body ends. What is held back when a read fails is lost, as it is in the SDK.
+type openaiSSEChunkReader struct {
+	body io.Reader
+	// buf is the read-ahead: buf[:ready] is passed on, buf[ready:] is held.
+	buf   []byte
+	ready int
+	// err is the read error that ended the body; io.EOF at its end.
+	err error
+}
+
+func (c *openaiSSEChunkReader) Read(p []byte) (int, error) {
+	for c.ready == 0 {
+		if c.err != nil {
+			return 0, c.err
+		}
+		if cap(c.buf)-len(c.buf) < 4096 {
+			c.buf = append(c.buf, make([]byte, 32*1024)...)[:len(c.buf)]
+		}
+		scanned := max(0, len(c.buf)-3) // a separator ends past what was scanned
+		n, err := c.body.Read(c.buf[len(c.buf):cap(c.buf)])
+		c.buf = c.buf[:len(c.buf)+n]
+		for at := scanned; ; {
+			end := openaiSSEChunkEnd(c.buf[at:])
+			if end < 0 {
+				break
+			}
+			at += end
+			c.ready = at
+		}
+		if err != nil {
+			c.err = err
+			if err == io.EOF {
+				c.ready = len(c.buf)
+			} else {
+				c.buf = c.buf[:c.ready]
+			}
+		}
+	}
+	n := copy(p, c.buf[:c.ready])
+	c.buf = c.buf[:copy(c.buf, c.buf[n:])]
+	c.ready -= n
+	return n, nil
+}
+
+// openaiSSEChunkEnd is the SDK's findDoubleNewlineIndex: the index just past
+// the first "\n\n", "\r\r" or "\r\n\r\n" in b, or -1.
+func openaiSSEChunkEnd(b []byte) int {
+	for i := 0; i+1 < len(b); i++ {
+		switch {
+		case b[i] == '\n' && b[i+1] == '\n', b[i] == '\r' && b[i+1] == '\r':
+			return i + 2
+		case b[i] == '\r' && b[i+1] == '\n' && i+3 < len(b) && b[i+2] == '\r' && b[i+3] == '\n':
+			return i + 4
+		}
+	}
+	return -1
 }
 
 // scanOpenAISSELines splits lines the way the SDK's LineDecoder does: "\r\n"
@@ -116,7 +190,8 @@ func scanOpenAISSELines(data []byte, atEOF bool) (advance int, token []byte, err
 //
 //   - An event whose data starts with "[DONE]" ends the stream, and every
 //     event after it is ignored. The body is still read to its end, so a read
-//     failure after it still surfaces.
+//     failure after it still surfaces (an aborted one ends the stream; see
+//     readOpenAISSE).
 //   - Data is JSON-parsed. parse returns the text that parsed, or false where
 //     JSON.parse throws; the port skips such an event rather than failing the
 //     stream (a deliberate leniency: pi fails with V8's SyntaxError text).
