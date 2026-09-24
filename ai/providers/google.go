@@ -455,7 +455,13 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			}
 			return r, nil
 		}
-		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, nil))
+		// pi hands @google/genai no timeout: createClient sets no
+		// httpOptions.timeout, and retryGoogleRequest takes only maxRetries,
+		// maxRetryDelayMs and signal. TimeoutMs never reaches the request;
+		// fetch's own headers timeout bounds the wait.
+		cfg := retryFromOptions(opts.StreamOptions, nil)
+		cfg.timeoutMs = googleHeadersTimeoutMs
+		resp, err := sendWithRetry(ctx, build, cfg)
 		if err != nil {
 			fail(googleFetchError(err))
 			return
@@ -1639,15 +1645,22 @@ func googleResponseBody(resp *http.Response) (io.Reader, error) {
 	return body, nil
 }
 
+// googleHeadersTimeoutMs bounds the wait for a google response's headers. It
+// is undici's headersTimeout, 300 seconds, which fetch applies whatever the
+// caller's options say; pi's CLI installs the same value as its
+// httpIdleTimeoutMs default. A variable only so a test can shorten it.
+var googleHeadersTimeoutMs = 300_000
+
 // googleFetchError is the error pi reports when the request gets no response:
-// fetch rejects with undici's TypeError "fetch failed" (a refused or dropped
-// connection, a malformed response), and neither @google/genai nor pi's catch
-// adds to that message. A timeout keeps net/http's text: it is the port's
-// own ResponseHeaderTimeout, since pi's google adapter gives the SDK no
-// timeout at all.
+// fetch rejects with undici's TypeError "fetch failed" whatever the transport
+// failure was — a refused, dropped or unreachable connection, a failed TLS
+// handshake, a malformed response, or undici's own connect and headers
+// timeouts — and neither @google/genai nor pi's catch adds to that message.
+// client.Do reports every such failure as a *url.Error whose Op is the
+// method.
 func googleFetchError(err error) error {
 	var sent *url.Error
-	if errors.As(err, &sent) && sent.Op == "Post" && !sent.Timeout() {
+	if errors.As(err, &sent) && sent.Op == "Post" {
 		return errors.New("fetch failed")
 	}
 	return err

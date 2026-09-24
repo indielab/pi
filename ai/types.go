@@ -1240,7 +1240,11 @@ type ProviderRequestOptions struct {
 	// Headers are custom HTTP headers merged into the provider request, with
 	// caller values overriding provider defaults. A nil value suppresses a
 	// provider/API default header of the same name (see ProviderHeaders).
-	Headers   ProviderHeaders
+	Headers ProviderHeaders
+	// TimeoutMs bounds the wait for a response's headers; zero means 10
+	// minutes. The google-generative-ai adapter ignores it, as pi's does:
+	// @google/genai gets no timeout, and fetch's own 300-second headers
+	// timeout bounds that wait instead.
 	TimeoutMs int
 	// MaxRetries caps client-side retry attempts for providers that support them.
 	MaxRetries int

@@ -8,10 +8,12 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"reflect"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/sky-valley/pi/ai"
 )
@@ -1043,11 +1045,38 @@ func TestGoogleRefusedConnectionFailsFetch(t *testing.T) {
 	}
 }
 
-// TestGoogleHeaderTimeoutIsNotFetchFailed: the port's own response-header
-// timeout (TimeoutMs; pi's google adapter gives @google/genai no timeout)
-// keeps net/http's timeout text rather than passing for pi's "fetch failed",
-// so the error still says what the caller can change.
-func TestGoogleHeaderTimeoutIsNotFetchFailed(t *testing.T) {
+// TestGoogleIgnoresTimeoutMs: pi hands @google/genai no timeout (createClient
+// sets no httpOptions.timeout; retryGoogleRequest takes maxRetries,
+// maxRetryDelayMs and signal), so TimeoutMs does not bound a google request.
+// Measured against pi's stream at 8676a0dcd (node v26.4.0): timeoutMs 50 with
+// the headers 1500ms late → start … done, stop "stop".
+func TestGoogleIgnoresTimeoutMs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(300 * time.Millisecond)
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, googleSSE)
+	}))
+	defer server.Close()
+	final := StreamGoogle(context.Background(), googleCaptureModel(server.URL),
+		ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
+		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", TimeoutMs: 50}}}).Result()
+	if final.StopReason != ai.StopToolUse {
+		t.Fatalf("stop %s %q; pi ignores timeoutMs and reads the late response", final.StopReason, final.ErrorMessage)
+	}
+}
+
+// TestGoogleHeadersTimeoutFailsFetch: what bounds the wait for headers is
+// fetch's own headersTimeout, undici's 300s default, and its expiry fails as
+// every other no-response failure does: "fetch failed", no start event.
+// Measured against pi's stream at 8676a0dcd (node v26.4.0): a server that
+// reads the request and never answers → [error] "fetch failed" after 301s,
+// timeoutMs 50 or 1000 alike.
+func TestGoogleHeadersTimeoutFailsFetch(t *testing.T) {
+	if googleHeadersTimeoutMs != 300_000 {
+		t.Fatalf("googleHeadersTimeoutMs %d; undici's headersTimeout default is 300000", googleHeadersTimeoutMs)
+	}
+	defer func(ms int) { googleHeadersTimeoutMs = ms }(googleHeadersTimeoutMs)
+	googleHeadersTimeoutMs = 50
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {
@@ -1057,11 +1086,44 @@ func TestGoogleHeaderTimeoutIsNotFetchFailed(t *testing.T) {
 	}))
 	defer server.Close()
 	defer close(release)
-	final := StreamGoogle(context.Background(), googleCaptureModel(server.URL),
+	var types []string
+	stream := StreamGoogle(context.Background(), googleCaptureModel(server.URL),
 		ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}),
-		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", TimeoutMs: 50}}}).Result()
-	if final.StopReason != ai.StopError || !strings.Contains(final.ErrorMessage, "timeout awaiting response headers") {
-		t.Fatalf("stop %s %q; want net/http's response-header timeout", final.StopReason, final.ErrorMessage)
+		&GoogleOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", TimeoutMs: 60_000}}})
+	for ev := range stream.Events() {
+		types = append(types, string(ev.Type))
+	}
+	final := stream.Result()
+	if !slices.Equal(types, []string{"error"}) || final.StopReason != ai.StopError || final.ErrorMessage != "fetch failed" {
+		t.Fatalf("stream %v, stop %s %q; pi: [error], error \"fetch failed\"", types, final.StopReason, final.ErrorMessage)
+	}
+}
+
+// googleTimeoutError is a transport error that reports itself as a timeout,
+// as net/http's dial, TLS-handshake and response-header timeouts do.
+type googleTimeoutError struct{ msg string }
+
+func (e googleTimeoutError) Error() string { return e.msg }
+func (e googleTimeoutError) Timeout() bool { return true }
+
+// TestGoogleFetchErrorIsFetchFailedForEveryTransportFailure: fetch rejects
+// with "fetch failed" whatever failed before the response, timeouts included.
+// Measured against pi's stream at 8676a0dcd (node v26.4.0): a TLS handshake
+// that never completes and a connect to a non-routable address both end
+// [error] "fetch failed" (undici's 10s connect timeout); the refused
+// connection is TestGoogleRefusedConnectionFailsFetch.
+func TestGoogleFetchErrorIsFetchFailedForEveryTransportFailure(t *testing.T) {
+	for _, cause := range []error{
+		&net.OpError{Op: "dial", Net: "tcp", Err: googleTimeoutError{"i/o timeout"}},
+		googleTimeoutError{"net/http: TLS handshake timeout"},
+		googleTimeoutError{"net/http: timeout awaiting response headers"},
+		&net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connect: connection refused")},
+		io.ErrUnexpectedEOF,
+	} {
+		err := &url.Error{Op: "Post", URL: "https://generativelanguage.googleapis.com/v1beta/models/g:streamGenerateContent?alt=sse", Err: cause}
+		if got := googleFetchError(err); got.Error() != "fetch failed" {
+			t.Errorf("%v (timeout %v) → %q; pi: \"fetch failed\"", cause, err.Timeout(), got)
+		}
 	}
 }
 
