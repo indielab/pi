@@ -9,7 +9,7 @@ package providers
 // gateway, but any backend implementing it can be used, e.g. via a models.json
 // custom provider with `"api": "pi-messages"`.
 //
-// Port of packages/ai/src/api/pi-messages.ts (upstream 961fa6c1).
+// Port of packages/ai/src/api/pi-messages.ts.
 
 import (
 	"bytes"
@@ -611,8 +611,10 @@ func (c *piMessagesConverter) convert(ev piMessagesEvent) (ai.AssistantMessageEv
 		}
 		return ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: r.pushedIndex(), ToolCall: tc, Partial: c.partial.Clone()}, nil
 	}
-	// Unknown event type: emit nothing meaningful (pi returns {...event,partial}
-	// for the exhaustive-known set; an unmodeled type has no unified analogue).
+	// Any other event — an unknown type, or a truthy frame that is not an
+	// object and so has no type — reaches pi's trailing `return { ...event,
+	// partial }`, as start and the per-block cases do: the event pushed carries
+	// the frame's type ("" when it has none) and the partial message.
 	return ai.AssistantMessageEvent{Type: ai.EventType(ev.Type), Partial: c.partial.Clone()}, nil
 }
 
