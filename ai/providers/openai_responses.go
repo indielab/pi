@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -1567,45 +1566,32 @@ type responsesPayload struct {
 	} `json:"incomplete_details"`
 }
 
+// iterateOpenAISSE2 reads a /responses stream the way pi iterates the openai
+// SDK's Stream (iterateOpenAIStream), handing handle each event. This loop
+// never repaired its JSON, so neither does its parse.
 func iterateOpenAISSE2(body io.Reader, ctx context.Context, handle func(responsesEvent) error) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for scanner.Scan() {
-		if ctx != nil && ctx.Err() != nil {
-			return fmt.Errorf("Request was aborted")
-		}
-		line := strings.TrimRight(scanner.Text(), "\r")
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := sseFieldValue(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
-			continue
-		}
-		var ev responsesEvent
-		if err := json.Unmarshal([]byte(data), &ev); err != nil {
-			continue
-		}
+	return iterateOpenAIStream(body, ctx, openaiStreamJSON, func(item []byte) error {
 		// The SDK yields `data: null` as null, and pi's processResponsesStream
 		// reads event.type off every event it iterates, so that read throws and
 		// the stream fails with V8's TypeError text (openai-responses-shared.ts).
-		// A scalar or an array reads as undefined and matches no branch, which the
-		// typed decode's failure above already mirrors.
-		if isJSONNull([]byte(data)) {
+		// A scalar or an array reads as undefined and matches no branch, which
+		// the typed decode's failure below mirrors.
+		if isJSONNull(item) {
 			return errors.New("Cannot read properties of null (reading 'type')")
+		}
+		var ev responsesEvent
+		if json.Unmarshal(item, &ev) != nil {
+			return nil
 		}
 		// Capture the raw item for reasoning-signature round-tripping.
 		var probe struct {
 			Item json.RawMessage `json:"item"`
 		}
-		if json.Unmarshal([]byte(data), &probe) == nil {
+		if json.Unmarshal(item, &probe) == nil {
 			ev.RawItem = probe.Item
 		}
-		if err := handle(ev); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
+		return handle(ev)
+	})
 }
 
 // RegisterOpenAIResponses registers the openai-responses api provider.

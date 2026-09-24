@@ -139,30 +139,38 @@ func openaiSDKErrorMessage(status int, body []byte) string {
 	} else {
 		var top map[string]json.RawMessage
 		if json.Unmarshal(body, &top) == nil {
-			if raw, has := top["error"]; has && rawTruthy(raw) {
-				var members map[string]json.RawMessage
-				if json.Unmarshal(raw, &members) == nil {
-					if m, has := members["message"]; has && rawTruthy(m) {
-						var str string
-						if json.Unmarshal(m, &str) == nil {
-							msg = str
-						} else if j, ok := jsStringify(m); ok {
-							msg = j
-						}
-					}
-				}
-				if msg == "" {
-					if j, ok := jsStringify(raw); ok {
-						msg = j
-					}
-				}
-			}
+			msg = openaiSDKErrorDetail(top["error"])
 		}
 	}
 	if msg == "" {
 		return fmt.Sprintf("%d status code (no body)", status)
 	}
 	return fmt.Sprintf("%d %s", status, msg)
+}
+
+// openaiSDKErrorDetail is the text openai SDK APIError.makeMessage builds from
+// its `error` argument, given as JSON (nil when absent): error.message when it
+// is a truthy string, JSON.stringify(error.message) when it is truthy
+// otherwise, else JSON.stringify(error) — or "" when error is falsy, where
+// makeMessage falls back to its status and message arguments.
+func openaiSDKErrorDetail(errorValue json.RawMessage) string {
+	if !rawTruthy(errorValue) {
+		return ""
+	}
+	var members map[string]json.RawMessage
+	if json.Unmarshal(errorValue, &members) == nil {
+		if m, has := members["message"]; has && rawTruthy(m) {
+			var str string
+			if json.Unmarshal(m, &str) == nil {
+				return str
+			}
+			if j, ok := jsStringify(m); ok {
+				return j
+			}
+		}
+	}
+	j, _ := jsStringify(errorValue)
+	return j
 }
 
 // stripBOM is the one piece of fetch's text() decode that the SDK-level

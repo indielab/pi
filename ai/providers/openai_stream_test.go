@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
+	"strings"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
@@ -144,4 +146,72 @@ func TestOpenAIResponsesNullEventFailsLikePi(t *testing.T) {
 	}
 	got := runOpenAIStreamAdapter(t, "responses", http.StatusOK, row.SSE)
 	compareOpenAIStreamEnding(t, got, *row.Responses)
+}
+
+// openaiStreamParsers are the two loops' JSON acceptance: completions repairs
+// what JSON.parse rejects where repairJSON can, responses never did.
+var openaiStreamParsers = map[string]func(string) ([]byte, bool){
+	"completions": openaiStreamJSONWithRepair,
+	"responses":   openaiStreamJSON,
+}
+
+// Both loops read a body into exactly the items the openai SDK's stream
+// iterator yields — blank-line dispatch, joined multi-line data, every line
+// ending, a "[DONE]" prefix ending the stream, no dispatch of an event the body
+// ends inside, "thread.*" events wrapped — and fail on an item carrying an
+// error with the SDK's APIError message. Where the SDK's JSON.parse throws, the
+// port skips the event instead (a deliberate leniency); only the items before
+// it are compared.
+func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	for name, row := range c.Dispatch {
+		for loop, parse := range openaiStreamParsers {
+			t.Run(name+"/"+loop, func(t *testing.T) {
+				var got []string
+				err := iterateOpenAIStream(strings.NewReader(row.SSE), nil, parse, func(item []byte) error {
+					text, ok := jsStringify(item)
+					if !ok {
+						t.Fatalf("yielded item %q is not one JSON value", item)
+					}
+					got = append(got, text)
+					return nil
+				})
+				want := row.SDK
+				switch {
+				case want.Threw != nil && want.Threw.Name == "SyntaxError":
+					if len(got) < len(want.Yields) || !slices.Equal(got[:len(want.Yields)], want.Yields) {
+						t.Fatalf("items before the SDK's SyntaxError:\n got %q\nsdk %q", got, want.Yields)
+					}
+					return
+				case want.Threw != nil:
+					if err == nil || err.Error() != want.Threw.Message {
+						t.Errorf("error = %v, sdk threw %s %q", err, want.Threw.Name, want.Threw.Message)
+					}
+				case err != nil:
+					t.Errorf("error = %v, sdk threw nothing", err)
+				}
+				if !slices.Equal(got, want.Yields) {
+					t.Errorf("items:\n got %q\nsdk %q", got, want.Yields)
+				}
+			})
+		}
+	}
+}
+
+// Both adapters end a dispatch body the way pi's do: the stop reason, the
+// error message — the SDK's APIError message for an error item, with
+// completions appending error.metadata.raw as String() writes it — the text
+// and the response id.
+func TestOpenAIStreamEndsLikePi(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	for name, row := range c.Dispatch {
+		if row.SDK.Threw != nil && row.SDK.Threw.Name == "SyntaxError" {
+			continue // pi fails with V8's SyntaxError text; the port skips the event
+		}
+		for adapter, want := range map[string]*openaiStreamOutcome{"completions": row.Completions, "responses": row.Responses} {
+			t.Run(name+"/"+adapter, func(t *testing.T) {
+				compareOpenAIStreamEnding(t, runOpenAIStreamAdapter(t, adapter, http.StatusOK, row.SSE), *want)
+			})
+		}
+	}
 }

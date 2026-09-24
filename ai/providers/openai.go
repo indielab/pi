@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -513,8 +512,9 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 
 		if err != nil {
 			// A mid-stream read/handler failure throws past pi's finalization
-			// loop straight into the catch block; do the same here.
-			fail(err)
+			// loop straight into the catch block; do the same here. The catch
+			// block also appends an error chunk's error.metadata.raw.
+			fail(withOpenAIErrorMetadataRaw(err))
 			return
 		}
 
@@ -1602,41 +1602,19 @@ type openAIChunk struct {
 	Usage *openAIChunkUsage `json:"usage"`
 }
 
-// sseFieldValue is the value of an SSE field as the openai SDK's SSEDecoder
-// reads it: everything after the colon less exactly one leading space. The SDK
-// trims nothing else and hands data to JSON.parse, which accepts only JSON's own
-// whitespace around a value, so a line padded with anything else (U+00A0,
-// U+FEFF, U+0085, VT, FF) is not a chunk.
-func sseFieldValue(value string) string {
-	return strings.TrimPrefix(value, " ")
-}
-
+// iterateOpenAISSE reads a /chat/completions stream the way pi iterates the
+// openai SDK's Stream (iterateOpenAIStream), handing handle each chunk. An
+// item that does not decode as a chunk — null, a scalar, an array — is
+// skipped, which is where pi's `!chunk || typeof chunk !== "object"` check and
+// its reads of absent fields leave it too.
 func iterateOpenAISSE(body io.Reader, ctx context.Context, handle func(openAIChunk) error) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for scanner.Scan() {
-		if ctx != nil && ctx.Err() != nil {
-			return fmt.Errorf("Request was aborted")
-		}
-		line := strings.TrimRight(scanner.Text(), "\r")
-		if !strings.HasPrefix(line, "data:") {
-			continue
-		}
-		data := sseFieldValue(strings.TrimPrefix(line, "data:"))
-		if data == "" || data == "[DONE]" {
-			continue
-		}
+	return iterateOpenAIStream(body, ctx, openaiStreamJSONWithRepair, func(item []byte) error {
 		var chunk openAIChunk
-		if err := parseJSONWithRepair(data, &chunk); err != nil {
-			// Deliberate leniency: unparseable SSE data lines are skipped rather
-			// than failing the stream (some providers interleave junk/keepalives).
-			continue
+		if json.Unmarshal(item, &chunk) != nil {
+			return nil
 		}
-		if err := handle(chunk); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
+		return handle(chunk)
+	})
 }
 
 // RegisterOpenAICompletions registers the openai-completions api provider.
