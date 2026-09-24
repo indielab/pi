@@ -2068,6 +2068,10 @@ func applyUsage(usage *ai.Usage, u anthropicUsage, isStart bool) {
 		usage.Output = derefOr(u.OutputTokens, 0)
 		usage.CacheRead = derefOr(u.CacheReadInputTokens, 0)
 		usage.CacheWrite = derefOr(u.CacheCreationInputTokens, 0)
+		// pi assigns `cache_creation?.ephemeral_1h_input_tokens || 0` on EVERY
+		// message_start, so a later start without a breakdown resets an earlier
+		// start's value rather than inheriting it.
+		usage.CacheWrite1h = 0
 		if u.CacheCreation != nil {
 			usage.CacheWrite1h = derefOr(u.CacheCreation.Ephemeral1hInputTokens, 0)
 		}

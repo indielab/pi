@@ -129,6 +129,49 @@ const cases: Array<[string, string, string, SseEvent[]]> = [
 		"claude-opus-4-8",
 		[opusStart, delta({ output_tokens: 4, cache_creation: { ephemeral_1h_input_tokens: 0 } }), stop],
 	],
+	// message_start assigns unconditionally
+	// (`cache_creation?.ephemeral_1h_input_tokens || 0`), so a second start
+	// with no breakdown resets the first start's 400...
+	[
+		"secondStartWithoutBreakdownResets",
+		"anthropic",
+		"claude-opus-4-8",
+		[
+			opusStart,
+			start({ input_tokens: 1, output_tokens: 0, cache_creation_input_tokens: 1000 }),
+			delta({ output_tokens: 4 }),
+			stop,
+		],
+	],
+	// ...as does one whose cache_creation is null...
+	[
+		"secondStartCacheCreationNullResets",
+		"anthropic",
+		"claude-opus-4-8",
+		[
+			opusStart,
+			start({ input_tokens: 1, output_tokens: 0, cache_creation_input_tokens: 1000, cache_creation: null }),
+			delta({ output_tokens: 4 }),
+			stop,
+		],
+	],
+	// ...or whose 1h count is null.
+	[
+		"secondStart1hNullResets",
+		"anthropic",
+		"claude-opus-4-8",
+		[
+			opusStart,
+			start({
+				input_tokens: 1,
+				output_tokens: 0,
+				cache_creation_input_tokens: 1000,
+				cache_creation: { ephemeral_1h_input_tokens: null },
+			}),
+			delta({ output_tokens: 4 }),
+			stop,
+		],
+	],
 ];
 
 const context = normalizeContext({ messages: [{ role: "user", content: "hi", timestamp: 1 }] });

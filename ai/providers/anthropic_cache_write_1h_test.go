@@ -20,7 +20,8 @@ const cacheWrite1hCaptureFile = "testdata/cache-write-1h/cache-write-1h-8676a0dc
 // and every cost double. The rows are the edges of where a 1h breakdown is
 // read from (upstream 667fc3dd3): a message_delta's breakdown with and without
 // the total beside it, one without the 1h key, a null cache_creation, a null
-// count, and an explicit 0.
+// count, and an explicit 0 — and a second message_start, which resets the
+// value whatever its breakdown says.
 func TestAnthropic1hCacheWriteMatchesPi(t *testing.T) {
 	data, err := os.ReadFile(cacheWrite1hCaptureFile)
 	if err != nil {
