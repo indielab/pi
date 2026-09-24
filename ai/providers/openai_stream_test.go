@@ -3,6 +3,7 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -90,9 +91,14 @@ func openaiStreamModel(adapter, baseURL string) *ai.Model {
 	}
 }
 
+// openaiStreamHooks are capture.mts's Hooks: which of the stream's hooks fail.
+type openaiStreamHooks struct {
+	failOnResponse bool
+}
+
 // runOpenAIStreamAdapter streams body, served with status, through the Go
 // adapter the capture calls adapter, the way capture.mts's piRun does.
-func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body string) openaiStreamOutcome {
+func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body string, hooks openaiStreamHooks) openaiStreamOutcome {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if status == http.StatusOK {
@@ -108,6 +114,14 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 	req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
 	opts := &ai.SimpleStreamOptions{}
 	opts.APIKey = "k"
+	onResponseCalls := 0
+	opts.OnResponse = func(ai.ProviderResponse, *ai.Model) error {
+		onResponseCalls++
+		if hooks.failOnResponse {
+			return errors.New("response veto")
+		}
+		return nil
+	}
 	var final *ai.AssistantMessage
 	if adapter == "completions" {
 		final = StreamSimpleOpenAICompletions(context.Background(), model, req, opts).Result()
@@ -115,10 +129,11 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 		final = StreamSimpleOpenAIResponses(context.Background(), model, req, opts).Result()
 	}
 	return openaiStreamOutcome{
-		StopReason:   string(final.StopReason),
-		ErrorMessage: final.ErrorMessage,
-		Text:         jstrimText(final),
-		ResponseID:   final.ResponseID,
+		OnResponseCalls: onResponseCalls,
+		StopReason:      string(final.StopReason),
+		ErrorMessage:    final.ErrorMessage,
+		Text:            jstrimText(final),
+		ResponseID:      final.ResponseID,
 	}
 }
 
@@ -144,7 +159,7 @@ func TestOpenAIResponsesNullEventFailsLikePi(t *testing.T) {
 	if row.Responses == nil {
 		t.Fatalf("%s has no responses/null-mid-stream; rerun capture.mts", openaiStreamCaptureFile)
 	}
-	got := runOpenAIStreamAdapter(t, "responses", http.StatusOK, row.SSE)
+	got := runOpenAIStreamAdapter(t, "responses", http.StatusOK, row.SSE, openaiStreamHooks{})
 	compareOpenAIStreamEnding(t, got, *row.Responses)
 }
 
@@ -210,7 +225,34 @@ func TestOpenAIStreamEndsLikePi(t *testing.T) {
 		}
 		for adapter, want := range map[string]*openaiStreamOutcome{"completions": row.Completions, "responses": row.Responses} {
 			t.Run(name+"/"+adapter, func(t *testing.T) {
-				compareOpenAIStreamEnding(t, runOpenAIStreamAdapter(t, adapter, http.StatusOK, row.SSE), *want)
+				compareOpenAIStreamEnding(t, runOpenAIStreamAdapter(t, adapter, http.StatusOK, row.SSE, openaiStreamHooks{}), *want)
+			})
+		}
+	}
+}
+
+// pi awaits onResponse only once the SDK has a 2xx response, and a throw from it
+// fails the stream in both adapters.
+func TestOpenAIStreamOnResponseLikePi(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	for _, name := range []string{"on-response-throws", "http-400", "http-400-on-response-throws"} {
+		for _, adapter := range []string{"completions", "responses"} {
+			t.Run(adapter+"/"+name, func(t *testing.T) {
+				row, ok := c.Hooks[adapter+"/"+name]
+				if !ok {
+					t.Fatalf("%s has no hooks row %s/%s; rerun capture.mts", openaiStreamCaptureFile, adapter, name)
+				}
+				got := runOpenAIStreamAdapter(t, adapter, row.Status, row.SSE, openaiStreamHooks{failOnResponse: strings.Contains(name, "on-response-throws")})
+				want := row.Outcome
+				if got.OnResponseCalls != want.OnResponseCalls {
+					t.Errorf("onResponse ran %d times, pi %d", got.OnResponseCalls, want.OnResponseCalls)
+				}
+				if adapter == "completions" && row.Status != http.StatusOK {
+					// The completions HTTP error text is the port's own
+					// (docs/UPSTREAM.md D20); only how the stream ended is pi's.
+					want.ErrorMessage = got.ErrorMessage
+				}
+				compareOpenAIStreamEnding(t, got, want)
 			})
 		}
 	}

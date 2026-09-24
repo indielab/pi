@@ -239,9 +239,6 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			return
 		}
 		defer resp.Body.Close()
-		if opts.OnResponse != nil {
-			_ = opts.OnResponse(ai.ProviderResponse{Status: resp.StatusCode, Headers: flattenHeaders(resp.Header)}, model)
-		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			data, _ := io.ReadAll(resp.Body)
 			err := formatProviderError("OpenAI", resp.StatusCode, data)
@@ -260,6 +257,15 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			}
 			fail(err)
 			return
+		}
+		// pi awaits onResponse once the SDK has a 2xx response — for any other
+		// status the SDK throws before withResponse resolves, so the hook never
+		// runs — and a throw from it fails the stream.
+		if opts.OnResponse != nil {
+			if err := opts.OnResponse(ai.ProviderResponse{Status: resp.StatusCode, Headers: flattenHeaders(resp.Header)}, model); err != nil {
+				fail(err)
+				return
+			}
 		}
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
