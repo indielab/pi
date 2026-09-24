@@ -1405,3 +1405,36 @@ func googlePartIDs(contents []any, key string) []string {
 	}
 	return ids
 }
+
+// @google/genai refuses an ephemeral token (an api key starting
+// "auth_tokens/") when it adds its auth header, which it does after it has
+// appended the record: a record header that fails does so first, and a record
+// x-goog-api-key does not rescue the key, because the refusal comes before the
+// check for one. Measured against upstream 8676a0dcd's google-generative-ai.ts
+// with @google/genai 2.21.0 under node v26.4.0: all three rows below, request
+// never sent.
+func TestGoogleRefusesAnEphemeralToken(t *testing.T) {
+	var google wireAdapter
+	for _, adapter := range wireAdapters() {
+		if adapter.name == "google-generative-ai" {
+			google = adapter
+		}
+	}
+	const refused = "Ephemeral tokens are only supported by the live API."
+	for _, tc := range []struct {
+		name    string
+		headers ai.ProviderHeaders
+		want    string
+	}{
+		{"no record key", nil, refused},
+		{"record key", ai.ProviderHeaders{"x-goog-api-key": strPtr("rec")}, refused},
+		{"failing record header first", ai.ProviderHeaders{"X-A": strPtr(string(rune(cjk)))}, byteStringError(0, cjk)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			h, final := runWire(t, google, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+				APIKey: "auth_tokens/abc", Headers: tc.headers,
+			}})
+			wantNotSent(t, h, final, tc.want)
+		})
+	}
+}

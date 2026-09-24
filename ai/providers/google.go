@@ -443,6 +443,13 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			if err := o.applyAsRecord(r.Header, recordEntry{"Content-Type", "application/json"}); err != nil {
 				return nil, err
 			}
+			// genai's NodeAuth.addAuthHeaders runs after the record is appended,
+			// and refuses an ephemeral token before it looks for a key header, so
+			// a record key does not rescue one. The Error is not a provider error,
+			// so retryGoogleRequest does not retry it.
+			if strings.HasPrefix(opts.APIKey, "auth_tokens/") {
+				return nil, errors.New("Ephemeral tokens are only supported by the live API.")
+			}
 			// genai appends the key after the record (NodeAuth.addKeyHeader), and
 			// only when its Headers holds no x-goog-api-key yet, so a record entry
 			// of any spelling keeps the key off the wire, and the key is converted
