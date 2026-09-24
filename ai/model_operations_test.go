@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"slices"
 	"strings"
@@ -664,4 +665,58 @@ func TestEmptyAPIDoesNotShadowAPIByApi(t *testing.T) {
 	if !strings.Contains(got.ErrorMessage, "stub test api") {
 		t.Fatalf("stream = %q, want the APIByApi implementation to run", got.ErrorMessage)
 	}
+}
+
+// piStoredTypedModels is a stored entry as pi writes one: the model factories
+// of upstream 8676a0dcd's model-types.test.ts and classifier-models.test.ts,
+// with an explicit null type and a type this version does not know, passed
+// through JSON.stringify as coding-agent's models-store.ts writes an entry.
+const piStoredTypedModels = `{"models":[{"id":"untyped-chat","name":"untyped-chat","api":"test-chat","provider":"dyn","baseUrl":"https://example.test/v1","reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":1000,"maxTokens":100},{"id":"null-typed-chat","name":"null-typed-chat","api":"test-chat","provider":"dyn","baseUrl":"https://example.test/v1","reasoning":false,"input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":1000,"maxTokens":100,"type":null},{"type":"image","id":"stored-image","name":"stored-image","api":"test-images","provider":"dyn","baseUrl":"https://example.test/v1","input":["text"],"output":["image"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}},{"type":"classifier","id":"stored-classifier","name":"stored-classifier","api":"test-classifier","provider":"dyn","baseUrl":"https://example.test/v1","input":["text"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0},"contextWindow":1000},{"type":"video","id":"future-video","name":"future-video","api":"test-images","provider":"dyn","baseUrl":"https://example.test/v1","input":["text"],"output":["image"],"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}}]}`
+
+// A pi-written entry decodes with its model types, which is all Model's
+// "type" JSON key decides: nothing else reads the JSON, so a renamed tag
+// would restore a stored image model as a chat model. Restored through
+// Refresh, the entry lists exactly what pi's own createModels lists for the
+// same JSON (run under node against 8676a0dcd src): getModels
+// untyped-chat,null-typed-chat; getAllModels adds stored-image and
+// stored-classifier; the video model is dropped.
+func TestPiStoredModelTypesDecode(t *testing.T) {
+	var entry ModelsStoreEntry
+	if err := json.Unmarshal([]byte(piStoredTypedModels), &entry); err != nil {
+		t.Fatal(err)
+	}
+	wantTypes := []ModelType{"", "", ModelTypeImage, ModelTypeClassifier, "video"}
+	if len(entry.Models) != len(wantTypes) {
+		t.Fatalf("decoded %d models, want %d", len(entry.Models), len(wantTypes))
+	}
+	for i, m := range entry.Models {
+		if m.Type != wantTypes[i] {
+			t.Fatalf("%s: Type = %q, want %q", m.ID, m.Type, wantTypes[i])
+		}
+	}
+	// An absent and a null type both read as chat, as pi's `model.type ?? "chat"`.
+	for _, m := range entry.Models[:2] {
+		if GetModelType(m) != ModelTypeChat {
+			t.Fatalf("%s: GetModelType = %q, want chat", m.ID, GetModelType(m))
+		}
+	}
+
+	ctx := context.Background()
+	store := NewInMemoryModelsStore()
+	if err := store.Write(ctx, "dyn", entry); err != nil {
+		t.Fatal(err)
+	}
+	models := CreateModels(&CreateModelsOptions{ModelsStore: store})
+	models.SetProvider(CreateProvider(CreateProviderOptions{
+		ID: "dyn", Auth: noAuthConfigured(), API: stubAPI(),
+		FetchModels: func(context.Context, RefreshModelsContext) ([]*Model, error) { return nil, nil },
+	}))
+	offline := false
+	if result := models.Refresh(ctx, &ModelsRefreshOptions{Providers: []string{"dyn"}, AllowNetwork: &offline}); len(result.Errors) != 0 {
+		t.Fatalf("restore errors: %v", result.Errors)
+	}
+	wantIDs(t, "GetModels", models.GetModels("dyn"), "untyped-chat", "null-typed-chat")
+	wantIDs(t, "GetAllModels", models.GetAllModels("dyn"), "untyped-chat", "null-typed-chat", "stored-image", "stored-classifier")
+	wantIDs(t, "image models", models.GetModelsOfType(ModelTypeImage, "dyn"), "stored-image")
+	wantIDs(t, "classifier models", models.GetModelsOfType(ModelTypeClassifier, "dyn"), "stored-classifier")
 }
