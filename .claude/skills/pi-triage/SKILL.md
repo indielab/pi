@@ -60,14 +60,14 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      | upstream tree | Go home | notes |
      |---|---|---|
      | `packages/ai/src` | `ai/`, `ai/providers/` | **OUT:** only `cli.ts` (E1). `amazon-bedrock` and `openai-codex` are IN scope with open dependency consults (queue entries 9 and 10) as of 2026-08-27 — do NOT mark them `n/a`. Azure, Mistral, Vertex, Radius, images and `auth/oauth/**` are IN as of 2026-08-27 — most are QUEUED, see below |
-     | `packages/ai/scripts` | `ai/models_catalog.json` **at the next release regen** | generator-only; verdict is `port-but-CATALOG-ONLY`. Includes `generate-image-models.ts` as of 2026-08-27 |
+     | `packages/ai/scripts` | `ai/models_catalog.json` **at the next release regen** | generator-only; verdict is `port-but-CATALOG-ONLY`. Includes `openrouter-catalog.ts` and `model-data.ts` (`generate-image-models.ts` was deleted by `a328aa89a`; images and classifiers now come out of `generate-models.ts`) |
      | `packages/agent/src` | `agent/` (harness deltas land per the chosen shape — default `coding/`) | `harness/**` and `search/**` are IN scope, FUNDED and draining as QUEUED (entry 8) — backlog them, never `n/a`, and **never escalate them again** (2026-08-27). **But split the commit by hunk before you queue it:** parts of that tree are already SHIPPED, so a hunk there can be an ordinary `port`. Today `harness/types.ts`'s `FileSystem`/`ExecutionEnv` and `harness/env/nodejs.ts`'s `NodeExecutionEnv` are `coding/execenv.go` (slice 8b-i), and 2026-09-09 parked-then-recovered a portable delta (`openTextLineReader`) under a heading that said the Go code did not exist |
      | `packages/protocol/src` | `protocol/`, `protocol/cbor/` | 2026-08-01. Byte-golden to a PEER: CBOR + frame layout |
      | `packages/client/src` | `client/` | 2026-08-01 |
      | `packages/server/src` | `server/`, `server/unix/`, `server/internal/servertest/` | 2026-08-01. Both of that ruling's carve-outs are stale and NOT to be re-applied: `server/src/legacy/**` no longer exists (`05bf9df65`), and `server/src/testing/**` IS ported |
      | `packages/telemetry` | `telemetry/` | 2026-08-06, **runtime half only** — the schema/type-inference half (`defineTelemetrySchema`, `Infer*`, `SchemaTelemetrySpan`) is `n/a` and shares `src/index.ts` with the ported half, so this one must be split by HUNK |
      | `packages/session-backends` | — | 2026-08-07: IN scope but QUEUED |
-     | `packages/coding-agent/src/{core,client,utils,server}` | `coding/` (`src/server/` is the harness factory — queue entry 8) | **OUT** (E1, and this list must match the ledger's out-table exactly): `core/extensions/**`, `core/export-html/**`, `core/settings-manager.ts`, `core/prompt-templates.ts`, `core/agent-session-runtime.ts` + the session-reload / `/new` lifecycle, `core/model-registry.ts`, `core/resolve-config-value.ts`, `core/radius.ts`, `core/resource-loader.ts` source-info accessors, `migrations.ts`. **Partly ported, split by HUNK, never diffstat-dispatched:** `core/model-resolver.ts`, `core/package-manager.ts`, `core/trust-manager.ts`. The trust *decision and gate* are IN (2026-08-27); the trust prompt, selector and store are host. **Also split by HUNK, inside the IN-scope queued tree:** `core/session-manager.ts` — its static discovery surface (`DefaultSessionDir`, `ListSessions`, `LatestSession`, `FindSessionByID`, the header reader, id generation, migrations) is `coding/session_store.go`, the class itself is Scope queue entry 12; a hunk on the shipped half is an ordinary `port`, never an entry-12 append (2026-09-16: the draft parked `findById` and the adversarial pass caught it). Two hunks land in `ai/providers/` instead: `utils/pi-user-agent.ts` -> `pi_user_agent.go`, `core/provider-attribution.ts` -> `attribution.go` |
+     | `packages/coding-agent/src/{core,client,utils,server}` | `coding/` (`src/server/` is the harness factory — queue entry 8) | **OUT** (E1, and this list must match the ledger's out-table exactly): `core/extensions/**`, `core/export-html/**`, `core/settings-manager.ts`, `core/prompt-templates.ts`, `core/agent-session-runtime.ts` + the session-reload / `/new` lifecycle, `core/model-registry.ts`, `core/resolve-config-value.ts`, `core/radius.ts`, `core/resource-loader.ts` source-info accessors, `core/provider-composer.ts`, `core/model-config.ts`, `migrations.ts`. **Partly ported, split by HUNK, never diffstat-dispatched:** `core/model-resolver.ts`, `core/package-manager.ts`, `core/trust-manager.ts`, `core/model-runtime.ts` (its `Models` contract is `ai.Models`, 2026-09-24). `core/remote-catalog-provider.ts` is Scope queue row 19. The trust *decision and gate* are IN (2026-08-27); the trust prompt, selector and store are host. **Also split by HUNK, inside the IN-scope queued tree:** `core/session-manager.ts` — its static discovery surface (`DefaultSessionDir`, `ListSessions`, `LatestSession`, `FindSessionByID`, the header reader, id generation, migrations) is `coding/session_store.go`, the class itself is Scope queue entry 12; a hunk on the shipped half is an ordinary `port`, never an entry-12 append (2026-09-16: the draft parked `findById` and the adversarial pass caught it). Two hunks land in `ai/providers/` instead: `utils/pi-user-agent.ts` -> `pi_user_agent.go`, `core/provider-attribution.ts` -> `attribution.go` |
 
      `utils/` is judged **by its consumer, not its path** — in scope only when a
      ported core file consumes it.
@@ -105,7 +105,8 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      `core/prompt-templates.ts`, `core/agent-session-runtime.ts` + the
      session-reload / `/new` lifecycle, `core/model-registry.ts`,
      `core/resolve-config-value.ts`, `core/radius.ts`, `core/resource-loader.ts`
-     source-info accessors, `migrations.ts`, `bun/**`, `package-manager-cli.ts`.
+     source-info accessors, `core/provider-composer.ts`, `core/model-config.ts`,
+     `migrations.ts`, `bun/**`, `package-manager-cli.ts`.
 
      `core/model-registry.ts`, `core/resolve-config-value.ts`, `core/radius.ts`
      and the `core/resource-loader.ts` accessors are E1's **only-consumers**
@@ -113,13 +114,14 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      clause fires **only when EVERY consumer is host**; a mixed consumer set
      does not fire it, so read the hunk.
 
-     **NEVER diffstat-dispatch these four — they are partly ported and the
+     **NEVER diffstat-dispatch these five — they are partly ported and the
      shortcut would manufacture a miss** (see the split-by-HUNK table in
      `docs/UPSTREAM.md`): `core/model-resolver.ts` (its
      `defaultModelPerProvider` is `coding/resolve.go`, and that table has caused
      a miss TWICE — diff it on every touch), `core/package-manager.ts` (skill
      discovery is `coding/resources.go`), `core/trust-manager.ts` (decision and
-     gate are ported), `packages/telemetry/src/index.ts` (E3). **A commit spanning the seam is triaged on its
+     gate are ported), `core/model-runtime.ts` (its `Models` contract is
+     `ai.Models`, 2026-09-24), `packages/telemetry/src/index.ts` (E3). **A commit spanning the seam is triaged on its
      non-host hunks alone and NEVER escalates on account of the host half.**
      This is the rule that removes most of the per-commit cost — roughly half of
      all mixed commits are mixed only because of host content.
@@ -193,7 +195,7 @@ Specific rulings (from pilot runs — keep appending):
   which IS ported surface (→ `ai/models_catalog.json`, regenerated from the
   matching npm build). The version bump/changelog parts are noise; ALSO note
   the release tag so /pi-sync refreshes the npm reference build.
-  `image-models.generated.ts` joins the catalog-regen surface as of 2026-08-27 (queue entry 3) — regen it alongside `models.generated.ts`.
+  Since `a328aa89a` the image and classifier catalogs are `IMAGE_MODELS` / `CLASSIFIER_MODELS` inside `models.generated.ts` (`image-models.generated.ts` is deleted): dump them alongside `MODELS` at every regen for Scope queue row 3's record, and embed them only once row 3 lands.
   A release tag ALSO drains the `port-but-CATALOG-ONLY` queue — but only of the
   deltas that are **ancestors of the release sha**. Check that with
   `git merge-base --is-ancestor <delta> <release>`, never by log order: generator
@@ -221,8 +223,10 @@ Specific rulings (from pilot runs — keep appending):
   via merges and were missed by per-first-parent diffstats — caught only by
   the adversarial parity review). After per-commit triage, ALWAYS reconcile
   with **both** passes. They catch different things; neither replaces the other:
-  1. **Detector — never skip.** `git diff <pin>..origin/main --name-only` with
-     NO pathspec, and classify every path it prints. This is the pass that
+  1. **Detector — never skip.** `git diff <pin>..origin/main --name-status
+     --no-renames` with NO pathspec, and classify every path it prints (with
+     rename detection on, a moved file prints only its destination and the
+     deletion of its source is invisible — `b45597504`, 2026-09-24). This is the pass that
      surfaces a brand-new top-level package, a file moved out of `packages/`,
      or a new repo-root directory — things no pathspec written today can
      anticipate. It is what caught the 2026-08-22 blind spot.

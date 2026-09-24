@@ -117,7 +117,7 @@ Rule: fix faithful to pi (npm build wins on source/build drift); every fix locke
 ## Cross-cutting fixes (dedupe)
 - [x] cloudflare resolveBaseUrl util (C4/E1 + responses caller) — *util landed: ai/providers/cloudflare.go (resolveCloudflareBaseURL, isCloudflareProvider, 4 baseURL consts; exact pi error message; empty env counts as unset). Completions + responses callers wired; E1 (anthropic) still pending.*
 - [x] copilot dynamic headers util (C8/E2 + responses caller) — *util landed: ai/providers/copilot.go (inferCopilotInitiator, hasCopilotVisionInput, buildCopilotDynamicHeaders; user/toolResult-only image scan, value+pointer message variants). Completions + responses callers wired; E2 (anthropic) still pending.*
-- OnPayload/OnResponse error propagation (all providers) (C10)
+- [x] OnPayload/OnResponse error propagation (all providers) (C10) — *closed 2026-09-24: anthropic, faux and both openai adapters propagate an OnResponse error and call it for a 2xx response only (as their SDKs do), pi-messages calls it for every status as pi does, and google no longer calls it at all, because pi's google adapter never does.*
 - [x] retry default semantics *int MaxRetries (D1 + L3 completions + A6 anthropic-google note) — *done in retry.go via D1 (int zero-value == pi default 0, no *int needed); all four providers pick it up through retryFromOptions.*
 - prompt_cache_retention sessionID gate (C5 both OpenAI providers)
 
