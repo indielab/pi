@@ -1,8 +1,10 @@
 package providers
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -56,8 +58,8 @@ func loadAnthropicSSEEventsCapture(t *testing.T) []anthropicSSEEventsRow {
 }
 
 // streamAnthropicSSEEvents streams body on claude-haiku-4-5 and returns the
-// type of every pushed event and the final message.
-func streamAnthropicSSEEvents(t *testing.T, ctx context.Context, body string, opts ai.StreamOptions) ([]string, *ai.AssistantMessage) {
+// model it streamed, the type of every pushed event and the final message.
+func streamAnthropicSSEEvents(t *testing.T, ctx context.Context, body string, opts ai.StreamOptions) (*ai.Model, []string, *ai.AssistantMessage) {
 	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("content-type", "text/event-stream")
@@ -78,7 +80,7 @@ func streamAnthropicSSEEvents(t *testing.T, ctx context.Context, body string, op
 	for ev := range stream.Events() {
 		pushed = append(pushed, string(ev.Type))
 	}
-	return pushed, stream.Result()
+	return &model, pushed, stream.Result()
 }
 
 // assertAnthropicMessageMatchesPi compares the final message with pi's. Where
@@ -137,22 +139,141 @@ func splitAnthropicParseFailure(msg string) (head, cause, tail string, ok bool) 
 	return msg[:headEnd], msg[headEnd : headEnd+data], msg[headEnd+data:], true
 }
 
+// jsonStringify renders a decoded value as JSON.stringify would, for the value
+// shapes an observer receives (no HTML escaping; OrderedObject keeps key order).
+func jsonStringify(t *testing.T, v any) string {
+	t.Helper()
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+	if err := enc.Encode(v); err != nil {
+		t.Fatalf("marshal %#v: %v", v, err)
+	}
+	return strings.TrimSuffix(buf.String(), "\n")
+}
+
+// providerStreamObserver records what OnProviderStreamEvent receives, and on
+// the event at index throwAt (when set) cancels the request if abortFirst and
+// returns "observer boom" — the capture's observer.
+type providerStreamObserver struct {
+	t          *testing.T
+	throwAt    *int
+	abortFirst bool
+	cancel     context.CancelFunc
+	observed   []string
+	models     []*ai.Model
+}
+
+func (o *providerStreamObserver) observe(data any, model *ai.Model) error {
+	o.observed = append(o.observed, jsonStringify(o.t, data))
+	o.models = append(o.models, model)
+	if o.throwAt != nil && *o.throwAt == len(o.observed)-1 {
+		if o.abortFirst {
+			o.cancel()
+		}
+		return errors.New("observer boom")
+	}
+	return nil
+}
+
+// assertModel requires every observed event to carry model, the one the
+// stream was called with (pi passes its `model` argument).
+func (o *providerStreamObserver) assertModel(model *ai.Model) {
+	o.t.Helper()
+	for i, m := range o.models {
+		if m != model {
+			o.t.Errorf("observed event %d carries model %p, want the streamed model %p", i, m, model)
+		}
+	}
+}
+
 // TestAnthropicSSEEventsMatchPi replays each captured body and requires pi's
-// pushed events and final message: named events whose data is JSON but not an
-// object are passed over, a `null` event fails with pi's TypeError text, and a
-// parse failure carries pi's data= and raw= suffix — raw being every line of
-// the event, comments included, joined with a literal backslash-n.
+// observed events, pushed events and final message. Named events whose data
+// is JSON but not an object are observed and then passed over; a `null` event
+// fails with pi's TypeError text before the observer sees it; a parse failure
+// carries pi's data= and raw= suffix — raw being every line of the event,
+// comments included, joined with a literal backslash-n; and an observer error
+// fails the stream with its message, aborted when the request was cancelled.
 func TestAnthropicSSEEventsMatchPi(t *testing.T) {
 	for _, row := range loadAnthropicSSEEventsCapture(t) {
-		if row.ThrowAt != nil {
-			continue // observer rows need onProviderStreamEvent
-		}
 		t.Run(row.Name, func(t *testing.T) {
-			pushed, final := streamAnthropicSSEEvents(t, context.Background(), row.SSE, ai.StreamOptions{})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			obs := &providerStreamObserver{t: t, throwAt: row.ThrowAt, abortFirst: row.AbortFirst, cancel: cancel}
+			model, pushed, final := streamAnthropicSSEEvents(t, ctx, row.SSE, ai.StreamOptions{OnProviderStreamEvent: obs.observe})
+			if !reflect.DeepEqual(obs.observed, row.Observed) && (len(obs.observed) > 0 || len(row.Observed) > 0) {
+				t.Errorf("observed = %q, want %q", obs.observed, row.Observed)
+			}
+			obs.assertModel(model)
 			if !reflect.DeepEqual(pushed, row.Pushed) {
 				t.Errorf("pushed = %q, want %q", pushed, row.Pushed)
 			}
 			assertAnthropicMessageMatchesPi(t, row, final)
 		})
+	}
+}
+
+// TestAnthropicForwardsProviderStreamEventsInOrder transliterates upstream's
+// 'forwards parsed provider stream events in order' (002fc8385): every message
+// event reaches the observer, in order, with the model the stream was called
+// with.
+func TestAnthropicForwardsProviderStreamEventsInOrder(t *testing.T) {
+	sse := `event: message_start
+data: {"type":"message_start","message":{"id":"msg_test","usage":{"input_tokens":12,"output_tokens":0,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}}
+
+event: content_block_start
+data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+
+event: content_block_delta
+data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}}
+
+event: content_block_stop
+data: {"type":"content_block_stop","index":0}
+
+event: message_delta
+data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"input_tokens":12,"output_tokens":5,"cache_read_input_tokens":0,"cache_creation_input_tokens":0}}
+
+event: message_stop
+data: {"type":"message_stop"}
+`
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, sse)
+	}))
+	defer server.Close()
+	base := ai.GetModel("anthropic", "claude-haiku-4-5")
+	if base == nil {
+		t.Fatal("catalog has no anthropic/claude-haiku-4-5")
+	}
+	model := *base
+	model.BaseURL = server.URL
+	var types []string
+	var models []*ai.Model
+	result := StreamAnthropic(context.Background(), &model, ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("Hello", 1)}}),
+		&AnthropicOptions{StreamOptions: ai.StreamOptions{
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"},
+			OnProviderStreamEvent: func(data any, eventModel *ai.Model) error {
+				event, _ := data.(ai.OrderedObject)
+				typ, _ := event.Plain()["type"].(string)
+				types = append(types, typ)
+				models = append(models, eventModel)
+				return nil
+			},
+		}}).Result()
+
+	if result.StopReason != ai.StopStop {
+		t.Fatalf("stopReason = %s, want stop (%s)", result.StopReason, result.ErrorMessage)
+	}
+	want := []string{"message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"}
+	if !reflect.DeepEqual(types, want) {
+		t.Errorf("event types = %q, want %q", types, want)
+	}
+	if len(models) != len(want) {
+		t.Fatalf("observer called %d times, want %d", len(models), len(want))
+	}
+	for i, m := range models {
+		if m != &model {
+			t.Errorf("event %d: observer got model %p, want the streamed model %p", i, m, &model)
+		}
 	}
 }

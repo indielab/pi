@@ -376,12 +376,22 @@ func piMessagesEventOf(data string, value any) (piMessagesEvent, bool) {
 // handle returns false to stop early (a terminal event was seen). A frame that
 // is not JSON fails the read, as pi's JSON.parse throw does. Port of
 // readPiMessagesEvents.
-func readPiMessagesEvents(body io.Reader, ctx context.Context, handle func(piMessagesEvent) bool) error {
+//
+// onEvent, when non-nil, observes every yielded frame's parsed value — objects
+// as ai.OrderedObject, unknown fields and the terminal done/error included —
+// before it is converted (pi's onProviderStreamEvent, upstream 002fc8385); its
+// error ends the read.
+func readPiMessagesEvents(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(piMessagesEvent) bool) error {
 	// emit handles one frame and reports whether to keep reading.
 	emit := func(frame string) (bool, error) {
 		data, value, ok, err := parsePiMessagesFrame(frame)
 		if err != nil || !ok {
 			return true, err
+		}
+		if onEvent != nil {
+			if err := onEvent(value); err != nil {
+				return false, err
+			}
 		}
 		ev, ok := piMessagesEventOf(data, value)
 		if !ok {
@@ -611,8 +621,14 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 			return
 		}
 
+		// pi awaits options.onProviderStreamEvent(piEvent, model) before
+		// convertEvent, with the model the stream was called with.
+		var onEvent func(any) error
+		if opts.OnProviderStreamEvent != nil {
+			onEvent = func(data any) error { return opts.OnProviderStreamEvent(data, model) }
+		}
 		terminal := false
-		perr := readPiMessagesEvents(resp.Body, ctx, func(ev piMessagesEvent) bool {
+		perr := readPiMessagesEvents(resp.Body, ctx, onEvent, func(ev piMessagesEvent) bool {
 			out := conv.convert(ev)
 			stream.Push(out)
 			if out.Type == ai.EventDone || out.Type == ai.EventError {

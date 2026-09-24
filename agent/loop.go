@@ -331,6 +331,7 @@ func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config
 				HTTPClient:      config.HTTPClient,
 				Headers:         config.Headers,
 			},
+			OnProviderStreamEvent:     config.OnProviderStreamEvent,
 			Transport:                 config.Transport,
 			SessionID:                 config.SessionID,
 			WebSocketConnectTimeoutMs: config.WebSocketConnectTimeoutMs,

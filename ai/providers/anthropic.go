@@ -696,8 +696,15 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// what an earlier one said — including an empty list, which retracts it.
 		var inputTransformations []anthropicInputTransformation
 
+		// pi awaits options.onProviderStreamEvent(event, model) first thing in
+		// the loop, with the model the stream was called with.
+		var onEvent func(any) error
+		if opts.OnProviderStreamEvent != nil {
+			onEvent = func(data any) error { return opts.OnProviderStreamEvent(data, model) }
+		}
+
 		sawStart, sawStop := false, false
-		err = iterateAnthropicSSE(resp.Body, ctx, func(ev anthropicStreamEvent) error {
+		err = iterateAnthropicSSE(resp.Body, ctx, onEvent, func(ev anthropicStreamEvent) error {
 			switch ev.Type {
 			case "message_start":
 				sawStart = true
@@ -2003,7 +2010,13 @@ func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error
 // their data is a JSON object: any other JSON value has no `type` for pi's
 // loop to match, so pi carries on past it. A `null` fails the stream the way
 // pi's `event.type` read does, inside the same try that wraps a parse failure.
-func iterateAnthropicSSE(body io.Reader, ctx context.Context, handle func(anthropicStreamEvent) error) error {
+//
+// onEvent, when non-nil, observes every event pi's iterateAnthropicEvents
+// yields — each named message event whose data parses (after repair) to
+// anything but null, objects and other values alike — before it is handled
+// (pi's onProviderStreamEvent, upstream 002fc8385). It receives the parsed
+// value with objects as ai.OrderedObject, and its error ends the iteration.
+func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(anthropicStreamEvent) error) error {
 	scanner := bufio.NewScanner(body)
 	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
 	scanner.Split(scanSSELines)
@@ -2042,11 +2055,20 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, handle func(anthro
 		if err != nil {
 			return parseFailure(err)
 		}
-		switch jsonValueKind(text) {
-		case '{':
-		case 'n':
+		kind := jsonValueKind(text)
+		if kind == 'n' {
 			return parseFailure(errors.New("Cannot read properties of null (reading 'type')"))
-		default:
+		}
+		if onEvent != nil {
+			value, err := ai.DecodeOrderedValue([]byte(text))
+			if err != nil {
+				return parseFailure(err)
+			}
+			if err := onEvent(value); err != nil {
+				return err
+			}
+		}
+		if kind != '{' {
 			return nil
 		}
 		var ev anthropicStreamEvent

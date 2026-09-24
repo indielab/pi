@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -64,6 +65,63 @@ func TestSDKOptionsReachProvider(t *testing.T) {
 	}
 	if !onPayloadCalled {
 		t.Fatal("OnPayload hook not invoked")
+	}
+}
+
+// TestSDKOptionsForwardProviderStreamEvents transliterates upstream's 'forwards
+// provider stream events to extensions' (sdk-stream-options.test.ts,
+// 002fc8385) onto the native hook: the stream options carry an observer, and
+// what a provider hands it reaches SessionOptions.OnProviderStreamEvent with
+// the model whose Provider/Api/ID are the extension event's
+// provider/api/model.
+func TestSDKOptionsForwardProviderStreamEvents(t *testing.T) {
+	providerEvent := map[string]any{"openrouter_metadata": map[string]any{"strategy": "direct"}}
+	model := &ai.Model{ID: "capture-model", Api: ai.APIOpenAICompletions, Provider: "capture-provider", MaxTokens: 4096}
+
+	type event struct {
+		data                   any
+		provider, api, modelID string
+	}
+	var events []event
+	var hadObserver bool
+	sess := NewSession(SessionOptions{
+		Model:   model,
+		Cwd:     t.TempDir(),
+		NoTools: NoToolsAll,
+		APIKey:  "k",
+		OnProviderStreamEvent: func(data any, m *ai.Model) error {
+			events = append(events, event{data: data, provider: m.Provider, api: string(m.Api), modelID: m.ID})
+			return nil
+		},
+		StreamFn: func(ctx context.Context, m *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			s := ai.NewAssistantMessageEventStream()
+			go func() {
+				hadObserver = opts.OnProviderStreamEvent != nil
+				if hadObserver {
+					if err := opts.OnProviderStreamEvent(providerEvent, m); err != nil {
+						t.Errorf("observer: %v", err)
+					}
+				}
+				msg := &ai.AssistantMessage{
+					Content: ai.ContentList{ai.TextContent{Text: "ok"}}, Api: m.Api, Provider: m.Provider,
+					Model: m.ID, StopReason: ai.StopStop, Timestamp: 1,
+				}
+				s.Push(ai.AssistantMessageEvent{Type: ai.EventDone, Reason: ai.StopStop, Message: msg})
+				s.End()
+			}()
+			return s
+		},
+	})
+
+	if _, err := sess.Run(context.Background(), "hi"); err != nil {
+		t.Fatal(err)
+	}
+	if !hadObserver {
+		t.Fatal("the stream options carry no OnProviderStreamEvent")
+	}
+	want := []event{{data: providerEvent, provider: "capture-provider", api: "openai-completions", modelID: "capture-model"}}
+	if !reflect.DeepEqual(events, want) {
+		t.Fatalf("events = %+v, want %+v", events, want)
 	}
 }
 

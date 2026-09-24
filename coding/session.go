@@ -88,6 +88,15 @@ type SessionOptions struct {
 	OnPayload func(payload any, model *ai.Model) (any, error)
 	// OnResponse is invoked after the HTTP response is received.
 	OnResponse func(resp ai.ProviderResponse, model *ai.Model) error
+	// OnProviderStreamEvent observes each parsed provider stream event before
+	// it is normalized, for adapters that support it (see
+	// ai.StreamOptions.OnProviderStreamEvent). It is the native equivalent of
+	// pi's provider_stream_event extension event (upstream 002fc8385): data is
+	// the event's data, and model carries the event's provider, api and model
+	// as Provider, Api and ID. It keeps pi-ai's semantics — the callback is
+	// awaited and a non-nil error fails the stream — where pi's extension
+	// runner reports a handler's throw and leaves the response alone.
+	OnProviderStreamEvent func(data any, model *ai.Model) error
 	// BeforeToolCall runs after a tool call's args are validated and before it
 	// executes. Return {Block:true, Reason:...} to deny it (the loop emits an
 	// error tool result). This is the native equivalent of pi's tool_call
@@ -506,6 +515,10 @@ func NewSession(opts SessionOptions) *Session {
 		OnResponse:      opts.OnResponse,
 		BeforeToolCall:  opts.BeforeToolCall,
 		AfterToolCall:   withToolResultImageNormalization(opts.AfterToolCall, sess.imageResizeOptions),
+
+		// pi's createAgentSession wires the extension runner's
+		// provider_stream_event handler here, beside onPayload/onResponse.
+		OnProviderStreamEvent: opts.OnProviderStreamEvent,
 	})
 
 	a.SetTools(tools)

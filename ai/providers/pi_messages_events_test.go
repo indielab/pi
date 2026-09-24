@@ -117,7 +117,7 @@ func assertPiMessagesMessageMatchesPi(t *testing.T, row piMessagesEventsRow, fin
 // fail with a JSON syntax error, as pi's JSON.parse throws a SyntaxError.
 func assertPiMessagesFrameSyntaxError(t *testing.T, row piMessagesEventsRow) {
 	t.Helper()
-	err := readPiMessagesEvents(strings.NewReader(row.SSE), nil, func(piMessagesEvent) bool { return true })
+	err := readPiMessagesEvents(strings.NewReader(row.SSE), nil, nil, func(piMessagesEvent) bool { return true })
 	var syntaxErr *json.SyntaxError
 	if !errors.As(err, &syntaxErr) {
 		t.Errorf("reading the body returned %v, want the JSON syntax error of frame data %q", err, row.V8Error)
@@ -125,16 +125,23 @@ func assertPiMessagesFrameSyntaxError(t *testing.T, row piMessagesEventsRow) {
 }
 
 // TestPiMessagesEventsMatchPi replays each captured body and requires pi's
-// pushed events and final message: a JS-falsy frame is skipped, any other
-// value that is not an object converts to an event with no type, and a frame
-// that is not JSON fails the stream.
+// observed events, pushed events and final message: a JS-falsy frame is
+// skipped unobserved, any other value that is not an object is observed and
+// converts to an event with no type, a frame that is not JSON fails the
+// stream, the terminal done is observed before it converts, and an observer
+// error fails the stream with its message — aborted when the request was
+// cancelled, and never done even when thrown on the done event.
 func TestPiMessagesEventsMatchPi(t *testing.T) {
 	for _, row := range loadPiMessagesEventsCapture(t) {
-		if row.ThrowAt != nil {
-			continue // observer rows need onProviderStreamEvent
-		}
 		t.Run(row.Name, func(t *testing.T) {
-			_, pushed, final := streamPiMessagesEvents(t, context.Background(), row.SSE, ai.StreamOptions{})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			obs := &providerStreamObserver{t: t, throwAt: row.ThrowAt, abortFirst: row.AbortFirst, cancel: cancel}
+			model, pushed, final := streamPiMessagesEvents(t, ctx, row.SSE, ai.StreamOptions{OnProviderStreamEvent: obs.observe})
+			if !reflect.DeepEqual(obs.observed, row.Observed) && (len(obs.observed) > 0 || len(row.Observed) > 0) {
+				t.Errorf("observed = %q, want %q", obs.observed, row.Observed)
+			}
+			obs.assertModel(model)
 			if !reflect.DeepEqual(pushed, row.Pushed) {
 				t.Errorf("pushed = %q, want %q", pushed, row.Pushed)
 			}
@@ -143,5 +150,67 @@ func TestPiMessagesEventsMatchPi(t *testing.T) {
 				assertPiMessagesFrameSyntaxError(t, row)
 			}
 		})
+	}
+}
+
+// TestPiMessagesForwardsWireEventsInOrder transliterates upstream's 'forwards
+// parsed wire events in order before converting them' (002fc8385): the
+// observer receives each wire event as parsed — unknown fields and the
+// terminal done included — with the model the stream was called with.
+func TestPiMessagesForwardsWireEventsInOrder(t *testing.T) {
+	wireEvents := []string{
+		`{"type":"start"}`,
+		`{"type":"text_start","contentIndex":0}`,
+		`{"type":"text_delta","contentIndex":0,"delta":"Hello","gatewayField":"upstream-value"}`,
+		`{"type":"text_end","contentIndex":0,"content":"Hello"}`,
+		`{"type":"done","reason":"stop","usage":` + piMessagesUsageJSON + `,"responseId":"resp_1"}`,
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("content-type", "text/event-stream")
+		io.WriteString(w, piMessagesSSE(wireEvents...))
+	}))
+	defer server.Close()
+	model := piMessagesTestModel(server.URL + "/v1")
+	var received []any
+	var models []*ai.Model
+	message := StreamSimplePiMessages(context.Background(), model, ai.NormalizeContext(piMessagesTestContext()), &ai.SimpleStreamOptions{
+		StreamOptions: ai.StreamOptions{
+			ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-key"},
+			OnProviderStreamEvent: func(data any, eventModel *ai.Model) error {
+				received = append(received, data)
+				models = append(models, eventModel)
+				return nil
+			},
+		},
+	}).Result()
+
+	want := make([]any, len(wireEvents))
+	for i, e := range wireEvents {
+		v, err := ai.DecodeOrderedValue([]byte(e))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want[i] = v
+	}
+	if !reflect.DeepEqual(received, want) {
+		t.Errorf("received = %v, want %v", received, want)
+	}
+	if len(models) != len(wireEvents) {
+		t.Fatalf("observer called %d times, want %d", len(models), len(wireEvents))
+	}
+	for i, m := range models {
+		if m != model {
+			t.Errorf("event %d: observer got model %p, want %p", i, m, model)
+		}
+	}
+	if message.StopReason != ai.StopStop {
+		t.Fatalf("stopReason = %s, want stop (%s)", message.StopReason, message.ErrorMessage)
+	}
+	if message.ResponseID != "resp_1" {
+		t.Errorf("responseId = %q, want resp_1", message.ResponseID)
+	}
+	content, _ := json.Marshal(message.Content)
+	if string(content) != `[{"type":"text","text":"Hello"}]` {
+		t.Errorf("content = %s, want [{\"type\":\"text\",\"text\":\"Hello\"}]", content)
 	}
 }

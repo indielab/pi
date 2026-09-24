@@ -76,19 +76,25 @@ type AgentOptions struct {
 	GetApiKey        func(provider string) string
 	OnPayload        func(payload any, model *ai.Model) (any, error)
 	OnResponse       func(resp ai.ProviderResponse, model *ai.Model) error
-	BeforeToolCall   func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
-	AfterToolCall    func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
-	FinishTurn       FinishTurnFunc
-	PrepareRequest   PrepareRequestFunc
-	PrepareNextTurn  func(c AgentTurnContext) *AgentLoopTurnUpdate
-	SteeringMode     QueueMode
-	FollowUpMode     QueueMode
-	SessionID        string
-	ThinkingBudgets  *ai.ThinkingBudgets
-	Transport        ai.Transport
-	MaxRetryDelayMs  *int
-	MaxRetries       int
-	TimeoutMs        int
+
+	// OnProviderStreamEvent observes each parsed provider stream event before
+	// it is normalized (pi AgentOptions.onProviderStreamEvent); it is forwarded
+	// to the stream options. See ai.StreamOptions.OnProviderStreamEvent.
+	OnProviderStreamEvent func(data any, model *ai.Model) error
+
+	BeforeToolCall  func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
+	AfterToolCall   func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+	FinishTurn      FinishTurnFunc
+	PrepareRequest  PrepareRequestFunc
+	PrepareNextTurn func(c AgentTurnContext) *AgentLoopTurnUpdate
+	SteeringMode    QueueMode
+	FollowUpMode    QueueMode
+	SessionID       string
+	ThinkingBudgets *ai.ThinkingBudgets
+	Transport       ai.Transport
+	MaxRetryDelayMs *int
+	MaxRetries      int
+	TimeoutMs       int
 	// WebSocketConnectTimeoutMs and HTTPClient are forwarded to the stream
 	// options (pi AgentLoopConfig extends SimpleStreamOptions).
 	WebSocketConnectTimeoutMs int
@@ -125,11 +131,16 @@ type Agent struct {
 	GetApiKey        func(provider string) string
 	OnPayload        func(payload any, model *ai.Model) (any, error)
 	OnResponse       func(resp ai.ProviderResponse, model *ai.Model) error
-	BeforeToolCall   func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
-	AfterToolCall    func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
-	FinishTurn       FinishTurnFunc
-	PrepareRequest   PrepareRequestFunc
-	PrepareNextTurn  func(c AgentTurnContext) *AgentLoopTurnUpdate
+
+	// OnProviderStreamEvent is forwarded to every provider request (pi's public
+	// Agent.onProviderStreamEvent).
+	OnProviderStreamEvent func(data any, model *ai.Model) error
+
+	BeforeToolCall  func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
+	AfterToolCall   func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+	FinishTurn      FinishTurnFunc
+	PrepareRequest  PrepareRequestFunc
+	PrepareNextTurn func(c AgentTurnContext) *AgentLoopTurnUpdate
 
 	SessionID                 string
 	ThinkingBudgets           *ai.ThinkingBudgets
@@ -186,6 +197,7 @@ func NewAgent(opts AgentOptions) *Agent {
 		GetApiKey:                 opts.GetApiKey,
 		OnPayload:                 opts.OnPayload,
 		OnResponse:                opts.OnResponse,
+		OnProviderStreamEvent:     opts.OnProviderStreamEvent,
 		BeforeToolCall:            opts.BeforeToolCall,
 		AfterToolCall:             opts.AfterToolCall,
 		FinishTurn:                opts.FinishTurn,
@@ -527,6 +539,7 @@ func (a *Agent) loopConfig(skipInitialSteeringPoll bool) AgentLoopConfig {
 		ToolExecution:             a.ToolExecution,
 		OnPayload:                 a.OnPayload,
 		OnResponse:                a.OnResponse,
+		OnProviderStreamEvent:     a.OnProviderStreamEvent,
 		ConvertToLlm:              a.ConvertToLlm,
 		TransformContext:          a.TransformContext,
 		GetApiKey:                 a.GetApiKey,

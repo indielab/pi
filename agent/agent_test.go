@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"slices"
 	"strings"
 	"sync"
@@ -1633,6 +1634,46 @@ func TestAgentForwardsHTTPClientToStreamOptions(t *testing.T) {
 	}
 	if got != ai.HTTPDoer(client) {
 		t.Fatalf("HTTPClient not forwarded to stream options: got %#v", got)
+	}
+}
+
+// TestAgentForwardsProviderStreamEventObservers transliterates upstream's
+// 'forwards provider stream event observers through AgentOptions' (002fc8385):
+// a stream function that invokes the stream options' observer reaches the one
+// given to AgentOptions.
+func TestAgentForwardsProviderStreamEventObservers(t *testing.T) {
+	var providerEvents []any
+	a := NewAgent(AgentOptions{
+		InitialState: &AgentState{Model: testModel},
+		OnProviderStreamEvent: func(data any, model *ai.Model) error {
+			providerEvents = append(providerEvents, data)
+			return nil
+		},
+		StreamFn: func(ctx context.Context, model *ai.Model, req ai.TranscriptContext, opts *ai.SimpleStreamOptions) *ai.AssistantMessageEventStream {
+			s := ai.NewAssistantMessageEventStream()
+			go func() {
+				if opts.OnProviderStreamEvent != nil {
+					if err := opts.OnProviderStreamEvent(map[string]any{"request_cost": 0.01}, model); err != nil {
+						t.Errorf("observer: %v", err)
+					}
+				}
+				msg := &ai.AssistantMessage{
+					Content: ai.ContentList{ai.TextContent{Text: "ok"}}, Api: model.Api, Provider: model.Provider,
+					Model: model.ID, StopReason: ai.StopStop, Timestamp: 1,
+				}
+				s.Push(ai.AssistantMessageEvent{Type: ai.EventDone, Reason: ai.StopStop, Message: msg})
+				s.End()
+			}()
+			return s
+		},
+	})
+
+	if err := a.Prompt(context.Background(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	want := []any{map[string]any{"request_cost": 0.01}}
+	if !reflect.DeepEqual(providerEvents, want) {
+		t.Fatalf("provider events = %v, want %v", providerEvents, want)
 	}
 }
 

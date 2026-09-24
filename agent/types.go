@@ -283,6 +283,9 @@ type AgentLoopConfig struct {
 	APIKey                    string
 	OnPayload                 func(payload any, model *ai.Model) (any, error)
 	OnResponse                func(resp ai.ProviderResponse, model *ai.Model) error
+	// OnProviderStreamEvent is forwarded to the stream options as
+	// ai.StreamOptions.OnProviderStreamEvent.
+	OnProviderStreamEvent func(data any, model *ai.Model) error
 
 	ToolExecution ToolExecutionMode
 
