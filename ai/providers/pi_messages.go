@@ -975,9 +975,9 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 		}
 
 		// pi: `(options?.fetch ?? globalThis.fetch)(url, …)` — this provider calls
-		// fetch directly rather than through an SDK, so the default stays
-		// http.DefaultClient rather than the retry loop's shared client.
-		var client ai.HTTPDoer = http.DefaultClient
+		// fetch directly rather than through an SDK, so no timeoutMs applies:
+		// only fetch's own headersTimeout bounds the wait for the response.
+		var client ai.HTTPDoer = sharedClient(undiciHeadersTimeoutMs)
 		c, custom := customHTTPClient(opts.HTTPClient)
 		if custom {
 			client = c

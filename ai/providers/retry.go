@@ -377,6 +377,14 @@ func undiciFetchError(err error) error {
 	return err
 }
 
+// undiciHeadersTimeoutMs bounds the wait for a response's headers on the
+// port's own client where pi's request is a bare fetch (google through
+// @google/genai, pi-messages): undici's headersTimeout, 300 seconds, which
+// fetch applies whatever the caller's options say; its expiry is one more
+// "fetch failed" (undiciFetchError). pi's CLI installs the same value as its
+// httpIdleTimeoutMs default. A variable only so a test can shorten it.
+var undiciHeadersTimeoutMs = 300_000
+
 // fetchRejection is a send that got no response: the error the port's own
 // client, or a custom HTTPClient (pi's custom fetch), rejected the request
 // with, or undici's refusal of it (fetchRefusal). sendWithRetry keeps it

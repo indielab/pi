@@ -483,7 +483,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		// maxRetryDelayMs and signal. TimeoutMs never reaches the request;
 		// fetch's own headers timeout bounds the wait.
 		cfg := retryFromOptions(opts.StreamOptions, nil)
-		cfg.timeoutMs = googleHeadersTimeoutMs
+		cfg.timeoutMs = undiciHeadersTimeoutMs
 		resp, err := sendWithRetry(ctx, build, cfg)
 		if err != nil {
 			// Neither @google/genai nor pi's catch adds to fetch's rejection.
@@ -1670,12 +1670,6 @@ func googleResponseBody(resp *http.Response) (io.Reader, error) {
 	}
 	return body, nil
 }
-
-// googleHeadersTimeoutMs bounds the wait for a google response's headers. It
-// is undici's headersTimeout, 300 seconds, which fetch applies whatever the
-// caller's options say; pi's CLI installs the same value as its
-// httpIdleTimeoutMs default. A variable only so a test can shorten it.
-var googleHeadersTimeoutMs = 300_000
 
 // codedBody undoes one content coding the way undici's decoding pipeline
 // does, through node's zlib streams (createGunzip, and createInflate, which

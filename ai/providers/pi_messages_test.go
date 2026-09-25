@@ -492,3 +492,27 @@ func TestPiMessagesAbsentProviderThinkingLevelLeavesExistingLevel(t *testing.T) 
 		})
 	}
 }
+
+// TestPiMessagesHeadersTimeoutFailsFetch: pi-messages calls fetch itself, so
+// no timeoutMs applies, and what bounds the wait for headers is fetch's own
+// headersTimeout, undici's 300s default; its expiry fails as every other
+// no-response failure does: "fetch failed", no start event. Measured against
+// pi's stream at 49681e1b7 (node v26.4.0): a server that reads the request
+// and never answers → [error] "fetch failed" after 301s, timeoutMs 50.
+func TestPiMessagesHeadersTimeoutFailsFetch(t *testing.T) {
+	if undiciHeadersTimeoutMs != 300_000 {
+		t.Fatalf("undiciHeadersTimeoutMs %d; undici's headersTimeout default is 300000", undiciHeadersTimeoutMs)
+	}
+	defer func(ms int) { undiciHeadersTimeoutMs = ms }(undiciHeadersTimeoutMs)
+	undiciHeadersTimeoutMs = 50
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		io.Copy(io.Discard, r.Body)
+		<-r.Context().Done()
+	}))
+	defer server.Close()
+	opts := ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{TimeoutMs: 60_000}}
+	events, final := drain(streamAbortAdapter(t, context.Background(), string(ai.APIPiMessages), server.URL, opts))
+	if fmt.Sprint(events) != "[error]" || final.StopReason != ai.StopError || final.ErrorMessage != "fetch failed" {
+		t.Fatalf("stream %v, stop %s %q; pi: [error], error \"fetch failed\"", events, final.StopReason, final.ErrorMessage)
+	}
+}
