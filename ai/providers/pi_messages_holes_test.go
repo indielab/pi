@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"runtime"
+	"slices"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
@@ -32,10 +33,11 @@ func piMessagesHoleStream(starts ...int) string {
 // that says what to check, where pi's sparse array would take any slot: a
 // backend numbers its blocks from 0 without gaps, and a far slot — one frame
 // can name 2^31-2 — would otherwise have every pushed event copy that many
-// slots.
+// slots. The error counts the content's slots and, apart, the ones a block
+// is set in.
 func TestPiMessagesContentHolesAreBounded(t *testing.T) {
-	overflow := func(slot, blocks, unset int) string {
-		return fmt.Sprintf("pi-messages backend started a block at contentIndex %d, past the %d blocks the message holds; that would leave %d of its content slots unset, and the port holds at most 1024 (pi's sparse array holds any number). Check that the backend numbers content blocks from 0 without gaps", slot, blocks, unset)
+	overflow := func(slot, slots, set, unset int) string {
+		return fmt.Sprintf("pi-messages backend started a block at contentIndex %d, past the %d content slots the message has (%d set); that would leave %d of its content slots unset, and the port holds at most 1024 (pi's sparse array holds any number). Check that the backend numbers content blocks from 0 without gaps", slot, slots, set, unset)
 	}
 	for _, tc := range []struct {
 		name   string
@@ -45,9 +47,11 @@ func TestPiMessagesContentHolesAreBounded(t *testing.T) {
 		want string
 	}{
 		{name: "holesUpToTheBound", starts: []int{1024}},
-		{name: "oneHolePastTheBound", starts: []int{1025}, want: overflow(1025, 0, 1025)},
+		{name: "oneHolePastTheBound", starts: []int{1025}, want: overflow(1025, 0, 0, 1025)},
 		{name: "aFilledHoleFreesItsRoom", starts: []int{1000, 500, 1026}},
-		{name: "farSlot", starts: []int{1<<31 - 2}, want: overflow(1<<31-2, 0, 1<<31-2)},
+		{name: "pastTheBoundAfterHoles", starts: []int{1000, 2030}, want: overflow(2030, 1001, 1, 2029)},
+		{name: "pastTheBoundAfterAFilledHole", starts: []int{500, 0, 1600}, want: overflow(1600, 501, 2, 1598)},
+		{name: "farSlot", starts: []int{1<<31 - 2}, want: overflow(1<<31-2, 0, 0, 1<<31-2)},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			_, pushed, final := streamPiMessagesEvents(t, context.Background(), piMessagesHoleStream(tc.starts...), ai.StreamOptions{})
@@ -55,8 +59,18 @@ func TestPiMessagesContentHolesAreBounded(t *testing.T) {
 				if final.StopReason != ai.StopError || final.ErrorMessage != tc.want {
 					t.Fatalf("stopReason = %s, errorMessage = %q; want error %q", final.StopReason, final.ErrorMessage, tc.want)
 				}
-				if len(pushed) != 2 || pushed[0].Type != ai.EventStart || pushed[1].Type != ai.EventError {
-					t.Errorf("pushed %d events, want start then error", len(pushed))
+				// start, a text_start for each start before the last, error.
+				types := make([]ai.EventType, len(pushed))
+				for i, ev := range pushed {
+					types[i] = ev.Type
+				}
+				want := []ai.EventType{ai.EventStart}
+				for range tc.starts[1:] {
+					want = append(want, ai.EventTextStart)
+				}
+				want = append(want, ai.EventError)
+				if !slices.Equal(types, want) {
+					t.Errorf("pushed %v, want %v", types, want)
 				}
 				return
 			}

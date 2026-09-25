@@ -392,7 +392,8 @@ func (c *piMessagesConverter) start(r piMessagesBlockRef, block ai.Content) erro
 		case r.slot >= n:
 			holes := r.slot - n
 			if holes > piMessagesMaxContentHoles-c.holes {
-				return fmt.Errorf("pi-messages backend started a block at contentIndex %d, past the %d blocks the message holds; that would leave %d of its content slots unset, and the port holds at most %d (pi's sparse array holds any number). Check that the backend numbers content blocks from 0 without gaps", r.slot, n, c.holes+holes, piMessagesMaxContentHoles)
+				// n counts the content's slots, the holes among them.
+				return fmt.Errorf("pi-messages backend started a block at contentIndex %d, past the %d content slots the message has (%d set); that would leave %d of its content slots unset, and the port holds at most %d (pi's sparse array holds any number). Check that the backend numbers content blocks from 0 without gaps", r.slot, n, n-c.holes, c.holes+holes, piMessagesMaxContentHoles)
 			}
 			c.holes += holes
 			c.partial.Content = append(c.partial.Content, make(ai.ContentList, holes+1)...)
