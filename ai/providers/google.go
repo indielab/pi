@@ -1241,11 +1241,15 @@ func googleBareJSONError(read string) error {
 }
 
 // iterateGoogleSSE consumes the alt=sse stream the way the @google/genai SDK
-// does (processStreamResponse): each body read is first checked whole for a
-// bare JSON error payload (googleBareJSONError), then buffered; events are
-// split on \n\n, \r\r, or \r\n\r\n; only "data:"-prefixed events are decoded;
-// and a trailing unconsumed segment fails with the SDK's "Incomplete JSON
-// segment at the end".
+// does (processStreamResponse): each body read is decoded by a TextDecoder in
+// stream mode (utf8StreamDecoder: the stream's byte-order mark dropped,
+// invalid UTF-8 as U+FFFD per maximal subpart, a sequence the read leaves
+// incomplete held for the next), then checked whole for a bare JSON error
+// payload (googleBareJSONError), then buffered; events are split on \n\n,
+// \r\r, or \r\n\r\n; only "data:"-prefixed events are decoded; and a trailing
+// unconsumed segment fails with the SDK's "Incomplete JSON segment at the
+// end". The SDK never flushes its decoder, so bytes it still holds when the
+// body ends are dropped.
 //
 // What one read holds is where the two differ. undici yields one HTTP/1.1
 // chunk per read, however many arrive together; Go's chunked reader (and its
@@ -1316,13 +1320,14 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload 
 		}
 		return nil
 	}
+	var decoder utf8StreamDecoder
 	for {
 		if err := abortErr(); err != nil {
 			return err
 		}
 		n, readErr := body.Read(buf)
 		if n > 0 {
-			read := string(buf[:n])
+			read := decoder.decode(buf[:n])
 			if err := googleBareJSONError(read); err != nil {
 				return err
 			}

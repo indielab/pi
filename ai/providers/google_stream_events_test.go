@@ -59,8 +59,10 @@ type googleStreamScenario struct {
 	// RequestHeaders are the options.headers the caller passes.
 	RequestHeaders map[string]string `json:"requestHeaders"`
 	// HeadLatin1 writes the head one byte per character (latin1) instead of
-	// as UTF-8, so a header can carry bytes that are not UTF-8.
+	// as UTF-8, so a header can carry bytes that are not UTF-8, and
+	// BodyLatin1 the segments, so the body can.
 	HeadLatin1   bool   `json:"headLatin1"`
+	BodyLatin1   bool   `json:"bodyLatin1"`
 	ThrowOn      *int   `json:"throwOn"`
 	ThrowMessage string `json:"throwMessage"`
 	// AbortOn is the callback call that aborts the request's signal.
@@ -157,7 +159,7 @@ func sameGoogleResponseID(got string, pi any) bool {
 
 func loadGoogleStreamCapture(t *testing.T) googleStreamCapture {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/google-stream-events/google-stream-events-8676a0dcd.json")
+	raw, err := os.ReadFile("testdata/google-stream-events/google-stream-events-49681e1b7.json")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -183,27 +185,53 @@ func (r *readsReader) Read(p []byte) (int, error) {
 	return n, nil
 }
 
+// latin1 is text written one byte per character, as node's latin1 encoding
+// writes it; every character must be one latin1 has.
+func latin1(t testing.TB, text string) string {
+	out := make([]byte, 0, len(text))
+	for _, r := range text {
+		if r > 0xff {
+			t.Fatalf("%q is not a latin1 character", r)
+		}
+		out = append(out, byte(r))
+	}
+	return string(out)
+}
+
+// segments is the scenario's body segments as the bytes its server writes:
+// each segment's UTF-8, or one byte per character with BodyLatin1.
+func (sc googleStreamScenario) segments(t testing.TB) []string {
+	if !sc.BodyLatin1 {
+		return sc.Segments
+	}
+	out := make([]string, len(sc.Segments))
+	for i, seg := range sc.Segments {
+		out[i] = latin1(t, seg)
+	}
+	return out
+}
+
 // googleScenarioWrites is what the scenario's server writes for the body
 // (before any chunk framing): the encoded body, else each segment when they
 // share one write, else the joined segments — pi's outcome too for every
 // scenario whose read boundaries do not matter.
-func googleScenarioWrites(sc googleStreamScenario) [][]byte {
+func googleScenarioWrites(t testing.TB, sc googleStreamScenario) [][]byte {
 	switch {
 	case sc.EncodedBody != nil:
 		return [][]byte{sc.EncodedBody}
 	case sc.OneWrite:
 		writes := make([][]byte, len(sc.Segments))
-		for i, seg := range sc.Segments {
+		for i, seg := range sc.segments(t) {
 			writes[i] = []byte(seg)
 		}
 		return writes
 	}
-	return [][]byte{[]byte(strings.Join(sc.Segments, ""))}
+	return [][]byte{[]byte(strings.Join(sc.segments(t), ""))}
 }
 
 // googleScenarioHead is the scenario's response head, as its server writes
 // it.
-func googleScenarioHead(sc googleStreamScenario) string {
+func googleScenarioHead(t testing.TB, sc googleStreamScenario) string {
 	var head strings.Builder
 	status := sc.Status
 	if status == "" {
@@ -215,7 +243,7 @@ func googleScenarioHead(sc googleStreamScenario) string {
 	}
 	if sc.ContentLength {
 		n := sc.ContentLengthExtra
-		for _, w := range googleScenarioWrites(sc) {
+		for _, w := range googleScenarioWrites(t, sc) {
 			n += len(w)
 		}
 		fmt.Fprintf(&head, "Content-Length: %d\r\n", n)
@@ -227,21 +255,14 @@ func googleScenarioHead(sc googleStreamScenario) string {
 	if !sc.HeadLatin1 {
 		return head.String()
 	}
-	latin1 := make([]byte, 0, head.Len())
-	for _, r := range head.String() {
-		if r > 0xff {
-			panic(fmt.Sprintf("scenario %q: %q is not a latin1 character", sc.Name, r))
-		}
-		latin1 = append(latin1, byte(r))
-	}
-	return string(latin1)
+	return latin1(t, head.String())
 }
 
 // googleScenarioResponse is the *http.Response Go's client makes of the
 // scenario's head, read by net/http itself.
 func googleScenarioResponse(t *testing.T, sc googleStreamScenario) *http.Response {
 	t.Helper()
-	resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(googleScenarioHead(sc))), nil)
+	resp, err := http.ReadResponse(bufio.NewReader(strings.NewReader(googleScenarioHead(t, sc))), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +298,7 @@ func TestGoogleSSEReadChunksMatchPi(t *testing.T) {
 				events = append(events, text)
 				return err
 			}
-			err := iterateGoogleSSE(&readsReader{reads: append([]string(nil), sc.Segments...)}, ctx,
+			err := iterateGoogleSSE(&readsReader{reads: slices.Clone(sc.segments(t))}, ctx,
 				observe, func(any) error { return nil })
 			if err == nil || err.Error() != msg {
 				t.Fatalf("error %v\npi:   %s", err, msg)
@@ -310,7 +331,7 @@ func googleCaptureScenario(t *testing.T, name string) googleStreamScenario {
 // objects included.
 func TestGoogleToolCallArgumentsKeepModelOrder(t *testing.T) {
 	sc := googleCaptureScenario(t, "thinking, text and a function call")
-	stream := googleServe(t, "gemini-2.5-flash", strings.Join(sc.Segments, ""))
+	stream := googleServe(t, "gemini-2.5-flash", strings.Join(sc.segments(t), ""))
 	var deltas []string
 	for ev := range stream.Events() {
 		if ev.Type == ai.EventToolCallDelta {
@@ -347,8 +368,8 @@ func serveGoogleScenario(t *testing.T, sc googleStreamScenario) (baseURL string,
 	}
 	t.Cleanup(func() { ln.Close() })
 	var resp bytes.Buffer
-	resp.WriteString(googleScenarioHead(sc))
-	for _, w := range googleScenarioWrites(sc) {
+	resp.WriteString(googleScenarioHead(t, sc))
+	for _, w := range googleScenarioWrites(t, sc) {
 		if sc.Framing == "chunked" {
 			fmt.Fprintf(&resp, "%x\r\n%s\r\n", len(w), w)
 		} else {
@@ -546,7 +567,7 @@ func TestGoogleAbortFromCallbackFailsNextRead(t *testing.T) {
 	defer close(release)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		io.WriteString(w, sc.Segments[0])
+		io.WriteString(w, sc.segments(t)[0])
 		w.(http.Flusher).Flush()
 		select {
 		case <-release:

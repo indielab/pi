@@ -4,7 +4,7 @@
 // this package.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> google-stream-events-8676a0dcd.json 8676a0dcd
+//   e.g. ... capture.mts <dir> google-stream-events-49681e1b7.json 49681e1b7
 //
 // <extraction> holds `git archive <sha> packages/ai package-lock.json` from the
 // upstream clone, plus a node_modules resolving pi-ai's dependencies (the npm
@@ -32,7 +32,8 @@
 // every segment as its own HTTP chunk but all in one socket write;
 // `abruptEnd` destroys the socket after the segments instead of ending the
 // body; `headLatin1` writes the head one byte per character (latin1), so a
-// header can carry bytes that are not UTF-8. `requestHeaders` are the
+// header can carry bytes that are not UTF-8, and `bodyLatin1` the segments,
+// so the body can. `requestHeaders` are the
 // options.headers pi's caller passes, and
 // `acceptEncoding` records the accept-encoding the server received.
 //
@@ -105,6 +106,9 @@ type Scenario = {
 	requestHeaders?: Record<string, string>;
 	// Write the head as latin1, one byte per character, instead of UTF-8.
 	headLatin1?: boolean;
+	// Write each segment as latin1, one byte per character, instead of UTF-8,
+	// so the body can carry bytes that are not UTF-8.
+	bodyLatin1?: boolean;
 	divergence?: string;
 	divergentFields?: string[];
 	// Throw Error(throwMessage) from the callback on its Nth call (0-based).
@@ -118,6 +122,9 @@ const sse = (...events: unknown[]) => events.map((e) => `data: ${typeof e === "s
 const eventStream: Array<[string, string]> = [["Content-Type", "text/event-stream"]];
 const text = (t: string, extra: Record<string, unknown> = {}) => ({ candidates: [{ content: { parts: [{ text: t }], role: "model" }, ...extra }] });
 const stop = { candidates: [{ content: { parts: [{ text: "!" }], role: "model" }, finishReason: "STOP" }] };
+// Bytes spelled as latin1 characters, for a bodyLatin1 scenario's segments.
+const latin1 = (...bytes: number[]) => String.fromCharCode(...bytes);
+const BOM_LATIN1 = latin1(0xef, 0xbb, 0xbf);
 
 const scenarios: Scenario[] = [
 	{
@@ -1045,6 +1052,55 @@ const scenarios: Scenario[] = [
 		headers: eventStream,
 		segments: [sse(text("x")), '{"error":{"code":429,"status":"RESOURCE_EXHAUSTED"}}\n\n'],
 	},
+	// processStreamResponse runs each read through a TextDecoder in stream
+	// mode before its bare-JSON check and its buffer: the byte-order mark at
+	// the body's start is dropped (even split across reads), invalid UTF-8
+	// becomes one U+FFFD per maximal subpart, and a sequence a read leaves
+	// incomplete waits for the next — at the body's end, it is dropped, since
+	// the SDK never flushes the decoder. The segments are latin1 so they can
+	// carry any byte.
+	{
+		name: "a bare JSON error after a byte-order mark throws",
+		framing: "close",
+		headers: eventStream,
+		bodyLatin1: true,
+		segments: [`${BOM_LATIN1}{"error":{"code":500,"message":"boom","status":"INTERNAL"}}`],
+	},
+	{
+		name: "a bare JSON error whose byte-order mark is split across reads throws",
+		framing: "close",
+		headers: eventStream,
+		bodyLatin1: true,
+		segments: [BOM_LATIN1.slice(0, 2), `${BOM_LATIN1.slice(2)}{"error":{"code":500,"message":"boom","status":"INTERNAL"}}`],
+	},
+	{
+		name: "a bare JSON error quotes invalid UTF-8 as its decoding",
+		framing: "close",
+		headers: eventStream,
+		bodyLatin1: true,
+		segments: [sse(text("x")), `{"error":{"code":500,"message":"a${latin1(0xe2, 0x82)}Z","status":"INTERNAL"}}`],
+	},
+	{
+		name: "invalid UTF-8 in a payload decodes per maximal subpart",
+		framing: "close",
+		headers: eventStream,
+		bodyLatin1: true,
+		segments: [`data: {"candidates":[{"content":{"parts":[{"text":"a${latin1(0xe2, 0x82)}Z${latin1(0xc0, 0xaf)}b"}],"role":"model"}}]}\n\n`, sse(stop)],
+	},
+	{
+		name: "a character split across reads is whole",
+		framing: "close",
+		headers: eventStream,
+		bodyLatin1: true,
+		segments: [`data: {"candidates":[{"content":{"parts":[{"text":"caf${latin1(0xc3)}`, `${latin1(0xa9)}"}],"role":"model"}}]}\n\n`, sse(stop)],
+	},
+	{
+		name: "an incomplete character at the body's end is dropped",
+		framing: "close",
+		headers: eventStream,
+		bodyLatin1: true,
+		segments: [sse(text("x")), `${sse(stop)}${latin1(0xe2, 0x82)}`],
+	},
 	{
 		name: "a truncated stream fails",
 		note: "TestGoogleTruncatedStreamFails's fixture",
@@ -1299,7 +1355,7 @@ function serve(
 				if (buf.length < headEnd + 4 + len) return;
 				responded = true;
 				acceptEncoding = /^accept-encoding:[ \t]*(.*?)[ \t]*$/im.exec(requestHead)?.[1];
-				const writes: Buffer[] = encoded ? [encoded] : segments.map((seg) => Buffer.from(seg));
+				const writes: Buffer[] = encoded ? [encoded] : segments.map((seg) => Buffer.from(seg, s.bodyLatin1 ? "latin1" : "utf8"));
 				const head = [s.status ?? "HTTP/1.1 200 OK", ...s.headers.map(([k, v]) => `${k}: ${v}`)];
 				if (s.contentLength) head.push(`Content-Length: ${writes.reduce((n, w) => n + w.length, 0) + (s.contentLengthExtra ?? 0)}`);
 				if (s.framing === "chunked") head.push("Transfer-Encoding: chunked");
@@ -1390,7 +1446,7 @@ async function run(s: Scenario, segments: string[], encoded: Buffer | undefined)
 
 const results = [];
 for (const s of scenarios) {
-	const encoded = s.encode?.(Buffer.from(s.segments.join("")));
+	const encoded = s.encode?.(Buffer.from(s.segments.join(""), s.bodyLatin1 ? "latin1" : "utf8"));
 	const pi = await run(s, s.segments, encoded);
 	const joined = await run(s, [s.segments.join("")], encoded);
 	const { throwOn, throwMessage, abortOn, encode, ...scenario } = s;
