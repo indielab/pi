@@ -339,6 +339,12 @@ func retryDelay(resp *http.Response, attempt int, cfg retryConfig, providerMsg s
 // wait (abortableSleep).
 var errRequestAborted = errors.New("Request aborted")
 
+// errOperationAborted is the message of undici's AbortError, which a fetch
+// rejects with when its signal aborts before the response arrives, and which
+// a body read that the abort cuts short, or that starts after it, rejects
+// with (fetch errors the body's stream on abort).
+var errOperationAborted = errors.New("This operation was aborted")
+
 // sendWithRetry issues the request built by build, retrying transient network
 // errors (like 5xx) and retryable HTTP statuses with backoff. build must
 // produce a fresh *http.Request on each call (request bodies are single-use).

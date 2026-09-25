@@ -1308,7 +1308,7 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload 
 	// out, which StreamGoogle checks after the loop.)
 	abortErr := func() error {
 		if ctx != nil && ctx.Err() != nil {
-			return errors.New("This operation was aborted")
+			return errOperationAborted
 		}
 		return nil
 	}

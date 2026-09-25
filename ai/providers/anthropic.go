@@ -2079,35 +2079,17 @@ var anthropicMessageEvents = map[string]bool{
 	"content_block_start": true, "content_block_delta": true, "content_block_stop": true,
 }
 
-// scanSSELines is a bufio.SplitFunc that treats \r, \n, and \r\n all as line
-// breaks, mirroring pi's SSE decoder (anthropic.ts consumeLine/nextLineBreakIndex).
-func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error) {
-	for i := 0; i < len(data); i++ {
-		switch data[i] {
-		case '\n':
-			return i + 1, data[:i], nil
-		case '\r':
-			if i+1 < len(data) {
-				if data[i+1] == '\n' {
-					return i + 2, data[:i], nil
-				}
-				return i + 1, data[:i], nil
-			}
-			if atEOF {
-				return i + 1, data[:i], nil
-			}
-			// A trailing \r might be half of a \r\n pair; wait for more data.
-			return 0, nil, nil
-		}
-	}
-	if atEOF && len(data) > 0 {
-		return len(data), data, nil
-	}
-	return 0, nil, nil
-}
-
 // iterateAnthropicSSE parses the SSE body and invokes handle for each known
 // event (pi iterateSseMessages + iterateAnthropicEvents).
+//
+// It reads the body as pi's iterateSseMessages does, one read at a time: pi
+// checks its signal before each read, and only there, so once a read is in
+// hand every line in it is decoded and every event it completes is handled,
+// whatever the handling does to the request; an abort seen before a read
+// fails the stream "Request was aborted". A read the abort cuts short rejects
+// with undici's AbortError, "This operation was aborted" (errOperationAborted).
+// Lines end at "\r", "\n" or "\r\n" (pi's consumeLine); a "\r" that ends what
+// has been read waits for the next read, in case it is half of a "\r\n".
 //
 // The body is text as pi's TextDecoder makes it: one byte-order mark at the
 // very start is dropped, and invalid UTF-8 becomes U+FFFD per maximal subpart
@@ -2128,10 +2110,6 @@ func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error
 // jsread.go), so no member of an unexpected type can fail the event before
 // pi's own reads would.
 func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(rawObject) error) error {
-	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), maxAnthropicSSELine)
-	scanner.Split(scanSSELines)
-
 	var eventName string
 	var dataLines []string
 	// rawLines is pi's state.raw: every non-empty line, comments included. It
@@ -2186,32 +2164,21 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 	}
 
 	first := true
-	for scanner.Scan() {
-		if ctx != nil && ctx.Err() != nil {
-			return fmt.Errorf("Request was aborted")
-		}
-		raw := scanner.Bytes()
+	// decodeLine is pi's decodeSseLine of one line's bytes.
+	decodeLine := func(raw []byte) error {
 		if first {
 			raw, first = stripBOM(raw), false
 		}
 		line := jstext.DecodeUTF8(raw)
 		if line == "" {
-			if err := flush(); err != nil {
-				return err
-			}
-			continue
+			return flush()
 		}
 		rawLines = append(rawLines, line)
 		if strings.HasPrefix(line, ":") {
-			continue
+			return nil
 		}
-		idx := strings.IndexByte(line, ':')
-		var field, value string
-		if idx == -1 {
-			field = line
-		} else {
-			field = line[:idx]
-			value = line[idx+1:]
+		field, value, found := strings.Cut(line, ":")
+		if found {
 			value = strings.TrimPrefix(value, " ")
 		}
 		switch field {
@@ -2220,12 +2187,70 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 		case "data":
 			dataLines = append(dataLines, value)
 		}
+		return nil
 	}
-	if err := scanner.Err(); err != nil {
-		if errors.Is(err, bufio.ErrTooLong) {
-			return errAnthropicSSELineTooLong(err)
+
+	read := make([]byte, 32*1024)
+	// buf holds what has been read and not yet consumed as lines; buf[:searched]
+	// holds no line break, bar a "\r" at searched waiting for the next read.
+	var buf []byte
+	searched := 0
+	for eof := false; ; {
+		if ctx != nil && ctx.Err() != nil {
+			return errors.New("Request was aborted")
 		}
-		return err
+		if eof {
+			break
+		}
+		n, readErr := body.Read(read)
+		buf = append(buf, read[:n]...)
+		eof = readErr == io.EOF
+		start := 0
+		for {
+			i := bytes.IndexAny(buf[searched:], "\r\n")
+			if i < 0 {
+				searched = len(buf)
+				break
+			}
+			end := searched + i
+			next := end + 1
+			if buf[end] == '\r' {
+				// Nothing follows a read that ended the body or failed.
+				if next == len(buf) && readErr == nil {
+					searched = end
+					break
+				}
+				if next < len(buf) && buf[next] == '\n' {
+					next++
+				}
+			}
+			if end-start > maxAnthropicSSELine {
+				return errAnthropicSSELineTooLong()
+			}
+			if err := decodeLine(buf[start:end]); err != nil {
+				return err
+			}
+			start, searched = next, next
+		}
+		if start > 0 {
+			buf = buf[:copy(buf, buf[start:])]
+			searched -= start
+		}
+		if searched > maxAnthropicSSELine {
+			return errAnthropicSSELineTooLong()
+		}
+		if readErr != nil && !eof {
+			if ctx != nil && ctx.Err() != nil {
+				return errOperationAborted
+			}
+			return readErr
+		}
+	}
+	// The body's end ends its last line, if it has one.
+	if len(buf) > 0 {
+		if err := decodeLine(buf); err != nil {
+			return err
+		}
 	}
 	return flush()
 }
@@ -2237,9 +2262,9 @@ const maxAnthropicSSELine = 16 << 20
 
 // errAnthropicSSELineTooLong is the port's error for a line past
 // maxAnthropicSSELine: it says the limit is the port's, not pi's, and what to
-// report. cause is bufio.ErrTooLong, which it wraps.
-func errAnthropicSSELineTooLong(cause error) error {
-	return fmt.Errorf("an anthropic stream line is longer than the port's %d MiB limit (pi reads a line of any length); this is a port limit, report it with the provider and model: %w", maxAnthropicSSELine>>20, cause)
+// report. It wraps bufio.ErrTooLong, as openai's line limit does.
+func errAnthropicSSELineTooLong() error {
+	return fmt.Errorf("an anthropic stream line is longer than the port's %d MiB limit (pi reads a line of any length); this is a port limit, report it with the provider and model: %w", maxAnthropicSSELine>>20, bufio.ErrTooLong)
 }
 
 // parseAnthropicEvent is pi's parseJsonWithRepair of an event's data: the text

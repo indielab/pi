@@ -708,6 +708,12 @@ func decodePiMessagesEvent(data string) (ev piMessagesEvent, yielded bool, err e
 // error ends the read. A frame that is not JSON fails the read, as pi's
 // JSON.parse throw does. Port of readPiMessagesEvents.
 //
+// pi never checks its signal here: fetch errors the body's stream when the
+// signal aborts, so the read the abort cuts short, or the next one, rejects
+// with undici's AbortError, "This operation was aborted"
+// (errOperationAborted). What an earlier read delivered is still framed and
+// handled first.
+//
 // onEvent, when non-nil, observes every yielded frame's parsed value — objects
 // as ai.OrderedObject, unknown fields and the terminal done/error included —
 // before it is converted (pi's onProviderStreamEvent, upstream 002fc8385); its
@@ -747,9 +753,10 @@ func readPiMessagesEvents(body io.Reader, ctx context.Context, onEvent func(any)
 	// atStart is whether pending still holds the body's first bytes, which
 	// may be the byte-order mark the decoder drops.
 	atStart := true
+	aborted := func() bool { return ctx != nil && ctx.Err() != nil }
 	for {
-		if ctx != nil && ctx.Err() != nil {
-			return fmt.Errorf("Request was aborted")
+		if aborted() {
+			return errOperationAborted
 		}
 		n, readErr := body.Read(buf)
 		chunk := string(buf[:n])
@@ -789,6 +796,9 @@ func readPiMessagesEvents(body io.Reader, ctx context.Context, onEvent func(any)
 			break
 		}
 		if readErr != nil {
+			if aborted() {
+				return errOperationAborted
+			}
 			return readErr
 		}
 	}
@@ -960,6 +970,11 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 		}
 		resp, err := client.Do(httpReq)
 		if err != nil {
+			// fetch rejects with undici's AbortError when the signal aborts
+			// before the response arrives, however far the request got.
+			if aborted() {
+				err = errOperationAborted
+			}
 			fail(err)
 			return
 		}
