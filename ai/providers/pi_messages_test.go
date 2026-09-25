@@ -397,7 +397,7 @@ func TestPiMessagesCRLFSeamAcrossReads(t *testing.T) {
 	reader := &chunkedReader{chunks: [][]byte{[]byte(frame1), []byte(frame2)}}
 
 	var types []string
-	err := readPiMessagesEvents(reader, nil, nil, func(ev piMessagesEvent) (bool, error) {
+	err := readPiMessagesEvents(reader, nil, func(ev piMessagesEvent) (bool, error) {
 		types = append(types, ev.Type)
 		return ev.Type != "done", nil
 	})

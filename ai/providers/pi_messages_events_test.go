@@ -307,7 +307,7 @@ func assertPiMessagesDiagnosticsMatchPi(t *testing.T, row piMessagesEventsRow, d
 // fail with a JSON syntax error, as pi's JSON.parse throws a SyntaxError.
 func assertPiMessagesFrameSyntaxError(t *testing.T, row piMessagesEventsRow) {
 	t.Helper()
-	err := readPiMessagesEvents(strings.NewReader(row.body()), nil, nil, func(piMessagesEvent) (bool, error) { return true, nil })
+	err := readPiMessagesEvents(strings.NewReader(row.body()), nil, func(piMessagesEvent) (bool, error) { return true, nil })
 	var syntaxErr *json.SyntaxError
 	if !errors.As(err, &syntaxErr) {
 		t.Errorf("reading the body returned %v, want the JSON syntax error of frame data %q", err, row.V8Error)
@@ -443,7 +443,7 @@ func TestPiMessagesDecodesFramesOnceWithoutAnObserver(t *testing.T) {
 	keepReading := func(piMessagesEvent) (bool, error) { return true, nil }
 	read := func(onEvent func(any) error) float64 {
 		return testing.AllocsPerRun(50, func() {
-			if err := readPiMessagesEvents(strings.NewReader(body), nil, onEvent, keepReading); err != nil {
+			if err := readPiMessagesEvents(strings.NewReader(body), onEvent, keepReading); err != nil {
 				t.Fatal(err)
 			}
 		})

@@ -136,6 +136,53 @@ func (b *heldBody) Read(p []byte) (int, error) {
 
 func (b *heldBody) Close() error { return nil }
 
+// ownBody is a body as the port's own client hands it to an adapter: read
+// through fetchBody, undici's body semantics. The adapter wraps its own
+// client's body so; a test doer delivering what that client would deliver,
+// read by read, wraps it here, since the adapter takes the doer for a custom
+// client and reads its body as it is.
+type ownBody struct {
+	fetchBody
+	io.Closer
+}
+
+func ownClientBody(ctx context.Context, body io.ReadCloser) io.ReadCloser {
+	return ownBody{fetchBody{ctx, body}, body}
+}
+
+// abortingBody is a custom client's body that delivers segment on its first
+// read, then aborts the request as its next read starts and fails that read
+// with its own err.
+type abortingBody struct {
+	segment string
+	read    bool
+	cancel  context.CancelFunc
+	err     error
+}
+
+func (b *abortingBody) Read(p []byte) (int, error) {
+	if !b.read {
+		b.read = true
+		return copy(p, b.segment), nil
+	}
+	b.cancel()
+	return 0, b.err
+}
+
+func (b *abortingBody) Close() error { return nil }
+
+// abortingDoer is a custom client that aborts the request and then rejects
+// it with err.
+type abortingDoer struct {
+	cancel context.CancelFunc
+	err    error
+}
+
+func (d abortingDoer) Do(*http.Request) (*http.Response, error) {
+	d.cancel()
+	return nil, d.err
+}
+
 // heldDoer answers every request 200 text/event-stream with body.
 type heldDoer struct{ body io.ReadCloser }
 
@@ -241,12 +288,15 @@ func drain(stream *ai.AssistantMessageEventStream) ([]string, *ai.AssistantMessa
 // aborted"; pi-messages never checks its signal, so every abort there is the
 // rejected read's AbortError (fetch errors the body's stream, so a chunk that
 // had already arrived is never read), or the rejected fetch's when the
-// response had not arrived. The body is heldBody, so each segment is exactly
-// one read, as it was for pi. An abort while an error body is read is the
-// SDKs' thrown error caught by pi's retryProviderRequest, which says
-// "Request aborted" first thing, and pi-messages' rejected text() read. A
-// connection that drops mid-body, with no abort, fails the read with
-// undici's TypeError "terminated".
+// response had not arrived. Those runs' body is heldBody as the port's own
+// client delivers it (ownClientBody), so each segment is exactly one read,
+// as it was for pi. An abort while an error body is read is the SDKs' thrown
+// error caught by pi's retryProviderRequest, which says "Request aborted"
+// first thing, and pi-messages' rejected text() read. A connection that
+// drops mid-body, with no abort, fails the read with undici's TypeError
+// "terminated". A custom fetch is pi's caller's: its rejection and its body's
+// errors are its own, abort or no abort, and a body that ignores the abort is
+// read on to its end by pi-messages, which never checks the signal.
 func TestStreamAbortMatchesPi(t *testing.T) {
 	for _, run := range loadStreamAbortCapture(t) {
 		t.Run(run.API+"/"+run.Mode, func(t *testing.T) {
@@ -255,7 +305,8 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 			var observed []string
 			cancelOn := 0
 			switch run.Mode {
-			case "an abort from the callback with events left in its read", "an abort from the callback with the next read already in":
+			case "an abort from the callback with events left in its read", "an abort from the callback with the next read already in",
+				"a custom fetch's body ignores an abort from the callback":
 				cancelOn = 1
 			case "an abort from the callback on its read's last event":
 				cancelOn = len(run.Observed)
@@ -268,10 +319,17 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 			baseURL := "http://pi.invalid"
 			switch run.Mode {
 			case "an abort while a read is pending":
-				opts.HTTPClient = heldDoer{&heldBody{ctx: ctx, segments: slices.Clone(run.Segments), cancelOnHold: cancel}}
+				opts.HTTPClient = heldDoer{ownClientBody(ctx, &heldBody{ctx: ctx, segments: slices.Clone(run.Segments), cancelOnHold: cancel})}
 			case "an abort from the callback with events left in its read", "an abort from the callback on its read's last event",
 				"an abort from the callback with the next read already in":
-				opts.HTTPClient = heldDoer{&heldBody{ctx: ctx, segments: slices.Clone(run.Segments)}}
+				opts.HTTPClient = heldDoer{ownClientBody(ctx, &heldBody{ctx: ctx, segments: slices.Clone(run.Segments)})}
+			case "a custom fetch rejects once the signal aborts":
+				opts.HTTPClient = abortingDoer{cancel, errors.New(run.CustomFetchError)}
+			case "a custom fetch's body ignores an abort from the callback":
+				// Every segment is a read of its own, abort or no abort.
+				opts.HTTPClient = heldDoer{io.NopCloser(&readsReader{reads: slices.Clone(run.Segments)})}
+			case "a custom fetch's body fails once the signal aborts":
+				opts.HTTPClient = heldDoer{&abortingBody{segment: run.Segments[0], cancel: cancel, err: errors.New(run.CustomBodyError)}}
 			case "an abort while an error body is read", "an abort while a retryable error body is read":
 				// The server answers the run's status (with its retry-after)
 				// and the start of the body and holds; the abort lands 100ms
@@ -370,7 +428,7 @@ func (b triggerBody) Read(p []byte) (int, error) {
 }
 
 // triggerDoer sends through a fresh net/http client and wraps each response
-// body in a triggerBody.
+// body in a triggerBody, read as the port's own client's (ownClientBody).
 type triggerDoer struct {
 	armed  *atomic.Bool
 	cancel context.CancelFunc
@@ -381,7 +439,7 @@ func (d triggerDoer) Do(req *http.Request) (*http.Response, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp.Body = triggerBody{resp.Body, d.armed, d.cancel}
+	resp.Body = ownClientBody(req.Context(), triggerBody{resp.Body, d.armed, d.cancel})
 	return resp, nil
 }
 

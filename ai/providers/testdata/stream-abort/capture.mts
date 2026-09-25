@@ -49,7 +49,15 @@
 //     adapters' are K21's): the connection is refused (port 1), the server
 //     closes it on the request, the server answers with bytes that are not
 //     HTTP, or a header value (U+0001) undici's client refuses; and "a custom
-//     fetch rejects" (customFetchError).
+//     fetch rejects" (customFetchError);
+//   - a custom fetch and an abort (anthropic, pi-messages): "a custom fetch
+//     rejects once the signal aborts" (150ms into the call, with
+//     customFetchError); "a custom fetch's body ignores an abort from the
+//     callback" (the body delivers the whole stream, one segment per read,
+//     whatever the signal; the callback aborts on the first event); "a custom
+//     fetch's body fails once the signal aborts" (the first segment, then a
+//     read that waits for the abort, 150ms later, and fails with
+//     customBodyError).
 // Recorded per run: the status and segments the server wrote, the event types
 // onProviderStreamEvent received, the stream's event types, and the final
 // stopReason, errorMessage, content and diagnostic types.
@@ -104,7 +112,10 @@ type Mode =
 	| "the request gets no response: the server closes the connection"
 	| "the request gets no response: the response is not HTTP"
 	| "the request gets no response: undici's client refuses a header value"
-	| "a custom fetch rejects";
+	| "a custom fetch rejects"
+	| "a custom fetch rejects once the signal aborts"
+	| "a custom fetch's body ignores an abort from the callback"
+	| "a custom fetch's body fails once the signal aborts";
 const streamModes: Mode[] = [
 	"an abort while a read is pending",
 	"an abort from the callback with events left in its read",
@@ -126,6 +137,10 @@ const customRejects: Mode = "a custom fetch rejects";
 const customFetchError = "the custom fetch failed";
 const noResponseModes = [refused, closes, notHTTP, badHeader, customRejects];
 const badHeaderValue = `a${String.fromCharCode(1)}b`;
+const customRejectsOnAbort: Mode = "a custom fetch rejects once the signal aborts";
+const customBodyIgnoresAbort: Mode = "a custom fetch's body ignores an abort from the callback";
+const customBodyFailsOnAbort: Mode = "a custom fetch's body fails once the signal aborts";
+const customAbortModes = [customRejectsOnAbort, customBodyIgnoresAbort, customBodyFailsOnAbort];
 
 const anthropicEvent = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 const piMessagesEvent = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
@@ -137,7 +152,7 @@ const adapters = [
 		provider: "anthropic",
 		id: "claude-sonnet-4-5",
 		module: await load("api/anthropic-messages.ts"),
-		modes: [...streamModes, errorBody, drops, customBody, retryableErrorBody],
+		modes: [...streamModes, errorBody, drops, customBody, retryableErrorBody, ...customAbortModes],
 		segments: [
 			anthropicEvent("message_start", {
 				type: "message_start",
@@ -147,19 +162,31 @@ const adapters = [
 				anthropicEvent("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "in hand" } }),
 			anthropicEvent("content_block_delta", { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: " and more" } }),
 		],
+		// The rest of a stream that finishes.
+		finish:
+			anthropicEvent("content_block_stop", { type: "content_block_stop", index: 0 }) +
+			anthropicEvent("message_delta", { type: "message_delta", delta: { stop_reason: "end_turn" }, usage: { output_tokens: 2 } }) +
+			anthropicEvent("message_stop", { type: "message_stop" }),
 	},
 	{
 		api: "pi-messages",
 		provider: "radius",
 		id: "auto",
 		module: await load("api/pi-messages.ts"),
-		modes: [...streamModes, errorBody, ...requestModes, drops, errorBodyDrops, customBody, ...noResponseModes],
+		modes: [...streamModes, errorBody, ...requestModes, drops, errorBodyDrops, customBody, ...noResponseModes, ...customAbortModes],
 		segments: [
 			piMessagesEvent({ type: "start" }) +
 				piMessagesEvent({ type: "text_start", contentIndex: 0 }) +
 				piMessagesEvent({ type: "text_delta", contentIndex: 0, delta: "in hand" }),
 			piMessagesEvent({ type: "text_delta", contentIndex: 0, delta: " and more" }),
 		],
+		finish:
+			piMessagesEvent({ type: "text_end", contentIndex: 0, content: "in hand and more" }) +
+			piMessagesEvent({
+				type: "done",
+				reason: "stop",
+				usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+			}),
 	},
 	{
 		api: "openai-completions",
@@ -245,7 +272,7 @@ for (const a of adapters) {
 			: mode === "an abort from the callback with the next read already in"
 				? a.segments
 				: a.segments.slice(0, 1);
-		answer = !requestModes.includes(mode) && mode !== customBody && !noResponseModes.includes(mode);
+		answer = !requestModes.includes(mode) && mode !== customBody && !noResponseModes.includes(mode) && !customAbortModes.includes(mode);
 		dropAfterWrite = mode === drops || mode === errorBodyDrops;
 		const controller = new AbortController();
 		onSegmentWritten =
@@ -280,11 +307,52 @@ for (const a of adapters) {
 			});
 			return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 		};
+		const eventStream = { status: 200, headers: { "content-type": "text/event-stream" } };
+		// The whole stream as the ignoring body delivers it, one read each.
+		const whole = [...a.segments, (a as { finish?: string }).finish ?? ""];
+		// The custom fetches that meet an abort: one that rejects once the
+		// signal aborts, one whose body ignores the signal, one whose body's
+		// next read fails once it aborts.
+		const customAbortFetches: Partial<Record<Mode, () => Promise<Response>>> = {
+			[customRejectsOnAbort]: () =>
+				new Promise((_, reject) => controller.signal.addEventListener("abort", () => reject(new Error(customFetchError)))),
+			[customBodyIgnoresAbort]: async () => {
+				let next = 0;
+				const body = new ReadableStream({
+					pull(c) {
+						if (next < whole.length) c.enqueue(new TextEncoder().encode(whole[next++]));
+						else c.close();
+					},
+				});
+				return new Response(body, eventStream);
+			},
+			[customBodyFailsOnAbort]: async () => {
+				let sent = false;
+				const body = new ReadableStream({
+					pull(c) {
+						if (sent) {
+							return new Promise<void>((resolve) =>
+								controller.signal.addEventListener("abort", () => {
+									c.error(new Error(customBodyError));
+									resolve();
+								}),
+							);
+						}
+						sent = true;
+						c.enqueue(new TextEncoder().encode(a.segments[0]));
+						setTimeout(() => controller.abort(), 150);
+					},
+				});
+				return new Response(body, eventStream);
+			},
+		};
+		if (mode === customRejectsOnAbort) setTimeout(() => controller.abort(), 150);
 		const out = a.module.stream(model, { messages: [{ role: "user", content: "hi", timestamp: 1 }] }, {
 			apiKey: "test-api-key",
 			signal: controller.signal,
 			...(mode === retryableErrorBody ? { maxRetries: 1 } : {}),
 			...(mode === customBody ? { fetch: customFetch } : {}),
+			...(customAbortFetches[mode] ? { fetch: customAbortFetches[mode] } : {}),
 			...(mode === customRejects
 				? {
 						fetch: async () => {
@@ -295,7 +363,10 @@ for (const a of adapters) {
 			...(mode === badHeader ? { headers: { "x-test": badHeaderValue } } : {}),
 			onProviderStreamEvent: async (event: { type?: string }) => {
 				observed.push(event.type ?? "");
-				const first = mode === "an abort from the callback with events left in its read" || mode === "an abort from the callback with the next read already in";
+				const first =
+					mode === "an abort from the callback with events left in its read" ||
+					mode === "an abort from the callback with the next read already in" ||
+					mode === customBodyIgnoresAbort;
 				if (first && observed.length === 1) controller.abort();
 				if (mode === "an abort from the callback on its read's last event" && observed.length === firstSegmentEvents) controller.abort();
 			},
@@ -310,7 +381,9 @@ for (const a of adapters) {
 			...(mode === retryableErrorBody ? { retryAfter: "120", maxRetries: 1 } : {}),
 			...(mode === customBody ? { status: 200, segments: a.segments.slice(0, 1), customBodyError } : {}),
 			...(mode === badHeader ? { headers: { "x-test": badHeaderValue } } : {}),
-			...(mode === customRejects ? { customFetchError } : {}),
+			...(mode === customRejects || mode === customRejectsOnAbort ? { customFetchError } : {}),
+			...(mode === customBodyIgnoresAbort ? { status: 200, segments: whole } : {}),
+			...(mode === customBodyFailsOnAbort ? { status: 200, segments: a.segments.slice(0, 1), customBodyError } : {}),
 			observed,
 			events,
 			stopReason: msg.stopReason,

@@ -719,7 +719,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// The SDK fetches with undici unless the caller hands pi its own fetch.
 		var respBody io.Reader = resp.Body
 		if _, custom := customHTTPClient(opts.HTTPClient); !custom {
-			respBody = fetchBody{resp.Body}
+			respBody = fetchBody{ctx, resp.Body}
 		}
 
 		// blocks is pi's `output.content` as its handler holds it: each block's
@@ -2104,8 +2104,10 @@ var anthropicMessageEvents = map[string]bool{
 // checks its signal before each read, and only there, so once a read is in
 // hand every line in it is decoded and every event it completes is handled,
 // whatever the handling does to the request; an abort seen before a read
-// fails the stream "Request was aborted". A read the abort cuts short rejects
-// with undici's AbortError, "This operation was aborted" (errOperationAborted).
+// fails the stream "Request was aborted". A read that fails fails the stream
+// with the body's error: the port's own client's body rejects one the abort
+// cuts short with undici's AbortError, "This operation was aborted"
+// (fetchBody), and a custom client's with whatever it rejects with.
 // Lines end at "\r", "\n" or "\r\n" (pi's consumeLine), within what has been
 // read: a "\r" that ends a read ends its line then and there, so a "\r\n"
 // split across two reads is two line breaks, the second an empty line that
@@ -2258,9 +2260,6 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 			return errAnthropicSSELineTooLong()
 		}
 		if readErr != nil && !eof {
-			if ctx != nil && ctx.Err() != nil {
-				return errOperationAborted
-			}
 			return readErr
 		}
 	}

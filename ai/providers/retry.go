@@ -375,16 +375,29 @@ func undiciFetchError(err error) error {
 var errTerminated = errors.New("terminated")
 
 // fetchBody is a response body read through the port's own client, the
-// stand-in for undici's fetch: a read that fails, however net/http words the
-// failure, fails as undici's does, errTerminated. An adapter wraps only its
-// own client's bodies: a custom HTTPClient is pi's custom fetch, whose body
-// fails with whatever it fails with.
-type fetchBody struct{ io.Reader }
+// stand-in for undici's fetch, which errors a body's stream when its signal
+// aborts: a read that starts once ctx is done, or that fails once it is,
+// rejects with undici's AbortError (errOperationAborted) — a chunk that had
+// already arrived is never read — and any other read that fails, however
+// net/http words the failure, fails as undici's does, errTerminated. An
+// adapter wraps only its own client's bodies: a custom HTTPClient is pi's
+// custom fetch, whose body is read as it is, abort or no abort.
+type fetchBody struct {
+	ctx context.Context
+	r   io.Reader
+}
 
 func (b fetchBody) Read(p []byte) (int, error) {
-	n, err := b.Reader.Read(p)
+	aborted := func() bool { return b.ctx != nil && b.ctx.Err() != nil }
+	if aborted() {
+		return 0, errOperationAborted
+	}
+	n, err := b.r.Read(p)
 	if err != nil && err != io.EOF {
 		err = errTerminated
+		if aborted() {
+			err = errOperationAborted
+		}
 	}
 	return n, err
 }
