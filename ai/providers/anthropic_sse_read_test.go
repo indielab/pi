@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 )
@@ -22,5 +23,31 @@ func TestAnthropicStreamLineLimitSaysItIsThePorts(t *testing.T) {
 	under := "event: message_start\ndata: {\"id\":\"" + strings.Repeat("x", maxAnthropicSSELine-20) + "\"}\n\n"
 	if err := iterateAnthropicSSE(strings.NewReader(under), context.Background(), nil, ignore); err != nil {
 		t.Fatalf("a line just under the limit: %v", err)
+	}
+}
+
+// countingReader counts the bytes read through it.
+type countingReader struct {
+	r io.Reader
+	n int
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += n
+	return n, err
+}
+
+// A line that never ends fails the same way as soon as what is held of it
+// passes the limit, without reading the rest of the body: the limit bounds
+// the memory an unterminated line takes, not only a line that ends.
+func TestAnthropicStreamUnterminatedLineIsBounded(t *testing.T) {
+	body := &countingReader{r: strings.NewReader("data: " + strings.Repeat("x", 2*maxAnthropicSSELine))}
+	err := iterateAnthropicSSE(body, context.Background(), nil, func(rawObject) error { return nil })
+	if err == nil || !errors.Is(err, bufio.ErrTooLong) {
+		t.Fatalf("err = %v, want the line limit's error", err)
+	}
+	if limit := maxAnthropicSSELine + 64<<10; body.n > limit {
+		t.Errorf("read %d bytes of the body before failing; want at most %d", body.n, limit)
 	}
 }
