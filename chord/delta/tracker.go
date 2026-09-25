@@ -17,9 +17,10 @@ import (
 //
 // Roots are trusted. Track and PrepareReplace take ownership of the value they
 // are handed without walking or copying it: it must be alias-free strict JSON
-// (nil, bool, a finite float64, string, []any, map[string]any, no container
-// reachable twice), and the caller must never modify it again. Only what a
-// draft is handed is checked and copied.
+// in the representation chord.CopyJSON makes (nil, bool, a finite float64,
+// string, []any and map[string]any, none of them a nil map or slice, no
+// container reachable twice), and the caller must never modify it again. Only
+// what a draft is handed is checked and copied.
 
 // The lifecycle errors, with upstream's text. Adopt checks them in this order:
 // owner, used, aborted, stale.
@@ -214,11 +215,15 @@ type Tracker[T any] struct {
 }
 
 // Track takes ownership of initial as the first committed revision, in O(1):
-// it is neither walked nor copied, so it must be alias-free strict JSON —
-// nil, bool, a finite float64, string, []any and map[string]any, no container
-// reachable twice — and the caller must never modify it again. A revision
-// that breaks the contract has unspecified behavior; check a value from
-// outside with chord.IsValue first.
+// it is neither walked nor copied, so it must be alias-free strict JSON in the
+// representation encoding/json decodes — nil, bool, a finite float64, string,
+// []any and map[string]any, with no container reachable twice — and the
+// caller must never modify it again. A nil map or slice is not an empty one
+// here: encoding/json writes it as null, which a replica cannot hold members
+// of. A revision that breaks the contract has unspecified behavior, in pi as
+// here; make one from any Go value with chord.CopyJSON, whose copy is exactly
+// this representation (chord.IsValue accepts more: aliases, other numeric
+// kinds, typed containers).
 func Track[T any](initial T) *Tracker[T] {
 	return &Tracker[T]{owner: &owner{contexts: map[weak.Pointer[overlayContext]]struct{}{}, pruneBudget: 256}, value: initial}
 }
@@ -247,7 +252,7 @@ func (t *Tracker[T]) BeginChange() (*Change[T], error) {
 }
 
 // PrepareReplace prepares replacing the committed revision with value, whole:
-// taking ownership of it, on Track's terms. When value is deeply equal to the
+// taking ownership of it, on Track's terms (build it with chord.CopyJSON). When value is deeply equal to the
 // committed revision the ops are empty and the prepared Value is the committed
 // revision itself; otherwise they are one Replace, and the prepared Value is
 // value. value must be an object or array: ErrScalarRevision.

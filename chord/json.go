@@ -3,6 +3,7 @@ package chord
 import (
 	"fmt"
 
+	"github.com/sky-valley/pi/chord/delta"
 	"github.com/sky-valley/pi/chord/internal/jsonvalue"
 )
 
@@ -27,9 +28,10 @@ type ValueError = jsonvalue.Error
 // an array. A map with a string-kind key is an object. A struct is a class
 // instance rather than a plain object, and pointers, funcs, channels and
 // complex numbers have no JSON form. There is no depth limit: a cycle is
-// refused as a cycle.
+// refused as a cycle. A *delta.Draft is read as it holds its content now, as
+// pi's isJsonValue reads a proxy; a settled one is not a value.
 func IsValue(value any) bool {
-	return jsonvalue.Is(value)
+	return jsonvalue.Is(value, readDraft)
 }
 
 // CopyJSON is upstream's copyJson: a detached, alias-free copy of value in the
@@ -38,14 +40,24 @@ func IsValue(value any) bool {
 // container reachable twice in value is two containers in the copy. It
 // accepts what IsValue accepts and refuses anything else with a *ValueError.
 //
-// Upstream's omitUndefinedProperties option has no Go form: a Go value holds
-// no undefined. Nor is a *delta.Draft a value here — pi's copy reads a draft
-// through its traps; place a draft in another draft, which copies what it
-// holds now.
+// A *delta.Draft — the value itself, or one inside it — is copied as it holds
+// its content now, as pi's copyJson reads a proxy through its traps; a settled
+// one fails with delta.ErrDraftSettled. Upstream's omitUndefinedProperties
+// option has no Go form: a Go value holds no undefined.
 func CopyJSON(value any) (Value, error) {
-	v, err := jsonvalue.Copy(value, nil)
+	v, err := jsonvalue.Copy(value, readDraft)
 	if err != nil {
 		return nil, fmt.Errorf("chord: %w", err)
 	}
 	return v, nil
+}
+
+// readDraft is how the strict-JSON rules read a draft: through it.
+func readDraft(v any) (any, bool, error) {
+	d, ok := v.(*delta.Draft)
+	if !ok {
+		return nil, false, nil
+	}
+	c, err := d.Snapshot()
+	return c, true, err
 }

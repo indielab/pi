@@ -347,12 +347,11 @@ func (n *node) cloneNode() any {
 		}
 		return out
 	}
-	keys := n.ownKeys()
-	out := make(map[string]any, len(keys))
-	for _, key := range keys {
-		value, _ := n.objectValue(key)
-		out[key] = n.cloneStored(slot{kind: objectEntry, key: key}, value, n.hasWrite(key))
-	}
+	out := make(map[string]any, n.objectLen())
+	n.members(func(key string, value any, written bool) bool {
+		out[key] = n.cloneStored(slot{kind: objectEntry, key: key}, value, written)
+		return true
+	})
 	return out
 }
 

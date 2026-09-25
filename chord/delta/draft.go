@@ -237,6 +237,53 @@ func (n *node) ownKeys() []string {
 	return append(out, strs...)
 }
 
+// objectLen is how many members ownKeys lists, counted without listing them:
+// the base's own less those deleted, and the written ones the base lacks (a
+// readded member is the base's, counted once).
+func (n *node) objectLen() int {
+	base := n.object()
+	count := len(base)
+	for k := range n.deletes.keys() {
+		if _, own := base[k]; own {
+			count--
+		}
+	}
+	for k := range n.writes.keys() {
+		if _, own := base[k]; !own {
+			count++
+		}
+	}
+	return count
+}
+
+// members yields an object's members as the draft holds them — each key, its
+// value, and whether the change wrote it — in no particular order: for a copy
+// into a Go map, which has none, where ownKeys would sort them for nothing.
+func (n *node) members(yield func(key string, value any, written bool) bool) {
+	base := n.object()
+	for k, v := range base {
+		if n.isDeleted(k) {
+			continue
+		}
+		if w, ok := n.writes.get(k); ok {
+			if !yield(k, w, true) {
+				return
+			}
+			continue
+		}
+		if !yield(k, v, false) {
+			return
+		}
+	}
+	for k, w := range n.writes.all() {
+		if _, own := base[k]; !own {
+			if !yield(k, w, true) {
+				return
+			}
+		}
+	}
+}
+
 // markDirty is upstream's: the node joins the change's dirty list, once, and
 // every ancestor learns that something below it changed.
 func (n *node) markDirty() {
@@ -514,7 +561,7 @@ func (d *Draft) Len() int {
 	case n.isArray():
 		return n.arrayOverlay().length()
 	}
-	return len(n.ownKeys())
+	return n.objectLen()
 }
 
 // Keys is Object.keys: an array's indices, as strings, or an object's members
@@ -599,6 +646,19 @@ func (d *Draft) At(key any) *Draft {
 	v, _ := d.Get(key)
 	child, _ := v.(*Draft)
 	return child
+}
+
+// Snapshot is copyJson of the draft: a detached strict-JSON copy of what it
+// holds now, in the representation a decoded tree has — what pi's copyJson,
+// JSON.stringify or structuredClone read through the proxy. chord.CopyJSON
+// and chord.IsValue read a draft with it. It fails with ErrDraftSettled once
+// the change has settled.
+func (d *Draft) Snapshot() (any, error) {
+	n, err := d.readable()
+	if err != nil {
+		return nil, err
+	}
+	return n.clonePlacementNode()
 }
 
 // arrayIndexOf is the index seg names on an array: an Index, or a Key that
@@ -1005,6 +1065,12 @@ func (d *Draft) Sort(cmp func(a, b any) int) error {
 	generation := a.generation
 	if cmp != nil {
 		slices.SortStableFunc(order, func(l, r int) int { return cmp(value(l), value(r)) })
+		// A comparator that prepares or aborts the change, or adopts a
+		// competitor, settles it: upstream leaves such a comparator
+		// unspecified, and the overlay it would go on to write is gone.
+		if n.ctx.settled() {
+			return ErrDraftSettled
+		}
 	} else if len(order) > 1 {
 		// Each String() is taken once, before anything moves: the default
 		// order has no side effects, and with two or more elements V8 compares
@@ -1240,15 +1306,18 @@ func (n *node) clonePlacementNode() (any, error) {
 		}
 		return out, nil
 	}
-	keys := n.ownKeys()
-	out := make(map[string]any, len(keys))
-	for _, k := range keys {
-		value, _ := n.objectValue(k)
-		v, err := n.clonePlacementStored(slot{kind: objectEntry, key: k}, value, n.hasWrite(k))
-		if err != nil {
-			return nil, err
+	out := make(map[string]any, n.objectLen())
+	var err error
+	n.members(func(k string, value any, written bool) bool {
+		var v any
+		if v, err = n.clonePlacementStored(slot{kind: objectEntry, key: k}, value, written); err != nil {
+			return false
 		}
 		out[k] = v
+		return true
+	})
+	if err != nil {
+		return nil, err
 	}
 	return out, nil
 }

@@ -6,7 +6,6 @@ import (
 	"math"
 	"reflect"
 	"slices"
-	"strconv"
 
 	"github.com/sky-valley/pi/internal/jstext"
 )
@@ -247,11 +246,23 @@ func compareKeys(a, b string) int {
 // leading zeros. It parses 32 bits whatever the platform's int, so an index
 // past 2^31 is one on a 32-bit build too.
 func canonicalIndex(s string) (int64, bool) {
-	n, err := strconv.ParseUint(s, 10, 32)
-	if err != nil || n > maxArrayIndex || strconv.FormatUint(n, 10) != s {
+	// The common case, a key that is not a number at all, is settled without
+	// strconv, whose error for it allocates.
+	if s == "" || len(s) > 10 || s[0] < '0' || s[0] > '9' || s[0] == '0' && len(s) > 1 {
 		return 0, false
 	}
-	return int64(n), true
+	var n int64
+	for i := range len(s) {
+		c := s[i]
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+		n = n*10 + int64(c-'0')
+	}
+	if n > maxArrayIndex {
+		return 0, false
+	}
+	return n, true
 }
 
 // maxArrayIndex is the largest index a JavaScript array has: 2^32 - 2.

@@ -1,9 +1,12 @@
 package chord
 
 import (
+	"encoding/json"
 	"errors"
 	"math"
 	"testing"
+
+	"github.com/sky-valley/pi/chord/delta"
 )
 
 // Port of packages/chord/test/json.test.ts at 19a0361be.
@@ -202,5 +205,59 @@ func TestCopyJSON(t *testing.T) {
 	}
 	if xs, ok := v.(map[string]any)["k"].([]any); !ok || len(xs) != 2 || xs[0] != 1.0 {
 		t.Errorf("typed containers copied as %#v", v)
+	}
+}
+
+// IsValue is on protocol's hot path — requireOpaqueJSON checks every call,
+// result and update payload with it — so a tree encoding/json decoded is
+// checked without allocating: no sorted keys, no boxed values, and no
+// ancestor set until the walk is deep enough to be a cycle.
+func TestIsValueDoesNotAllocate(t *testing.T) {
+	rows := make([]any, 2_000)
+	for i := range rows {
+		rows[i] = map[string]any{"id": float64(i), "label": "row", "tags": []any{"a", true, nil}, "nested": map[string]any{"x": 1.5}}
+	}
+	payload := map[string]any{"rows": rows, "total": 2_000.0}
+	if allocs := testing.AllocsPerRun(10, func() {
+		if !IsValue(payload) {
+			t.Fatal("payload rejected")
+		}
+	}); allocs != 0 {
+		t.Errorf("IsValue allocated %v times on a decoded payload", allocs)
+	}
+}
+
+// A live draft is a value, read through it as pi's isJsonValue and copyJson
+// read a proxy — by itself or inside another value; a settled one is not.
+func TestCopyJSONReadsADraft(t *testing.T) {
+	tr := delta.Track[any](map[string]any{"a": 1.0, "list": []any{1.0, map[string]any{"b": 1.0}, 3.0}})
+	c, err := tr.BeginChange()
+	if err != nil {
+		t.Fatal(err)
+	}
+	state := c.State()
+	if err := state.Set("a", 5.0); err != nil {
+		t.Fatal(err)
+	}
+	if err := state.At("list").At(1).Set("b", 2.0); err != nil {
+		t.Fatal(err)
+	}
+	if !IsValue(state) || !IsValue([]any{state}) {
+		t.Error("a live draft is not a value")
+	}
+	v, err := CopyJSON(map[string]any{"draft": state})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := json.Marshal(v)
+	if string(got) != `{"draft":{"a":5,"list":[1,{"b":2},3]}}` {
+		t.Errorf("CopyJSON of a draft: %s", got)
+	}
+	c.Abort()
+	if IsValue(state) {
+		t.Error("a settled draft is a value")
+	}
+	if _, err := CopyJSON(state); !errors.Is(err, delta.ErrDraftSettled) {
+		t.Errorf("CopyJSON of a settled draft: %v, want delta.ErrDraftSettled", err)
 	}
 }

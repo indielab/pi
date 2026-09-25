@@ -750,3 +750,62 @@ func TestTrackerRetention(t *testing.T) {
 		runtime.KeepAlive(p)
 	})
 }
+
+// A comparator that settles its own change — prepares or aborts it, or adopts
+// a competitor — ends the sort with ErrDraftSettled rather than a crash on the
+// overlay it released. Upstream leaves such a comparator unspecified.
+func TestSortComparatorThatSettlesItsChange(t *testing.T) {
+	for name, settle := range map[string]func(tr *Tracker[any], c *Change[any]){
+		"abort":   func(_ *Tracker[any], c *Change[any]) { c.Abort() },
+		"prepare": func(_ *Tracker[any], c *Change[any]) { _, _ = c.Prepare() },
+		"adopt a competitor": func(tr *Tracker[any], _ *Change[any]) {
+			p, err := tr.PrepareReplace(tree(t, `{"v": []}`))
+			must(t, err)
+			must(t, tr.Adopt(p))
+		},
+	} {
+		tr := mustTrack(t, `{"v": [3, 1, 2]}`)
+		c := mustBegin(t, tr)
+		settled := false
+		err := noPanic(t, name, func() error {
+			return c.State().At("v").Sort(func(a, b any) int {
+				if !settled {
+					settled = true
+					settle(tr, c)
+				}
+				return int(a.(float64) - b.(float64))
+			})
+		})
+		if !errors.Is(err, ErrDraftSettled) {
+			t.Errorf("%s: Sort = %v, want ErrDraftSettled", name, err)
+		}
+	}
+}
+
+// One write to a wide object prepares in time linear in the object: counting
+// and copying its members sorts nothing, and a key that is not an index is
+// told apart from one without strconv's allocating error.
+func TestTrackerWideObjectWriteIsLinear(t *testing.T) {
+	wide := make(map[string]any, 20_000)
+	for i := range 20_000 {
+		wide[fmt.Sprintf("field%d", i)] = float64(i)
+	}
+	tr := Track(map[string]any{"wide": wide})
+	allocs := testing.AllocsPerRun(1, func() {
+		c := mustBegin(t, tr)
+		d := c.State().At("wide")
+		must(t, d.Set("field7", -7.0))
+		if d.Len() != 20_000 {
+			t.Fatalf("Len = %d", d.Len())
+		}
+		p := mustPrepare(t, c)
+		if len(p.Ops()) != 1 {
+			t.Fatalf("ops %s", jsonText(t, p.Ops()))
+		}
+	})
+	// A copy of the object is a few thousand allocations; a sort of its keys
+	// with an allocating comparison is a million.
+	if allocs > 20_000 {
+		t.Errorf("%v allocations to prepare one write to a 20,000-member object", allocs)
+	}
+}

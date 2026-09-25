@@ -134,7 +134,9 @@
 // copied defensively, so never modify one — which includes never handing one
 // to Apply (see Streams). Track and PrepareReplace take ownership of the root
 // they are handed in O(1), without walking it: it must be alias-free strict
-// JSON, and the caller must not touch it again.
+// JSON in the representation encoding/json decodes (no nil map or slice, which
+// encoding/json writes as null), and the caller must not touch it again —
+// chord.CopyJSON makes one from any Go value.
 //
 // Object identity is not replicated: a replica holds a distinct value at each
 // path. Nor is object key order, entirely. JavaScript enumerates an object's
