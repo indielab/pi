@@ -2129,7 +2129,7 @@ func scanSSELines(data []byte, atEOF bool) (advance int, token []byte, err error
 // pi's own reads would.
 func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(rawObject) error) error {
 	scanner := bufio.NewScanner(body)
-	scanner.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxAnthropicSSELine)
 	scanner.Split(scanSSELines)
 
 	var eventName string
@@ -2222,9 +2222,24 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 		}
 	}
 	if err := scanner.Err(); err != nil {
+		if errors.Is(err, bufio.ErrTooLong) {
+			return errAnthropicSSELineTooLong(err)
+		}
 		return err
 	}
 	return flush()
+}
+
+// maxAnthropicSSELine is the longest line iterateAnthropicSSE reads. pi's
+// reader has no limit; a longer line fails the stream with the port's own
+// error (errAnthropicSSELineTooLong).
+const maxAnthropicSSELine = 16 << 20
+
+// errAnthropicSSELineTooLong is the port's error for a line past
+// maxAnthropicSSELine: it says the limit is the port's, not pi's, and what to
+// report. cause is bufio.ErrTooLong, which it wraps.
+func errAnthropicSSELineTooLong(cause error) error {
+	return fmt.Errorf("an anthropic stream line is longer than the port's %d MiB limit (pi reads a line of any length); this is a port limit, report it with the provider and model: %w", maxAnthropicSSELine>>20, cause)
 }
 
 // parseAnthropicEvent is pi's parseJsonWithRepair of an event's data: the text
