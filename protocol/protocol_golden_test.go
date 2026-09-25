@@ -12,8 +12,8 @@ import (
 )
 
 // testdata/upstream_protocol_v8.json is produced by testdata/gen-protocol-v8.ts
-// run under node against upstream pi's packages/protocol at 64eeb82a4: its real
-// codec.ts, TypeBox schemas and CBOR encoder. Every frame here was encoded by
+// run under node against upstream pi's packages/protocol (last at 49681e1b7,
+// typebox 1.3.27): its real codec.ts, TypeBox schemas and CBOR encoder. Every frame here was encoded by
 // the Node implementation and every reject was refused by it, so the file is an
 // interop contract with a real peer, never a record of what Go happens to emit.
 //

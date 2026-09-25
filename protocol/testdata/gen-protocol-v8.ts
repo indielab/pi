@@ -1,9 +1,12 @@
 // Emits v8 protocol vectors from upstream's real codec + TypeBox schemas
-// (packages/protocol at 64eeb82a4, PROTOCOL_VERSION 8).
+// (packages/protocol, PROTOCOL_VERSION 8). Last run at 49681e1b7, whose
+// protocol src is 64eeb82a4's, with typebox 1.3.27 (the version and integrity
+// that sha's package-lock.json names); the vectors 64eeb82a4 produced under
+// typebox 1.3.7 came out byte-identical.
 //
-// Run from a copy placed in the extracted packages/protocol/src/, with
-// typebox@1.3.7 and @earendil-works/chord (packages/chord/src at the same sha)
-// resolvable from there:
+// Run from a copy placed in the extracted packages/protocol/src/, with typebox
+// and @earendil-works/chord (packages/chord/src at the same sha) resolvable
+// from there:
 //
 //	node --experimental-strip-types gen-protocol-v8.ts > upstream_protocol_v8.json
 //
@@ -83,6 +86,12 @@ const clientMessages: Array<[string, unknown]> = [
 	}],
 	["cancel_server_target", { type: "cancel", id: "request-1", target: serverTarget }],
 	["cancel_session_target", { type: "cancel", id: "request-2", target: sessionTarget }],
+	// The edges of what the schemas admit: an id needs one character, any
+	// character, and a hello's version is any safe non-negative integer.
+	["request_single_character_ids", {
+		type: "request", id: " ", target: { serverId, sessionId: "\t", attachmentId: "✓" }, call: null,
+	}],
+	["hello_version_max_safe", { type: "hello", version: Number.MAX_SAFE_INTEGER }],
 ];
 
 const serverMessages: Array<[string, unknown]> = [
@@ -108,6 +117,9 @@ const serverMessages: Array<[string, unknown]> = [
 	["service_update_null", { type: "service_update", subscriptionId: "subscription-3", update: null }],
 	["attachment_attached", { type: "attachment", attachment: sessionTarget }],
 	["attachment_detached", { type: "attachment", attachment: null }],
+	// An error's code must be non-empty; its message may be empty.
+	["response_error_empty_message", { type: "response", id: "request-1", ok: false, error: { code: "cancelled", message: "" } }],
+	["hello_error_empty_message", { type: "hello_error", error: { code: "busy", message: "" } }],
 ];
 
 function encodeAll(cases: Array<[string, unknown]>, encode: (m: never) => Uint8Array) {

@@ -660,6 +660,58 @@ func TestV8RejectsUnknownMessagesAndFields(t *testing.T) {
 	assertClientRejected(t, "missing type", wireV8(t, map[string]any{"version": 8}))
 }
 
+// The encoder is the only guard a Go-built envelope passes: a decoder picks the
+// arm by the type literal and validates each struct it fills, so a wrong
+// literal or a nested fault can only get out through Encode. pi's
+// encodeClientMessage and encodeServerMessage (49681e1b7, under node) refuse
+// every row here, and a frame the port sent instead would poison the peer's
+// decoder. The zero Type is the realistic mistake: an envelope written as a
+// struct literal rather than built by its constructor.
+func TestV8EncodersRefuseWhatPiRefuses(t *testing.T) {
+	call := rawJSON(t, listModelsCall())
+	server := NewServerTarget(testServerID)
+	session := &SessionTarget{ServerID: testServerID, SessionID: "session-1", AttachmentID: "attachment-1"}
+	for _, test := range []struct {
+		name    string
+		message ClientMessageV8
+	}{
+		{"hello without a type", &ClientHelloV8{Version: 8}},
+		{"hello typed as a request", &ClientHelloV8{Type: "request", Version: 8}},
+		{"request without a type", &RequestEnvelopeV8{ID: "request-1", Target: server, Call: call}},
+		{"request typed as a cancel", &RequestEnvelopeV8{Type: "cancel", ID: "request-1", Target: server, Call: call}},
+		{"cancel without a type", &CancelEnvelope{ID: "request-1", Target: server}},
+		{"cancel typed as a request", &CancelEnvelope{Type: "request", ID: "request-1", Target: server}},
+	} {
+		frame, err := EncodeClientMessageV8(test.message, nil)
+		assertValidationError(t, "encoding a client "+test.name+fmt.Sprintf(" (produced %x)", frame), err)
+		if !strings.Contains(err.Error(), "type must be") {
+			t.Errorf("encoding a client %s: %q does not name the type", test.name, err)
+		}
+	}
+	for _, test := range []struct {
+		name, mention string
+		message       ServerMessageV8
+	}{
+		{"hello without a type", "type must be", &ServerHelloV8{Version: 8, ServerID: testServerID}},
+		{"hello typed as a response", "type must be", &ServerHelloV8{Type: "response", Version: 8, ServerID: testServerID}},
+		{"hello_error without a type", "type must be", &ServerHelloErrorV8{Error: ProtocolErrorV8{Code: "busy", Message: "m"}}},
+		{"hello_error typed as a response", "type must be", &ServerHelloErrorV8{Type: "response", Error: ProtocolErrorV8{Code: "busy", Message: "m"}}},
+		{"hello_error with an empty code", "code", &ServerHelloErrorV8{Type: "hello_error", Error: ProtocolErrorV8{Message: "m"}}},
+		{"response without a type", "type must be", &ResponseEnvelopeV8{ID: "request-1", OK: true, Result: rawJSON(t, []any{})}},
+		{"response typed as a service_update", "type must be", &ResponseEnvelopeV8{Type: "service_update", ID: "request-1", OK: true, Result: rawJSON(t, []any{})}},
+		{"service_update without a type", "type must be", &ServiceEventEnvelope{SubscriptionID: "subscription-1", Update: rawJSON(t, nil)}},
+		{"service_update typed as a response", "type must be", &ServiceEventEnvelope{Type: "response", SubscriptionID: "subscription-1", Update: rawJSON(t, nil)}},
+		{"attachment without a type", "type must be", &AttachmentEnvelope{Attachment: session}},
+		{"attachment typed as a response", "type must be", &AttachmentEnvelope{Type: "response", Attachment: session}},
+	} {
+		frame, err := EncodeServerMessageV8(test.message, nil)
+		assertValidationError(t, "encoding a server "+test.name+fmt.Sprintf(" (produced %x)", frame), err)
+		if !strings.Contains(err.Error(), test.mention) {
+			t.Errorf("encoding a server %s: %q does not mention %q", test.name, err, test.mention)
+		}
+	}
+}
+
 // "does not parse JSON strings as messages"
 func TestV8DoesNotParseJSONStringsAsMessages(t *testing.T) {
 	assertClientRejected(t, "client JSON string", `{"type":"hello","version":8}`)
