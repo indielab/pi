@@ -1127,7 +1127,7 @@ func TestGoogleFetchErrorIsFetchFailedForEveryTransportFailure(t *testing.T) {
 	}
 	// Only client.Do's failures are the transport's: any other error — a
 	// *url.Error from parsing a URL included, which the adapters refuse
-	// before sending (fetchURLError) — is returned as it is.
+	// before sending (requestURL) — is returned as it is.
 	for _, err := range []error{
 		&url.Error{Op: "parse", URL: "http://[::1/x", Err: errors.New("missing ']' in host")},
 		errors.New("Ephemeral tokens are only supported by the live API."),

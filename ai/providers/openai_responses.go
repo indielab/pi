@@ -384,7 +384,14 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		}
 		payload, _ := json.Marshal(body)
 
-		url := strings.TrimRight(baseURL, "/") + "/responses"
+		// The SDK's buildURL makes the request URL with `new URL(...)` before
+		// anything else about the request, and fetch sends what that makes of
+		// it (requestURL).
+		url, err := requestURL(strings.TrimRight(baseURL, "/") + "/responses")
+		if err != nil {
+			fail(err)
+			return
+		}
 		build := func() (*http.Request, error) {
 			r, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 			if err != nil {
