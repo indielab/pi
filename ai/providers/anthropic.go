@@ -689,7 +689,11 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		defer resp.Body.Close()
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			data, _ := io.ReadAll(resp.Body)
+			data, err := readSDKErrorBody(ctx, resp.Body)
+			if err != nil {
+				fail(err)
+				return
+			}
 			fail(formatProviderError("Anthropic", resp.StatusCode, data))
 			return
 		}

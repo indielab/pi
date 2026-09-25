@@ -248,8 +248,12 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			data, _ := io.ReadAll(resp.Body)
-			err := formatProviderError("OpenAI", resp.StatusCode, data)
+			data, err := readSDKErrorBody(ctx, resp.Body)
+			if err != nil {
+				fail(err)
+				return
+			}
+			err = formatProviderError("OpenAI", resp.StatusCode, data)
 			// Some providers via OpenRouter give additional information in
 			// error.metadata.raw; pi appends it to the error message.
 			// Upstream 6fbeba51 guarded this against double-printing once

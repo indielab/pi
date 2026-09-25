@@ -402,7 +402,11 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			data, _ := io.ReadAll(resp.Body)
+			data, err := readSDKErrorBody(ctx, resp.Body)
+			if err != nil {
+				fail(err)
+				return
+			}
 			fail(formatResponsesHTTPError(model.Provider, resp.StatusCode, data))
 			return
 		}

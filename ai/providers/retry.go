@@ -339,6 +339,20 @@ func retryDelay(resp *http.Response, attempt int, cfg retryConfig, providerMsg s
 // wait (abortableSleep).
 var errRequestAborted = errors.New("Request aborted")
 
+// readSDKErrorBody reads the body of the non-2xx response an SDK adapter
+// (anthropic, both openai loops, google) fails with. The SDKs throw their
+// error only once they have read that body, and pi's retryProviderRequest
+// catches it and checks the signal first thing, so a request aborted by then
+// — during the read included — ends errRequestAborted, whatever the body
+// said.
+func readSDKErrorBody(ctx context.Context, body io.Reader) ([]byte, error) {
+	data, _ := io.ReadAll(body)
+	if ctx != nil && ctx.Err() != nil {
+		return nil, errRequestAborted
+	}
+	return data, nil
+}
+
 // errOperationAborted is the message of undici's AbortError, which a fetch
 // rejects with when its signal aborts before the response arrives, and which
 // a body read that the abort cuts short, or that starts after it, rejects

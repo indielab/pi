@@ -500,7 +500,11 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		// No OnResponse: pi hands the request to the @google/genai client,
 		// which owns the fetch, and its google adapter never calls onResponse.
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			data, _ := io.ReadAll(respBody)
+			data, err := readSDKErrorBody(ctx, respBody)
+			if err != nil {
+				fail(err)
+				return
+			}
 			// Not pi's message: pi surfaces @google/genai's ApiError message,
 			// JSON.stringify of the error body, whole and without the status;
 			// this says "Google API error <status>: <message>", capped at 4,000

@@ -993,8 +993,13 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			// pi's response.text(): the body decoded as UTF-8, a leading
 			// byte-order mark dropped and invalid bytes U+FFFD per maximal
-			// subpart.
-			data, _ := io.ReadAll(resp.Body)
+			// subpart. An abort that cuts the read short rejects it with
+			// undici's AbortError.
+			data, err := io.ReadAll(resp.Body)
+			if err != nil && aborted() {
+				fail(errOperationAborted)
+				return
+			}
 			fail(createPiMessagesResponseError(model, url, resp.StatusCode, jstext.DecodeUTF8(stripBOM(data))))
 			return
 		}

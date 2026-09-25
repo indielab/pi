@@ -1,9 +1,10 @@
 {
-	"source": "upstream 49681e1b7 packages/ai/src/api (anthropic-messages, pi-messages), @anthropic-ai/sdk 0.124.0 sha512-cN5O8i9UVxHeOQAzj/XjshWXG8KiibJDw9OGpH2Z/eR3n/RBxdoLxDJOcfqAJWvjaMDFfHTBADU04hWRJVkDyA==, node v26.4.0 (undici 8.5.0)",
+	"source": "upstream 49681e1b7 packages/ai/src/api, @anthropic-ai/sdk 0.124.0 sha512-cN5O8i9UVxHeOQAzj/XjshWXG8KiibJDw9OGpH2Z/eR3n/RBxdoLxDJOcfqAJWvjaMDFfHTBADU04hWRJVkDyA==, openai 6.40.0 sha512-MWtTjd/gQt4jpbji61NTgFWJLoY/PdRJ6wG9/ZDRMYNMlBKrCrSlkLI+KgHP1vR1qT6LKSAyAqIxno6lcK9JiA==, @google/genai 2.21.0 sha512-+PDtco2/Z0ONdzCGekCoCT+O1VJS9xJQNN4XzQpXG/t3El/SWWMkCWlFRO1KmivOHPa4Q0VjUYu1HBKCZ/v33Q==, node v26.4.0 (undici 8.5.0)",
 	"runs": [
 		{
 			"api": "anthropic-messages",
 			"mode": "an abort while a read is pending",
+			"status": 200,
 			"segments": [
 				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"in hand\"}}\n\n"
 			],
@@ -25,6 +26,7 @@
 		{
 			"api": "anthropic-messages",
 			"mode": "an abort from the callback with events left in its read",
+			"status": 200,
 			"segments": [
 				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"in hand\"}}\n\n"
 			],
@@ -46,6 +48,7 @@
 		{
 			"api": "anthropic-messages",
 			"mode": "an abort from the callback on its read's last event",
+			"status": 200,
 			"segments": [
 				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"in hand\"}}\n\n"
 			],
@@ -67,6 +70,7 @@
 		{
 			"api": "anthropic-messages",
 			"mode": "an abort from the callback with the next read already in",
+			"status": 200,
 			"segments": [
 				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"in hand\"}}\n\n",
 				"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" and more\"}}\n\n"
@@ -87,8 +91,24 @@
 			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]"
 		},
 		{
+			"api": "anthropic-messages",
+			"mode": "an abort while an error body is read",
+			"status": 500,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "Request aborted",
+			"content": "[]"
+		},
+		{
 			"api": "pi-messages",
 			"mode": "an abort while a read is pending",
+			"status": 200,
 			"segments": [
 				"data: {\"type\":\"start\"}\n\ndata: {\"type\":\"text_start\",\"contentIndex\":0}\n\ndata: {\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"in hand\"}\n\n"
 			],
@@ -110,6 +130,7 @@
 		{
 			"api": "pi-messages",
 			"mode": "an abort from the callback with events left in its read",
+			"status": 200,
 			"segments": [
 				"data: {\"type\":\"start\"}\n\ndata: {\"type\":\"text_start\",\"contentIndex\":0}\n\ndata: {\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"in hand\"}\n\n"
 			],
@@ -131,6 +152,7 @@
 		{
 			"api": "pi-messages",
 			"mode": "an abort from the callback on its read's last event",
+			"status": 200,
 			"segments": [
 				"data: {\"type\":\"start\"}\n\ndata: {\"type\":\"text_start\",\"contentIndex\":0}\n\ndata: {\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"in hand\"}\n\n"
 			],
@@ -152,6 +174,7 @@
 		{
 			"api": "pi-messages",
 			"mode": "an abort from the callback with the next read already in",
+			"status": 200,
 			"segments": [
 				"data: {\"type\":\"start\"}\n\ndata: {\"type\":\"text_start\",\"contentIndex\":0}\n\ndata: {\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"in hand\"}\n\n",
 				"data: {\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\" and more\"}\n\n"
@@ -165,6 +188,21 @@
 				"start",
 				"text_start",
 				"text_delta",
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "This operation was aborted",
+			"content": "[]"
+		},
+		{
+			"api": "pi-messages",
+			"mode": "an abort while an error body is read",
+			"status": 500,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"observed": [],
+			"events": [
 				"error"
 			],
 			"stopReason": "aborted",
@@ -191,6 +229,51 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "This operation was aborted",
+			"content": "[]"
+		},
+		{
+			"api": "openai-completions",
+			"mode": "an abort while an error body is read",
+			"status": 500,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "Request aborted",
+			"content": "[]"
+		},
+		{
+			"api": "openai-responses",
+			"mode": "an abort while an error body is read",
+			"status": 500,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "Request aborted",
+			"content": "[]"
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "an abort while an error body is read",
+			"status": 500,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "Request aborted",
 			"content": "[]"
 		}
 	]

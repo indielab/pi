@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/sky-valley/pi/ai"
 )
@@ -27,8 +28,10 @@ const streamAbortCaptureFile = "testdata/stream-abort/stream-abort-49681e1b7.jso
 type streamAbortRun struct {
 	API  string `json:"api"`
 	Mode string `json:"mode"`
-	// Segments is what the server wrote before holding the connection, each
-	// segment one HTTP chunk and one body read; empty when it never answered.
+	// Status and Segments are what the server wrote before holding the
+	// connection, each segment one HTTP chunk and one body read; zero and
+	// empty when it never answered.
+	Status       int      `json:"status"`
 	Segments     []string `json:"segments"`
 	Observed     []string `json:"observed"`
 	Events       []string `json:"events"`
@@ -112,6 +115,15 @@ func streamAbortAdapter(t *testing.T, ctx context.Context, api, baseURL string, 
 	case ai.APIPiMessages:
 		model := &ai.Model{ID: "auto", Api: ai.APIPiMessages, Provider: "radius", BaseURL: baseURL, Input: []string{"text"}, ContextWindow: 100000, MaxTokens: 1000}
 		return StreamPiMessages(ctx, model, req, &PiMessagesOptions{StreamOptions: opts})
+	case ai.APIOpenAICompletions:
+		model := &ai.Model{ID: "gpt-4o", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: baseURL, Input: []string{"text"}, ContextWindow: 100000, MaxTokens: 1000}
+		return StreamOpenAICompletions(ctx, model, req, &OpenAIOptions{StreamOptions: opts})
+	case ai.APIOpenAIResponses:
+		model := &ai.Model{ID: "gpt-5-mini", Api: ai.APIOpenAIResponses, Provider: "openai", BaseURL: baseURL, Input: []string{"text"}, ContextWindow: 100000, MaxTokens: 1000}
+		return StreamOpenAIResponses(ctx, model, req, &OpenAIResponsesOptions{StreamOptions: opts})
+	case ai.APIGoogleGenerativeAI:
+		model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: baseURL, Input: []string{"text"}, ContextWindow: 100000, MaxTokens: 1000}
+		return StreamGoogle(ctx, model, req, &GoogleOptions{StreamOptions: opts})
 	}
 	t.Fatalf("no Go adapter for %s", api)
 	return nil
@@ -177,7 +189,9 @@ func drain(stream *ai.AssistantMessageEventStream) ([]string, *ai.AssistantMessa
 // rejected read's AbortError (fetch errors the body's stream, so a chunk that
 // had already arrived is never read), or the rejected fetch's when the
 // response had not arrived. The body is heldBody, so each segment is exactly
-// one read, as it was for pi.
+// one read, as it was for pi. An abort while an error body is read is the
+// SDKs' thrown error caught by pi's retryProviderRequest, which says
+// "Request aborted" first thing, and pi-messages' rejected text() read.
 func TestStreamAbortMatchesPi(t *testing.T) {
 	for _, run := range loadStreamAbortCapture(t) {
 		t.Run(run.API+"/"+run.Mode, func(t *testing.T) {
@@ -203,6 +217,22 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 			case "an abort from the callback with events left in its read", "an abort from the callback on its read's last event",
 				"an abort from the callback with the next read already in":
 				opts.HTTPClient = heldDoer{&heldBody{ctx: ctx, segments: slices.Clone(run.Segments)}}
+			case "an abort while an error body is read":
+				// The server answers the run's status with the start of the
+				// body and holds; the abort lands 100ms on, while the adapter
+				// reads the rest. (Were it to land before the response, pi's
+				// message would be the same.)
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					io.Copy(io.Discard, r.Body)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(run.Status)
+					io.WriteString(w, run.Segments[0])
+					w.(http.Flusher).Flush()
+					time.AfterFunc(100*time.Millisecond, cancel)
+					<-r.Context().Done()
+				}))
+				defer server.Close()
+				baseURL = server.URL
 			case "an already-aborted signal", "an abort before the response arrives":
 				// The server never answers; the abort lands before the call,
 				// or once the request has reached the server.
