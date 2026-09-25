@@ -367,6 +367,10 @@ func TestDecodeServiceControlCallGrammar(t *testing.T) {
 		{ServiceID: control, Member: "subscribe", Args: []Value{"s", "", "singleton"}},
 		{ServiceID: control, Member: "subscribe", Args: []Value{"s", "pi.models", "other"}},
 		{ServiceID: control, Member: "subscribe", Args: []Value{"s", "pi.models", nil}},
+		// The empty mode is no mode, however it is spelled: pi's
+		// decodeServiceControlCall returns undefined for it.
+		{ServiceID: control, Member: "subscribe", Args: []Value{"s", "pi.models", ""}},
+		{ServiceID: control, Member: "subscribe", Args: []Value{"s", "pi.models", ServiceMode("")}},
 		{ServiceID: control, Member: "unsubscribe", Args: []Value{}},
 		{ServiceID: control, Member: "unsubscribe", Args: []Value{""}},
 		{ServiceID: control, Member: "unsubscribe", Args: []Value{"s", "t"}},
@@ -437,6 +441,7 @@ func TestParsersRejectAtEveryLevel(t *testing.T) {
 		{"not an object", `"pi.models"`, "object"},
 		{"extra key", `{"serviceId":"s","mode":"keyed","instances":[],"extra":1}`, `"extra"`},
 		{"bad mode", `{"serviceId":"s","mode":"both","instances":[]}`, `"both"`},
+		{"empty mode", `{"serviceId":"s","mode":"","instances":[]}`, "mode"},
 		{"empty id", `{"serviceId":"","mode":"keyed","instances":[]}`, "serviceId"},
 		{"instances not array", `{"serviceId":"s","mode":"keyed","instances":{}}`, "instances"},
 		{"instance extra key", `{"serviceId":"s","mode":"keyed","instances":[{"members":[],"extra":1}]}`, `"extra"`},
@@ -485,6 +490,7 @@ func TestParsersRejectAtEveryLevel(t *testing.T) {
 		{"not an array", `{}`, "array"},
 		{"entry extra key", `[{"serviceId":"a","mode":"keyed","extra":1}]`, `"extra"`},
 		{"entry missing mode", `[{"serviceId":"a"}]`, `"mode"`},
+		{"entry empty mode", `[{"serviceId":"a","mode":""}]`, "mode"},
 		{"duplicate id", `[{"serviceId":"a","mode":"keyed"},{"serviceId":"a","mode":"singleton"}]`, `duplicate`},
 	}
 	for _, tc := range catalogues {

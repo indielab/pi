@@ -118,6 +118,9 @@ func TestTypeValidators(t *testing.T) {
 	}{
 		{ServiceCatalogueEntry{ServiceID: "", Mode: Keyed}, "serviceId"},
 		{ServiceCatalogueEntry{ServiceID: "s", Mode: "other"}, `"other"`},
+		// A mode left unset is the zero ServiceMode, "", which pi's isMode
+		// refuses like any other string.
+		{ServiceCatalogueEntry{ServiceID: "s"}, "mode"},
 		{ServiceInstanceAddress{Key: "", Generation: 1}, "key"},
 		{ServiceInstanceAddress{Key: "k", Generation: 0}, "generation"},
 		{MethodSnapshot[delta.Op]{}, "name"},
@@ -128,6 +131,7 @@ func TestTypeValidators(t *testing.T) {
 		{ServiceInstanceSnapshot[delta.Op]{Members: []ServiceMemberSnapshot[delta.Op]{nil}}, "members[0] is nil"},
 		{ServiceInstanceSnapshot[delta.Op]{Members: []ServiceMemberSnapshot[delta.Op]{MethodSnapshot[delta.Op]{}}}, "members[0]: name"},
 		{ServiceSubscriptionSnapshot[delta.Op]{ServiceID: "s", Mode: "x"}, "mode"},
+		{ServiceSubscriptionSnapshot[delta.Op]{ServiceID: "s"}, "mode"},
 		{ServiceSubscriptionSnapshot[delta.Op]{ServiceID: "s", Mode: Keyed, Instances: []ServiceInstanceSnapshot[delta.Op]{{Instance: &ServiceInstanceAddress{}}}}, "instances[0]: instance: key"},
 		{StateUpdate[delta.Op]{Member: "m", Sequence: 0}, "state update sequence"},
 		{StateUpdate[delta.Op]{Member: "", Sequence: 1}, "state update member"},
