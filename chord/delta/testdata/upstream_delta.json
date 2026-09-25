@@ -1,5 +1,5 @@
 {
-	"sha": "d5cba1d97",
+	"sha": "19a0361be",
 	"diffs": [
 		{"name":"sets and deletes","before":{"keep":1,"change":1,"remove":true},"after":{"keep":1,"change":2,"add":3},"ops":[["s",["add"],3],["s",["change"],2],["d",["remove"]]],"raw":[["s",["change"],2],["s",["add"],3],["d",["remove"]]]},
 		{"name":"string append","before":{"text":"hello"},"after":{"text":"hello world"},"ops":[["a",["text"]," world"]]},
@@ -486,7 +486,7 @@
 			"name": "invalid writes leave the base alone",
 			"trackers": {"main":{"values":[1,2]}},
 			"steps": [{"do":"begin"},{"at":["values"],"do":"delete","key":0},{"do":"abort"},{"do":"begin"},{"at":["values"],"do":"set","key":0,"value":{"$nan":true}},{"at":["values"],"do":"set","key":0,"value":{"$inf":true}},{"at":["values"],"do":"set","key":0,"value":{"$date":true}},{"at":["values"],"do":"set","key":0,"value":{"$cycle":true}},{"at":["values"],"do":"setLength","length":-1},{"do":"abort"},{"do":"value"}],
-			"results": [{},{"error":"Overlay arrays cannot contain holes"},{},{},{"error":"Draft placements must contain strict JSON values"},{"error":"Draft placements must contain strict JSON values"},{"error":"Draft placements must contain plain objects or arrays"},{"error":"Draft placements cannot contain cycles"},{"error":"Invalid array length"},{},{"value":{"values":[1,2]}}]
+			"results": [{},{"error":"Overlay arrays cannot contain holes"},{},{},{"error":"Value contains a non-finite number and is not strict JSON"},{"error":"Value contains a non-finite number and is not strict JSON"},{"error":"Value must contain strict JSON plain objects or arrays"},{"error":"Value contains cycles and is not strict JSON"},{"error":"Invalid array length"},{},{"value":{"values":[1,2]}}]
 		},
 		{"name":"structurally shared revision","trackers":{"main":{"changed":{"value":1},"retained":{"value":2}}},"steps":[{"do":"begin"},{"at":["changed"],"do":"set","key":"value","value":3},{"at":["changed"],"do":"set","key":"value","value":4},{"do":"prepare"}],"results":[{},{},{},{"ops":[["s",["changed","value"],4]],"noop":false,"value":{"changed":{"value":4},"retained":{"value":2}}}]},
 		{
@@ -1028,7 +1028,17 @@
 			"name": "a refused placement changes nothing",
 			"trackers": {"main":{"o":{},"v":[1]}},
 			"steps": [{"do":"begin"},{"at":["v"],"do":"push","items":[2,{"$nan":true}]},{"at":["v"],"do":"unshift","items":[{"$cycle":true}]},{"at":["v"],"deleteCount":1,"do":"splice","items":[{"$date":true}],"start":0},{"at":["v"],"do":"fill","end":1,"start":0,"value":{"$inf":true}},{"at":["o"],"do":"set","key":"x","value":{"a":[1,{"$nan":true}]}},{"at":["v"],"do":"get","key":"length"},{"at":["o"],"do":"keys"},{"do":"prepare"}],
-			"results": [{},{"error":"Draft placements must contain strict JSON values"},{"error":"Draft placements cannot contain cycles"},{"error":"Draft placements must contain plain objects or arrays"},{"error":"Draft placements must contain strict JSON values"},{"error":"Draft placements must contain strict JSON values"},{"value":1},{"value":[]},{"ops":[],"noop":true,"value":{"o":{},"v":[1]}}]
+			"results": [
+				{},
+				{"error":"Value contains a non-finite number and is not strict JSON"},
+				{"error":"Value contains cycles and is not strict JSON"},
+				{"error":"Value must contain strict JSON plain objects or arrays"},
+				{"error":"Value contains a non-finite number and is not strict JSON"},
+				{"error":"Value contains a non-finite number and is not strict JSON"},
+				{"value":1},
+				{"value":[]},
+				{"ops":[],"noop":true,"value":{"o":{},"v":[1]}}
+			]
 		},
 		{
 			"name": "a reserved key in the path folds into its safe ancestor",

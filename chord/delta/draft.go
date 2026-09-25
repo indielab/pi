@@ -1,18 +1,17 @@
 package delta
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"math"
 	"math/big"
-	"reflect"
 	"slices"
 	"strconv"
 	"strings"
 	"unicode"
 
+	"github.com/sky-valley/pi/chord/internal/jsonvalue"
 	"github.com/sky-valley/pi/internal/jstext"
 )
 
@@ -1183,51 +1182,41 @@ func (n *node) deduplicateEntries() {
 
 // ─── Placements ──────────────────────────────────────────────────────────────
 
-// Upstream's d5cba1d97 texts for a value a draft refuses to place.
-const (
-	placementCycle  = "Draft placements cannot contain cycles"
-	placementPlain  = "Draft placements must contain plain objects or arrays"
-	placementStrict = "Draft placements must contain strict JSON values"
-)
-
 // ValueError reports a value a draft cannot place: a cycle, a number that is
-// not finite, or a Go type with no JSON form. Message is upstream's TypeError
-// text.
-type ValueError struct {
-	Message string
-	// Value is the offending Go value, for a type or number error; nil for a
-	// cycle.
-	Value any
-}
-
-func (e *ValueError) Error() string {
-	if e.Message == placementCycle {
-		return "delta: " + e.Message + " (a container reaches itself; break the cycle before handing the value over)"
-	}
-	var got string
-	if f, ok := number(e.Value); ok {
-		got = strconv.FormatFloat(f, 'g', -1, 64)
-		if math.IsNaN(f) {
-			got = "NaN"
-		}
-	} else {
-		got = fmt.Sprintf("%T", e.Value)
-	}
-	return fmt.Sprintf("delta: %s: got %s (build values from nil, bool, string, a finite number, []any and map[string]any, as encoding/json decodes them)", e.Message, got)
-}
+// not finite, or a Go type with no JSON form. Message is upstream's copyJson
+// TypeError text (chord.ValueError is the same type).
+type ValueError = jsonvalue.Error
 
 // clonePlacement is upstream's: a value placed into a draft, copied and
-// checked. A draft is copied as it holds its content now.
+// checked by chord's copyJson. A draft — the value itself, or one inside it —
+// is copied as it holds its content now.
 func clonePlacement(v any) (any, error) {
-	if d, ok := v.(*Draft); ok {
-		n, err := d.readable()
-		if err != nil {
-			return nil, err
-		}
-		return n.clonePlacementNode()
+	c, err := copyPlacement(v)
+	var ve *ValueError
+	if errors.As(err, &ve) {
+		return nil, fmt.Errorf("delta: %w", err)
 	}
-	c := placementCopier{}
-	return c.copy(v)
+	return c, err
+}
+
+// copyPlacement is clonePlacement below the top: its errors are wrapped once,
+// by clonePlacement.
+func copyPlacement(v any) (any, error) {
+	return jsonvalue.Copy(v, copyDraft)
+}
+
+// copyDraft is copyJson's reading of a draft through its traps.
+func copyDraft(v any) (any, bool, error) {
+	d, ok := v.(*Draft)
+	if !ok {
+		return nil, false, nil
+	}
+	n, err := d.readable()
+	if err != nil {
+		return nil, true, err
+	}
+	c, err := n.clonePlacementNode()
+	return c, true, err
 }
 
 // clonePlacementNode is upstream's: a node's content now, copied — through
@@ -1272,105 +1261,7 @@ func (n *node) clonePlacementStored(s slot, value any, placement bool) (any, err
 			return c.clonePlacementNode()
 		}
 	}
-	c := placementCopier{}
-	return c.copy(value)
-}
-
-// placementCopier is upstream's cloneJson: a deep, checked copy into the
-// representation drafts hold — nil, bool, float64, string, []any and
-// map[string]any — with aliases expanded into independent copies. ancestors
-// holds the containers on the current path, which is how a cycle is told
-// apart from a container that merely occurs twice.
-type placementCopier struct {
-	ancestors map[identity]bool
-}
-
-func (c *placementCopier) copy(v any) (any, error) {
-	switch x := v.(type) {
-	case *Draft:
-		// A draft inside a placed value: pi's copy reads it through its traps.
-		n, err := x.readable()
-		if err != nil {
-			return nil, err
-		}
-		return n.clonePlacementNode()
-	case nil, bool, string:
-		return x, nil
-	case float64:
-		return finite(x, x)
-	case json.Number:
-		f, err := x.Float64()
-		if err != nil {
-			return nil, &ValueError{Message: placementStrict, Value: x}
-		}
-		return finite(f, x)
-	case []any:
-		return c.container(x)
-	case map[string]any:
-		return c.container(x)
-	}
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Bool:
-		return rv.Bool(), nil
-	case reflect.String:
-		return rv.String(), nil
-	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
-		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
-		reflect.Float32, reflect.Float64:
-		f, _ := number(v)
-		return finite(f, v)
-	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Pointer:
-		// typeof "object" in JavaScript: a container, but not a plain one.
-		return nil, &ValueError{Message: placementPlain, Value: v}
-	}
-	return nil, &ValueError{Message: placementStrict, Value: v}
-}
-
-// finite is a number as a draft holds it: f, which v was converted to, unless
-// it is NaN or infinite.
-func finite(f float64, v any) (any, error) {
-	if math.IsNaN(f) || math.IsInf(f, 0) {
-		return nil, &ValueError{Message: placementStrict, Value: v}
-	}
-	return f, nil
-}
-
-func (c *placementCopier) container(v any) (any, error) {
-	id, _ := identityOf(v)
-	if id.ptr != 0 && c.ancestors[id] {
-		return nil, &ValueError{Message: placementCycle}
-	}
-	if c.ancestors == nil {
-		c.ancestors = map[identity]bool{}
-	}
-	c.ancestors[id] = true
-	defer delete(c.ancestors, id)
-	switch x := v.(type) {
-	case []any:
-		out := newArray(len(x))
-		for i, item := range x {
-			copied, err := c.copy(item)
-			if err != nil {
-				return nil, err
-			}
-			out[i] = copied
-		}
-		return out, nil
-	case map[string]any:
-		out := make(map[string]any, len(x))
-		// In enumeration order, so that of several bad members the one
-		// reported is always the same.
-		for _, k := range keyOrder(x) {
-			copied, err := c.copy(x[k])
-			if err != nil {
-				return nil, err
-			}
-			out[k] = copied
-		}
-		return out, nil
-	}
-	panic("unreachable: container called on a scalar")
+	return copyPlacement(value)
 }
 
 // ─── JavaScript conversions ──────────────────────────────────────────────────

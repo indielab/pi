@@ -1,11 +1,12 @@
 package chord
 
 import (
+	"errors"
 	"math"
 	"testing"
 )
 
-// Port of packages/chord/test/json.test.ts at 64eeb82a4.
+// Port of packages/chord/test/json.test.ts at 19a0361be.
 
 // TestIsValueChecksStrictJSONWithoutNormalizingIt is upstream's single case,
 // one assertion per line of it. Go has no undefined, so the "omitted"
@@ -70,13 +71,11 @@ func TestIsValueContainers(t *testing.T) {
 	}
 }
 
-// TestIsValueDepthCap: upstream refuses a value whose depth exceeds 512, root
-// at 0, so 513 nested containers pass and 514 do not. This is also what makes
-// a cycle terminate without tracking visited pointers. Every container kind
-// counts a level, so the cap is pinned through plain []any and
-// map[string]any as well as through the typed slices and maps that walk
-// by reflection.
-func TestIsValueDepthCap(t *testing.T) {
+// TestIsValueHasNoDepthLimit: upstream dropped isJsonValue's 512-level cap
+// (19a0361be) for an ancestor set, so deep nesting is a value and a cycle —
+// through every container kind, including the typed ones that walk by
+// reflection — is not.
+func TestIsValueHasNoDepthLimit(t *testing.T) {
 	type list []any
 	type object map[string]any
 	nest := func(n int, wrap func(any) any) any {
@@ -112,11 +111,96 @@ func TestIsValueDepthCap(t *testing.T) {
 			return object{"k": v}
 		},
 	} {
-		if !IsValue(nest(513, wrap)) {
-			t.Errorf("%s: 513 nested rejected", name)
+		deep := nest(5_000, wrap)
+		if !IsValue(deep) {
+			t.Errorf("%s: 5,000 nested rejected", name)
 		}
-		if IsValue(nest(514, wrap)) {
-			t.Errorf("%s: 514 nested accepted", name)
+		if _, err := CopyJSON(deep); err != nil {
+			t.Errorf("%s: CopyJSON of 5,000 nested: %v", name, err)
 		}
+	}
+	loop := make([]any, 1)
+	loop[0] = loop
+	typedLoop := make(list, 1)
+	typedLoop[0] = typedLoop
+	self := map[string]any{}
+	self["self"] = self
+	typedSelf := object{}
+	typedSelf["self"] = typedSelf
+	indirect := map[string]any{}
+	indirect["rows"] = []any{map[string]any{"back": indirect}}
+	for name, cyclic := range map[string]any{"[]any": loop, "typed slice": typedLoop, "map[string]any": self, "typed map": typedSelf, "through an array": indirect} {
+		if IsValue(cyclic) {
+			t.Errorf("%s: a cycle accepted", name)
+		}
+		var ve *ValueError
+		if _, err := CopyJSON(cyclic); !errors.As(err, &ve) || ve.Message != "Value contains cycles and is not strict JSON" {
+			t.Errorf("%s: CopyJSON of a cycle: %v", name, err)
+		}
+	}
+	// An alias is not a cycle: two paths to one container.
+	shared := []any{1}
+	if !IsValue([]any{shared, shared, map[string]any{"a": shared}}) {
+		t.Error("an aliased container is not a cycle")
+	}
+}
+
+// TestCopyJSON is json.test.ts's copyJson cases: aliases become independent
+// copies, an own "__proto__" member is kept, and cycles and non-strict values
+// are refused with upstream's texts.
+func TestCopyJSON(t *testing.T) {
+	shared := map[string]any{"value": 1}
+	input := map[string]any{"left": shared, "right": shared}
+	v, err := CopyJSON(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	copied := v.(map[string]any)
+	left, right := copied["left"].(map[string]any), copied["right"].(map[string]any)
+	if left["value"] != 1.0 || right["value"] != 1.0 {
+		t.Errorf("copied %v", copied)
+	}
+	left["value"] = 2.0
+	if right["value"] != 1.0 || shared["value"] != 1 {
+		t.Error("the copy retained an alias")
+	}
+
+	v, err = CopyJSON(map[string]any{"__proto__": map[string]any{"safe": true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if safe := v.(map[string]any)["__proto__"].(map[string]any)["safe"]; safe != true {
+		t.Errorf(`own "__proto__" member lost: %v`, v)
+	}
+
+	for _, tc := range []struct {
+		value any
+		text  string
+	}{
+		{math.NaN(), "Value contains a non-finite number and is not strict JSON"},
+		{[]any{math.Inf(1)}, "Value contains a non-finite number and is not strict JSON"},
+		{map[string]any{"f": func() {}}, "Value contains a non-JSON function; expected strict JSON"},
+		{[]byte("a"), "Value must contain strict JSON plain objects or arrays"},
+		{struct{ A int }{1}, "Value must contain strict JSON plain objects or arrays"},
+		{map[int]any{1: "a"}, "Value must contain strict JSON plain objects or arrays"},
+	} {
+		var ve *ValueError
+		if _, err := CopyJSON(tc.value); !errors.As(err, &ve) || ve.Message != tc.text {
+			t.Errorf("CopyJSON(%#v): %v, want %q", tc.value, err, tc.text)
+		}
+		if IsValue(tc.value) {
+			t.Errorf("IsValue(%#v) accepts what CopyJSON refuses", tc.value)
+		}
+	}
+
+	// The copy is the decoded-tree representation: float64 numbers, []any
+	// and map[string]any, whatever Go kinds went in.
+	type key string
+	v, err = CopyJSON(map[key][]int{"k": {1, 2}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if xs, ok := v.(map[string]any)["k"].([]any); !ok || len(xs) != 2 || xs[0] != 1.0 {
+		t.Errorf("typed containers copied as %#v", v)
 	}
 }

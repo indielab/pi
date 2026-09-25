@@ -3,12 +3,15 @@ package delta
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math"
 	"runtime"
 	"strings"
 	"testing"
 	"time"
 	"weak"
+
+	"github.com/sky-valley/pi/chord/internal/jsonvalue"
 )
 
 // The upstream assertions ops goldens cannot carry: object identity (what is
@@ -389,51 +392,64 @@ func TestDraftEmptyArraysAreDistinct(t *testing.T) {
 	wantJSON(t, mustPrepare(t, c).Value(), tree(t, `{"a": [1], "b": [], "c": {"d": [], "e": [2]}, "f": [4], "g": [3], "rows": [[], [5]]}`))
 }
 
-// Go values in, JSON values out: a placement of any Go numeric kind is one
-// JavaScript number, and a typed nil container an empty one. Anything else
-// with no JSON form is refused with pi's text, and a refused placement leaves
-// the draft as it was.
+// Go values in, JSON values out: a placement is chord's copyJson of what the
+// caller hands over (chord.IsValue's Go spelling of strict JSON), so any Go
+// numeric kind is one JavaScript number, a typed slice or string-keyed map a
+// plain array or object, and a typed nil container an empty one. Anything else
+// is refused with pi's text, and a refused placement leaves the draft as it
+// was.
 func TestDraftPlacementRepresentation(t *testing.T) {
 	type myInt int
 	type myFloat float64
+	type key string
 	tr := mustTrack(t, `{"xs": []}`)
 	c := mustBegin(t, tr)
 	must(t, c.State().Set("v", map[string]any{
 		"int": 1, "int64": int64(2), "uint8": uint8(3), "float32": float32(0.5), "named": myInt(4),
 		"namedFloat": myFloat(6.5), "number": json.Number("5e2"), "nilMap": map[string]any(nil), "nilSlice": []any(nil),
+		"strings": []string{"a"}, "typedMap": map[key]int{"k": 1}, "array": [2]bool{true, false},
 	}))
 	v, _ := c.State().At("v").Get("nilMap")
 	if d, ok := v.(*Draft); !ok || d.Len() != 0 || d.IsArray() {
 		t.Errorf("a nil map placed as %#v, want an empty object", v)
 	}
 	p := mustPrepare(t, c)
-	wantJSON(t, asObject(p.Value())["v"], tree(t, `{"int":1,"int64":2,"uint8":3,"float32":0.5,"named":4,"namedFloat":6.5,"number":500,"nilMap":{},"nilSlice":[]}`))
-	for k, v := range asObject(asObject(p.Value())["v"]) {
-		switch v.(type) {
-		case float64, map[string]any, []any:
+	wantJSON(t, asObject(p.Value())["v"], tree(t, `{"int":1,"int64":2,"uint8":3,"float32":0.5,"named":4,"namedFloat":6.5,"number":500,"nilMap":{},"nilSlice":[],"strings":["a"],"typedMap":{"k":1},"array":[true,false]}`))
+	var normalize func(v any)
+	normalize = func(v any) {
+		switch x := v.(type) {
+		case float64, string, bool:
+		case []any:
+			for _, item := range x {
+				normalize(item)
+			}
+		case map[string]any:
+			for _, item := range x {
+				normalize(item)
+			}
 		default:
-			t.Errorf("%s placed as %T", k, v)
+			t.Errorf("placed as %T", v)
 		}
 	}
+	normalize(asObject(p.Value())["v"])
 
 	cases := []struct {
 		value any
 		text  string
 	}{
-		{math.NaN(), placementStrict},
-		{math.Inf(-1), placementStrict},
-		{json.Number("1e400"), placementStrict},
-		{float32(math.NaN()), placementStrict},
-		{float32(math.Inf(1)), placementStrict},
-		{json.Number("NaN"), placementStrict},
-		{func() {}, placementStrict},
-		{complex(1, 2), placementStrict},
-		{make(chan int), placementStrict},
-		{time.Unix(0, 0), placementPlain},
-		{&struct{}{}, placementPlain},
-		{map[string]string{"a": "b"}, placementPlain},
-		{[]string{"a"}, placementPlain},
-		{[]byte("a"), placementPlain},
+		{math.NaN(), jsonvalue.NonFinite},
+		{math.Inf(-1), jsonvalue.NonFinite},
+		{json.Number("1e400"), jsonvalue.NonFinite},
+		{float32(math.NaN()), jsonvalue.NonFinite},
+		{float32(math.Inf(1)), jsonvalue.NonFinite},
+		{json.Number("NaN"), jsonvalue.NonFinite},
+		{func() {}, fmt.Sprintf(jsonvalue.NonJSON, "function")},
+		{complex(1, 2), fmt.Sprintf(jsonvalue.NonJSON, "complex128")},
+		{make(chan int), fmt.Sprintf(jsonvalue.NonJSON, "chan int")},
+		{time.Unix(0, 0), jsonvalue.Plain},
+		{&struct{}{}, jsonvalue.Plain},
+		{map[int]string{1: "b"}, jsonvalue.Plain},
+		{[]byte("a"), jsonvalue.Plain},
 	}
 	c = mustBegin(t, tr)
 	for _, tc := range cases {
@@ -454,12 +470,12 @@ func TestDraftPlacementRepresentation(t *testing.T) {
 	}
 	cyclic := map[string]any{}
 	cyclic["self"] = cyclic
-	if err := c.State().Set("v", cyclic); err == nil || !strings.Contains(err.Error(), placementCycle) {
+	if err := c.State().Set("v", cyclic); err == nil || !strings.Contains(err.Error(), jsonvalue.Cycle) {
 		t.Errorf("cycle: %v", err)
 	}
 	loop := make([]any, 1)
 	loop[0] = loop
-	if _, err := c.State().At("xs").Push(loop); err == nil || !strings.Contains(err.Error(), placementCycle) {
+	if _, err := c.State().At("xs").Push(loop); err == nil || !strings.Contains(err.Error(), jsonvalue.Cycle) {
 		t.Errorf("array cycle: %v", err)
 	}
 	c.Abort()
