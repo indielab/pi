@@ -32,9 +32,10 @@
 //   v8Cause    true when errorMessage embeds a V8 JSON.parse message, which
 //              the port does not reproduce: only the text around it is pi's;
 //   rawSeed    true when the message's content still holds a block member as
-//              the raw non-string value content_block_start seeded it with
-//              (the stream failed before a delta converted it), which the
-//              port's string field cannot hold: that member is not compared;
+//              a non-string — the raw value content_block_start seeded it
+//              with (the stream failed before a delta converted it), or a
+//              number `+` made of it — which the port's string field cannot
+//              hold: that member is not compared;
 //   oneByte    what pi made of the same body read one byte per read, when
 //              that differs from the whole body in one read (observed, pushed,
 //              message and v8Cause as above): pi's reader splits lines per
@@ -471,6 +472,56 @@ const cases: Case[] = [
 			ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"text","text":5}}'),
 			textDelta("a"),
 			textDelta("b"),
+			blockStop,
+			messageDelta,
+			messageStop,
+		),
+	},
+	// `+=` is JavaScript's `+`: a seed that is a number or a boolean ADDS a
+	// delta that is a number, a boolean, null or absent (undefined) — 5 + 3 is
+	// 8, 5 + undefined NaN — and the member stays a number until a string
+	// delta concatenates onto the sum's String(). A signature's `|| ""` drops a
+	// sum that came to 0.
+	{
+		name: "numericSeedsAddNonStringDeltas",
+		sse: frames(
+			messageStart,
+			...(
+				[
+					['{"type":"text","text":5}', ["3", "true", "null", '"x"'], "text_delta", "text"],
+					['{"type":"text","text":true}', ["1", '"!"'], "text_delta", "text"],
+					['{"type":"text","text":5}', [undefined, '"x"'], "text_delta", "text"],
+					['{"type":"text","text":1e400}', ["-1e400", '"n"'], "text_delta", "text"],
+					['{"type":"thinking","thinking":0.1,"signature":"sig"}', ["0.2", '"t"'], "thinking_delta", "thinking"],
+					['{"type":"thinking","thinking":1e21,"signature":"sig"}', ["1", '"e"'], "thinking_delta", "thinking"],
+					['{"type":"thinking","thinking":-0,"signature":"sig"}', ["0", '"z"'], "thinking_delta", "thinking"],
+					['{"type":"thinking","thinking":"t","signature":5}', ["3", '"s"'], "signature_delta", "signature"],
+					['{"type":"thinking","thinking":"t","signature":2}', ["-2", '"s"'], "signature_delta", "signature"],
+					['{"type":"redacted_thinking","data":5}', ["3", '"s"'], "signature_delta", "signature"],
+				] as Array<[string, Array<string | undefined>, string, string]>
+			).flatMap(([block, deltas, deltaType, member], i) => [
+				ev("content_block_start", `{"type":"content_block_start","index":${i},"content_block":${block}}`),
+				...deltas.map((value) =>
+					ev(
+						"content_block_delta",
+						`{"type":"content_block_delta","index":${i},"delta":{"type":"${deltaType}"${value === undefined ? "" : `,"${member}":${value}`}}}`,
+					),
+				),
+				ev("content_block_stop", `{"type":"content_block_stop","index":${i}}`),
+			]),
+			messageDelta,
+			messageStop,
+		),
+	},
+	// A sum no string delta follows leaves the member a number, which the
+	// port's string field cannot hold (rawSeed): the rest is compared.
+	{
+		name: "aNumericSumStaysANumber",
+		rawSeed: true,
+		sse: frames(
+			messageStart,
+			ev("content_block_start", '{"type":"content_block_start","index":0,"content_block":{"type":"text","text":5}}'),
+			ev("content_block_delta", '{"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":3}}'),
 			blockStop,
 			messageDelta,
 			messageStop,

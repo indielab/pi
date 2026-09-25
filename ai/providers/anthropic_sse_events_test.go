@@ -31,8 +31,9 @@ type anthropicSSEEventsRow struct {
 	AbortFirst bool   `json:"abortFirst"`
 	// OAuth rows stream with an OAuth token and one current tool, Read.
 	OAuth bool `json:"oauth"`
-	// RawSeed rows end with a block member pi holds as the raw non-string
-	// value it was seeded with, which the port's string field cannot hold.
+	// RawSeed rows end with a block member pi holds as a non-string — the
+	// raw value it was seeded with, or a number `+` made of it — which the
+	// port's string field cannot hold.
 	RawSeed bool `json:"rawSeed"`
 	// The outcome of the body whole, in one read.
 	anthropicSSEOutcome
@@ -186,8 +187,9 @@ func assertAnthropicMessageMatchesPi(t *testing.T, row anthropicSSEEventsRow, ou
 // dropRawSeedMembers removes, from both decoded contents, each block's text,
 // thinking or thinkingSignature that pi holds as a non-string — the raw value
 // content_block_start seeded it with, which no delta converted before the
-// stream failed. The port's string field cannot hold such a value; every
-// other member is still compared.
+// stream ended, or a number `+` made of it that no string delta followed.
+// The port's string field cannot hold such a value; every other member is
+// still compared.
 func dropRawSeedMembers(got, want any) {
 	gotBlocks, _ := got.([]any)
 	wantBlocks, _ := want.([]any)

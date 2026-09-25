@@ -904,8 +904,9 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 					return nil
 				}
 				b := blocks[idx]
-				// pi's `+=` appends String() of the member ("undefined" when it is
-				// absent); the pushed event carries the member itself.
+				// pi's `+=` onto a string appends String() of the member
+				// ("undefined" when it is absent); the pushed event carries the
+				// member itself.
 				pushed, isString := rawString(delta[member])
 				piece := pushed
 				if !isString {
@@ -915,17 +916,15 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 				}
 				switch string(deltaType) {
 				case "text_delta":
-					if err := convertAnthropicSeed(&b.seeds.text); err != nil {
+					if err := b.seeds.text.plusAssign(&b.text, delta[member], piece); err != nil {
 						return err
 					}
-					b.text.WriteString(piece)
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: idx, Delta: pushed, Partial: output.Clone()})
 				case "thinking_delta":
-					if err := convertAnthropicSeed(&b.seeds.thinking); err != nil {
+					if err := b.seeds.thinking.plusAssign(&b.thinking, delta[member], piece); err != nil {
 						return err
 					}
-					b.thinking.WriteString(piece)
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: idx, Delta: pushed, Partial: output.Clone()})
 				case "input_json_delta":
@@ -941,14 +940,16 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: idx, Delta: pushed, Partial: output.Clone()})
 				case "signature_delta":
 					// pi: `thinkingSignature = thinkingSignature || ""`, then
-					// `+= signature`: a falsy seed (0, false) is dropped first.
-					if b.seeds.signature != nil && !rawTruthy(b.seeds.signature) {
-						b.thinkingSig, b.seeds.signature = "", nil
+					// `+= signature`: a falsy value (0, false, a sum that came to
+					// 0 or NaN) is dropped first.
+					if b.seeds.signature.value != nil && !jsTruthy(b.seeds.signature.value) {
+						b.thinkingSig, b.seeds.signature.value = "", nil
 					}
-					if err := convertAnthropicSeed(&b.seeds.signature); err != nil {
+					if b.seeds.signature.value == nil {
+						b.thinkingSig += piece
+					} else if b.thinkingSig, err = b.seeds.signature.plus(delta[member]); err != nil {
 						return err
 					}
-					b.thinkingSig += piece
 				}
 			case "content_block_stop":
 				idx := findBlock(ev["index"])
@@ -2349,45 +2350,88 @@ func applyMessageDeltaUsage(usage *ai.Usage, u rawObject) {
 	assign(&usage.Reasoning, rawOptional(u["output_tokens_details"])["thinking_tokens"])
 }
 
-// anthropicSeeds holds the raw seeds of a block's text, thinking and
-// signature that pi has not converted yet (see anthropicSeed).
+// anthropicSeeds holds, for a block's text, thinking and signature, what pi
+// holds there while it is not a string (see anthropicMember).
 type anthropicSeeds struct {
-	text, thinking, signature json.RawMessage
+	text, thinking, signature anthropicMember
 }
 
-// anthropicSeed is a block member content_block_start seeds with a raw value
+// anthropicMember is a block member pi's handler appends deltas to with `+=`
+// (text, thinking, a thinking signature), as far as the port's string field
+// cannot show it. value is what pi holds while that is not a string — the raw
+// seed content_block_start gave the member (a number, boolean, object or
+// array, as ai.DecodeOrderedValue decodes it), or the number a `+` of two
+// non-string primitives made of it — and nil once the member is the string
+// its field holds. While value is set, the field holds its String() (D82: a
+// number pi holds, the port holds as text).
+type anthropicMember struct{ value any }
+
+// anthropicSeed is a member content_block_start seeds with a raw value
 // (`value ?? ""` for text, thinking and a thinking signature; a redacted
-// block's data as it is), to which pi then appends deltas with `+=`. pi keeps
-// the raw value until the first `+=` converts it; the port's block holds a
-// string, so text is the member as it holds it: "" for undefined or null, a
-// string's text, and String() of any other value — what that first `+=` makes
-// of it — or "" for a value with no string form. pending is the raw value
-// while pi still holds something other than that string (a number, boolean,
-// object or array), and nil otherwise: a signature_delta drops it when it is
-// falsy (`|| ""`), and the first delta fails as pi's `+=` throws when it has
-// no string form (convertAnthropicSeed). Until a delta comes, the block holds
-// text where pi's holds the raw value.
-func anthropicSeed(raw json.RawMessage) (text string, pending json.RawMessage) {
+// block's data as it is): the text the member's field starts with — "" for
+// undefined or null, a string's text, String() of any other value, "" for a
+// value with no string form — and the member, whose value is the raw one
+// while pi holds something other than that string. A signature_delta drops a
+// falsy value (`|| ""`), and a `+=` fails as pi's throws on a value with no
+// string form (anthropicMember.plus).
+func anthropicSeed(raw json.RawMessage) (text string, member anthropicMember) {
 	if rawNullish(raw) {
-		return "", nil
+		return "", anthropicMember{}
 	}
 	if s, ok := rawString(raw); ok {
-		return s, nil
+		return s, anthropicMember{}
 	}
-	text, _ = rawToString(raw)
-	return text, raw
+	value, err := ai.DecodeOrderedValue(raw)
+	if err != nil {
+		return "", anthropicMember{} // unreachable: raw is a member of a decoded document
+	}
+	text, _ = jsToString(value)
+	return text, anthropicMember{value}
 }
 
-// convertAnthropicSeed is the conversion of a pending seed that the first
-// `+=` onto it makes: its error is V8's TypeError for a seed with no string
-// form, which fails the stream. After it, the member is the string it holds.
-func convertAnthropicSeed(pending *json.RawMessage) error {
-	if *pending == nil {
+// plusAssign is pi's `member += delta` onto the member whose field is b:
+// String(delta), piece, appended, while the member is a string, and plus
+// otherwise.
+func (m *anthropicMember) plusAssign(b *strings.Builder, delta json.RawMessage, piece string) error {
+	if m.value == nil {
+		b.WriteString(piece)
 		return nil
 	}
-	_, err := rawToString(*pending)
-	*pending = nil
-	return err
+	sum, err := m.plus(delta)
+	if err != nil {
+		return err
+	}
+	b.Reset()
+	b.WriteString(sum)
+	return nil
+}
+
+// plus is `member + delta` for a member whose value is set, and the text its
+// field then holds: JavaScript's `+` (jsAdd), which concatenates the two
+// sides' strings when either side's primitive is a string — the member is
+// then that string — and adds them as numbers when neither is (5 + 3 is 8,
+// 5 + true 6, 5 + null 5, 5 + an absent delta NaN), a sum the member keeps
+// as its value and shows as its String(). Its error is V8's TypeError for an
+// operand with no primitive value, which fails the stream.
+func (m *anthropicMember) plus(delta json.RawMessage) (string, error) {
+	var d any = jsUndefined
+	if delta != nil {
+		v, err := ai.DecodeOrderedValue(delta)
+		if err != nil {
+			return "", err // unreachable: delta is a member of a decoded document
+		}
+		d = v
+	}
+	sum, err := jsAdd(m.value, d)
+	if err != nil {
+		return "", err
+	}
+	if n, ok := sum.(float64); ok {
+		m.value = n
+		return jstext.NumberToString(n), nil
+	}
+	m.value = nil
+	return sum.(string), nil
 }
 
 // responseHeadersRecord is pi's headersToRecord(response.headers) for a
