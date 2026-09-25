@@ -690,7 +690,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, anthropicSDKErrorMessage))
 		if err != nil {
-			fail(err)
+			fail(sdkFetchRefusal(err))
 			return
 		}
 		defer resp.Body.Close()

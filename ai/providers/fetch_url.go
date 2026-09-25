@@ -3,6 +3,7 @@ package providers
 import (
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
@@ -63,7 +64,51 @@ func requestURL(rawURL string) (string, error) {
 	if u.Path == "" {
 		u.Path = "/" // a special URL's path is never empty
 	}
+	// An empty username and password are no credentials, and serialize as
+	// nothing (net/http would send them as Basic auth).
+	if u.User != nil && u.User.Username() == "" {
+		if password, _ := u.User.Password(); password == "" {
+			u.User = nil
+		}
+	}
 	return u.String(), nil
+}
+
+// fetchCredentialsError is the TypeError undici's fetch throws, sending
+// nothing, for a request URL that includes credentials (a username or a
+// password): "Request cannot be constructed from a URL that includes
+// credentials: " and the URL's href.
+type fetchCredentialsError struct{ href string }
+
+func (e *fetchCredentialsError) Error() string {
+	return "Request cannot be constructed from a URL that includes credentials: " + e.href
+}
+
+// fetchRefusal is the error undici's fetch refuses req with before it sends
+// anything, or nil: a URL with credentials (fetchCredentialsError). It
+// applies only to a request the port's own client sends; a custom
+// HTTPClient, pi's custom fetch, takes whatever it is handed.
+func fetchRefusal(req *http.Request) error {
+	if req.URL.User != nil {
+		return &fetchCredentialsError{href: req.URL.String()}
+	}
+	return nil
+}
+
+// errAPIConnection is the Anthropic and OpenAI SDKs' APIConnectionError,
+// which they throw when their fetch rejects (other than for an abort or a
+// timeout).
+var errAPIConnection = errors.New("Connection error.")
+
+// sdkFetchRefusal is the error an SDK adapter (anthropic, both openai loops)
+// fails with for err from sendWithRetry: the SDK's APIConnectionError when
+// the fetch refused the request (fetchRefusal), err otherwise.
+func sdkFetchRefusal(err error) error {
+	var refused *fetchCredentialsError
+	if errors.As(err, &refused) {
+		return errAPIConnection
+	}
+	return err
 }
 
 // whatwgURLInput is rawURL as the WHATWG basic URL parser reads it before

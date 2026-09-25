@@ -426,7 +426,16 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 		if err != nil {
 			return nil, err
 		}
-		resp, err := client.Do(req)
+		// The port's own client stands for undici's fetch, which refuses some
+		// requests before sending anything; the SDK sees that as any other
+		// rejected fetch.
+		var resp *http.Response
+		if cfg.httpClient == nil {
+			err = fetchRefusal(req)
+		}
+		if err == nil {
+			resp, err = client.Do(req)
+		}
 		if err != nil {
 			if aborted() {
 				return nil, errRequestAborted

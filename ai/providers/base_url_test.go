@@ -63,10 +63,19 @@ type baseURLHref struct {
 	Href       string `json:"href"`
 }
 
+// baseURLCustomFetch is one of the capture's customFetch rows: the URL a
+// custom fetch was handed for a base URL with credentials.
+type baseURLCustomFetch struct {
+	API     string `json:"api"`
+	BaseURL string `json:"baseUrl"`
+	URL     string `json:"url"`
+}
+
 type baseURLCapture struct {
-	Rows     []baseURLRun     `json:"rows"`
-	Hrefs    []baseURLHref    `json:"hrefs"`
-	Requests []baseURLRequest `json:"requests"`
+	Rows        []baseURLRun         `json:"rows"`
+	Hrefs       []baseURLHref        `json:"hrefs"`
+	CustomFetch []baseURLCustomFetch `json:"customFetch"`
+	Requests    []baseURLRequest     `json:"requests"`
 }
 
 func loadBaseURLCapture(t *testing.T) baseURLCapture {
@@ -198,6 +207,42 @@ func TestInvalidBaseURLDivergencesStillDiffer(t *testing.T) {
 	}
 	if ran == 0 {
 		t.Fatal("no divergence rows in the capture")
+	}
+}
+
+// urlRecordingDoer is a custom HTTPClient that records the URL of each
+// request it is handed and answers 400.
+type urlRecordingDoer struct{ urls *[]string }
+
+func (d urlRecordingDoer) Do(req *http.Request) (*http.Response, error) {
+	*d.urls = append(*d.urls, req.URL.String())
+	return &http.Response{
+		StatusCode: http.StatusBadRequest,
+		Status:     "400 Bad Request",
+		Header:     http.Header{"Content-Type": {"application/json"}},
+		Body:       io.NopCloser(strings.NewReader(`{"error":{"message":"stop here"}}`)),
+		Request:    req,
+	}, nil
+}
+
+// TestCredentialsReachACustomClient streams each captured base URL with
+// credentials through a custom HTTPClient — pi's custom fetch, which no
+// undici refusal stands in front of — and requires the client to be handed
+// the URL pi's custom fetch was handed, credentials included.
+func TestCredentialsReachACustomClient(t *testing.T) {
+	rows := loadBaseURLCapture(t).CustomFetch
+	if len(rows) == 0 {
+		t.Fatal("no customFetch rows in the capture")
+	}
+	for _, row := range rows {
+		t.Run(row.API, func(t *testing.T) {
+			var urls []string
+			opts := ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test-api-key", HTTPClient: urlRecordingDoer{&urls}}}
+			drain(streamAbortAdapter(t, context.Background(), row.API, row.BaseURL, opts))
+			if len(urls) != 1 || urls[0] != row.URL {
+				t.Errorf("the custom client was handed %q; pi's custom fetch %q", urls, row.URL)
+			}
+		})
 	}
 }
 

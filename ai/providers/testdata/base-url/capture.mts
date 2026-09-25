@@ -27,6 +27,10 @@
 // "Invalid URL" — the parser itself, with nothing sent. A row the port reads
 // differently is tagged `divergence`.
 //
+// `customFetch`: a base URL with credentials streamed through each adapter
+// that takes a custom fetch (all but google), which records the URL it is
+// handed and answers 400: no refusal, the credentials handed on.
+//
 // `requests`: base URLs naming a recording server by `{PORT}`, which answers
 // every request 400. Each records the request the server received — its
 // request line, and its Host and Authorization headers — or, when none came,
@@ -169,6 +173,13 @@ const hrefInputs: Array<[string, string?]> = [
 	["not a url"],
 	["http://example.com:65536/v1"],
 	["http://"],
+	["http://user:pass@example.com/v1"],
+	["http://user@example.com/v1"],
+	["http://:pass@example.com/v1"],
+	["http://@example.com/v1"],
+	["http://:@example.com/v1"],
+	["http://user:p%40ss@example.com/v1"],
+	["http://user:pa:ss@example.com/v1"],
 	["http://example.com/a/../v1", "the WHATWG parser resolves dot segments; net/url keeps them"],
 	["http://127.1/v1", "the WHATWG parser reads 127.1 as 127.0.0.1; net/url keeps the host name"],
 	["http://example.com/a|b", "the WHATWG path percent-encode set leaves | alone; net/url escapes it"],
@@ -185,6 +196,36 @@ const hrefs = hrefInputs.map(([input, divergence]) => {
 	}
 	return { input, ...(divergence ? { divergence } : {}), href };
 });
+
+const customFetch = [];
+for (const a of adapters) {
+	if (a.api === "google-generative-ai") continue; // it refuses a custom fetch outright
+	const baseUrl = "http://user:pass@example.invalid/v1";
+	let handed = "";
+	const model = {
+		id: a.id,
+		name: a.id,
+		api: a.api,
+		provider: a.provider,
+		baseUrl,
+		reasoning: false,
+		input: ["text"],
+		cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+		contextWindow: 100000,
+		maxTokens: 1000,
+	};
+	const out = a.module.stream(model, { messages: [{ role: "user", content: "hi", timestamp: 1 }] }, {
+		apiKey: "test-api-key",
+		fetch: async (url: unknown) => {
+			handed = String(url);
+			return new Response('{"error":{"message":"stop here"}}', { status: 400, headers: { "content-type": "application/json" } });
+		},
+	});
+	for await (const _ of out) {
+	}
+	await out.result();
+	customFetch.push({ api: a.api, baseUrl, url: handed });
+}
 
 // The recording server: it answers every request 400 and keeps the last
 // request's line and its Host and Authorization headers.
@@ -241,6 +282,17 @@ const requestBases: RequestBase[] = [
 	{ label: "an uppercase scheme", baseUrl: "HTTP://127.0.0.1:{PORT}/v1" },
 	{ label: "an uppercase host", baseUrl: "http://LOCALHOST:{PORT}/v1" },
 	{ label: "a port with a leading zero", baseUrl: "http://127.0.0.1:0{PORT}/v1" },
+	{ label: "credentials", baseUrl: "http://user:pass@127.0.0.1:{PORT}/v1" },
+	{ label: "a username alone", baseUrl: "http://user@127.0.0.1:{PORT}/v1" },
+	{ label: "a password alone", baseUrl: "http://:pass@127.0.0.1:{PORT}/v1" },
+	{ label: "an empty userinfo", baseUrl: "http://@127.0.0.1:{PORT}/v1" },
+	{ label: "an empty username and password", baseUrl: "http://:@127.0.0.1:{PORT}/v1" },
+	{ label: "credentials with a CR", baseUrl: `http://us${C(13)}er:pass@127.0.0.1:{PORT}/v1` },
+	{ label: "credentials and an uppercase host", baseUrl: "http://user:pass@LOCALHOST:{PORT}/v1" },
+	{ label: "credentials and a default port", baseUrl: "http://user:pass@127.0.0.1:80/v1" },
+	{ label: "credentials with a percent-encoded password", baseUrl: "http://user:p%40ss@127.0.0.1:{PORT}/v1" },
+	{ label: "credentials with a colon in the password", baseUrl: "http://user:pa:ss@127.0.0.1:{PORT}/v1" },
+	{ label: "credentials before a backslash", baseUrl: "http://user:pass@127.0.0.1:{PORT}\\v1" },
 	{
 		label: "dot segments",
 		baseUrl: "http://127.0.0.1:{PORT}/a/../v1",
@@ -301,7 +353,7 @@ server.close();
 
 fs.writeFileSync(
 	outFile,
-	`{"source":${JSON.stringify(`upstream ${sha} packages/ai/src/api, ${sdks.join(", ")}, node ${process.version}`)},"rows":[\n${rows.map((r) => JSON.stringify(r)).join(",\n")}\n],"hrefs":[\n${hrefs.map((r) => JSON.stringify(r)).join(",\n")}\n],"requests":[\n${requests.map((r) => JSON.stringify(r)).join(",\n")}\n]}\n`,
+	`{"source":${JSON.stringify(`upstream ${sha} packages/ai/src/api, ${sdks.join(", ")}, node ${process.version}`)},"rows":[\n${rows.map((r) => JSON.stringify(r)).join(",\n")}\n],"hrefs":[\n${hrefs.map((r) => JSON.stringify(r)).join(",\n")}\n],"customFetch":[\n${customFetch.map((r) => JSON.stringify(r)).join(",\n")}\n],"requests":[\n${requests.map((r) => JSON.stringify(r)).join(",\n")}\n]}\n`,
 );
 console.log(`captured ${rows.length} rows, ${hrefs.length} hrefs and ${requests.length} requests -> ${outFile}`);
 process.exit(0);
