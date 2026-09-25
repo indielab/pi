@@ -5,8 +5,10 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"math"
 	"reflect"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -274,6 +276,37 @@ func TestV8RejectsNonCanonicalServerID(t *testing.T) {
 		if IsServerID(serverID) {
 			t.Errorf("IsServerID(%q) = true", serverID)
 		}
+	}
+}
+
+// piServerIDPattern is pi's ServerIdSchema pattern, verbatim (protocol.ts at
+// 49681e1b7). ASCII classes between anchors mean the same to RE2 as to V8.
+var piServerIDPattern = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)
+
+// IsServerID is a hand-rolled scan of pi's pattern, so every byte position is
+// checked against every byte value: the version nibble admits only 4, the
+// variant nibble only 8, 9, a and b. Under node, pi's isServerId accepts
+// exactly 489 of these 9,216 single-byte substitutions, and the digest is of
+// that accepted set. (Its bytes above 0x7f are Latin-1 characters, not invalid
+// UTF-8. Neither side accepts one, so the set is the same.)
+func TestV8IsServerIDMatchesPiAtEveryPosition(t *testing.T) {
+	base := string(testServerID)
+	var accepted []string
+	for position := range len(base) {
+		for code := range 256 {
+			candidate := base[:position] + string([]byte{byte(code)}) + base[position+1:]
+			got := IsServerID(candidate)
+			if want := piServerIDPattern.MatchString(candidate); got != want {
+				t.Errorf("IsServerID(%q) = %v; pi's pattern says %v (byte %#02x at %d)", candidate, got, want, code, position)
+			}
+			if got {
+				accepted = append(accepted, fmt.Sprintf("%d:%d", position, code))
+			}
+		}
+	}
+	digest := sha256.Sum256([]byte(strings.Join(accepted, ",")))
+	if len(accepted) != 489 || hex.EncodeToString(digest[:]) != "6541ad353b90b5182a3e9aaa68e1f7bc55c7dfc09403c93312b4d8d07aeaa0e8" {
+		t.Errorf("accepted %d substitutions (sha256 %x); pi accepts 489 (sha256 6541ad35...)", len(accepted), digest)
 	}
 }
 
