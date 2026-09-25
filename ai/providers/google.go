@@ -1267,8 +1267,10 @@ func googleBareJSONError(read string) error {
 // capture's "divergence: HTTP chunks that arrive in one read" measures it.
 //
 // observe, when set, receives each data: payload's parsed value before handle
-// receives its own copy, and either one's error ends the stream.
+// receives its own copy, and either one's error ends the stream. A body whose
+// reads never progress fails with the port's guard (progressReader).
 func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload any) error, handle func(payload any) error) error {
+	body = &progressReader{r: body, provider: "google"}
 	delimiters := []string{"\n\n", "\r\r", "\r\n\r\n"}
 	buf := make([]byte, 32*1024)
 	var pending string
@@ -1363,6 +1365,10 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload 
 		if readErr != nil {
 			if err := abortErr(); err != nil {
 				return err
+			}
+			// The port's own guard is no failure of the body's.
+			if errors.Is(readErr, io.ErrNoProgress) {
+				return readErr
 			}
 			// Any other failure once the body has started — the connection
 			// dropping, a coding that does not decode — rejects the read with

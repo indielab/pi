@@ -2130,7 +2130,11 @@ var anthropicMessageEvents = map[string]bool{
 // handle gets an object event's members, read as pi reads the event (see
 // jsread.go), so no member of an unexpected type can fail the event before
 // pi's own reads would.
+//
+// A body whose reads never progress fails with the port's guard
+// (progressReader).
 func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(rawObject) error) error {
+	body = &progressReader{r: body, provider: "anthropic"}
 	var eventName string
 	var dataLines []string
 	// rawLines is pi's state.raw: every non-empty line, comments included. It

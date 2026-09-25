@@ -730,8 +730,10 @@ func decodePiMessagesEvent(data string) (ev piMessagesEvent, yielded bool, err e
 // before it is converted (pi's onProviderStreamEvent, upstream 002fc8385); its
 // error ends the read. The value is a decode of its own, made only when
 // onEvent is non-nil, so observing costs nothing when unset and a mutating
-// observer cannot change what is converted.
+// observer cannot change what is converted. A body whose reads never progress
+// fails with the port's guard (progressReader).
 func readPiMessagesEvents(body io.Reader, ctx context.Context, onEvent func(any) error, handle func(piMessagesEvent) (bool, error)) error {
+	body = &progressReader{r: body, provider: "pi-messages"}
 	// emit handles one frame and reports whether to keep reading.
 	emit := func(frame string) (bool, error) {
 		if !utf8.ValidString(frame) {
