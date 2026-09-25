@@ -405,6 +405,12 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 			baseURL = googleDefaultBaseURL
 		}
 		url := fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse", strings.TrimRight(baseURL, "/"), model.ID)
+		// @google/genai builds the request URL with `new URL(...)` (after
+		// onPayload), before anything else about the request.
+		if err := fetchURLError(url); err != nil {
+			fail(err)
+			return
+		}
 		build := func() (*http.Request, error) {
 			r, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(payload))
 			if err != nil {

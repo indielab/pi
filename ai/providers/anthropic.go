@@ -658,6 +658,12 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// query string is part of the request pi makes; difftest compares bodies
 		// only, so it is pinned by test instead.
 		url := strings.TrimRight(baseURL, "/") + "/v1/messages?beta=true"
+		// The SDK's buildURL makes the request URL with `new URL(...)` before
+		// anything else about the request.
+		if err := fetchURLError(url); err != nil {
+			fail(err)
+			return
+		}
 		// pi builds the client once per stream, and its constructor reads the
 		// environment then (see anthropicClientHeaders).
 		headers := anthropicClientHeaders(model, opts, oauth, apiKey, authToken, normalized.Messages)

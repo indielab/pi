@@ -354,6 +354,31 @@ func readSDKErrorBody(ctx context.Context, body io.Reader) ([]byte, error) {
 	return data, nil
 }
 
+// errInvalidURL is the TypeError `new URL(...)` throws for a URL the WHATWG
+// URL parser refuses.
+var errInvalidURL = errors.New("Invalid URL")
+
+// fetchURLError is errInvalidURL for a request URL pi's `new URL(...)` would
+// refuse, as far as net/url can tell — one net/url cannot parse, one with no
+// scheme (a relative reference, which the WHATWG parser refuses without a
+// base), or one whose port is past 65535 — and nil otherwise. The two parsers
+// differ on some URLs, and the port's reading is net/url's there: a malformed
+// percent escape, a DEL or a space in the userinfo only net/url refuses; an
+// IPv4 part past 255 only the WHATWG parser does (testdata/base-url tags
+// each).
+func fetchURLError(rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil || u.Scheme == "" {
+		return errInvalidURL
+	}
+	if port := u.Port(); port != "" {
+		if n, err := strconv.Atoi(port); err != nil || n > 65535 {
+			return errInvalidURL
+		}
+	}
+	return nil
+}
+
 // undiciFetchError is what fetch rejects with when a request sent through
 // the port's own client gets no response: undici's TypeError "fetch failed",
 // whatever the transport failure was — a refused, dropped or unreachable

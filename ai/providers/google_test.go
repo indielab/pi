@@ -1125,6 +1125,18 @@ func TestGoogleFetchErrorIsFetchFailedForEveryTransportFailure(t *testing.T) {
 			t.Errorf("%v (timeout %v) → %q; pi: \"fetch failed\"", cause, err.Timeout(), got)
 		}
 	}
+	// Only client.Do's failures are the transport's: any other error — a
+	// *url.Error from parsing a URL included, which the adapters refuse
+	// before sending (fetchURLError) — is returned as it is.
+	for _, err := range []error{
+		&url.Error{Op: "parse", URL: "http://[::1/x", Err: errors.New("missing ']' in host")},
+		errors.New("Ephemeral tokens are only supported by the live API."),
+		errRequestAborted,
+	} {
+		if got := undiciFetchError(err); got != err {
+			t.Errorf("%v → %v; want it returned as it is", err, got)
+		}
+	}
 }
 
 // TestGoogleForwardsEachSDKChunkInOrder transliterates

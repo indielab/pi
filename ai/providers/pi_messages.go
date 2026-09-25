@@ -901,7 +901,12 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 			return
 		}
 
+		// pi: `new URL(...)`, before the payload is built or onPayload runs.
 		url := strings.TrimRight(model.BaseURL, "/") + "/messages"
+		if err := fetchURLError(url); err != nil {
+			fail(err)
+			return
+		}
 		if opts.Debug {
 			url += "?debug=1"
 		}
