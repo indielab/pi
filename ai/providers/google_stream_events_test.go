@@ -298,8 +298,8 @@ func TestGoogleSSEReadChunksMatchPi(t *testing.T) {
 				events = append(events, text)
 				return err
 			}
-			err := iterateGoogleSSE(&readsReader{reads: slices.Clone(sc.segments(t))}, ctx,
-				observe, func(any) error { return nil })
+			body := fetchBody{ctx, &readsReader{reads: slices.Clone(sc.segments(t))}}
+			err := iterateGoogleSSE(body, observe, func(any) error { return nil })
 			if err == nil || err.Error() != msg {
 				t.Fatalf("error %v\npi:   %s", err, msg)
 			}
@@ -614,13 +614,13 @@ func (r abortingReader) Read([]byte) (int, error) {
 	return 0, context.Canceled
 }
 
-// TestGoogleAbortDuringReadIsAbortError: a read that fails because the
-// request was aborted surfaces as undici's AbortError, not the transport's
-// error text.
+// TestGoogleAbortDuringReadIsAbortError: a read of the body StreamGoogle
+// reads (fetchBody) that fails because the request was aborted surfaces as
+// undici's AbortError, not the transport's error text.
 func TestGoogleAbortDuringReadIsAbortError(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	err := iterateGoogleSSE(abortingReader{cancel}, ctx, nil, func(any) error { return nil })
+	err := iterateGoogleSSE(fetchBody{ctx, abortingReader{cancel}}, nil, func(any) error { return nil })
 	if err == nil || err.Error() != "This operation was aborted" {
 		t.Fatalf("error %v, want This operation was aborted", err)
 	}

@@ -386,9 +386,15 @@ var errTerminated = errors.New("terminated")
 // aborts: a read that starts once ctx is done, or that fails once it is,
 // rejects with undici's AbortError (errOperationAborted) — a chunk that had
 // already arrived is never read — and any other read that fails, however
-// net/http words the failure, fails as undici's does, errTerminated. An
-// adapter wraps only its own client's bodies: a custom HTTPClient is pi's
-// custom fetch, whose body is read as it is, abort or no abort.
+// net/http words the failure, fails as undici's does, errTerminated. The
+// body's end is a read of its own, as a stream reader's done is: undici
+// reaches it only when a read asks, so an abort before that read rejects it
+// even when the whole body has arrived. A read that returns the last bytes
+// and io.EOF together — net/http's does, when the end is already buffered —
+// returns the bytes alone; the next read, which io.Reader's contract has
+// return 0 and io.EOF, reports the end. An adapter wraps only its own
+// client's bodies: a custom HTTPClient is pi's custom fetch, whose body is
+// read as it is, abort or no abort.
 type fetchBody struct {
 	ctx context.Context
 	r   io.Reader
@@ -400,7 +406,10 @@ func (b fetchBody) Read(p []byte) (int, error) {
 		return 0, errOperationAborted
 	}
 	n, err := b.r.Read(p)
-	if err != nil && err != io.EOF {
+	switch {
+	case err == io.EOF && n > 0:
+		err = nil
+	case err != nil && err != io.EOF:
 		err = errTerminated
 		if aborted() {
 			err = errOperationAborted

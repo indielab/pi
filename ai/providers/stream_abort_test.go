@@ -290,7 +290,11 @@ func drain(stream *ai.AssistantMessageEventStream) ([]string, *ai.AssistantMessa
 // had already arrived is never read), or the rejected fetch's when the
 // response had not arrived. Those runs' body is heldBody as the port's own
 // client delivers it (ownClientBody), so each segment is exactly one read,
-// as it was for pi. An abort while an error body is read is the SDKs' thrown
+// as it was for pi. A body that has ended before it is read is no exception:
+// undici reports its end on a read of its own, which an abort before it
+// rejects, so pi-messages' and google's next read after an abort on the
+// last event fails with the AbortError, and anthropic's own check comes
+// first. An abort while an error body is read is the SDKs' thrown
 // error caught by pi's retryProviderRequest, which says "Request aborted"
 // first thing, and pi-messages' rejected text() read. A connection that
 // drops mid-body, with no abort, fails the read with undici's TypeError
@@ -308,7 +312,8 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 			case "an abort from the callback with events left in its read", "an abort from the callback with the next read already in",
 				"a custom fetch's body ignores an abort from the callback":
 				cancelOn = 1
-			case "an abort from the callback on its read's last event":
+			case "an abort from the callback on its read's last event",
+				"an abort from the callback on the last event of a body already complete":
 				cancelOn = len(run.Observed)
 			}
 			opts := ai.StreamOptions{OnProviderStreamEvent: observedTypes(&observed, func(seen int) {
@@ -323,6 +328,32 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 			case "an abort from the callback with events left in its read", "an abort from the callback on its read's last event",
 				"an abort from the callback with the next read already in":
 				opts.HTTPClient = heldDoer{ownClientBody(ctx, &heldBody{ctx: ctx, segments: slices.Clone(run.Segments)})}
+			case "an abort from the callback on the last event of a body already complete":
+				// The server writes the head, each segment as an HTTP chunk and
+				// the terminating chunk in one write, and holds the connection:
+				// net/http then reads the body's last bytes and its end
+				// together, where undici's reader reports the end on a read of
+				// its own.
+				release := make(chan struct{})
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					io.Copy(io.Discard, r.Body)
+					conn, rw, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					defer conn.Close()
+					fmt.Fprint(rw, "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\n\r\n")
+					for _, segment := range run.Segments {
+						fmt.Fprintf(rw, "%x\r\n%s\r\n", len(segment), segment)
+					}
+					fmt.Fprint(rw, "0\r\n\r\n")
+					rw.Flush()
+					<-release
+				}))
+				defer server.Close()
+				defer close(release)
+				baseURL = server.URL
 			case "a custom fetch rejects once the signal aborts":
 				opts.HTTPClient = abortingDoer{cancel, errors.New(run.CustomFetchError)}
 			case "a custom fetch's body ignores an abort from the callback":

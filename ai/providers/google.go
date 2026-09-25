@@ -585,7 +585,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		// testdata/google-stream-events tags those cases as divergences.
 		responseIDTruthy := false
 		toolCallIDs := map[int]any{} // builder index -> the id pi compares with ===
-		err = iterateGoogleSSE(respBody, ctx, observe, func(payload any) error {
+		err = iterateGoogleSSE(fetchBody{ctx, respBody}, observe, func(payload any) error {
 			chunk := googleGenerateContentResponse(payload, nil)
 			// output.responseId ||= chunk.responseId
 			if !responseIDTruthy {
@@ -1266,10 +1266,18 @@ func googleBareJSONError(read string) error {
 // where it is not JSON. net/http does not expose chunk boundaries; the
 // capture's "divergence: HTTP chunks that arrive in one read" measures it.
 //
+// The SDK's loop never checks the signal, and neither does this: an abort
+// reaches it through the body, which StreamGoogle reads through its own
+// client only (pi's adapter refuses a custom fetch) and so through fetchBody —
+// the read the abort cuts short, or the next one, rejects with undici's
+// AbortError, the end included; any other failed read is undici's
+// "terminated". (pi's own "Request was aborted" is thrown only once the
+// stream has run out, which StreamGoogle checks after the loop.)
+//
 // observe, when set, receives each data: payload's parsed value before handle
 // receives its own copy, and either one's error ends the stream. A body whose
 // reads never progress fails with the port's guard (progressReader).
-func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload any) error, handle func(payload any) error) error {
+func iterateGoogleSSE(body io.Reader, observe func(payload any) error, handle func(payload any) error) error {
 	body = &progressReader{r: body, provider: "google"}
 	delimiters := []string{"\n\n", "\r\r", "\r\n\r\n"}
 	buf := make([]byte, 32*1024)
@@ -1320,20 +1328,8 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload 
 		return handle(value)
 	}
 
-	// An abort rejects the SDK's pending body read with undici's AbortError.
-	// (pi's own "Request was aborted" is thrown only once the stream has run
-	// out, which StreamGoogle checks after the loop.)
-	abortErr := func() error {
-		if ctx != nil && ctx.Err() != nil {
-			return errOperationAborted
-		}
-		return nil
-	}
 	var decoder utf8StreamDecoder
 	for {
-		if err := abortErr(); err != nil {
-			return err
-		}
 		n, readErr := body.Read(buf)
 		if n > 0 {
 			read := decoder.decode(buf[:n])
@@ -1363,17 +1359,7 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload 
 			break
 		}
 		if readErr != nil {
-			if err := abortErr(); err != nil {
-				return err
-			}
-			// The port's own guard is no failure of the body's.
-			if errors.Is(readErr, io.ErrNoProgress) {
-				return readErr
-			}
-			// Any other failure once the body has started — the connection
-			// dropping, a coding that does not decode — rejects the read with
-			// undici's TypeError: terminated.
-			return errTerminated
+			return readErr
 		}
 	}
 

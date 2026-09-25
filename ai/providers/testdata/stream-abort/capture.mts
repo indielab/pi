@@ -16,8 +16,9 @@
 // writes each of the run's segments as one HTTP chunk, which reaches the
 // adapter as one body read (undici reads one chunk at a time); then it holds
 // the connection open. The anthropic-messages and pi-messages adapters run
-// every mode; openai-completions, openai-responses and google-generative-ai
-// run only "an abort while an error body is read". Modes:
+// every mode; openai-completions and openai-responses run only the two
+// error-body modes, google-generative-ai those and "an abort from the
+// callback on the last event of a body already complete". Modes:
 //   - "an abort while a read is pending": the signal aborts 150ms after the
 //     first segment is written, while the adapter waits on its next read;
 //   - "an abort from the callback with events left in its read": the
@@ -27,6 +28,10 @@
 //   - "an abort from the callback with the next read already in": both
 //     segments go out in one socket write, and the callback aborts on the
 //     first segment's first event;
+//   - "an abort from the callback on the last event of a body already
+//     complete": both segments and the terminating chunk go out in one
+//     socket write — the body has ended before the adapter reads it, and no
+//     terminal event is in it — and the callback aborts on the last event;
 //   - "an abort while an error body is read": the server answers 500,
 //     application/json, and writes the start of the error body as one chunk;
 //     the signal aborts 150ms after that;
@@ -101,6 +106,7 @@ type Mode =
 	| "an abort from the callback with events left in its read"
 	| "an abort from the callback on its read's last event"
 	| "an abort from the callback with the next read already in"
+	| "an abort from the callback on the last event of a body already complete"
 	| "an abort while an error body is read"
 	| "an abort while a retryable error body is read"
 	| "an already-aborted signal"
@@ -122,6 +128,7 @@ const streamModes: Mode[] = [
 	"an abort from the callback on its read's last event",
 	"an abort from the callback with the next read already in",
 ];
+const completeBody: Mode = "an abort from the callback on the last event of a body already complete";
 const errorBody: Mode = "an abort while an error body is read";
 const retryableErrorBody: Mode = "an abort while a retryable error body is read";
 const requestModes: Mode[] = ["an already-aborted signal", "an abort before the response arrives"];
@@ -143,7 +150,8 @@ const customBodyFailsOnAbort: Mode = "a custom fetch's body fails once the signa
 const customAbortModes = [customRejectsOnAbort, customBodyIgnoresAbort, customBodyFailsOnAbort];
 
 const anthropicEvent = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
-const piMessagesEvent = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
+// A data-only event, as pi-messages and google send them.
+const dataEvent = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
 // Each adapter's segments: the first carries three events, the second one
 // more.
 const adapters = [
@@ -152,7 +160,7 @@ const adapters = [
 		provider: "anthropic",
 		id: "claude-sonnet-4-5",
 		module: await load("api/anthropic-messages.ts"),
-		modes: [...streamModes, errorBody, drops, customBody, retryableErrorBody, ...customAbortModes],
+		modes: [...streamModes, completeBody, errorBody, drops, customBody, retryableErrorBody, ...customAbortModes],
 		segments: [
 			anthropicEvent("message_start", {
 				type: "message_start",
@@ -173,16 +181,16 @@ const adapters = [
 		provider: "radius",
 		id: "auto",
 		module: await load("api/pi-messages.ts"),
-		modes: [...streamModes, errorBody, ...requestModes, drops, errorBodyDrops, customBody, ...noResponseModes, ...customAbortModes],
+		modes: [...streamModes, completeBody, errorBody, ...requestModes, drops, errorBodyDrops, customBody, ...noResponseModes, ...customAbortModes],
 		segments: [
-			piMessagesEvent({ type: "start" }) +
-				piMessagesEvent({ type: "text_start", contentIndex: 0 }) +
-				piMessagesEvent({ type: "text_delta", contentIndex: 0, delta: "in hand" }),
-			piMessagesEvent({ type: "text_delta", contentIndex: 0, delta: " and more" }),
+			dataEvent({ type: "start" }) +
+				dataEvent({ type: "text_start", contentIndex: 0 }) +
+				dataEvent({ type: "text_delta", contentIndex: 0, delta: "in hand" }),
+			dataEvent({ type: "text_delta", contentIndex: 0, delta: " and more" }),
 		],
 		finish:
-			piMessagesEvent({ type: "text_end", contentIndex: 0, content: "in hand and more" }) +
-			piMessagesEvent({
+			dataEvent({ type: "text_end", contentIndex: 0, content: "in hand and more" }) +
+			dataEvent({
 				type: "done",
 				reason: "stop",
 				usage: { input: 1, output: 2, cacheRead: 0, cacheWrite: 0, totalTokens: 3, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
@@ -209,8 +217,14 @@ const adapters = [
 		provider: "google",
 		id: "gemini-2.5-flash",
 		module: await load("api/google-generative-ai.ts"),
-		modes: [errorBody, retryableErrorBody],
-		segments: [],
+		modes: [completeBody, errorBody, retryableErrorBody],
+		segments: [
+			dataEvent({ candidates: [{ content: { parts: [{ text: "in hand" }], role: "model" } }] }),
+			dataEvent({
+				candidates: [{ content: { parts: [{ text: " and more" }], role: "model" }, finishReason: "STOP" }],
+				usageMetadata: { promptTokenCount: 1, candidatesTokenCount: 2, totalTokenCount: 3 },
+			}),
+		],
 	},
 ];
 const firstSegmentEvents = 3;
@@ -221,6 +235,7 @@ let extraHead = "";
 let segments: string[] = [];
 let answer = true;
 let dropAfterWrite = false;
+let endBody = false;
 let onSegmentWritten = () => {};
 const chunk = (s: string) => `${Buffer.byteLength(s).toString(16)}\r\n${s}\r\n`;
 const server = net.createServer((sock) => {
@@ -234,7 +249,9 @@ const server = net.createServer((sock) => {
 		buf = buf.subarray(headEnd + 4 + len);
 		if (!answer) return;
 		const contentType = status === "200 OK" ? "text/event-stream" : "application/json";
-		sock.write(`HTTP/1.1 ${status}\r\nContent-Type: ${contentType}\r\n${extraHead}Transfer-Encoding: chunked\r\n\r\n${segments.map(chunk).join("")}`);
+		sock.write(
+			`HTTP/1.1 ${status}\r\nContent-Type: ${contentType}\r\n${extraHead}Transfer-Encoding: chunked\r\n\r\n${segments.map(chunk).join("")}${endBody ? "0\r\n\r\n" : ""}`,
+		);
 		onSegmentWritten();
 		if (dropAfterWrite) setTimeout(() => sock.destroy(), 100);
 	});
@@ -269,9 +286,10 @@ for (const a of adapters) {
 		extraHead = mode === retryableErrorBody ? "retry-after: 120\r\n" : "";
 		segments = errorStatus
 			? [errorBodyStart]
-			: mode === "an abort from the callback with the next read already in"
+			: mode === "an abort from the callback with the next read already in" || mode === completeBody
 				? a.segments
 				: a.segments.slice(0, 1);
+		endBody = mode === completeBody;
 		answer = !requestModes.includes(mode) && mode !== customBody && !noResponseModes.includes(mode) && !customAbortModes.includes(mode);
 		dropAfterWrite = mode === drops || mode === errorBodyDrops;
 		const controller = new AbortController();
@@ -369,6 +387,7 @@ for (const a of adapters) {
 					mode === customBodyIgnoresAbort;
 				if (first && observed.length === 1) controller.abort();
 				if (mode === "an abort from the callback on its read's last event" && observed.length === firstSegmentEvents) controller.abort();
+				if (mode === completeBody && observed.length === a.segments.join("").split("data: ").length - 1) controller.abort();
 			},
 		});
 		const events: string[] = [];

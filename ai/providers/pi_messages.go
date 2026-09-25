@@ -722,8 +722,9 @@ func decodePiMessagesEvent(data string) (ev piMessagesEvent, yielded bool, err e
 // pi never checks its signal here, and neither does this: an abort reaches
 // the reading only through the body — the port's own client's body rejects
 // the read the abort cuts short, or the next one, as undici's fetch does
-// (fetchBody), and a custom client's body goes on as it goes on. What an
-// earlier read delivered is still framed and handled first.
+// (fetchBody), even the one that would report a body already complete; a
+// custom client's body goes on as it goes on. What an earlier read
+// delivered is still framed and handled first.
 //
 // onEvent, when non-nil, observes every yielded frame's parsed value — objects
 // as ai.OrderedObject, unknown fields and the terminal done/error included —

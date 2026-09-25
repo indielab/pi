@@ -28,7 +28,7 @@ func TestSSEReadersRefuseABodyThatNeverProgresses(t *testing.T) {
 			return readPiMessagesEvents(body, nil, func(piMessagesEvent) (bool, error) { return true, nil })
 		}},
 		{"google", "data: {\"candidates\":[]}\n\n", func(body io.Reader) error {
-			return iterateGoogleSSE(body, context.Background(), nil, func(any) error { return nil })
+			return iterateGoogleSSE(body, nil, func(any) error { return nil })
 		}},
 	}
 	for _, r := range readers {

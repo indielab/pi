@@ -96,6 +96,32 @@
 		},
 		{
 			"api": "anthropic-messages",
+			"mode": "an abort from the callback on the last event of a body already complete",
+			"status": 200,
+			"segments": [
+				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"in hand\"}}\n\n",
+				"event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\" and more\"}}\n\n"
+			],
+			"observed": [
+				"message_start",
+				"content_block_start",
+				"content_block_delta",
+				"content_block_delta"
+			],
+			"events": [
+				"start",
+				"text_start",
+				"text_delta",
+				"text_delta",
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "Request was aborted",
+			"content": "[{\"type\":\"text\",\"text\":\"in hand and more\"}]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
 			"mode": "an abort while an error body is read",
 			"status": 500,
 			"segments": [
@@ -322,6 +348,32 @@
 			"events": [
 				"start",
 				"text_start",
+				"text_delta",
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "This operation was aborted",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
+			"mode": "an abort from the callback on the last event of a body already complete",
+			"status": 200,
+			"segments": [
+				"data: {\"type\":\"start\"}\n\ndata: {\"type\":\"text_start\",\"contentIndex\":0}\n\ndata: {\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"in hand\"}\n\n",
+				"data: {\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\" and more\"}\n\n"
+			],
+			"observed": [
+				"start",
+				"text_start",
+				"text_delta",
+				"text_delta"
+			],
+			"events": [
+				"start",
+				"text_start",
+				"text_delta",
 				"text_delta",
 				"error"
 			],
@@ -629,6 +681,30 @@
 			"stopReason": "aborted",
 			"errorMessage": "Request aborted",
 			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "an abort from the callback on the last event of a body already complete",
+			"status": 200,
+			"segments": [
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"in hand\"}],\"role\":\"model\"}}]}\n\n",
+				"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\" and more\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":1,\"candidatesTokenCount\":2,\"totalTokenCount\":3}}\n\n"
+			],
+			"observed": [
+				"",
+				""
+			],
+			"events": [
+				"start",
+				"text_start",
+				"text_delta",
+				"text_delta",
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "This operation was aborted",
+			"content": "[{\"type\":\"text\",\"text\":\"in hand and more\"}]",
 			"diagnostics": []
 		},
 		{
