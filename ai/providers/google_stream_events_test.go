@@ -186,8 +186,10 @@ func (r *readsReader) Read(p []byte) (int, error) {
 }
 
 // latin1 is text written one byte per character, as node's latin1 encoding
-// writes it; every character must be one latin1 has.
+// writes it; every character must be one latin1 has. It fails the test
+// otherwise, so it runs on the test's goroutine, never in a server handler.
 func latin1(t testing.TB, text string) string {
+	t.Helper()
 	out := make([]byte, 0, len(text))
 	for _, r := range text {
 		if r > 0xff {
@@ -201,6 +203,7 @@ func latin1(t testing.TB, text string) string {
 // segments is the scenario's body segments as the bytes its server writes:
 // each segment's UTF-8, or one byte per character with BodyLatin1.
 func (sc googleStreamScenario) segments(t testing.TB) []string {
+	t.Helper()
 	if !sc.BodyLatin1 {
 		return sc.Segments
 	}
@@ -216,6 +219,7 @@ func (sc googleStreamScenario) segments(t testing.TB) []string {
 // share one write, else the joined segments — pi's outcome too for every
 // scenario whose read boundaries do not matter.
 func googleScenarioWrites(t testing.TB, sc googleStreamScenario) [][]byte {
+	t.Helper()
 	switch {
 	case sc.EncodedBody != nil:
 		return [][]byte{sc.EncodedBody}
@@ -232,6 +236,7 @@ func googleScenarioWrites(t testing.TB, sc googleStreamScenario) [][]byte {
 // googleScenarioHead is the scenario's response head, as its server writes
 // it.
 func googleScenarioHead(t testing.TB, sc googleStreamScenario) string {
+	t.Helper()
 	var head strings.Builder
 	status := sc.Status
 	if status == "" {
@@ -563,11 +568,12 @@ func TestGoogleDivergencesStillDiffer(t *testing.T) {
 // AbortError message and no text_end.
 func TestGoogleAbortFromCallbackFailsNextRead(t *testing.T) {
 	sc := googleCaptureScenario(t, "an abort from the callback fails the next read")
+	first := sc.segments(t)[0]
 	release := make(chan struct{})
 	defer close(release)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/event-stream")
-		io.WriteString(w, sc.segments(t)[0])
+		io.WriteString(w, first)
 		w.(http.Flusher).Flush()
 		select {
 		case <-release:

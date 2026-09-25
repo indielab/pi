@@ -534,16 +534,21 @@ func TestGatewayBindingClosesRequestBody(t *testing.T) {
 func TestGatewayBindingIsSafeForConcurrentUse(t *testing.T) {
 	doer, binding := newGatewayBindingTestDoer(t)
 
+	// The requests are built here: gatewayPost fails the test on an error,
+	// which only the test's goroutine may do.
+	reqs := make([]*http.Request, 32)
+	for i := range reqs {
+		reqs[i] = gatewayPost(t, gatewayBindingBaseURL+"/openai/responses", fmt.Sprintf(`{"n":%d}`, i))
+	}
 	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
+	for _, req := range reqs {
 		wg.Add(1)
-		go func(i int) {
+		go func() {
 			defer wg.Done()
-			body := fmt.Sprintf(`{"n":%d}`, i)
-			if _, err := doer.Do(gatewayPost(t, gatewayBindingBaseURL+"/openai/responses", body)); err != nil {
+			if _, err := doer.Do(req); err != nil {
 				t.Errorf("Do: %v", err)
 			}
-		}(i)
+		}()
 	}
 	wg.Wait()
 	if got := len(binding.captured()); got != 32 {
