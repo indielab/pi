@@ -110,22 +110,6 @@ func fetchRefusal(req *http.Request) error {
 	return nil
 }
 
-// errAPIConnection is the Anthropic and OpenAI SDKs' APIConnectionError,
-// which they throw when their fetch rejects (other than for an abort or a
-// timeout).
-var errAPIConnection = errors.New("Connection error.")
-
-// sdkFetchRefusal is the error an SDK adapter (anthropic, both openai loops)
-// fails with for err from sendWithRetry: the SDK's APIConnectionError when
-// the fetch refused the request (fetchRefusal), err otherwise.
-func sdkFetchRefusal(err error) error {
-	var refused *fetchCredentialsError
-	if errors.As(err, &refused) {
-		return errAPIConnection
-	}
-	return err
-}
-
 // whatwgURLInput is rawURL as the WHATWG basic URL parser reads it before
 // net/url can: leading and trailing C0 controls and spaces stripped, and
 // every tab, LF and CR removed; for a special scheme but file, the run of

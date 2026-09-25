@@ -203,6 +203,120 @@
 		},
 		{
 			"api": "anthropic-messages",
+			"mode": "the request gets no response: the connection is refused",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "the request gets no response: the connection is refused at a /timeout path",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "the request gets no response: the server closes the connection",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "the request gets no response: the response is not HTTP",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "the request gets no response: undici's client refuses a header value",
+			"headers": {
+				"x-test": "a\u0001b"
+			},
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "a custom fetch rejects",
+			"customFetchError": "the custom fetch failed",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "a custom fetch rejects with a timeout",
+			"customFetchError": "the custom fetch timed out",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Request timed out.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "the request gets no response: timeoutMs passes first",
+			"timeoutMs": 200,
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Request timed out.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "a custom fetch rejects with an AbortError of its own",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Request timed out.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
 			"mode": "a custom fetch rejects once the signal aborts",
 			"customFetchError": "the custom fetch failed",
 			"observed": [],
@@ -499,6 +613,18 @@
 		},
 		{
 			"api": "pi-messages",
+			"mode": "the request gets no response: the connection is refused at a /timeout path",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
 			"mode": "the request gets no response: the server closes the connection",
 			"observed": [],
 			"events": [
@@ -546,6 +672,19 @@
 			],
 			"stopReason": "error",
 			"errorMessage": "the custom fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
+			"mode": "a custom fetch rejects with a timeout",
+			"customFetchError": "the custom fetch timed out",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "the custom fetch timed out",
 			"content": "[]",
 			"diagnostics": []
 		},
@@ -650,6 +789,120 @@
 			"diagnostics": []
 		},
 		{
+			"api": "openai-completions",
+			"mode": "the request gets no response: the connection is refused",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-completions",
+			"mode": "the request gets no response: the connection is refused at a /timeout path",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-completions",
+			"mode": "the request gets no response: the server closes the connection",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-completions",
+			"mode": "the request gets no response: the response is not HTTP",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-completions",
+			"mode": "the request gets no response: undici's client refuses a header value",
+			"headers": {
+				"x-test": "a\u0001b"
+			},
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-completions",
+			"mode": "a custom fetch rejects",
+			"customFetchError": "the custom fetch failed",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-completions",
+			"mode": "a custom fetch rejects with a timeout",
+			"customFetchError": "the custom fetch timed out",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Request timed out.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-completions",
+			"mode": "the request gets no response: timeoutMs passes first",
+			"timeoutMs": 200,
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Request timed out.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-completions",
+			"mode": "a custom fetch rejects with an AbortError of its own",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Request timed out.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
 			"api": "openai-responses",
 			"mode": "an abort while an error body is read",
 			"status": 500,
@@ -680,6 +933,120 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "Request aborted",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-responses",
+			"mode": "the request gets no response: the connection is refused",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-responses",
+			"mode": "the request gets no response: the connection is refused at a /timeout path",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-responses",
+			"mode": "the request gets no response: the server closes the connection",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-responses",
+			"mode": "the request gets no response: the response is not HTTP",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-responses",
+			"mode": "the request gets no response: undici's client refuses a header value",
+			"headers": {
+				"x-test": "a\u0001b"
+			},
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-responses",
+			"mode": "a custom fetch rejects",
+			"customFetchError": "the custom fetch failed",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Connection error.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-responses",
+			"mode": "a custom fetch rejects with a timeout",
+			"customFetchError": "the custom fetch timed out",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Request timed out.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-responses",
+			"mode": "the request gets no response: timeoutMs passes first",
+			"timeoutMs": 200,
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Request timed out.",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "openai-responses",
+			"mode": "a custom fetch rejects with an AbortError of its own",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Request timed out.",
 			"content": "[]",
 			"diagnostics": []
 		},
@@ -738,6 +1105,95 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "Request aborted",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "the request gets no response: the connection is refused",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "the request gets no response: the connection is refused at a /timeout path",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "the request gets no response: the server closes the connection",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "the request gets no response: the response is not HTTP",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "the request gets no response: undici's client refuses a header value",
+			"headers": {
+				"x-test": "a\u0001b"
+			},
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "a custom fetch rejects",
+			"customFetchError": "the custom fetch failed",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Custom fetch is not supported by the Google Generative AI adapter",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "a custom fetch rejects with a timeout",
+			"customFetchError": "the custom fetch timed out",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "Custom fetch is not supported by the Google Generative AI adapter",
 			"content": "[]",
 			"diagnostics": []
 		}

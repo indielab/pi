@@ -296,6 +296,9 @@ const requestBases: RequestBase[] = [
 	{ label: "credentials with a percent-encoded password", baseUrl: "http://user:p%40ss@127.0.0.1:{PORT}/v1" },
 	{ label: "credentials with a colon in the password", baseUrl: "http://user:pa:ss@127.0.0.1:{PORT}/v1" },
 	{ label: "credentials before a backslash", baseUrl: "http://user:pass@127.0.0.1:{PORT}\\v1" },
+	// The SDKs take a rejected fetch whose text says it timed out for a
+	// timeout, and fetch's credentials refusal quotes the URL.
+	{ label: "credentials at a /timeout path", baseUrl: "http://user:pass@127.0.0.1:{PORT}/timeout" },
 	{
 		label: "dot segments",
 		baseUrl: "http://127.0.0.1:{PORT}/a/../v1",

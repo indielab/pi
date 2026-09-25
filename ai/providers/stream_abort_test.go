@@ -54,6 +54,8 @@ type streamAbortRun struct {
 	Headers map[string]string `json:"headers"`
 	// CustomFetchError is the error a custom fetch rejected with.
 	CustomFetchError string `json:"customFetchError"`
+	// TimeoutMs is the timeoutMs the run streamed with.
+	TimeoutMs int `json:"timeoutMs"`
 }
 
 // rejectingDoer fails every request with err, as a custom fetch rejects.
@@ -396,6 +398,8 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 				}
 			case "the request gets no response: the connection is refused":
 				baseURL = "http://127.0.0.1:1"
+			case "the request gets no response: the connection is refused at a /timeout path":
+				baseURL = "http://127.0.0.1:1/timeout"
 			case "the request gets no response: the server closes the connection":
 				baseURL = serveRawOnce(t, "")
 			case "the request gets no response: the response is not HTTP":
@@ -406,8 +410,20 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 				for name, value := range run.Headers {
 					opts.Headers[name] = ai.HeaderValue(value)
 				}
-			case "a custom fetch rejects":
+			case "the request gets no response: timeoutMs passes first":
+				// The server reads the request and never answers.
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					io.Copy(io.Discard, r.Body)
+					<-r.Context().Done()
+				}))
+				defer server.Close()
+				baseURL = server.URL
+				opts.TimeoutMs = run.TimeoutMs
+			case "a custom fetch rejects", "a custom fetch rejects with a timeout":
 				opts.HTTPClient = rejectingDoer{errors.New(run.CustomFetchError)}
+			case "a custom fetch rejects with an AbortError of its own":
+				// A Go client's own abort is its context's.
+				opts.HTTPClient = rejectingDoer{context.Canceled}
 			case "a custom fetch's body fails mid-body":
 				// A custom client is pi's custom fetch: its body's own error is
 				// the stream's.

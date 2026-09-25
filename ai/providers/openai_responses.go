@@ -404,7 +404,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		}
 		resp, err := sendWithRetry(ctx, build, retryFromOptions(opts.StreamOptions, openaiSDKErrorMessage))
 		if err != nil {
-			fail(sdkFetchRefusal(err))
+			fail(sdkFetchError(err))
 			return
 		}
 		defer resp.Body.Close()

@@ -10,6 +10,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -376,6 +377,66 @@ func undiciFetchError(err error) error {
 	return err
 }
 
+// fetchRejection is a send that got no response: the error the port's own
+// client, or a custom HTTPClient (pi's custom fetch), rejected the request
+// with, or undici's refusal of it (fetchRefusal). sendWithRetry keeps it
+// apart from an error building the request, which pi's SDKs throw as it is,
+// where they wrap a rejected fetch in an error of their own (sdkFetchError).
+type fetchRejection struct {
+	err    error
+	custom bool
+}
+
+func (e *fetchRejection) Error() string { return e.err.Error() }
+
+func (e *fetchRejection) Unwrap() error { return e.err }
+
+// errAPIConnection and errAPIConnectionTimeout are the Anthropic and OpenAI
+// SDKs' APIConnectionError and APIConnectionTimeoutError, which they throw
+// when their fetch rejects.
+var (
+	errAPIConnection        = errors.New("Connection error.")
+	errAPIConnectionTimeout = errors.New("Request timed out.")
+)
+
+// sdkTimedOut is the SDKs' test of a rejection's text.
+var sdkTimedOut = regexp.MustCompile(`(?i)timed? ?out`)
+
+// sdkFetchError is the error an SDK adapter (anthropic, both openai loops)
+// fails with for err from sendWithRetry. The SDKs throw a rejected fetch as
+// their APIConnectionError, or as their APIConnectionTimeoutError when it
+// looks like a timeout: an AbortError the caller's signal did not raise (the
+// SDK's own timeoutMs timer raises one; in Go, a context error), or an error
+// whose text says it timed out. retryProviderRequest retries either and
+// throws the last. The port's
+// own client's transport failures are classed by net/http's Timeout, which
+// holds for what undici calls a timeout — its connect and headers timeouts,
+// an OS ETIMEDOUT — and for timeoutMs's ResponseHeaderTimeout. The text of
+// undici's refusal is undici's own, and a custom client's error is its own,
+// so for those the SDKs' test reads the text. Any other error — an abort, a
+// request that could not be built, a server's refused retry delay — is pi's
+// and passes through.
+func sdkFetchError(err error) error {
+	var rejected *fetchRejection
+	if !errors.As(err, &rejected) {
+		return err
+	}
+	if rejected.timedOut() {
+		return errAPIConnectionTimeout
+	}
+	return errAPIConnection
+}
+
+func (e *fetchRejection) timedOut() bool {
+	var refused *fetchCredentialsError
+	if !e.custom && !errors.As(e.err, &refused) {
+		var sent *url.Error
+		return errors.As(e.err, &sent) && sent.Timeout()
+	}
+	return errors.Is(e.err, context.Canceled) || errors.Is(e.err, context.DeadlineExceeded) ||
+		sdkTimedOut.MatchString(e.err.Error())
+}
+
 // errTerminated is the message of the TypeError undici's fetch errors a
 // response body's stream with when its connection fails mid-body — dropped,
 // reset, or closed short of the length or chunks the head promised.
@@ -432,7 +493,8 @@ var errOperationAborted = errors.New("This operation was aborted")
 // It is pi's retryProviderRequest, which every adapter sending through it
 // wraps its SDK request in: once ctx is done, a request that fails — no
 // response, or a non-2xx one, which the SDKs throw — and a retry wait both
-// end with errRequestAborted.
+// end with errRequestAborted. A send that gets no response otherwise fails
+// with a *fetchRejection holding its client's error.
 //
 // For providers whose SDK error carries the response headers
 // (cfg.providerError non-nil) a server-requested delay above
@@ -469,6 +531,7 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 			if aborted() {
 				return nil, errRequestAborted
 			}
+			err = &fetchRejection{err: err, custom: cfg.httpClient != nil}
 			lastErr = err
 			if attempt == attempts-1 {
 				return nil, err

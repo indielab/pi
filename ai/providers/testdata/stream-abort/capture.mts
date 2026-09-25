@@ -16,9 +16,9 @@
 // writes each of the run's segments as one HTTP chunk, which reaches the
 // adapter as one body read (undici reads one chunk at a time); then it holds
 // the connection open. The anthropic-messages and pi-messages adapters run
-// every mode; openai-completions and openai-responses run only the two
-// error-body modes, google-generative-ai those and "an abort from the
-// callback on the last event of a body already complete". Modes:
+// every mode; openai-completions and openai-responses run the two error-body
+// modes and the no-response ones, google-generative-ai those and "an abort
+// from the callback on the last event of a body already complete". Modes:
 //   - "an abort while a read is pending": the signal aborts 150ms after the
 //     first segment is written, while the adapter waits on its next read;
 //   - "an abort from the callback with events left in its read": the
@@ -50,11 +50,17 @@
 //   - "a custom fetch's body fails mid-body": the caller's options.fetch
 //     answers 200 with a body that delivers the first segment and then fails
 //     with its own error (customBodyError); no server is involved;
-//   - "the request gets no response: ..." (pi-messages only; the SDK
-//     adapters' are K21's): the connection is refused (port 1), the server
+//   - "the request gets no response: ...": the connection is refused (port
+//     1), also at a /timeout path (the SDKs test a rejection's text for
+//     /timed? ?out/i, and undici's does not hold the URL), the server
 //     closes it on the request, the server answers with bytes that are not
-//     HTTP, or a header value (U+0001) undici's client refuses; and "a custom
-//     fetch rejects" (customFetchError);
+//     HTTP, a header value (U+0001) undici's client refuses, or (the adapters
+//     whose SDK takes timeoutMs: anthropic-messages and both openai loops)
+//     the server holds the request past timeoutMs, 200; and "a custom fetch
+//     rejects" (customFetchError), with its own error or with one that says
+//     it timed out, and (the SDK adapters) with an AbortError of its own.
+//     pi-messages and google never hand timeoutMs to fetch and wait on
+//     undici's 300s headers timeout (D13), too long to capture;
 //   - a custom fetch and an abort (anthropic, pi-messages): "a custom fetch
 //     rejects once the signal aborts" (150ms into the call, with
 //     customFetchError); "a custom fetch's body ignores an abort from the
@@ -115,10 +121,14 @@ type Mode =
 	| "the connection drops while an error body is read"
 	| "a custom fetch's body fails mid-body"
 	| "the request gets no response: the connection is refused"
+	| "the request gets no response: the connection is refused at a /timeout path"
 	| "the request gets no response: the server closes the connection"
 	| "the request gets no response: the response is not HTTP"
 	| "the request gets no response: undici's client refuses a header value"
+	| "the request gets no response: timeoutMs passes first"
 	| "a custom fetch rejects"
+	| "a custom fetch rejects with a timeout"
+	| "a custom fetch rejects with an AbortError of its own"
 	| "a custom fetch rejects once the signal aborts"
 	| "a custom fetch's body ignores an abort from the callback"
 	| "a custom fetch's body fails once the signal aborts";
@@ -140,9 +150,17 @@ const refused: Mode = "the request gets no response: the connection is refused";
 const closes: Mode = "the request gets no response: the server closes the connection";
 const notHTTP: Mode = "the request gets no response: the response is not HTTP";
 const badHeader: Mode = "the request gets no response: undici's client refuses a header value";
+const refusedAtTimedOutPath: Mode = "the request gets no response: the connection is refused at a /timeout path";
+const timesOut: Mode = "the request gets no response: timeoutMs passes first";
+const timeoutMs = 200;
 const customRejects: Mode = "a custom fetch rejects";
 const customFetchError = "the custom fetch failed";
-const noResponseModes = [refused, closes, notHTTP, badHeader, customRejects];
+const customRejectsTimedOut: Mode = "a custom fetch rejects with a timeout";
+const customTimeoutError = "the custom fetch timed out";
+const customRejectsAbortError: Mode = "a custom fetch rejects with an AbortError of its own";
+const noResponseModes = [refused, refusedAtTimedOutPath, closes, notHTTP, badHeader, customRejects, customRejectsTimedOut];
+// The modes only the adapters whose SDK wraps a rejected fetch run.
+const sdkNoResponseModes = [timesOut, customRejectsAbortError];
 const badHeaderValue = `a${String.fromCharCode(1)}b`;
 const customRejectsOnAbort: Mode = "a custom fetch rejects once the signal aborts";
 const customBodyIgnoresAbort: Mode = "a custom fetch's body ignores an abort from the callback";
@@ -160,7 +178,7 @@ const adapters = [
 		provider: "anthropic",
 		id: "claude-sonnet-4-5",
 		module: await load("api/anthropic-messages.ts"),
-		modes: [...streamModes, completeBody, errorBody, drops, customBody, retryableErrorBody, ...customAbortModes],
+		modes: [...streamModes, completeBody, errorBody, drops, customBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes, ...customAbortModes],
 		segments: [
 			anthropicEvent("message_start", {
 				type: "message_start",
@@ -201,7 +219,7 @@ const adapters = [
 		provider: "openai",
 		id: "gpt-4o",
 		module: await load("api/openai-completions.ts"),
-		modes: [errorBody, retryableErrorBody],
+		modes: [errorBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes],
 		segments: [],
 	},
 	{
@@ -209,7 +227,7 @@ const adapters = [
 		provider: "openai",
 		id: "gpt-5-mini",
 		module: await load("api/openai-responses.ts"),
-		modes: [errorBody, retryableErrorBody],
+		modes: [errorBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes],
 		segments: [],
 	},
 	{
@@ -217,7 +235,7 @@ const adapters = [
 		provider: "google",
 		id: "gemini-2.5-flash",
 		module: await load("api/google-generative-ai.ts"),
-		modes: [completeBody, errorBody, retryableErrorBody],
+		modes: [completeBody, errorBody, retryableErrorBody, ...noResponseModes],
 		segments: [
 			dataEvent({ candidates: [{ content: { parts: [{ text: "in hand" }], role: "model" } }] }),
 			dataEvent({
@@ -273,6 +291,7 @@ const notHTTPServer = net.createServer((sock) => {
 await new Promise<void>((resolve) => notHTTPServer.listen(0, "127.0.0.1", resolve));
 const baseUrlFor = (mode: Mode) => {
 	if (mode === refused) return "http://127.0.0.1:1";
+	if (mode === refusedAtTimedOutPath) return "http://127.0.0.1:1/timeout";
 	if (mode === closes || mode === badHeader) return `http://127.0.0.1:${(closer.address() as net.AddressInfo).port}`;
 	if (mode === notHTTP) return `http://127.0.0.1:${(notHTTPServer.address() as net.AddressInfo).port}`;
 	return `http://127.0.0.1:${port}`;
@@ -290,7 +309,12 @@ for (const a of adapters) {
 				? a.segments
 				: a.segments.slice(0, 1);
 		endBody = mode === completeBody;
-		answer = !requestModes.includes(mode) && mode !== customBody && !noResponseModes.includes(mode) && !customAbortModes.includes(mode);
+		answer =
+			!requestModes.includes(mode) &&
+			mode !== customBody &&
+			!noResponseModes.includes(mode) &&
+			!sdkNoResponseModes.includes(mode) &&
+			!customAbortModes.includes(mode);
 		dropAfterWrite = mode === drops || mode === errorBodyDrops;
 		const controller = new AbortController();
 		onSegmentWritten =
@@ -371,10 +395,18 @@ for (const a of adapters) {
 			...(mode === retryableErrorBody ? { maxRetries: 1 } : {}),
 			...(mode === customBody ? { fetch: customFetch } : {}),
 			...(customAbortFetches[mode] ? { fetch: customAbortFetches[mode] } : {}),
-			...(mode === customRejects
+			...(mode === customRejects || mode === customRejectsTimedOut
 				? {
 						fetch: async () => {
-							throw new Error(customFetchError);
+							throw new Error(mode === customRejects ? customFetchError : customTimeoutError);
+						},
+					}
+				: {}),
+			...(mode === timesOut ? { timeoutMs } : {}),
+			...(mode === customRejectsAbortError
+				? {
+						fetch: async () => {
+							throw new DOMException("This operation was aborted", "AbortError");
 						},
 					}
 				: {}),
@@ -401,6 +433,8 @@ for (const a of adapters) {
 			...(mode === customBody ? { status: 200, segments: a.segments.slice(0, 1), customBodyError } : {}),
 			...(mode === badHeader ? { headers: { "x-test": badHeaderValue } } : {}),
 			...(mode === customRejects || mode === customRejectsOnAbort ? { customFetchError } : {}),
+			...(mode === customRejectsTimedOut ? { customFetchError: customTimeoutError } : {}),
+			...(mode === timesOut ? { timeoutMs } : {}),
 			...(mode === customBodyIgnoresAbort ? { status: 200, segments: whole } : {}),
 			...(mode === customBodyFailsOnAbort ? { status: 200, segments: a.segments.slice(0, 1), customBodyError } : {}),
 			observed,
