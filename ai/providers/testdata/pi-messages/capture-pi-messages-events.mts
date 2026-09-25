@@ -29,9 +29,10 @@
 //              V8's text, which the port does not reproduce.
 // A row may make the observer throw ("observer boom") on the observed event at
 // index throwAt, after aborting the request when abortFirst is set. A row with
-// a status is served with that status, the reason phrase a server sends for
-// it (the port's statusText is Go's http.StatusText) and an application/json
-// content type, from the suite model's baseUrl, which the details' url shows.
+// a status is served with that status, the standard reason phrase for it
+// (which the Go replay's status line carries too; a server's own phrase is
+// capture-pi-messages-status.mts's) and an application/json content type,
+// from the suite model's baseUrl, which the details' url shows.
 import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";

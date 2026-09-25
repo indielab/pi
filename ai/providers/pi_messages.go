@@ -221,9 +221,8 @@ func truncateDiagnosticString(value string) string {
 }
 
 // formatPiMessagesResponseError builds "<status> <statusText>: <message or
-// body><(code)>". Go has no Response.statusText, so http.StatusText(status)
-// stands in. Port of formatPiMessagesResponseError.
-func formatPiMessagesResponseError(status int, body string, errObj ai.OrderedObject) string {
+// body><(code)>". Port of formatPiMessagesResponseError.
+func formatPiMessagesResponseError(status int, statusText, body string, errObj ai.OrderedObject) string {
 	suffix := body
 	if msg, _ := errObj.Get("message"); msg != nil {
 		if s, ok := msg.(string); ok {
@@ -236,13 +235,24 @@ func formatPiMessagesResponseError(status int, body string, errObj ai.OrderedObj
 			codeSuffix = fmt.Sprintf(" (%s)", s)
 		}
 	}
-	return fmt.Sprintf("%d %s: %s%s", status, http.StatusText(status), suffix, codeSuffix)
+	return fmt.Sprintf("%d %s: %s%s", status, statusText, suffix, codeSuffix)
+}
+
+// responseStatusText is fetch's Response.statusText for a response net/http
+// read: the reason phrase of the status line as the server sent it — what
+// follows the code's one space, spaces kept, nothing when there is none —
+// decoded as UTF-8, as undici decodes it. net/http keeps that line in
+// resp.Status. (HTTP/2 has no reason phrase, and net/http writes in the
+// standard one there; pi's CLI speaks HTTP/1.1, D80.)
+func responseStatusText(resp *http.Response) string {
+	_, reason, _ := strings.Cut(resp.Status, " ")
+	return jstext.DecodeUTF8([]byte(reason))
 }
 
 // createPiMessagesResponseError builds the error + its diagnostic details from a
 // non-2xx response, the details in pi's key order. Port of
 // createPiMessagesResponseError.
-func createPiMessagesResponseError(model *ai.Model, url string, status int, body string) *piMessagesResponseError {
+func createPiMessagesResponseError(model *ai.Model, url string, status int, statusText, body string) *piMessagesResponseError {
 	errObj := parsePiMessagesErrorBody(body)
 	var code any
 	if c, _ := errObj.Get("code"); c != nil {
@@ -256,7 +266,7 @@ func createPiMessagesResponseError(model *ai.Model, url string, status int, body
 		{Key: "model", Value: model.ID},
 		{Key: "url", Value: url},
 		{Key: "status", Value: status},
-		{Key: "statusText", Value: http.StatusText(status)},
+		{Key: "statusText", Value: statusText},
 	}
 	// pi spreads error:errorBody.error when there is an error body and
 	// body:truncated when there is none: exactly one is present.
@@ -267,7 +277,7 @@ func createPiMessagesResponseError(model *ai.Model, url string, status int, body
 	}
 	details = append(details, ai.OrderedField{Key: "timestampMs", Value: nowMillis()})
 	return &piMessagesResponseError{
-		message:           formatPiMessagesResponseError(status, body, errObj),
+		message:           formatPiMessagesResponseError(status, statusText, body, errObj),
 		code:              code,
 		diagnosticDetails: details,
 	}
@@ -1014,7 +1024,7 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 				fail(err)
 				return
 			}
-			fail(createPiMessagesResponseError(model, url, resp.StatusCode, jstext.DecodeUTF8(stripBOM(data))))
+			fail(createPiMessagesResponseError(model, url, resp.StatusCode, responseStatusText(resp), jstext.DecodeUTF8(stripBOM(data))))
 			return
 		}
 
