@@ -428,7 +428,17 @@ func TestEncodeRejectsUnreadableRawItem(t *testing.T) {
 			opts:  &Options{MaxDepth: ptr(2)},
 			want:  "CBOR nesting depth exceeds configured limit of 2",
 		},
+		{
+			name:  "too_long_a_string",
+			value: RawItem{0x63, 'a', 'b', 'c'},
+			opts:  &Options{MaxByteLength: ptr(2)},
+			want:  "CBOR text string length exceeds configured limit of 2",
+		},
 	}
+	// A limit exceeded is not a malformed item: pi's encoder, encoding the
+	// value the bytes hold, refuses it in the same words, so they come out
+	// bare. Anything else is the RawItem's own fault and says so.
+	limits := map[string]bool{"too_deep_for_its_position": true, "too_long_a_string": true}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			got, err := Encode(test.value, test.opts)
@@ -437,6 +447,13 @@ func TestEncodeRejectsUnreadableRawItem(t *testing.T) {
 			}
 			if !strings.Contains(err.Error(), test.want) {
 				t.Errorf("error text\n got %q\nwant it to contain %q", err.Error(), test.want)
+			}
+			switch {
+			case limits[test.name] && err.Error() != test.want:
+				t.Errorf("a limit exceeded reads %q, pi's encoder says %q", err, test.want)
+			case !limits[test.name] && !strings.HasPrefix(test.want, "RawItem must not be empty") &&
+				err.Error() != "RawItem must hold exactly one readable CBOR item: "+test.want:
+				t.Errorf("a malformed RawItem reads %q, want the RawItem's own wording around %q", err, test.want)
 			}
 			if _, isCbor := err.(*Error); !isCbor {
 				t.Errorf("error is %T, want *Error", err)

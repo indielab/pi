@@ -82,14 +82,14 @@ func (r *reader) readLength(additional byte, kind string, limit int) (int, error
 		return 0, err
 	}
 	if n > uint64(limit) {
-		return 0, cborErrf("CBOR %s length exceeds configured limit of %d", kind, limit)
+		return 0, limitErrf("CBOR %s length exceeds configured limit of %d", kind, limit)
 	}
 	return int(n), nil
 }
 
 func (r *reader) readItem(depth int) (any, error) {
 	if depth > r.opts.maxDepth {
-		return nil, cborErrf("CBOR nesting depth exceeds configured limit of %d", r.opts.maxDepth)
+		return nil, limitErrf("CBOR nesting depth exceeds configured limit of %d", r.opts.maxDepth)
 	}
 	initial, err := r.readByte()
 	if err != nil {
@@ -254,7 +254,7 @@ func decode(b []byte, opts *Options, rawKeys []string) (any, error) {
 		return nil, err
 	}
 	if len(b) > r.maxByteLength {
-		return nil, cborErrf("CBOR byte length exceeds configured limit of %d", r.maxByteLength)
+		return nil, limitErrf("CBOR byte length exceeds configured limit of %d", r.maxByteLength)
 	}
 	reader := &reader{bytes: b, opts: r, rawKeys: rawKeys}
 	value, err := reader.readItem(0)

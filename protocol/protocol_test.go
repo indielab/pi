@@ -877,8 +877,11 @@ func TestV8OpaquePayloadsLargerThanTheCBORDefault(t *testing.T) {
 	big := request(text)
 	_, err := EncodeClientMessageV8(big, nil)
 	assertValidationError(t, "a 17MB call under the default frame limit", err)
-	if !strings.Contains(err.Error(), "exceeds configured limit of 16777216") {
-		t.Errorf("error %q does not name the limit", err)
+	// pi's text, from encodeProtocolMessage around its encoder's refusal: the
+	// payload is too big, not malformed, so nothing names the RawItem the
+	// port holds it in.
+	if want := "Unable to encode client protocol message: CBOR text string length exceeds configured limit of 16777216"; err.Error() != want {
+		t.Errorf("error %q, pi's is %q", err, want)
 	}
 	frame, err := EncodeClientMessageV8(big, opts)
 	if err != nil {

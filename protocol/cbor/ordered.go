@@ -22,7 +22,7 @@ type OrderedObject []OrderedField
 
 func (e *encoder) encodeOrderedObject(o OrderedObject, depth int) error {
 	if len(o) > e.opts.maxContainerLength {
-		return cborErrf("CBOR map length exceeds configured limit of %d", e.opts.maxContainerLength)
+		return limitErrf("CBOR map length exceeds configured limit of %d", e.opts.maxContainerLength)
 	}
 	// A repeated key encodes a map this package's own Decode rejects, so it
 	// would be unreadable by every peer including us — the same rule

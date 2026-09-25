@@ -54,12 +54,22 @@ type resolved struct {
 }
 
 // Error is a malformed-or-out-of-policy CBOR payload (pi's CborError).
-type Error struct{ Msg string }
+type Error struct {
+	Msg string
+	// limit marks a well-formed item refused only for exceeding a configured
+	// limit, in the words pi's encoder and decoder both use for it.
+	limit bool
+}
 
 func (e *Error) Error() string { return e.Msg }
 
 func cborErrf(format string, a ...any) *Error {
 	return &Error{Msg: fmt.Sprintf(format, a...)}
+}
+
+// limitErrf is cborErrf for a configured limit exceeded.
+func limitErrf(format string, a ...any) *Error {
+	return &Error{Msg: fmt.Sprintf(format, a...), limit: true}
 }
 
 // RangeError is an invalid Options value — a caller bug, not a peer's fault,

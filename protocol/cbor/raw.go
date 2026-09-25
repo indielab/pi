@@ -63,6 +63,11 @@ func (e *encoder) encodeRawItem(item RawItem, depth int) error {
 	}
 	check := &reader{bytes: item, opts: e.opts}
 	if _, err := check.readItem(depth); err != nil {
+		if ce, ok := err.(*Error); ok && ce.limit {
+			// Too big, not malformed: pi's encoder, encoding the value these
+			// bytes hold, refuses it in the same words.
+			return err
+		}
 		return &Error{Msg: "RawItem must hold exactly one readable CBOR item: " + err.Error()}
 	}
 	if check.offset != len(item) {

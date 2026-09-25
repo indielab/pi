@@ -15,7 +15,7 @@ type writer struct {
 
 func (w *writer) ensure(additional int) error {
 	if len(w.buf)+additional > w.maxByteLength {
-		return cborErrf("CBOR byte length exceeds configured limit of %d", w.maxByteLength)
+		return limitErrf("CBOR byte length exceeds configured limit of %d", w.maxByteLength)
 	}
 	return nil
 }
@@ -83,7 +83,7 @@ func (w *writer) writeFloat64(v float64) error {
 
 func (w *writer) writeText(s string, opts resolved) error {
 	if len(s) > opts.maxByteLength {
-		return cborErrf("CBOR text string length exceeds configured limit of %d", opts.maxByteLength)
+		return limitErrf("CBOR text string length exceeds configured limit of %d", opts.maxByteLength)
 	}
 	// pi round-trips through TextDecoder({fatal:true}) to reject lone
 	// surrogates; the Go equivalent of "is this a valid Unicode scalar
@@ -135,7 +135,7 @@ func (e *encoder) leave(k visitKey) {
 
 func (e *encoder) encode(v reflect.Value, depth int) error {
 	if depth > e.opts.maxDepth {
-		return cborErrf("CBOR nesting depth exceeds configured limit of %d", e.opts.maxDepth)
+		return limitErrf("CBOR nesting depth exceeds configured limit of %d", e.opts.maxDepth)
 	}
 
 	if !v.IsValid() {
@@ -226,7 +226,7 @@ func (e *encoder) encode(v reflect.Value, depth int) error {
 		if v.Type().Elem().Kind() == reflect.Uint8 {
 			b := v.Bytes()
 			if len(b) > e.opts.maxByteLength {
-				return cborErrf("CBOR byte string length exceeds configured limit of %d", e.opts.maxByteLength)
+				return limitErrf("CBOR byte string length exceeds configured limit of %d", e.opts.maxByteLength)
 			}
 			if err := e.w.writeArgument(2, uint64(len(b))); err != nil {
 				return err
@@ -262,7 +262,7 @@ func (e *encoder) encode(v reflect.Value, depth int) error {
 func (e *encoder) encodeArray(v reflect.Value, depth int) error {
 	n := v.Len()
 	if n > e.opts.maxContainerLength {
-		return cborErrf("CBOR array length exceeds configured limit of %d", e.opts.maxContainerLength)
+		return limitErrf("CBOR array length exceeds configured limit of %d", e.opts.maxContainerLength)
 	}
 	if err := e.w.writeArgument(4, uint64(n)); err != nil {
 		return err
@@ -296,7 +296,7 @@ func (e *encoder) encodeMap(v reflect.Value, depth int) error {
 	slices.Sort(keys)
 
 	if len(keys) > e.opts.maxContainerLength {
-		return cborErrf("CBOR map length exceeds configured limit of %d", e.opts.maxContainerLength)
+		return limitErrf("CBOR map length exceeds configured limit of %d", e.opts.maxContainerLength)
 	}
 	if err := e.w.writeArgument(5, uint64(len(keys))); err != nil {
 		return err
@@ -336,7 +336,7 @@ func (e *encoder) encodeStruct(v reflect.Value, depth int) error {
 		entries = append(entries, entry{name: f.name, val: fv})
 	}
 	if len(entries) > e.opts.maxContainerLength {
-		return cborErrf("CBOR map length exceeds configured limit of %d", e.opts.maxContainerLength)
+		return limitErrf("CBOR map length exceeds configured limit of %d", e.opts.maxContainerLength)
 	}
 	if err := e.w.writeArgument(5, uint64(len(entries))); err != nil {
 		return err
