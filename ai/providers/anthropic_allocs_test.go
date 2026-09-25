@@ -3,25 +3,12 @@ package providers
 import (
 	"context"
 	"fmt"
-	"io"
 	"net/http"
 	"strings"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
 )
-
-// sseDoer serves body as a text/event-stream response to every request.
-type sseDoer struct{ body string }
-
-func (d sseDoer) Do(req *http.Request) (*http.Response, error) {
-	return &http.Response{
-		StatusCode: 200,
-		Header:     http.Header{"Content-Type": {"text/event-stream"}},
-		Body:       io.NopCloser(strings.NewReader(d.body)),
-		Request:    req,
-	}, nil
-}
 
 // anthropicTextDeltaStream is a stream of one text block with deltas
 // text_delta events.
@@ -55,7 +42,7 @@ func TestAnthropicTextDeltaAllocations(t *testing.T) {
 	stream := func(deltas int) float64 {
 		body := anthropicTextDeltaStream(deltas)
 		return testing.AllocsPerRun(20, func() {
-			opts := ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", HTTPClient: sseDoer{body}}}
+			opts := ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k", HTTPClient: cannedDoer{status: http.StatusOK, body: body}}}
 			s := StreamAnthropic(context.Background(), model, transcript, &AnthropicOptions{StreamOptions: opts})
 			for range s.Events() {
 			}

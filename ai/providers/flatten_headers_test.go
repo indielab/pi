@@ -17,7 +17,7 @@ import (
 // responseHeadersCaptureFile is written by
 // testdata/response-headers/capture-response-headers.mts, which runs pi's
 // headersToRecord on node's fetch Response for each row's raw bytes.
-const responseHeadersCaptureFile = "testdata/response-headers/response-headers-8676a0dcd.json"
+const responseHeadersCaptureFile = "testdata/response-headers/response-headers-49681e1b7.json"
 
 // serveRaw answers one request on a loopback listener with raw, byte for byte,
 // and returns the URL to request.
@@ -47,7 +47,9 @@ func serveRaw(t *testing.T, raw string) string {
 // with ", " in wire order, set-cookie holding its last value, and the
 // headers net/http takes out of its header map — Transfer-Encoding, Trailer,
 // Connection: close, and Content-Encoding of a body it gunzipped — kept as
-// undici keeps them.
+// undici keeps them. The record is taken before the body is read, as the
+// adapters take it: reading a chunked body merges every trailer it carries
+// into resp.Trailer, where undici's Headers never hold one.
 func TestResponseHeadersRecordMatchesPi(t *testing.T) {
 	data, err := os.ReadFile(responseHeadersCaptureFile)
 	if err != nil {
@@ -79,10 +81,10 @@ func TestResponseHeadersRecordMatchesPi(t *testing.T) {
 				t.Fatal(err)
 			}
 			defer resp.Body.Close()
-			_, _ = io.ReadAll(resp.Body)
 			if got := responseHeadersRecord(resp); !reflect.DeepEqual(got, row.Record) {
 				t.Errorf("responseHeadersRecord = %v, want pi's %v", got, row.Record)
 			}
+			_, _ = io.ReadAll(resp.Body)
 		})
 	}
 }

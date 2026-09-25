@@ -3,7 +3,7 @@
 // TestResponseHeadersRecordMatchesPi.
 //
 //   node --experimental-strip-types capture-response-headers.mts <extraction> <out.json> <sha>
-//   e.g. ... capture-response-headers.mts <dir> response-headers-8676a0dcd.json 8676a0dcd
+//   e.g. ... capture-response-headers.mts <dir> response-headers-49681e1b7.json 49681e1b7
 //
 // <extraction> holds packages/ai at <sha> (`git archive <sha> packages/ai |
 // tar -x -C <dir>` from the upstream clone); only utils/headers.ts is loaded,
@@ -59,6 +59,15 @@ const cases: Array<[string, string | Buffer]> = [
 	["connectionCloseIsKept", response(["Content-Type: text/event-stream", "Connection: close"])],
 	["connectionCloseOnAChunkedBodyIsKept", chunked(["Connection: close"], [Buffer.from("ok")])],
 	["trailerIsKept", chunked(["Trailer: X-Checksum"], [Buffer.from("ok")], ["X-Checksum: abc"])],
+	// A trailer is no header: fetch's Headers never hold one, announced in a
+	// Trailer header or not, however the body is read. (net/http merges every
+	// trailer it reads into resp.Trailer, which is why the record is taken
+	// before the body is read, as the adapters take it.)
+	["aTrailerNobodyAnnouncedIsNoHeader", chunked(["Content-Type: text/event-stream"], [Buffer.from("ok")], ["X-Extra: 1"])],
+	[
+		"anUnannouncedTrailerBesideAnAnnouncedOne",
+		chunked(["Trailer: X-Checksum"], [Buffer.from("ok")], ["X-Checksum: abc", "X-Extra: 1"]),
+	],
 	["gzipContentEncodingIsKept", chunked(["Content-Type: text/event-stream", "Content-Encoding: gzip"], [zlib.gzipSync("data: {}\n\n")])],
 	// A body read until the connection closes has no Connection header to
 	// keep (net/http marks it closing all the same).
