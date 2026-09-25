@@ -3,6 +3,7 @@ package delta
 import (
 	"fmt"
 	"iter"
+	"maps"
 	"reflect"
 	"slices"
 	"unicode/utf16"
@@ -71,7 +72,7 @@ func ApplyImmutableBatches[T any](target T, batches iter.Seq[[]Op]) (T, error) {
 }
 
 func applyImmutableBatches(root any, batches iter.Seq[[]Op]) (any, error) {
-	owned := ownedSet{}
+	owned := newOwnedSet()
 	for ops := range batches {
 		next, err := applyOps(root, ops, owned)
 		if err != nil {
@@ -86,7 +87,7 @@ func applyImmutableBatches(root any, batches iter.Seq[[]Op]) (any, error) {
 // materialized as ApplyImmutable would, without validating ops the tracker
 // made itself.
 func applyTrusted(root any, ops []Op) (any, error) {
-	owned := ownedSet{}
+	owned := newOwnedSet()
 	for _, op := range ops {
 		next, err := applyOne(root, op, owned)
 		if err != nil {
@@ -100,44 +101,63 @@ func applyTrusted(root any, ops []Op) (any, error) {
 // ownedSet holds the containers an immutable application copied: those it may
 // write in place. A map is known by its header, a slice by its backing array,
 // which every copy allocates for itself — capacity at least one, so that no
-// copy shares the zero-size address of an empty []any.
-type ownedSet map[uintptr]bool
+// copy shares the zero-size address of an empty []any. It keeps every copy it
+// records alive until the application returns, as upstream's WeakSet of the
+// copies needs no help to: an address alone does not, and a copy dropped by a
+// later op could be freed and its address reused by a payload a lazy batch
+// allocates afterwards, which would then read as the application's own and be
+// written in place.
+type ownedSet struct {
+	at   map[uintptr]bool
+	keep []any
+}
+
+func newOwnedSet() *ownedSet { return &ownedSet{at: map[uintptr]bool{}} }
 
 // owns reports whether v is a copy this application made.
-func (o ownedSet) owns(v any) bool {
+func (o *ownedSet) owns(v any) bool {
 	switch v.(type) {
 	case map[string]any, []any:
-		return o[reflect.ValueOf(v).Pointer()]
+		return o.at[reflect.ValueOf(v).Pointer()]
 	}
 	return false
 }
 
 // adopt records v, a copy this application made or re-headered.
-func (o ownedSet) adopt(v any) {
+func (o *ownedSet) adopt(v any) {
 	switch x := v.(type) {
 	case map[string]any:
-		o[reflect.ValueOf(x).Pointer()] = true
-	case []any:
-		if cap(x) > 0 {
-			o[reflect.ValueOf(x).Pointer()] = true
+		if x == nil {
+			return
 		}
+	case []any:
+		if cap(x) == 0 {
+			return
+		}
+	default:
+		return
+	}
+	if ptr := reflect.ValueOf(v).Pointer(); !o.at[ptr] {
+		o.at[ptr] = true
+		o.keep = append(o.keep, v)
 	}
 }
 
 // claim is the container to write: v itself once owned, else a shallow copy
-// of it, owned from now on.
-func (o ownedSet) claim(v any) any {
+// of it, owned from now on. A nil map is left as it is: it is JSON null, and
+// the write it was claimed for refuses it (upstream's copyContainers throws a
+// PathError for a value that is not an object).
+func (o *ownedSet) claim(v any) any {
 	if o.owns(v) {
 		return v
 	}
 	var c any
 	switch x := v.(type) {
 	case map[string]any:
-		m := make(map[string]any, len(x))
-		for k, item := range x {
-			m[k] = item
+		if x == nil {
+			return v
 		}
-		c = m
+		c = maps.Clone(x)
 	case []any:
 		c = cloneArray(x)
 	default:
@@ -163,7 +183,7 @@ func typed[T any](root any, err error) (T, error) {
 
 // applyOps applies ops in order. owned is nil for the mutable applier; else
 // the set of containers already copied, written in place from then on.
-func applyOps(root any, ops []Op, owned ownedSet) (any, error) {
+func applyOps(root any, ops []Op, owned *ownedSet) (any, error) {
 	for _, op := range ops {
 		if op == nil {
 			return nil, fmt.Errorf("%w: op is nil (a batch is a []Op of Replace, Set, Delete, Append, Truncate, Splice or Permute; run ParseOp on wire input first)", ErrInvalidOp)
@@ -183,7 +203,7 @@ func applyOps(root any, ops []Op, owned ownedSet) (any, error) {
 	return root, nil
 }
 
-func applyOne(root any, op Op, owned ownedSet) (any, error) {
+func applyOne(root any, op Op, owned *ownedSet) (any, error) {
 	switch op := op.(type) {
 	case Replace:
 		// Adopted, not copied. See Apply.
@@ -261,7 +281,7 @@ func applyOne(root any, op Op, owned ownedSet) (any, error) {
 // applies the array rule: a key an array does not own is unresolvable, and
 // only one it owns — a canonical index below its length, or "length" — is
 // unsafe.
-func walk(root any, path Path, owned ownedSet, fn func(node any) (any, error)) (any, error) {
+func walk(root any, path Path, owned *ownedSet, fn func(node any) (any, error)) (any, error) {
 	var descend func(node any, rest Path) (any, error)
 	descend = func(node any, rest Path) (any, error) {
 		if owned != nil {
@@ -328,7 +348,7 @@ func ownsKey(xs []any, key Seg) bool {
 // which Validate has already guaranteed exists — and hands fn the container
 // and that last segment. The parent must be a container: upstream's resolve
 // reports anything else as an unresolvable parent path.
-func atParent(root any, path Path, owned ownedSet, fn func(parent any, key Seg) (any, error)) (any, error) {
+func atParent(root any, path Path, owned *ownedSet, fn func(parent any, key Seg) (any, error)) (any, error) {
 	parent := path[:len(path)-1]
 	return walk(root, parent, owned, func(node any) (any, error) {
 		switch c := node.(type) {

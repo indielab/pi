@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -835,5 +836,60 @@ func TestApplyImmutableCopiesAWideObjectOnce(t *testing.T) {
 	})
 	if result["field999"] != -999.0 || allocs > 2_000 {
 		t.Errorf("%v allocations for 1,000 one-write batches to one object: it is copied per batch, not once", allocs)
+	}
+}
+
+// A replay keeps every copy it made alive until it returns. Were a copy freed
+// once a later op dropped it, a payload a lazy batch allocates afterwards could
+// take its address and read as the replay's own — and be written in place.
+func TestApplyImmutableBatchesNeverWritesALazyPayload(t *testing.T) {
+	base := map[string]any{"a": map[string]any{"x": 0.0}}
+	var payloads []map[string]any
+	batches := func(yield func([]Op) bool) {
+		for round := range 3_000 {
+			p := map[string]any{"x": 0.0}
+			payloads = append(payloads, p)
+			if !yield([]Op{Set{Path: Path{Key("a")}, Value: p}}) {
+				return
+			}
+			// Copies p — a payload, not the replay's own — and drops the copy the
+			// previous round's write made.
+			if !yield([]Op{Set{Path: Path{Key("a"), Key("x")}, Value: float64(round + 1)}}) {
+				return
+			}
+			if round%4 == 0 {
+				runtime.GC()
+			}
+		}
+	}
+	result, err := ApplyImmutableBatches(base, batches)
+	must(t, err)
+	written := 0
+	for _, p := range payloads {
+		if p["x"] != 0.0 {
+			written++
+		}
+	}
+	if written > 0 {
+		t.Errorf("%d of %d payloads were written in place", written, len(payloads))
+	}
+	wantJSON(t, result, tree(t, `{"a": {"x": 3000}}`))
+	wantJSON(t, base, tree(t, `{"a": {"x": 0}}`))
+}
+
+// A nil map is JSON null, and an immutable application refuses to write into
+// one, as upstream's copyContainers refuses a value that is not an object (and
+// as Apply does): a map-typed replica that missed its base batch fails rather
+// than absorbing the ops.
+func TestApplyImmutableRefusesANilMap(t *testing.T) {
+	var pathErr *PathError
+	if _, err := ApplyImmutable[map[string]any](nil, []Op{Set{Path: Path{Key("a")}, Value: 1.0}}); !errors.As(err, &pathErr) {
+		t.Errorf("a nil root: %v, want a PathError", err)
+	}
+	if _, err := ApplyImmutable(map[string]any{"a": map[string]any(nil)}, []Op{Set{Path: Path{Key("a"), Key("k")}, Value: 1.0}}); !errors.As(err, &pathErr) {
+		t.Errorf("a nil member: %v, want a PathError", err)
+	}
+	if _, err := ApplyImmutableBatches[map[string]any](nil, slices.Values([][]Op{{Set{Path: Path{Key("a")}, Value: 1.0}}})); !errors.As(err, &pathErr) {
+		t.Errorf("a nil root, batched: %v, want a PathError", err)
 	}
 }
