@@ -21,7 +21,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "This operation was aborted",
-			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]"
+			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]",
+			"diagnostics": []
 		},
 		{
 			"api": "anthropic-messages",
@@ -43,7 +44,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "Request was aborted",
-			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]"
+			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]",
+			"diagnostics": []
 		},
 		{
 			"api": "anthropic-messages",
@@ -65,7 +67,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "Request was aborted",
-			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]"
+			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]",
+			"diagnostics": []
 		},
 		{
 			"api": "anthropic-messages",
@@ -88,7 +91,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "Request was aborted",
-			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]"
+			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]",
+			"diagnostics": []
 		},
 		{
 			"api": "anthropic-messages",
@@ -103,7 +107,55 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "Request aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "the connection drops mid-body",
+			"status": 200,
+			"segments": [
+				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"in hand\"}}\n\n"
+			],
+			"observed": [
+				"message_start",
+				"content_block_start",
+				"content_block_delta"
+			],
+			"events": [
+				"start",
+				"text_start",
+				"text_delta",
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "terminated",
+			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]",
+			"diagnostics": []
+		},
+		{
+			"api": "anthropic-messages",
+			"mode": "a custom fetch's body fails mid-body",
+			"status": 200,
+			"segments": [
+				"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_1\",\"model\":\"claude-sonnet-4-5\",\"usage\":{\"input_tokens\":3,\"output_tokens\":0}}}\n\nevent: content_block_start\ndata: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\nevent: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"in hand\"}}\n\n"
+			],
+			"customBodyError": "the custom fetch's body failed",
+			"observed": [
+				"message_start",
+				"content_block_start",
+				"content_block_delta"
+			],
+			"events": [
+				"start",
+				"text_start",
+				"text_delta",
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "the custom fetch's body failed",
+			"content": "[{\"type\":\"text\",\"text\":\"in hand\"}]",
+			"diagnostics": []
 		},
 		{
 			"api": "pi-messages",
@@ -125,7 +177,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "This operation was aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
 		},
 		{
 			"api": "pi-messages",
@@ -147,7 +200,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "This operation was aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
 		},
 		{
 			"api": "pi-messages",
@@ -169,7 +223,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "This operation was aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
 		},
 		{
 			"api": "pi-messages",
@@ -192,7 +247,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "This operation was aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
 		},
 		{
 			"api": "pi-messages",
@@ -207,7 +263,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "This operation was aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
 		},
 		{
 			"api": "pi-messages",
@@ -218,7 +275,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "This operation was aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
 		},
 		{
 			"api": "pi-messages",
@@ -229,7 +287,71 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "This operation was aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
+			"mode": "the connection drops mid-body",
+			"status": 200,
+			"segments": [
+				"data: {\"type\":\"start\"}\n\ndata: {\"type\":\"text_start\",\"contentIndex\":0}\n\ndata: {\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"in hand\"}\n\n"
+			],
+			"observed": [
+				"start",
+				"text_start",
+				"text_delta"
+			],
+			"events": [
+				"start",
+				"text_start",
+				"text_delta",
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "terminated",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
+			"mode": "the connection drops while an error body is read",
+			"status": 500,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "terminated",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
+			"mode": "a custom fetch's body fails mid-body",
+			"status": 200,
+			"segments": [
+				"data: {\"type\":\"start\"}\n\ndata: {\"type\":\"text_start\",\"contentIndex\":0}\n\ndata: {\"type\":\"text_delta\",\"contentIndex\":0,\"delta\":\"in hand\"}\n\n"
+			],
+			"customBodyError": "the custom fetch's body failed",
+			"observed": [
+				"start",
+				"text_start",
+				"text_delta"
+			],
+			"events": [
+				"start",
+				"text_start",
+				"text_delta",
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "the custom fetch's body failed",
+			"content": "[]",
+			"diagnostics": []
 		},
 		{
 			"api": "openai-completions",
@@ -244,7 +366,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "Request aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
 		},
 		{
 			"api": "openai-responses",
@@ -259,7 +382,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "Request aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
 		},
 		{
 			"api": "google-generative-ai",
@@ -274,7 +398,8 @@
 			],
 			"stopReason": "aborted",
 			"errorMessage": "Request aborted",
-			"content": "[]"
+			"content": "[]",
+			"diagnostics": []
 		}
 	]
 }

@@ -1,6 +1,6 @@
 // Captures how pi's adapters end a stream whose signal aborts once the
-// request is on its way — the oracle behind TestStreamAbortMatchesPi in this
-// package.
+// request is on its way, or whose connection drops mid-body — the oracle
+// behind TestStreamAbortMatchesPi in this package.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
 //   e.g. ... capture.mts <dir> stream-abort-49681e1b7.json 49681e1b7
@@ -33,10 +33,17 @@
 //   - "an already-aborted signal" and "an abort before the response arrives"
 //     (pi-messages only; the other four adapters' are in
 //     abort-before-response): the server never answers, and the signal is
-//     aborted before the call or 150ms into it.
+//     aborted before the call or 150ms into it;
+//   - "the connection drops mid-body": no abort; the server destroys the
+//     socket 100ms after the first segment, inside the chunked body;
+//   - "the connection drops while an error body is read" (pi-messages only;
+//     the SDK adapters' error text is K18's): the same after a 500's start;
+//   - "a custom fetch's body fails mid-body": the caller's options.fetch
+//     answers 200 with a body that delivers the first segment and then fails
+//     with its own error (customBodyError); no server is involved.
 // Recorded per run: the status and segments the server wrote, the event types
 // onProviderStreamEvent received, the stream's event types, and the final
-// stopReason, errorMessage and content.
+// stopReason, errorMessage, content and diagnostic types.
 import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
@@ -79,7 +86,10 @@ type Mode =
 	| "an abort from the callback with the next read already in"
 	| "an abort while an error body is read"
 	| "an already-aborted signal"
-	| "an abort before the response arrives";
+	| "an abort before the response arrives"
+	| "the connection drops mid-body"
+	| "the connection drops while an error body is read"
+	| "a custom fetch's body fails mid-body";
 const streamModes: Mode[] = [
 	"an abort while a read is pending",
 	"an abort from the callback with events left in its read",
@@ -88,6 +98,10 @@ const streamModes: Mode[] = [
 ];
 const errorBody: Mode = "an abort while an error body is read";
 const requestModes: Mode[] = ["an already-aborted signal", "an abort before the response arrives"];
+const drops: Mode = "the connection drops mid-body";
+const errorBodyDrops: Mode = "the connection drops while an error body is read";
+const customBody: Mode = "a custom fetch's body fails mid-body";
+const customBodyError = "the custom fetch's body failed";
 
 const anthropicEvent = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 const piMessagesEvent = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
@@ -99,7 +113,7 @@ const adapters = [
 		provider: "anthropic",
 		id: "claude-sonnet-4-5",
 		module: await load("api/anthropic-messages.ts"),
-		modes: [...streamModes, errorBody],
+		modes: [...streamModes, errorBody, drops, customBody],
 		segments: [
 			anthropicEvent("message_start", {
 				type: "message_start",
@@ -115,7 +129,7 @@ const adapters = [
 		provider: "radius",
 		id: "auto",
 		module: await load("api/pi-messages.ts"),
-		modes: [...streamModes, errorBody, ...requestModes],
+		modes: [...streamModes, errorBody, ...requestModes, drops, errorBodyDrops, customBody],
 		segments: [
 			piMessagesEvent({ type: "start" }) +
 				piMessagesEvent({ type: "text_start", contentIndex: 0 }) +
@@ -140,6 +154,7 @@ const errorBodyStart = '{"error":{"message":"cut short';
 let status = "";
 let segments: string[] = [];
 let answer = true;
+let dropAfterWrite = false;
 let onSegmentWritten = () => {};
 const chunk = (s: string) => `${Buffer.byteLength(s).toString(16)}\r\n${s}\r\n`;
 const server = net.createServer((sock) => {
@@ -155,6 +170,7 @@ const server = net.createServer((sock) => {
 		const contentType = status === "200 OK" ? "text/event-stream" : "application/json";
 		sock.write(`HTTP/1.1 ${status}\r\nContent-Type: ${contentType}\r\nTransfer-Encoding: chunked\r\n\r\n${segments.map(chunk).join("")}`);
 		onSegmentWritten();
+		if (dropAfterWrite) setTimeout(() => sock.destroy(), 100);
 	});
 	sock.on("error", () => {});
 });
@@ -164,14 +180,15 @@ const port = (server.address() as net.AddressInfo).port;
 const runs = [];
 for (const a of adapters) {
 	for (const mode of a.modes) {
-		status = mode === errorBody ? "500 Internal Server Error" : "200 OK";
-		segments =
-			mode === errorBody
-				? [errorBodyStart]
-				: mode === "an abort from the callback with the next read already in"
-					? a.segments
-					: a.segments.slice(0, 1);
-		answer = !requestModes.includes(mode);
+		const errorStatus = mode === errorBody || mode === errorBodyDrops;
+		status = errorStatus ? "500 Internal Server Error" : "200 OK";
+		segments = errorStatus
+			? [errorBodyStart]
+			: mode === "an abort from the callback with the next read already in"
+				? a.segments
+				: a.segments.slice(0, 1);
+		answer = !requestModes.includes(mode) && mode !== customBody;
+		dropAfterWrite = mode === drops || mode === errorBodyDrops;
 		const controller = new AbortController();
 		onSegmentWritten =
 			mode === "an abort while a read is pending" || mode === errorBody ? () => setTimeout(() => controller.abort(), 150) : () => {};
@@ -190,9 +207,23 @@ for (const a of adapters) {
 			maxTokens: 1000,
 		};
 		const observed: string[] = [];
+		// A custom fetch answers 200 with a body that delivers the first
+		// segment and then fails with the fetch's own error.
+		const customFetch = async () => {
+			let sent = false;
+			const body = new ReadableStream({
+				pull(c) {
+					if (sent) c.error(new Error(customBodyError));
+					else c.enqueue(new TextEncoder().encode(a.segments[0]));
+					sent = true;
+				},
+			});
+			return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
+		};
 		const out = a.module.stream(model, { messages: [{ role: "user", content: "hi", timestamp: 1 }] }, {
 			apiKey: "test-api-key",
 			signal: controller.signal,
+			...(mode === customBody ? { fetch: customFetch } : {}),
 			onProviderStreamEvent: async (event: { type?: string }) => {
 				observed.push(event.type ?? "");
 				const first = mode === "an abort from the callback with events left in its read" || mode === "an abort from the callback with the next read already in";
@@ -207,11 +238,13 @@ for (const a of adapters) {
 			api: a.api,
 			mode,
 			...(answer ? { status: Number.parseInt(status), segments } : {}),
+			...(mode === customBody ? { status: 200, segments: a.segments.slice(0, 1), customBodyError } : {}),
 			observed,
 			events,
 			stopReason: msg.stopReason,
 			errorMessage: msg.errorMessage,
 			content: JSON.stringify(msg.content),
+			diagnostics: (msg.diagnostics ?? []).map((d: { type: string }) => d.type),
 		});
 	}
 }

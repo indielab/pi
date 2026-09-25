@@ -353,6 +353,26 @@ func readSDKErrorBody(ctx context.Context, body io.Reader) ([]byte, error) {
 	return data, nil
 }
 
+// errTerminated is the message of the TypeError undici's fetch errors a
+// response body's stream with when its connection fails mid-body — dropped,
+// reset, or closed short of the length or chunks the head promised.
+var errTerminated = errors.New("terminated")
+
+// fetchBody is a response body read through the port's own client, the
+// stand-in for undici's fetch: a read that fails, however net/http words the
+// failure, fails as undici's does, errTerminated. An adapter wraps only its
+// own client's bodies: a custom HTTPClient is pi's custom fetch, whose body
+// fails with whatever it fails with.
+type fetchBody struct{ io.Reader }
+
+func (b fetchBody) Read(p []byte) (int, error) {
+	n, err := b.Reader.Read(p)
+	if err != nil && err != io.EOF {
+		err = errTerminated
+	}
+	return n, err
+}
+
 // errOperationAborted is the message of undici's AbortError, which a fetch
 // rejects with when its signal aborts before the response arrives, and which
 // a body read that the abort cuts short, or that starts after it, rejects

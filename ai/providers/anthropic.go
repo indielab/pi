@@ -709,6 +709,12 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
 
+		// The SDK fetches with undici unless the caller hands pi its own fetch.
+		var respBody io.Reader = resp.Body
+		if _, custom := customHTTPClient(opts.HTTPClient); !custom {
+			respBody = fetchBody{resp.Body}
+		}
+
 		// blocks is pi's `output.content` as its handler holds it: each block's
 		// builder with the two fields pi deletes on content_block_stop — the
 		// event's raw `index` a block is found by (nil once deleted: undefined)
@@ -768,7 +774,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		// stop reason assigned one, however empty its text (see
 		// mapAnthropicStopReason).
 		errorMessageSet := false
-		err = iterateAnthropicSSE(resp.Body, ctx, onEvent, func(ev rawObject) error {
+		err = iterateAnthropicSSE(respBody, ctx, onEvent, func(ev rawObject) error {
 			typ, _ := rawStringBytes(ev["type"])
 			switch string(typ) {
 			case "message_start":

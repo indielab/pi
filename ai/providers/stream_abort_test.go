@@ -3,6 +3,8 @@ package providers
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,19 +14,19 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/sky-valley/pi/ai"
 )
 
 // streamAbortCaptureFile is written by testdata/stream-abort/capture.mts,
-// which streams pi's anthropic-messages and pi-messages adapters from source
-// at the named sha.
+// which streams pi's adapters from source at the named sha.
 const streamAbortCaptureFile = "testdata/stream-abort/stream-abort-49681e1b7.json"
 
 // streamAbortRun is one row of the capture: how pi's adapter ended a stream
-// whose signal aborted once the request was on its way. capture.mts says how
-// each mode is made.
+// whose signal aborted once the request was on its way, or whose connection
+// dropped mid-body. capture.mts says how each mode is made.
 type streamAbortRun struct {
 	API  string `json:"api"`
 	Mode string `json:"mode"`
@@ -39,6 +41,10 @@ type streamAbortRun struct {
 	ErrorMessage string   `json:"errorMessage"`
 	// Content is JSON.stringify of the final message's content.
 	Content string `json:"content"`
+	// Diagnostics holds the type of each of the final message's diagnostics.
+	Diagnostics []string `json:"diagnostics"`
+	// CustomBodyError is the error a custom fetch's body failed with.
+	CustomBodyError string `json:"customBodyError"`
 }
 
 func loadStreamAbortCapture(t *testing.T) []streamAbortRun {
@@ -170,6 +176,13 @@ func assertStreamAbortMatchesPi(t *testing.T, run streamAbortRun, observed, even
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("content %s, pi %s", gotJSON, run.Content)
 	}
+	var diagnostics []string
+	for _, d := range final.Diagnostics {
+		diagnostics = append(diagnostics, d.Type)
+	}
+	if !slices.Equal(diagnostics, run.Diagnostics) && (len(diagnostics) > 0 || len(run.Diagnostics) > 0) {
+		t.Errorf("diagnostics %v, pi %v", diagnostics, run.Diagnostics)
+	}
 }
 
 // drain collects a stream's event types and its result.
@@ -191,7 +204,9 @@ func drain(stream *ai.AssistantMessageEventStream) ([]string, *ai.AssistantMessa
 // response had not arrived. The body is heldBody, so each segment is exactly
 // one read, as it was for pi. An abort while an error body is read is the
 // SDKs' thrown error caught by pi's retryProviderRequest, which says
-// "Request aborted" first thing, and pi-messages' rejected text() read.
+// "Request aborted" first thing, and pi-messages' rejected text() read. A
+// connection that drops mid-body, with no abort, fails the read with
+// undici's TypeError "terminated".
 func TestStreamAbortMatchesPi(t *testing.T) {
 	for _, run := range loadStreamAbortCapture(t) {
 		t.Run(run.API+"/"+run.Mode, func(t *testing.T) {
@@ -246,6 +261,31 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 				if run.Mode == "an already-aborted signal" {
 					cancel()
 				}
+			case "a custom fetch's body fails mid-body":
+				// A custom client is pi's custom fetch: its body's own error is
+				// the stream's.
+				opts.HTTPClient = heldDoer{io.NopCloser(io.MultiReader(strings.NewReader(run.Segments[0]), iotest.ErrReader(errors.New(run.CustomBodyError))))}
+			case "the connection drops mid-body", "the connection drops while an error body is read":
+				// The server writes the head and one chunk, then closes the
+				// connection inside the chunked body.
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					io.Copy(io.Discard, r.Body)
+					conn, rw, err := w.(http.Hijacker).Hijack()
+					if err != nil {
+						t.Error(err)
+						return
+					}
+					defer conn.Close()
+					contentType := "text/event-stream"
+					if run.Status != http.StatusOK {
+						contentType = "application/json"
+					}
+					fmt.Fprintf(rw, "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nTransfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n",
+						run.Status, http.StatusText(run.Status), contentType, len(run.Segments[0]), run.Segments[0])
+					rw.Flush()
+				}))
+				defer server.Close()
+				baseURL = server.URL
 			default:
 				t.Fatalf("no replay for mode %q", run.Mode)
 			}

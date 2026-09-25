@@ -1355,7 +1355,7 @@ func iterateGoogleSSE(body io.Reader, ctx context.Context, observe func(payload 
 			// Any other failure once the body has started — the connection
 			// dropping, a coding that does not decode — rejects the read with
 			// undici's TypeError: terminated.
-			return errors.New("terminated")
+			return errTerminated
 		}
 	}
 

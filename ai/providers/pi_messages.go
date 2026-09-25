@@ -965,7 +965,8 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 		// fetch directly rather than through an SDK, so the default stays
 		// http.DefaultClient rather than the retry loop's shared client.
 		var client ai.HTTPDoer = http.DefaultClient
-		if c, ok := customHTTPClient(opts.HTTPClient); ok {
+		c, custom := customHTTPClient(opts.HTTPClient)
+		if custom {
 			client = c
 		}
 		resp, err := client.Do(httpReq)
@@ -979,6 +980,10 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 			return
 		}
 		defer resp.Body.Close()
+		var respBody io.Reader = resp.Body
+		if !custom {
+			respBody = fetchBody{resp.Body}
+		}
 
 		if opts.OnResponse != nil {
 			// pi calls onResponse before the response.ok check, so error responses
@@ -993,11 +998,15 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			// pi's response.text(): the body decoded as UTF-8, a leading
 			// byte-order mark dropped and invalid bytes U+FFFD per maximal
-			// subpart. An abort that cuts the read short rejects it with
-			// undici's AbortError.
-			data, err := io.ReadAll(resp.Body)
-			if err != nil && aborted() {
-				fail(errOperationAborted)
+			// subpart. A read that fails rejects it — with undici's AbortError
+			// when the abort cut it short — and that error, which is no
+			// response error, is what the stream fails with.
+			data, err := io.ReadAll(respBody)
+			if err != nil {
+				if aborted() {
+					err = errOperationAborted
+				}
+				fail(err)
 				return
 			}
 			fail(createPiMessagesResponseError(model, url, resp.StatusCode, jstext.DecodeUTF8(stripBOM(data))))
@@ -1011,7 +1020,7 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 			onEvent = func(data any) error { return opts.OnProviderStreamEvent(data, model) }
 		}
 		terminal := false
-		perr := readPiMessagesEvents(resp.Body, ctx, onEvent, func(ev piMessagesEvent) (bool, error) {
+		perr := readPiMessagesEvents(respBody, ctx, onEvent, func(ev piMessagesEvent) (bool, error) {
 			out, err := conv.convert(ev)
 			if err != nil {
 				return false, err
