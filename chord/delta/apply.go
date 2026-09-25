@@ -2,6 +2,7 @@ package delta
 
 import (
 	"fmt"
+	"iter"
 	"reflect"
 	"slices"
 	"unicode/utf16"
@@ -45,38 +46,48 @@ func Apply[T any](target T, ops []Op) (T, error) {
 	return typed[T](root, err)
 }
 
-// ApplyImmutable applies decoded ops without mutating the previous value. It
-// copies only the containers along each op's path and shares every unchanged
-// subtree, so one batch can safely fan out to several in-process consumers;
-// it does not clone or freeze either complete input, and it treats op payloads
-// as immutable rather than copying them.
+// ApplyImmutable applies one decoded batch without mutating the previous
+// value. It copies each container the batch touches once — along the paths
+// its ops walk, shared payloads included — writes the copies in place for the
+// rest of the batch, and shares every unchanged subtree, so one batch can
+// safely fan out to several in-process consumers. It does not clone or freeze
+// either complete input, and the result shares containers with both.
 func ApplyImmutable[T any](target T, ops []Op) (T, error) {
-	var root any = target
-	for _, op := range ops {
-		var err error
-		if root, err = applyOps(root, []Op{op}, ownedSet{}); err != nil {
-			return typed[T](nil, err)
-		}
-	}
-	return typed[T](root, nil)
+	root, err := applyImmutableBatches(target, slices.Values([][]Op{ops}))
+	return typed[T](root, err)
 }
 
-// applyBatch is the tracker's own immutable application of a batch it
-// materializes (upstream's apply-immutable-batch.ts, and with trusted set
-// apply-immutable-trusted.ts, which skips the validation of ops the tracker
-// made itself): each container the batch touches is copied once, then written
-// in place for the rest of the batch.
-func applyBatch(root any, ops []Op, trusted bool) (any, error) {
+// ApplyImmutableBatches applies decoded batches in order as one replay whose
+// final result is all it exposes: one copy-on-write scope spans the whole
+// call, so a container copied for an earlier batch may be written in place by
+// a later one, and no intermediate revision is safe to retain. Use it for an
+// ordered backlog of which only the end state matters, rather than joining the
+// batches' ops; call ApplyImmutable per batch when every revision is kept. An
+// invalid op ends the replay without reading further batches, and neither
+// input is modified.
+func ApplyImmutableBatches[T any](target T, batches iter.Seq[[]Op]) (T, error) {
+	root, err := applyImmutableBatches(target, batches)
+	return typed[T](root, err)
+}
+
+func applyImmutableBatches(root any, batches iter.Seq[[]Op]) (any, error) {
+	owned := ownedSet{}
+	for ops := range batches {
+		next, err := applyOps(root, ops, owned)
+		if err != nil {
+			return nil, err
+		}
+		root = next
+	}
+	return root, nil
+}
+
+// applyTrusted is upstream's applyImmutableTrusted: the tracker's own batch
+// materialized as ApplyImmutable would, without validating ops the tracker
+// made itself.
+func applyTrusted(root any, ops []Op) (any, error) {
 	owned := ownedSet{}
 	for _, op := range ops {
-		if op == nil {
-			return nil, fmt.Errorf("%w: op is nil", ErrInvalidOp)
-		}
-		if !trusted {
-			if err := op.Validate(); err != nil {
-				return nil, err
-			}
-		}
 		next, err := applyOne(root, op, owned)
 		if err != nil {
 			return nil, err

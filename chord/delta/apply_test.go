@@ -2,7 +2,10 @@ package delta
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
+	"slices"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -600,4 +603,237 @@ func TestApplyImmutablePermute(t *testing.T) {
 	}
 	wantTree(t, rootAfter, `[3, 2, 1]`)
 	wantTree(t, root, `[1, 2, 3]`)
+}
+
+// ─── delta-apply-immutable.test.ts (9e70c3d50) ───────────────────────────────
+//
+// Upstream freezes its inputs to prove nothing writes them; Go cannot freeze,
+// so each case compares the inputs with a snapshot taken before.
+
+func TestApplyImmutableCopiesEachTouchedContainerOnce(t *testing.T) {
+	shared := tree(t, `{"nested": {"value": 1}}`)
+	untouched := tree(t, `{"value": 9}`)
+	rowPayload := tree(t, `{"id": 4, "label": "placed"}`)
+	base := tree(t, `{"text": "abcdef", "stable": {"value": 7}, "branch": {"value": 1}, "copy": null, "placed": null,
+		"untouched": null, "left": null, "right": null, "meta": {"count": 0, "obsolete": true},
+		"rows": [{"id": 1, "label": "one"}, {"id": 2, "label": "two"}, {"id": 3, "label": "three"}]}`).(map[string]any)
+	snapshot := func() string { return jsonText(t, []any{base, shared, untouched, rowPayload}) }
+	before := snapshot()
+	ops := []Op{
+		Truncate{Path: Path{Key("text")}, Count: 2},
+		Append{Path: Path{Key("text")}, Text: "!"},
+		Set{Path: Path{Key("meta"), Key("count")}, Value: 1.0},
+		Set{Path: Path{Key("meta"), Key("count")}, Value: 2.0},
+		Delete{Path: Path{Key("meta"), Key("obsolete")}},
+		Set{Path: Path{Key("copy")}, Value: base["branch"]},
+		Set{Path: Path{Key("copy"), Key("value")}, Value: 2.0},
+		Set{Path: Path{Key("placed")}, Value: shared},
+		Set{Path: Path{Key("placed"), Key("nested"), Key("value")}, Value: 2.0},
+		Set{Path: Path{Key("untouched")}, Value: untouched},
+		Set{Path: Path{Key("left")}, Value: shared},
+		Set{Path: Path{Key("right")}, Value: shared},
+		Set{Path: Path{Key("left"), Key("nested"), Key("value")}, Value: 3.0},
+		Splice{Path: Path{Key("rows")}, Index: 1, Remove: 1, Items: []any{rowPayload}},
+		Set{Path: Path{Key("rows"), Index(1), Key("label")}, Value: "edited"},
+		Permute{Path: Path{Key("rows")}, Permutation: []int{1, 0, 2}},
+		Set{Path: Path{Key("rows"), Index(0), Key("label")}, Value: "moved"},
+	}
+	result, err := ApplyImmutable(base, ops)
+	must(t, err)
+	mutable, err := Apply(cloneJSON(base).(map[string]any), cloneOps(ops))
+	must(t, err)
+	wantJSON(t, result, mutable)
+	if before != snapshot() {
+		t.Error("ApplyImmutable wrote into its inputs or a payload")
+	}
+	switch {
+	case result["text"] != "cdef!":
+		t.Errorf("text %v", result["text"])
+	case !same(result["stable"], base["stable"]), !same(result["untouched"], untouched):
+		t.Error("an untouched container was copied")
+	case same(result["copy"], base["branch"]), same(result["placed"], shared), same(result["left"], shared):
+		t.Error("a payload that a later op walked into was written in place, not copied")
+	case !same(result["right"], shared):
+		t.Error("a payload no later op walked into was copied")
+	case same(result["rows"].([]any)[0], rowPayload):
+		t.Error("the spliced payload an op edited was not copied")
+	}
+	wantJSON(t, result["rows"].([]any)[0], tree(t, `{"id": 4, "label": "moved"}`))
+}
+
+func TestApplyImmutableBatchesProtectsReplacementPayloads(t *testing.T) {
+	replacement := tree(t, `{"nested": {"value": 1}, "values": [1, 2, 3]}`)
+	result, err := ApplyImmutableBatches[any](nil, slices.Values([][]Op{
+		{Replace{Value: replacement}},
+		{Set{Path: Path{Key("nested"), Key("value")}, Value: 2.0}},
+		{Splice{Path: Path{Key("values")}, Index: 1, Remove: 1, Items: []any{4.0, 5.0}}, Permute{Path: Path{Key("values")}, Permutation: []int{3, 0, 1, 2}}},
+	}))
+	must(t, err)
+	wantJSON(t, result, tree(t, `{"nested": {"value": 2}, "values": [3, 1, 4, 5]}`))
+	wantJSON(t, replacement, tree(t, `{"nested": {"value": 1}, "values": [1, 2, 3]}`))
+
+	array := tree(t, `[1, 2, 3]`)
+	arrayResult, err := ApplyImmutable(array, []Op{
+		Splice{Path: Path{}, Index: 1, Remove: 1, Items: []any{4.0, 5.0}},
+		Permute{Path: Path{}, Permutation: []int{3, 0, 1, 2}},
+		Delete{Path: Path{Index(1)}},
+	})
+	must(t, err)
+	wantJSON(t, arrayResult, tree(t, `[3, 4, 5]`))
+	wantJSON(t, array, tree(t, `[1, 2, 3]`))
+}
+
+func TestApplyImmutableBatchesSharesOneScope(t *testing.T) {
+	base := tree(t, `{"text": "abcdef", "meta": {"count": 0}, "values": [{"id": 1, "value": 1}, {"id": 2, "value": 2}, {"id": 3, "value": 3}]}`)
+	before := jsonText(t, base)
+	batches := [][]Op{
+		{Set{Path: Path{Key("meta"), Key("count")}, Value: 1.0}, Splice{Path: Path{Key("values")}, Index: 1, Remove: 1, Items: []any{tree(t, `{"id": 4, "value": 4}`)}}},
+		{},
+		{Permute{Path: Path{Key("values")}, Permutation: []int{2, 0, 1}}, Set{Path: Path{Key("values"), Index(2), Key("value")}, Value: 40.0}},
+		{Truncate{Path: Path{Key("text")}, Count: 2}, Append{Path: Path{Key("text")}, Text: "!"}},
+	}
+	intermediate, err := ApplyImmutable(base, batches[0])
+	must(t, err)
+	intermediateSnapshot := jsonText(t, intermediate)
+	sequential := intermediate
+	for _, batch := range batches[1:] {
+		sequential, err = ApplyImmutable(sequential, batch)
+		must(t, err)
+	}
+	streamed, err := ApplyImmutableBatches(base, slices.Values(batches))
+	must(t, err)
+	flattened, err := ApplyImmutable(base, slices.Concat(batches...))
+	must(t, err)
+	wantJSON(t, streamed, sequential)
+	wantJSON(t, streamed, flattened)
+	if jsonText(t, intermediate) != intermediateSnapshot || jsonText(t, base) != before {
+		t.Error("a later application wrote into an earlier revision or the base")
+	}
+}
+
+func TestApplyImmutableBatchesReplaysTrackerBatches(t *testing.T) {
+	values := make([]any, 8)
+	for id := range values {
+		values[id] = map[string]any{"id": float64(id), "score": 0.0}
+	}
+	initial := map[string]any{"text": "start", "values": values, "revision": 0.0}
+	before := jsonText(t, initial)
+	tr := Track(initial)
+	var batches [][]Op
+	for revision := 1; revision <= 40; revision++ {
+		c := mustBegin(t, tr)
+		state := c.State()
+		must(t, state.Set("revision", float64(revision)))
+		text, _ := state.Get("text")
+		must(t, state.Set("text", text.(string)[1:]+strconv.Itoa(revision)))
+		vs := state.At("values")
+		var err error
+		switch revision % 5 {
+		case 0:
+			err = vs.Reverse()
+		case 1:
+			_, err = vs.Push(map[string]any{"id": float64(100 + revision), "score": float64(revision)})
+		case 2:
+			_, _, err = vs.Shift()
+		case 3:
+			err = vs.At(revision%vs.Len()).Set("score", float64(revision))
+		default:
+			_, err = vs.Splice(1, 1, map[string]any{"id": float64(200 + revision), "score": float64(revision)})
+		}
+		must(t, err)
+		p := mustPrepare(t, c)
+		batches = append(batches, p.Ops())
+		must(t, tr.Adopt(p))
+	}
+	replayed, err := ApplyImmutableBatches[any](initial, slices.Values(batches))
+	must(t, err)
+	wantJSON(t, replayed, tr.Value())
+	if jsonText(t, initial) != before {
+		t.Error("the replay wrote into the initial revision")
+	}
+}
+
+func TestApplyImmutableBatchesStopsAtAnInvalidOp(t *testing.T) {
+	base := tree(t, `{"nested": {"value": 1}}`)
+	advancedPastInvalid := false
+	batches := func(yield func([]Op) bool) {
+		if !yield([]Op{Set{Path: Path{Key("nested"), Key("value")}, Value: 4.0}}) {
+			return
+		}
+		if !yield([]Op{Set{Path: Path{Key("__proto__"), Key("polluted")}, Value: true}}) {
+			return
+		}
+		advancedPastInvalid = true
+	}
+	var unsafe *UnsafePathError
+	if _, err := ApplyImmutableBatches(base, batches); !errors.As(err, &unsafe) {
+		t.Errorf("a reserved segment in a later batch: %v, want an UnsafePathError", err)
+	}
+	if advancedPastInvalid {
+		t.Error("the replay read past the batch that failed")
+	}
+	wantJSON(t, base, tree(t, `{"nested": {"value": 1}}`))
+
+	var pathErr *PathError
+	if _, err := ApplyImmutable(tree(t, `{"values": []}`), []Op{Set{Path: Path{Key("values"), Key("missing"), Key("value")}, Value: 1.0}}); !errors.As(err, &pathErr) {
+		t.Errorf("a key an array does not own: %v, want a PathError", err)
+	}
+	if _, err := ApplyImmutable(tree(t, `{"values": [{}]}`), []Op{Set{Path: Path{Key("values"), Key("0"), Key("value")}, Value: 1.0}}); !errors.As(err, &unsafe) {
+		t.Errorf("a key an array owns: %v, want an UnsafePathError", err)
+	}
+}
+
+func TestApplyImmutableFansOutWithoutSharingCopies(t *testing.T) {
+	payload := tree(t, `{"nested": {"value": 1}}`)
+	ops := []Op{Set{Path: Path{Key("placed")}, Value: payload}, Set{Path: Path{Key("placed"), Key("nested"), Key("value")}, Value: 2.0}}
+	base := tree(t, `{"placed": null}`)
+	first, err := ApplyImmutable(base, ops)
+	must(t, err)
+	second, err := ApplyImmutable(base, ops)
+	must(t, err)
+	wantJSON(t, first, second)
+	if same(first, second) || same(first.(map[string]any)["placed"], second.(map[string]any)["placed"]) {
+		t.Error("two applications of one batch share their copies")
+	}
+	wantJSON(t, payload, tree(t, `{"nested": {"value": 1}}`))
+}
+
+// "copies a wide object once rather than once per repeated write": counted
+// here as allocations, where upstream counts Object.keys calls.
+func TestApplyImmutableCopiesAWideObjectOnce(t *testing.T) {
+	base := make(map[string]any, 20_000)
+	for i := range 20_000 {
+		base[fmt.Sprintf("field%d", i)] = float64(i)
+	}
+	ops := make([]Op, 1_000)
+	for i := range ops {
+		ops[i] = Set{Path: Path{Key(fmt.Sprintf("field%d", i))}, Value: float64(-i)}
+	}
+	var result map[string]any
+	allocs := testing.AllocsPerRun(1, func() {
+		var err error
+		result, err = ApplyImmutable(base, ops)
+		must(t, err)
+	})
+	if result["field999"] != -999.0 || base["field999"] != 999.0 {
+		t.Fatalf("field999: result %v, base %v", result["field999"], base["field999"])
+	}
+	// One copy of a 20,000-member map is a few hundred allocations; one per
+	// write would be a thousand copies of it.
+	if allocs > 2_000 {
+		t.Errorf("%v allocations for 1,000 writes to one object: it is copied per write, not once", allocs)
+	}
+	// ApplyImmutableBatches keeps the one copy across batches, too.
+	batches := make([][]Op, len(ops))
+	for i, op := range ops {
+		batches[i] = []Op{op}
+	}
+	allocs = testing.AllocsPerRun(1, func() {
+		var err error
+		result, err = ApplyImmutableBatches(base, slices.Values(batches))
+		must(t, err)
+	})
+	if result["field999"] != -999.0 || allocs > 2_000 {
+		t.Errorf("%v allocations for 1,000 one-write batches to one object: it is copied per batch, not once", allocs)
+	}
 }

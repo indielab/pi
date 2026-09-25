@@ -2,6 +2,7 @@ package delta
 
 import (
 	"errors"
+	"slices"
 	"weak"
 )
 
@@ -332,18 +333,18 @@ func materializePrepared[T any](c *overlayContext) (*Prepared[T], error) {
 	return p, nil
 }
 
-// materializeOperations is upstream's: the ops applied to base, copying each
-// container they touch once. A batch with no splice or permutation is the
-// tracker's own and skips validation (upstream's applyImmutableTrusted).
+// materializeOperations is upstream's: the ops applied to base as
+// ApplyImmutable applies them, copying each container they touch once. A
+// batch with no splice or permutation skips validation, being the tracker's
+// own (upstream's applyImmutableTrusted).
 func materializeOperations(base any, ops []Op) (any, error) {
-	trusted := true
 	for _, op := range ops {
 		switch op.(type) {
 		case Splice, Permute:
-			trusted = false
+			return applyImmutableBatches(base, slices.Values([][]Op{ops}))
 		}
 	}
-	return applyBatch(base, ops, trusted)
+	return applyTrusted(base, ops)
 }
 
 // ensureOperations is upstream's: a change's ops were emitted when it was

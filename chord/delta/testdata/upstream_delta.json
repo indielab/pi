@@ -1,5 +1,5 @@
 {
-	"sha": "19a0361be",
+	"sha": "9e70c3d50",
 	"diffs": [
 		{"name":"sets and deletes","before":{"keep":1,"change":1,"remove":true},"after":{"keep":1,"change":2,"add":3},"ops":[["s",["add"],3],["s",["change"],2],["d",["remove"]]],"raw":[["s",["change"],2],["s",["add"],3],["d",["remove"]]]},
 		{"name":"string append","before":{"text":"hello"},"after":{"text":"hello world"},"ops":[["a",["text"]," world"]]},

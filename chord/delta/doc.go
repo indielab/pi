@@ -1,6 +1,6 @@
 // Package delta synchronizes JSON values from an authoritative producer to an
 // ordered replica. It mirrors @earendil-works/chord/delta
-// (packages/chord/src/delta at d5cba1d97) and depends on nothing else in the
+// (packages/chord/src/delta at 9e70c3d50) and depends on nothing else in the
 // port: session storage, the runtime and the facet host consume it, and the
 // arrows point that way.
 //
@@ -176,6 +176,14 @@
 // replicas no longer match. Apply a tracker's batches in-process with
 // ApplyImmutable, as pi's own replicas do, or detach them first; a batch that
 // was marshalled and decoded on the way is already detached.
+//
+// ApplyImmutable copies each container a batch touches once, so one batch can
+// fan out to any number of immutable replicas; each must hold the batch's
+// base. When only the final result of an ordered backlog is needed, replay it
+// with ApplyImmutableBatches rather than joining the batches' ops: one
+// copy-on-write scope spans the call, so no intermediate revision is exposed,
+// or safe to retain. Call ApplyImmutable per batch when every revision is
+// published or kept.
 //
 // # JSON in Go
 //
