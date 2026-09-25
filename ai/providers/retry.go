@@ -340,6 +340,13 @@ func retryDelay(resp *http.Response, attempt int, cfg retryConfig, providerMsg s
 // wait (abortableSleep).
 var errRequestAborted = errors.New("Request aborted")
 
+// errRequestWasAborted is the Error("Request was aborted") pi's adapters
+// throw from their own checks of the signal — anthropic's before each body
+// read, and each SDK adapter's once its stream has ended — and the error
+// message faux gives an aborted stream. It is not errRequestAborted, the
+// retry loop's.
+var errRequestWasAborted = errors.New("Request was aborted")
+
 // readSDKErrorBody reads the body of the non-2xx response an SDK adapter
 // (anthropic, both openai loops, google) fails with. The SDKs throw their
 // error only once they have read that body, and pi's retryProviderRequest

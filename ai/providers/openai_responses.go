@@ -933,7 +933,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			return
 		}
 		if ctx != nil && ctx.Err() != nil {
-			fail(fmt.Errorf("Request was aborted"))
+			fail(errRequestWasAborted)
 			return
 		}
 		// pi openai-responses.ts (upstream f9a49869): a stream that ended without

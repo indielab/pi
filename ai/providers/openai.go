@@ -681,11 +681,11 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 		}
 
 		if ctx != nil && ctx.Err() != nil {
-			fail(fmt.Errorf("Request was aborted"))
+			fail(errRequestWasAborted)
 			return
 		}
 		if output.StopReason == ai.StopAborted {
-			fail(fmt.Errorf("Request was aborted"))
+			fail(errRequestWasAborted)
 			return
 		}
 		// Some OpenAI-compatible providers never emit finish_reason. When compat

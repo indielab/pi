@@ -1024,7 +1024,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 			return
 		}
 		if ctx != nil && ctx.Err() != nil {
-			fail(fmt.Errorf("Request was aborted"))
+			fail(errRequestWasAborted)
 			return
 		}
 		if output.StopReason == ai.StopPending {
@@ -2224,7 +2224,7 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 	searched := 0
 	for eof := false; ; {
 		if ctx != nil && ctx.Err() != nil {
-			return errors.New("Request was aborted")
+			return errRequestWasAborted
 		}
 		if eof {
 			break

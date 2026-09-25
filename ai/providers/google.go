@@ -747,7 +747,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		}
 		endCurrent()
 		if ctx != nil && ctx.Err() != nil {
-			fail(fmt.Errorf("Request was aborted"))
+			fail(errRequestWasAborted)
 			return
 		}
 		// pi (upstream f9a49869): a stream that ended without resolving the

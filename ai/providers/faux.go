@@ -678,7 +678,7 @@ func fauxErrorMessage(err error, api, provider, modelID string) *ai.AssistantMes
 func fauxAbortedMessage(partial *ai.AssistantMessage) *ai.AssistantMessage {
 	c := partial.Clone()
 	c.StopReason = ai.StopAborted
-	c.ErrorMessage = "Request was aborted"
+	c.ErrorMessage = errRequestWasAborted.Error()
 	c.Timestamp = nowMillis()
 	return c
 }

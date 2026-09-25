@@ -415,6 +415,48 @@ func TestFauxAssistantMessageKeepsSetOptionalFields(t *testing.T) {
 	}
 }
 
+// TestFauxProviderAbortedStreamMatchesPi: pi's faux provider ends a stream
+// whose signal has aborted by the time it would start — before the call, or
+// from onResponse — with one error event (reason aborted), stopReason
+// aborted, "Request was aborted" and no content, and the scripted step it
+// took stays consumed (faux.ts createAbortedMessage, run under node at
+// 49681e1b7).
+func TestFauxProviderAbortedStreamMatchesPi(t *testing.T) {
+	for _, how := range []string{"already aborted", "onResponse aborts"} {
+		t.Run(how, func(t *testing.T) {
+			reg := RegisterFauxProvider(RegisterFauxProviderOptions{})
+			defer reg.Unregister()
+			reg.SetResponses([]FauxResponseStep{FauxStatic(FauxAssistantMessage(ai.ContentList{FauxText("hello there")}, ai.StopStop))})
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			opts := &ai.SimpleStreamOptions{}
+			if how == "already aborted" {
+				cancel()
+			} else {
+				opts.OnResponse = func(ai.ProviderResponse, *ai.Model) error {
+					cancel()
+					return nil
+				}
+			}
+			stream := ai.StreamSimple(ctx, reg.GetModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, opts)
+			var events []string
+			for ev := range stream.Events() {
+				events = append(events, string(ev.Type)+":"+string(ev.Reason))
+			}
+			msg := stream.Result()
+			if !slices.Equal(events, []string{"error:aborted"}) {
+				t.Errorf("events %v, pi [error:aborted]", events)
+			}
+			if msg.StopReason != ai.StopAborted || msg.ErrorMessage != "Request was aborted" || len(msg.Content) != 0 {
+				t.Errorf("stop %s %q, content %v; pi aborted \"Request was aborted\", []", msg.StopReason, msg.ErrorMessage, msg.Content)
+			}
+			if reg.PendingResponseCount() != 0 || reg.State.CallCount != 1 {
+				t.Errorf("pending %d, calls %d; pi 0, 1", reg.PendingResponseCount(), reg.State.CallCount)
+			}
+		})
+	}
+}
+
 // TestFauxProviderOnResponseErrorFailsStream locks pi's faux provider awaiting
 // onResponse inside each call's try (faux.ts:512 stream, :579 fetchDeferred,
 // :643 cancelDeferred at 8676a0dcd). Measured by running that source under
