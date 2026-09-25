@@ -233,7 +233,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 		// The SDK's buildURL makes the request URL with `new URL(...)` before
 		// anything else about the request, and fetch sends what that makes of
 		// it (requestURL).
-		url, err := requestURL(strings.TrimRight(baseURL, "/") + "/chat/completions")
+		url, err := requestURL(sdkJoinURL(baseURL, "/chat/completions"))
 		if err != nil {
 			fail(err)
 			return

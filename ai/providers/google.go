@@ -407,7 +407,7 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		// @google/genai builds the request URL with `new URL(...)` (after
 		// onPayload), before anything else about the request, and fetch sends
 		// what that makes of it (requestURL).
-		url, err := requestURL(fmt.Sprintf("%s/models/%s:streamGenerateContent?alt=sse", strings.TrimRight(baseURL, "/"), model.ID))
+		url, err := requestURL(sdkJoinURL(baseURL, "/models/"+model.ID+":streamGenerateContent?alt=sse"))
 		if err != nil {
 			fail(err)
 			return

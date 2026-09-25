@@ -258,6 +258,9 @@ const all = adapters.map((a) => a.api);
 type RequestBase = { label: string; baseUrl: string; divergence?: string; divergentApis?: string[] };
 const requestBases: RequestBase[] = [
 	{ label: "a plain base URL", baseUrl: "http://127.0.0.1:{PORT}/v1" },
+	{ label: "a trailing slash", baseUrl: "http://127.0.0.1:{PORT}/v1/" },
+	{ label: "two trailing slashes", baseUrl: "http://127.0.0.1:{PORT}/v1//" },
+	{ label: "a slash alone after the host", baseUrl: "http://127.0.0.1:{PORT}/" },
 	{ label: "a trailing CR", baseUrl: `http://127.0.0.1:{PORT}/v1${C(13)}` },
 	{ label: "a trailing LF", baseUrl: `http://127.0.0.1:{PORT}/v1${C(10)}` },
 	{ label: "a trailing CRLF", baseUrl: `http://127.0.0.1:{PORT}/v1${C(13, 10)}` },

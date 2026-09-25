@@ -387,7 +387,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		// The SDK's buildURL makes the request URL with `new URL(...)` before
 		// anything else about the request, and fetch sends what that makes of
 		// it (requestURL).
-		url, err := requestURL(strings.TrimRight(baseURL, "/") + "/responses")
+		url, err := requestURL(sdkJoinURL(baseURL, "/responses"))
 		if err != nil {
 			fail(err)
 			return

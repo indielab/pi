@@ -17,6 +17,21 @@ var errInvalidURL = errors.New("Invalid URL")
 // each with its default port.
 var specialSchemePorts = map[string]int{"http": 80, "https": 443, "ws": 80, "wss": 443, "ftp": 21}
 
+// sdkJoinURL is the string an SDK adapter's request URL is parsed from: its
+// base URL and an endpoint path that starts with a slash, joined as
+// @anthropic-ai/sdk's and openai's buildURL join them — the path's slash
+// dropped when the base ends with one — and as @google/genai's constructUrl
+// does, which drops one trailing slash from the base and joins with a slash:
+// the same string. One slash goes, so a base that ends in two sends a path
+// with an empty segment, "/v1//chat/completions". (pi-messages strips every
+// trailing slash itself.)
+func sdkJoinURL(base, path string) string {
+	if strings.HasSuffix(base, "/") {
+		return base + strings.TrimPrefix(path, "/")
+	}
+	return base + path
+}
+
 // requestURL is the URL a request an adapter built from rawURL is sent to:
 // what pi's `new URL(rawURL)` — the WHATWG URL parser, which every adapter's
 // request URL goes through — makes of it, as net/url can hold it; or
