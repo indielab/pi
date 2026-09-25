@@ -10,6 +10,8 @@ import (
 
 // Goldens marked "pi:" are the bytes pi's encoder/decoder produced for the
 // same input under node (packages/chord/src/delta/index.ts at 64eeb82a4).
+// Each was re-checked at 49681e1b7 by replaying pi's encoder() and decoder()
+// over these inputs and 400 random streams against Encode and Decode.
 
 // wireOps parses a JSON array of wire tuples through ParseWireOp — the batch a
 // decoder is handed after the services wire layer has checked its shape.
@@ -316,6 +318,14 @@ func TestCodecResetsMidBatch(t *testing.T) {
 	wantWire(t, enc.Encode(batches[0]), `[["s",["p"],1],["s",["q"],2],["#",0,["p"]],["s",0,3],["s",4],["#",1,["q"]],["s",1,5]]`)
 	wantWire(t, enc.Encode(batches[1]), `[["s",0,6],["s",1,7],["r",1],["s",["p"],8],["s",9],["s",["q"],10],["s",11]]`)
 	wantWire(t, enc.Encode(batches[2]), `[["#",0,["p"]],["a",0,"!"],["#",1,["q"]],["d",1]]`)
+
+	// The same path on both sides of a replacement goes inline after it: a
+	// short form would reach back across the replacement, to a path pi's
+	// decoder has forgotten ("unresolvable path: []"). pi at 49681e1b7.
+	straddle := ops(t, `[["s", ["a"], 1], ["r", 0], ["s", ["a"], 2]]`)
+	enc = Encoder{}
+	wantWire(t, enc.Encode(straddle), `[["s",["a"],1],["r",0],["s",["a"],2]]`)
+	roundTrip(t, [][]Op{straddle})
 }
 
 // Every verb has a short form, and the root path takes one too: a root "p"
