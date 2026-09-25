@@ -16,19 +16,19 @@ import (
 )
 
 // The oracle: testdata/upstream_delta.json, captured from pi's own
-// packages/chord/src/delta at 9a139c62b by testdata/capture.mts (its header
-// says how, and what each section is). Every batch below is compared byte for
-// byte with pi's, as encoding/json writes both. The one normalization is the
-// order of an object's member ops, which the capture records in Go's
-// enumeration order next to pi's own ("raw") — a Go map has no insertion
-// order (docs/UPSTREAM.md Divergences, "chord/delta immutable tracking").
+// packages/chord/src/delta by testdata/capture.mts (its header says how, and
+// what each section is) at the sha its "sha" field names, under node v26.4.0.
+// Every batch below is compared byte for byte with pi's, as encoding/json
+// writes both. A tracker's batches are pi's own, in pi's order. The one
+// normalization is DiffRevisions' order of an object's member ops, which the
+// capture records in Go's enumeration order next to pi's own ("raw") — a Go
+// map has no insertion order (docs/UPSTREAM.md, D69).
 
 type goldenFile struct {
 	SHA          string           `json:"sha"`
 	Diffs        []goldenBatch    `json:"diffs"`
 	Scenarios    []goldenScript   `json:"scenarios"`
 	Generated    []goldenBatch    `json:"generated"`
-	Probes       []goldenProbe    `json:"probes"`
 	Fuzz         []goldenFuzzSeed `json:"fuzz"`
 	Differential []goldenScript   `json:"differential"`
 }
@@ -66,9 +66,8 @@ type goldenResult struct {
 }
 
 type goldenFuzzSeed struct {
-	Seed         int    `json:"seed"`
-	Hash         string `json:"hash"`
-	OrderDiffers int    `json:"orderDiffers"`
+	Seed int    `json:"seed"`
+	Hash string `json:"hash"`
 }
 
 var loadGolden = sync.OnceValues(func() (*goldenFile, error) {
@@ -90,9 +89,9 @@ func golden(t *testing.T) *goldenFile {
 		t.Fatalf("testdata/upstream_delta.json: %v (regenerate it with testdata/capture.mts)", err)
 	}
 	// A table that can become empty is not a test.
-	if len(g.Diffs) == 0 || len(g.Scenarios) == 0 || len(g.Generated) == 0 || len(g.Probes) == 0 || len(g.Fuzz) == 0 || len(g.Differential) == 0 {
-		t.Fatalf("testdata/upstream_delta.json has an empty section: %d diffs, %d scenarios, %d generated, %d probes, %d fuzz, %d differential",
-			len(g.Diffs), len(g.Scenarios), len(g.Generated), len(g.Probes), len(g.Fuzz), len(g.Differential))
+	if len(g.Diffs) == 0 || len(g.Scenarios) == 0 || len(g.Generated) == 0 || len(g.Fuzz) == 0 || len(g.Differential) == 0 {
+		t.Fatalf("testdata/upstream_delta.json has an empty section: %d diffs, %d scenarios, %d generated, %d fuzz, %d differential",
+			len(g.Diffs), len(g.Scenarios), len(g.Generated), len(g.Fuzz), len(g.Differential))
 	}
 	return g
 }
@@ -504,7 +503,27 @@ func (r *runner) nav(step map[string]any) *Draft {
 	}
 	at, _ := step["at"].([]any)
 	for _, seg := range at {
+		if d == nil {
+			// JavaScript's d[seg] on undefined.
+			panic(undefinedRead(seg))
+		}
 		d = d.At(seg)
+	}
+	return d
+}
+
+// undefinedRead is the TypeError JavaScript throws for a property read on
+// undefined — where a step's path leaves the tree, the Go draft chain meets a
+// nil *Draft.
+func undefinedRead(prop any) error {
+	return fmt.Errorf("Cannot read properties of undefined (reading '%v')", prop)
+}
+
+// draft is nav for a step that reads prop from the draft it lands on.
+func (r *runner) draft(step map[string]any, prop any) *Draft {
+	d := r.nav(step)
+	if d == nil {
+		panic(undefinedRead(prop))
 	}
 	return d
 }
@@ -589,6 +608,13 @@ func (r *runner) exec(step map[string]any) (o outcome) {
 	case "abort":
 		r.changes[name(step, "c")].Abort()
 		return outcome{}
+	case "abortPrepared":
+		r.prepared[name(step, "p")].Abort()
+		return outcome{}
+	case "baseRevision":
+		return outcome{value: r.prepared[name(step, "p")].BaseRevision(), hasVal: true}
+	case "revision":
+		return outcome{value: r.trackers[name(step, "t")].Revision(), hasVal: true}
 	case "value":
 		return outcome{value: r.trackers[name(step, "t")].Value(), hasVal: true}
 	case "hold":
@@ -606,15 +632,15 @@ func (r *runner) exec(step map[string]any) (o outcome) {
 	case "keys":
 		return outcome{value: r.nav(step).Keys(), hasVal: true}
 	case "get":
-		return result(r.nav(step).Get(key))
+		return result(r.draft(step, key).Get(key))
 	case "set":
-		return outcome{err: r.nav(step).Set(key, value())}
+		return outcome{err: r.draft(step, key).Set(key, value())}
 	case "append":
-		d := r.nav(step)
+		d := r.draft(step, key)
 		current, _ := d.Get(key)
 		return outcome{err: d.Set(key, jsConcat(current, step["text"].(string)))}
 	case "delete":
-		return outcome{err: r.nav(step).Delete(key)}
+		return outcome{err: r.draft(step, key).Delete(key)}
 	case "push", "unshift":
 		d := r.nav(step)
 		method := d.Push
@@ -649,7 +675,8 @@ func (r *runner) exec(step map[string]any) (o outcome) {
 	case "reverse":
 		return outcome{err: r.nav(step).Reverse()}
 	case "sort":
-		return outcome{err: r.nav(step).Sort(r.comparator(step))}
+		d := r.nav(step)
+		return outcome{err: d.Sort(r.comparator(d, step))}
 	case "fill":
 		return outcome{err: r.nav(step).Fill(value(), num("start"), num("end"))}
 	case "copyWithin":
@@ -682,8 +709,10 @@ func jsConcat(current any, text string) any {
 }
 
 // comparator is the step's sort comparator: nil for the default order, else
-// (field(l) - field(r)) * direction, bumping a counter on both sides first.
-func (r *runner) comparator(step map[string]any) func(a, b any) int {
+// (field(l) - field(r)) * direction, bumping a counter on both sides first,
+// writing over an element of the array being sorted, or unshifting into it
+// on the first call.
+func (r *runner) comparator(array *Draft, step map[string]any) func(a, b any) int {
 	by, ok := step["by"].(string)
 	if !ok {
 		return nil
@@ -693,6 +722,9 @@ func (r *runner) comparator(step map[string]any) func(a, b any) int {
 		direction = -1
 	}
 	bump, _ := step["bump"].(string)
+	write, _ := step["write"].([]any)
+	unshiftOnce, hasUnshift := step["unshiftOnce"].([]any)
+	unshifted := false
 	field := func(v any) float64 {
 		if by == "." {
 			return v.(float64)
@@ -707,6 +739,18 @@ func (r *runner) comparator(step map[string]any) func(a, b any) int {
 				n, _ := d.Get(bump)
 				must(r.t, d.Set(bump, n.(float64)+1))
 			}
+		}
+		if write != nil {
+			must(r.t, array.Set(write[0], r.b.build(write[1])))
+		}
+		if hasUnshift && !unshifted {
+			unshifted = true
+			items := make([]any, len(unshiftOnce))
+			for i, item := range unshiftOnce {
+				items[i] = r.b.build(item)
+			}
+			_, err := array.Unshift(items...)
+			must(r.t, err)
 		}
 		switch diff := (field(a) - field(b)) * direction; {
 		case diff < 0:
@@ -775,50 +819,36 @@ func (r *runner) run(label string, s goldenScript) (reordered int) {
 
 func TestGoldenScenarios(t *testing.T) {
 	g := golden(t)
-	reordered := 0
 	for _, s := range g.Scenarios {
 		r := newRunner(t, false)
 		for tname, initial := range s.Trackers {
-			tr, err := Track(r.b.raw(initial))
-			if err != nil {
-				t.Fatalf("%s: Track: %v", s.Name, err)
-			}
-			r.trackers[tname] = tr
+			r.trackers[tname] = Track(r.b.raw(initial))
 		}
-		reordered += r.run(s.Name, s)
+		r.run(s.Name, s)
 	}
-	t.Logf("%d scenarios; pi's own member order differs from Go's in %d batches", len(g.Scenarios), reordered)
 }
 
-// The scenarios whose outcome depends on the order a change is walked in —
-// which of several sparse arrays a failed Prepare reports — replayed many
-// times: a Go map iterates in a randomized order, so a walk that followed it
-// would match pi only by chance.
+// Every scenario and script replayed many times: a Go map iterates in a
+// randomized order, so an emission that followed one would match pi only by
+// chance.
 func TestGoldenScenariosAreDeterministic(t *testing.T) {
 	g := golden(t)
-	replayed := 0
-	for _, s := range g.Scenarios {
-		if !strings.HasPrefix(s.Name, "dense check") {
-			continue
-		}
-		replayed++
-		for range 50 {
+	for range 10 {
+		for _, s := range g.Scenarios {
 			r := newRunner(t, false)
 			for tname, initial := range s.Trackers {
-				tr, err := Track(r.b.raw(initial))
-				if err != nil {
-					t.Fatalf("%s: Track: %v", s.Name, err)
-				}
-				r.trackers[tname] = tr
+				r.trackers[tname] = Track(r.b.raw(initial))
 			}
 			r.run(s.Name, s)
-			if t.Failed() {
-				return
-			}
 		}
-	}
-	if replayed == 0 {
-		t.Fatal(`no "dense check" scenario in the golden`)
+		for _, s := range g.Differential {
+			r := newRunner(t, true)
+			r.trackers["main"] = Track(r.b.raw(s.Initial))
+			r.run(fmt.Sprintf("script %d", *s.Script), s)
+		}
+		if t.Failed() {
+			return
+		}
 	}
 }
 
@@ -826,14 +856,11 @@ func TestGoldenScenariosAreDeterministic(t *testing.T) {
 // and value hashed as pi's were.
 func TestGoldenFuzz(t *testing.T) {
 	g := golden(t)
-	reordered := 0
 	for _, want := range g.Fuzz {
-		reordered += want.OrderDiffers
 		if got := fuzzSeed(t, want.Seed); got != want.Hash {
 			t.Errorf("fuzz seed %d: ops and values differ from pi's", want.Seed)
 		}
 	}
-	t.Logf("%d seeds x 100 steps; pi's own member order differs from Go's in %d batches", len(g.Fuzz), reordered)
 }
 
 // mulberry32 is state-fuzz.test.ts's random(seed), in int32 arithmetic.
@@ -855,17 +882,15 @@ func fuzzSeed(t *testing.T, seed int) string {
 		items[id] = map[string]any{"id": float64(id), "text": fmt.Sprintf("item-%d", id), "score": 0.0}
 	}
 	initial["items"] = items
-	tr, err := Track(initial)
-	if err != nil {
-		t.Fatal(err)
-	}
+	tr := Track[map[string]any](initial)
 	replica := cloneJSON(tr.Value())
+	var err error
 	stream := sha256.New()
 	for step := range 100 {
 		choice := int(math.Floor(rng() * 14))
 		value := seed*1_000 + step
 		ops := commit(t, tr, func(d *Draft) { fuzzMutate(t, d, choice, value) })
-		if replica, err = ApplyImmutable(replica, ops); err != nil {
+		if replica, err = ApplyImmutable[any](replica, ops); err != nil {
 			t.Fatalf("seed %d step %d: %v", seed, step, err)
 		}
 		wantJSON(t, replica, tr.Value())
@@ -946,79 +971,222 @@ func fuzzMutate(t *testing.T, d *Draft, choice, value int) {
 // pi's live draft and replayed here step for step.
 func TestGoldenDifferential(t *testing.T) {
 	g := golden(t)
-	reordered, steps := 0, 0
+	steps := 0
 	for _, s := range g.Differential {
 		r := newRunner(t, true)
-		tr, err := Track(r.b.raw(s.Initial))
-		if err != nil {
-			t.Fatal(err)
-		}
-		r.trackers["main"] = tr
-		reordered += r.run(fmt.Sprintf("script %d", *s.Script), s)
+		r.trackers["main"] = Track(r.b.raw(s.Initial))
+		r.run(fmt.Sprintf("script %d", *s.Script), s)
 		steps += len(s.Steps)
 	}
-	t.Logf("%d scripts, %d steps; pi's own member order differs from Go's in %d batches", len(g.Differential), steps, reordered)
+	t.Logf("%d scripts, %d steps", len(g.Differential), steps)
 }
 
-// The tracker cases whose inputs are too large to record.
+// The tracker cases whose inputs are too large to record, built as
+// capture.mts builds them.
 func TestGoldenGenerated(t *testing.T) {
 	g := golden(t)
 	for _, want := range g.Generated {
-		switch {
-		case want.Name == "prepareReplace-rows-10000":
+		var p *Prepared[map[string]any]
+		if want.Name == "prepareReplace-rows-10000" {
 			rows := make([]any, 10_000)
 			for i := range rows {
-				rows[i] = map[string]any{"value": float64(i), "stable": map[string]any{"value": float64(i)}}
+				rows[i] = obj("value", float64(i), "stable", obj("value", float64(i)))
 			}
-			tr, err := Track(map[string]any{"rows": rows})
-			if err != nil {
-				t.Fatal(err)
-			}
+			tr := Track(obj("rows", rows))
 			replacement := slices.Clone(tr.Value()["rows"].([]any))
-			replacement[5_000] = map[string]any{"value": -1.0, "stable": replacement[5_000].(map[string]any)["stable"]}
-			p, err := tr.PrepareReplace(map[string]any{"rows": replacement})
-			if err != nil {
-				t.Fatal(err)
+			replacement[5_000] = obj("value", -1.0, "stable", replacement[5_000].(map[string]any)["stable"])
+			var err error
+			if p, err = tr.PrepareReplace(obj("rows", replacement)); err != nil {
+				t.Fatalf("%s: %v", want.Name, err)
 			}
-			checkBatch(t, want.Name, p.Ops(), want)
-			if got := len(jsonText(t, p.Ops())); got >= 100 {
-				t.Errorf("%s: %d bytes of ops, want under 100", want.Name, got)
-			}
-		case strings.HasPrefix(want.Name, "draft-"):
-			tr, err := Track(map[string]any{"values": []any{-1.0}})
-			if err != nil {
-				t.Fatal(err)
-			}
+		} else {
+			initial, edit := generatedChange(t, want.Name)
+			tr := Track(initial)
 			c, err := tr.BeginChange()
 			if err != nil {
-				t.Fatal(err)
+				t.Fatalf("%s: %v", want.Name, err)
 			}
-			items := make([]any, 100_000)
-			for i := range items {
-				items[i] = float64(i)
+			edit(c.State())
+			if p, err = c.Prepare(); err != nil {
+				t.Fatalf("%s: %v", want.Name, err)
 			}
-			values := c.State().At("values")
-			if strings.Contains(want.Name, "unshift") {
-				_, err = values.Unshift(items...)
+		}
+		checkBatch(t, want.Name, p.Ops(), want)
+		if h := sha(jsonText(t, p.Value())); h != want.ValueHash {
+			t.Errorf("%s: value differs from pi's", want.Name)
+		}
+		replica, err := ApplyImmutable(p.Base(), p.Ops())
+		if err != nil {
+			t.Fatalf("%s: replaying: %v", want.Name, err)
+		}
+		wantJSON(t, replica, p.Value())
+	}
+}
+
+func obj(kv ...any) map[string]any {
+	m := make(map[string]any, len(kv)/2)
+	for i := 0; i < len(kv); i += 2 {
+		m[kv[i].(string)] = kv[i+1]
+	}
+	return m
+}
+
+// generatedChange is a "generated" case's root and edit, as capture.mts's
+// generate builds them.
+func generatedChange(t *testing.T, name string) (map[string]any, func(d *Draft)) {
+	t.Helper()
+	numbers := func(n int) []any {
+		out := make([]any, n)
+		for i := range out {
+			out[i] = float64(i)
+		}
+		return out
+	}
+	rows := func(n int, row func(i int) any) []any {
+		out := make([]any, n)
+		for i := range out {
+			out[i] = row(i)
+		}
+		return out
+	}
+	value := func(i int) any { return obj("value", float64(i)) }
+	add := func(d *Draft, key string, delta float64) {
+		v, _ := d.Get(key)
+		must(t, d.Set(key, v.(float64)+delta))
+	}
+	switch name {
+	case "draft-unshift-100000", "draft-splice-100000":
+		return obj("values", []any{-1.0}), func(d *Draft) {
+			var err error
+			if name == "draft-unshift-100000" {
+				_, err = d.At("values").Unshift(numbers(100_000)...)
 			} else {
-				_, err = values.Splice(1, 0, items...)
+				_, err = d.At("values").Splice(1, 0, numbers(100_000)...)
 			}
 			must(t, err)
-			p, err := c.Prepare()
-			if err != nil {
-				t.Fatal(err)
+		}
+	case "dense-rows-1000":
+		return obj("rows", rows(1_000, value)), func(d *Draft) {
+			rs := d.At("rows")
+			for i := range rs.Len() {
+				add(rs.At(i), "value", 1)
 			}
-			checkBatch(t, want.Name, p.Ops(), want)
-			if h := sha(jsonText(t, p.Value())); h != want.ValueHash {
-				t.Errorf("%s: value differs from pi's", want.Name)
+		}
+	case "dense-values-600":
+		return obj("values", numbers(1_000)), func(d *Draft) {
+			for i := range 600 {
+				must(t, d.At("values").Set(i, float64(-i-1)))
 			}
-			replica, err := ApplyImmutable(p.Base(), p.Ops())
-			if err != nil {
-				t.Fatal(err)
+		}
+	case "dense-nested-2000":
+		return obj("rows", rows(2_000, func(i int) any { return obj("nested", value(i)) })), func(d *Draft) {
+			rs := d.At("rows")
+			must(t, rs.At(0).At("nested").Set("value", -1.0))
+			for i := 500; i < 1_000; i++ {
+				must(t, rs.At(i).At("nested").Set("value", float64(-i)))
 			}
-			wantJSON(t, replica, p.Value())
-		default:
-			t.Fatalf("unknown generated case %q", want.Name)
+		}
+	case "dense-reserved-400":
+		rs := rows(400, func(int) any { return obj("flag", 0.0) })
+		rs[100].(map[string]any)["special"] = obj("__proto__", obj("values", numbers(400)))
+		return obj("rows", rs), func(d *Draft) {
+			rs := d.At("rows")
+			for i := range 256 {
+				must(t, rs.At(i).Set("flag", 1.0))
+			}
+			values := rs.At(100).At("special").At("__proto__").At("values")
+			for i := range 256 {
+				must(t, values.Set(i, float64(-i-1)))
+			}
+		}
+	case "dense-covered-400":
+		rs := rows(400, func(i int) any {
+			if i == 100 {
+				return obj("flag", 0.0, "values", rows(400, value))
+			}
+			return obj("flag", 0.0, "values", []any{})
+		})
+		return obj("rows", rs), func(d *Draft) {
+			rs := d.At("rows")
+			for i := range 256 {
+				must(t, rs.At(i).Set("flag", 1.0))
+			}
+			values := rs.At(100).At("values")
+			for i := range 256 {
+				must(t, values.At(i).Set("value", float64(-i-1)))
+			}
+			_, err := values.Push(obj("value", 999.0))
+			must(t, err)
+		}
+	case "dense-disjoint-1400":
+		return obj("values", rows(1_400, value)), func(d *Draft) {
+			vs := d.At("values")
+			for _, i := range []int{97, 358, 897, 1_158} {
+				must(t, vs.At(i).Set("value", float64(-i-1)))
+			}
+			for i := 100; i < 356; i++ {
+				must(t, vs.At(i).Set("value", float64(-i-1)))
+			}
+			for i := 900; i < 1_156; i++ {
+				must(t, vs.At(i).Set("value", float64(-i-1)))
+			}
+		}
+	case "queue-20000":
+		return obj("values", rows(20_000, value)), func(d *Draft) {
+			vs := d.At("values")
+			for i := range 10_000 {
+				_, _, err := vs.Shift()
+				must(t, err)
+				_, err = vs.Push(obj("value", float64(20_000+i)))
+				must(t, err)
+			}
+		}
+	case "fragmentation-20000":
+		return obj("values", rows(20_000, value)), func(d *Draft) {
+			vs := d.At("values")
+			var held []*Draft
+			for _, i := range []int{1, 1_001, 5_001, 10_001, 15_001, 19_999} {
+				held = append(held, vs.At(i))
+			}
+			for i := 0; i < 20_000; i += 2 {
+				_, err := vs.Splice(i, 1, obj("value", float64(-i-1)))
+				must(t, err)
+			}
+			for _, h := range held {
+				add(h, "value", 100_000)
+			}
+		}
+	case "null-overrides-10000":
+		return obj("values", numbers(10_000)), func(d *Draft) {
+			must(t, d.At("values").Set(17, nil))
+			must(t, d.At("values").Set(9_000, nil))
+		}
+	case "op-cap-object-4096", "op-cap-object-4097":
+		n, _ := strconv.Atoi(strings.TrimPrefix(name, "op-cap-object-"))
+		initial := map[string]any{}
+		for i := range n {
+			initial[strconv.FormatInt(int64(i), 36)] = 0.0
+		}
+		return initial, func(d *Draft) {
+			for i := range n {
+				must(t, d.Set(strconv.FormatInt(int64(i), 36), 1.0))
+			}
+		}
+	case "op-cap-array-4096", "op-cap-array-4097":
+		n, _ := strconv.Atoi(strings.TrimPrefix(name, "op-cap-array-"))
+		v := rows(n, func(int) any { return obj("x", 0.0) })
+		w := rows(n, func(int) any { return 0.0 })
+		return obj("v", v, "w", w), func(d *Draft) {
+			must(t, d.At("v").Reverse())
+			for i := range n {
+				x := 0.0
+				if i%3 == 0 {
+					x = 1
+				}
+				must(t, d.At("w").Set(i, x))
+			}
 		}
 	}
+	t.Fatalf("unknown generated case %q: add it to generatedChange as capture.mts builds it", name)
+	return nil, nil
 }

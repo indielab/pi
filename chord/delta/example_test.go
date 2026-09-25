@@ -16,8 +16,7 @@ func ExampleTracker() {
 			panic(err)
 		}
 	}
-	tracker, err := delta.Track(map[string]any{"rows": []any{}, "status": "idle"})
-	check(err)
+	tracker := delta.Track(map[string]any{"rows": []any{}, "status": "idle"})
 	replica, err := delta.ApplyImmutable[any](nil, []delta.Op{delta.Replace{Value: tracker.Value()}})
 	check(err)
 	row := map[string]any{"id": 1}
@@ -43,6 +42,6 @@ func ExampleTracker() {
 	check(err)
 	fmt.Println(string(value))
 	// Output:
-	// [["p",["rows"],0,0,[{"id":1}]],["s",["status"],"running"]]
+	// [["s",["status"],"running"],["p",["rows"],0,0,[{"id":1}]]]
 	// {"rows":[{"id":1}],"status":"running"}
 }

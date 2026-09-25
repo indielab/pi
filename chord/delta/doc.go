@@ -1,6 +1,6 @@
 // Package delta synchronizes JSON values from an authoritative producer to an
 // ordered replica. It mirrors @earendil-works/chord/delta
-// (packages/chord/src/delta at 9a139c62b) and depends on nothing else in the
+// (packages/chord/src/delta at d5cba1d97) and depends on nothing else in the
 // port: session storage, the runtime and the facet host consume it, and the
 // arrows point that way.
 //
@@ -62,31 +62,36 @@
 //	err = tracker.Adopt(prepared)                // commit
 //	publish(prepared.Ops())
 //
-// Nothing is recorded while the draft is mutated. Prepare diffs the draft's
-// result against the committed revision (DiffRevisions), so the batch depends
-// only on the two revisions, never on the order or number of writes: three
-// writes to one property publish as one set, and writes that cancel out
-// publish nothing and leave the committed revision's identity intact. Adopt
-// commits exactly what was prepared, so a runtime can persist the batch before
-// it adopts, or drop it. PrepareReplace prepares a whole new value the same
-// way.
+// A change is an overlay on the committed revision, which it never modifies:
+// each container the draft reads gets a node that records the writes,
+// deletions and structural edits made through it. Prepare emits the ops those
+// records mean — in the order the change made them, shallowest first, each
+// edit inside an array at its entry's final index — and materializes the
+// revision they produce; writes that cancel out publish nothing and leave the
+// committed revision's identity intact. Adopt commits exactly what was
+// prepared, by swapping the root, so a runtime can persist the batch before it
+// adopts, or drop it. PrepareReplace prepares a whole new value: no ops when it
+// equals the committed revision, one Replace otherwise.
 //
-// A tracker has at most one open change. Adopt refuses a prepared change from
-// another tracker, one already adopted or aborted, and one prepared against a
-// revision that is no longer committed.
+// Any number of changes may be open or prepared against one revision.
+// Adopting one makes every other stale: an open change's drafts are settled
+// and it cannot be prepared, and Adopt refuses a prepared one. Adopt also
+// refuses a prepared change from another tracker, one already adopted, and one
+// aborted.
 //
 // Strings publish as appends and front-truncations where they can; arrays as
-// splices and permutations anchored on the elements the two revisions share by
-// identity, then by value; objects as sets and deletes of the members that
-// differ. A batch of more than 4,096 ops, or a large one costing more than the
-// value itself, is published as one Replace. The op sequence is not canonical:
-// depend on the resulting value, never on the exact tuples.
+// splices of the entries removed and inserted, a permutation of the entries
+// kept, and sets of the entries written over; objects as sets and deletes.
+// Many edits across one array fold into a splice of the region they cover, an
+// edit below a reserved key into a set of its nearest safe ancestor, and a
+// batch of more than 4,096 ops into one Replace. The op sequence is exact but
+// not canonical: depend on the resulting value, never on the exact tuples.
 //
 // # Drafts
 //
 // Upstream's draft is a Proxy: plain JavaScript reads, writes and array method
-// calls on a copy-on-write view. Go has no Proxy, so a *Draft is the handler
-// the Proxy would call, and each trap is a method:
+// calls on the overlay. Go has no Proxy, so a *Draft is the handler the Proxy
+// would call, and each trap is a method:
 //
 //	draft.key                        d.Get(key)  (value, present); a member object or array is a *Draft
 //	draft.key (an object or array)   d.At(key)   the member's draft, or nil
@@ -106,53 +111,51 @@
 //	draft.copyWithin(t, start, end)  d.CopyWithin(t, start, end)
 //
 // A draft belongs to a container, not a position: reading a member twice
-// yields the same *Draft, and a held draft follows its container through
-// sorting, reversal and insertion — or out of the tree, after which writes
-// through it are dropped. Every value written is checked and deep-copied at
-// once; assigning a *Draft copies what that draft holds now. A draft is valid
-// until its change is prepared or aborted: after that a write returns
-// ErrDraftRevoked, and a read — which has no error to return — panics with it.
+// yields the same *Draft, and a held draft follows its entry through sorting,
+// reversal and insertion — or out of the tree, after which writes through it
+// are ignored. Every value placed — by Set, Push, Unshift, Splice, Fill or
+// CopyWithin — is checked and deep-copied at once, and a refused one leaves the
+// draft as it was; placing a *Draft copies what that draft holds now, and one
+// value placed twice becomes two. A draft is usable until its change settles:
+// after that a write returns ErrDraftSettled, and a read — which has no error
+// to return — panics with it.
 //
 // Where upstream throws a TypeError from a trap, the Go method returns an
-// error carrying upstream's text: deleting an array element, assigning a
-// value with no JSON form, or a cycle. An array grown with SetLen or written
-// past its end holds holes until they are filled, and Prepare fails if any
-// remain, as upstream's does; so does a named (non-index) property set on an
-// array, which JavaScript lets a draft array hold and never lets it drop.
-// Unshift or Splice inserting more than 10,000 items turns the holes it moves
-// into slots holding JavaScript's undefined, as upstream's fallback does: Get
-// reads nothing there, but Has and Keys see them, and Prepare fails on them
-// too.
+// error carrying upstream's text. Arrays stay dense: writing past the next
+// index, deleting an element and writing a named property are refused;
+// growing the length inserts nulls, and shrinking it removes elements.
 //
 // # Revisions
 //
 // Every committed revision — Tracker.Value, and the Base and Value of each
 // Prepared — is immutable and shares its unchanged subtrees with the revisions
-// around it; the ops' payloads share them too. Upstream freezes them; in Go
-// they are immutable by contract, so never modify one — which includes never
-// handing one to Apply (see Streams). Track and PrepareReplace
-// import a deep copy of what they are handed: every number becomes a float64
-// (JavaScript's one number type), a nil map or slice an empty one, and an
-// object or array reachable twice becomes two independent values.
+// around it; the ops' payloads may be the same containers as parts of Value.
+// Immutability is an ownership contract, in pi as in Go: nothing is frozen or
+// copied defensively, so never modify one — which includes never handing one
+// to Apply (see Streams). Track and PrepareReplace take ownership of the root
+// they are handed in O(1), without walking it: it must be alias-free strict
+// JSON, and the caller must not touch it again.
 //
 // Object identity is not replicated: a replica holds a distinct value at each
-// path. Nor is object key order. JavaScript enumerates an object's keys in
-// insertion order, a Go map in none, so the port diffs an object's members, and
-// Draft.Keys lists them, in the order of an object whose keys were inserted
-// sorted — integer-like keys ascending, then the rest by UTF-16 code unit — and
-// a batch can list an object's member ops in a different order than pi would
-// for the same change. encoding/json marshals a payload's members in byte
-// order instead. The replica is the same either way.
+// path. Nor is object key order, entirely. JavaScript enumerates an object's
+// keys integer-like first (ascending), then in insertion order; a Go map keeps
+// none, so DiffRevisions visits a revision's members — and Draft.Keys lists
+// them — in the order of an object whose keys were inserted sorted (the rest
+// by UTF-16 code unit), and Draft.Keys lists the string keys a change added
+// after them, in the order it added them. A tracker's batches follow the order
+// of the change's edits, as pi's do. encoding/json marshals a payload's members
+// in byte order instead. The replica is the same either way.
 //
 // # Paths and safety
 //
 // Path segments are Key and Index. Three keys are reserved as segments —
 // ReservedSegments — because a replica in pi applies parent[key] = value, and
 // a path is data: a Go producer emitting ["s", ["__proto__", "isAdmin"], true]
-// hands a TypeScript replica a prototype-pollution primitive. The diff never
-// emits one — an object holding a reserved key is published whole, by its
-// parent's path — and wire validators and appliers refuse them. As VALUE keys
-// they are fine; a value is written whole and never walked.
+// hands a TypeScript replica a prototype-pollution primitive. Neither the
+// tracker nor the diff ever emits one — an edit at or below a reserved key is
+// published by setting the nearest safe ancestor whole — and wire validators
+// and appliers refuse them. As VALUE keys they are fine; a value is written
+// whole and never walked.
 //
 // # Streams
 //
@@ -168,12 +171,11 @@
 // Prepared.Ops share Prepared.Value's containers, and a base batch carries
 // the committed revision itself, and so does the encoder's output for them.
 // Apply builds its replica out of what it is handed and writes into it, so
-// in-process it would modify the tracker's revisions — silently, where pi's
-// apply throws a TypeError on them, frozen — and the tracker would go on
-// publishing batches against a revision its replicas no longer match. Apply a
-// tracker's batches in-process with ApplyImmutable, as pi's own replicas do,
-// or detach them first; a batch that was marshalled and decoded on the way is
-// already detached.
+// in-process it would modify the tracker's revisions — silently, in pi as
+// here — and the tracker would go on publishing batches against a revision its
+// replicas no longer match. Apply a tracker's batches in-process with
+// ApplyImmutable, as pi's own replicas do, or detach them first; a batch that
+// was marshalled and decoded on the way is already detached.
 //
 // # JSON in Go
 //

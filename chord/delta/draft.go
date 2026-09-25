@@ -1,11 +1,13 @@
 package delta
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
 	"math"
 	"math/big"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -16,358 +18,408 @@ import (
 
 // ─── Drafts ──────────────────────────────────────────────────────────────────
 //
-// Upstream's delta/draft.ts: a revocable copy-on-write view of a revision,
-// which a change's caller mutates freely and the tracker then diffs. Upstream
-// hands out a Proxy per container; Go has no Proxy, so a Draft is a handle to
-// the same per-container state the Proxy's handler holds, and its methods are
-// the handler's traps (see doc.go for the mapping).
+// Upstream's delta/tracker.ts: a change's draft is an overlay on the committed
+// revision. Every container the draft reads gets an overlay node, which records
+// the writes, deletions and structural edits made through it and leaves the
+// revision untouched; preparing the change emits the ops those records mean,
+// directly, without diffing. Upstream hands out a Proxy per node; Go has no
+// Proxy, so a Draft is a handle to one node and its methods are the traps (see
+// doc.go for the mapping).
 //
-// A draft state belongs to a container IDENTITY, not a position: reading a
-// member yields the one handle for that container, and writes through a held
-// handle follow the container wherever array operations move it — or nowhere,
-// once it has been removed. Nothing is recorded while a draft is mutated;
-// finishing walks from the root, folds each touched container's copy back
-// into a fresh revision that shares every untouched subtree, and the tracker
-// diffs that against the base.
+// A node belongs to one container of one slot: an object's member, an entry of
+// the base array, or an entry a change inserted. Reading a member twice yields
+// the same Draft, and a held Draft follows its entry through sorting, reversal
+// and insertion — or out of the tree, after which its writes are ignored.
 
-// transaction is upstream's DraftContext: every draft state of one change,
-// keyed by the identity of the container each was created for.
-type transaction struct {
-	active  bool
-	root    *draftState
-	states  map[identity]*draftState
-	created []*draftState
-	// fresh holds the arrays this change created — every array a write copied
-	// in — which upstream's context.owned marks as the transaction's own: see
-	// finalize for what that changes.
-	fresh map[identity]bool
-	// committed is the first error the store's commit would raise for a fresh
-	// array, which upstream reports only once finalize has walked the tree.
-	committed error
+// parentKind is where a node's container sits in its parent.
+type parentKind uint8
+
+const (
+	objectEntry parentKind = iota // a member of an object
+	baseEntry                     // an entry of the base array
+	insertEntry                   // an entry the change inserted
+)
+
+// node is upstream's OverlayNode.
+type node struct {
+	ctx    *overlayContext
+	base   any // map[string]any or []any
+	parent *node
+	kind   parentKind
+	key    string        // objectEntry: the member's key
+	index  int           // baseEntry, insertEntry: the entry's source index
+	source *insertSource // insertEntry: the insertion it came from
+	// placement is upstream's parentPlacement: the container was placed by
+	// this change (written or inserted) rather than read from the revision, so
+	// its content publishes with the op that placed it.
+	placement bool
+	draft     *Draft
+
+	// An object's overlay: written members, deleted ones, and base members
+	// deleted and written again (which must be deleted on the replica first, so
+	// that its key order follows the draft's).
+	writes  *orderedMap[string]
+	deletes *orderedMap[string]
+	readded *orderedMap[string]
+
+	array *arrayOverlay
+
+	// The nodes of containers read from the revision, by slot: those are
+	// found again by where they are, since the revision never changes under
+	// them. A placed container is found by identity (overlayContext.placed).
+	keyChildren   map[string]*node
+	indexChildren map[int]*node
+
+	dirty, subtreeDirty bool
+	path                Path
+	resolved            bool
 }
 
-// draftState is upstream's DraftState: one container of the base (or one a
-// write inserted), and the transaction's own shallow copy of it once written.
-type draftState struct {
-	txn   *transaction
-	base  any // map[string]any or []any
-	own   any // nil until the first write
-	draft *Draft
-	// named holds an array's named (non-index) properties, which JavaScript
-	// lets a draft array carry and no revision can: while there are any, the
-	// change cannot be prepared.
-	named map[string]any
+// slot is where a container sits in a node: a member key, or an entry's
+// source index and insertion.
+type slot struct {
+	kind   parentKind
+	key    string
+	index  int
+	source *insertSource
 }
 
-// hole is an array slot that SetLen, or a write past the end, left without a
-// value — JavaScript's hole. Reading one yields nothing, and finishing a
-// change whose array still has one fails, as upstream's dense check does.
-type holeValue struct{}
-
-var hole any = holeValue{}
-
-func isHole(v any) bool {
-	_, ok := v.(holeValue)
+func (n *node) isArray() bool {
+	_, ok := n.base.([]any)
 	return ok
 }
 
-// undefinedSlot is an array slot holding JavaScript's undefined: what
-// upstream's spliceArray leaves where it moves a hole, which it does when
-// Unshift or Splice inserts more than maxNativeInsert items. It reads as
-// missing, as a hole does, but it is an own key (Keys and Has see it), the
-// default sort puts it between the values and the holes, and finishing a
-// change whose array still has one fails with the dense check's second text.
-type undefinedValue struct{}
+func (n *node) object() map[string]any { return n.base.(map[string]any) }
+func (n *node) elements() []any        { return n.base.([]any) }
 
-var undefinedSlot any = undefinedValue{}
+// childFor is upstream's createNode for a member container: the node the
+// container already has, or a new one.
+func (n *node) childFor(s slot, value any, placement bool) *node {
+	if c := n.existingChild(s, value, placement); c != nil {
+		return c
+	}
+	c := n.ctx.newNode(value, n, s, placement)
+	if placement {
+		id, _ := identityOf(value)
+		n.ctx.placed[id] = c
+	} else if s.kind == objectEntry {
+		if n.keyChildren == nil {
+			n.keyChildren = map[string]*node{}
+		}
+		n.keyChildren[s.key] = c
+	} else {
+		if n.indexChildren == nil {
+			n.indexChildren = map[int]*node{}
+		}
+		n.indexChildren[s.index] = c
+	}
+	return c
+}
 
-// isEmptySlot reports whether an array slot holds no value: a hole or an
-// undefined slot.
-func isEmptySlot(v any) bool {
-	switch v.(type) {
-	case holeValue, undefinedValue:
+// existingChild is upstream's rawNodes lookup: the node of the container a
+// slot holds, if one was made.
+func (n *node) existingChild(s slot, value any, placement bool) *node {
+	if placement {
+		id, ok := identityOf(value)
+		if !ok {
+			return nil
+		}
+		return n.ctx.placed[id]
+	}
+	if s.kind == objectEntry {
+		return n.keyChildren[s.key]
+	}
+	return n.indexChildren[s.index]
+}
+
+// holds reports whether the slot child sits in still holds child's container:
+// a member not written over or deleted since, or an entry not overridden since
+// — or, for a placed container, the same one.
+func (n *node) holds(child *node, value any) bool {
+	if !child.placement {
+		switch child.kind {
+		case objectEntry:
+			return !n.hasWrite(child.key)
+		case baseEntry:
+			return !n.array.baseOverrides.has(child.index)
+		}
+		return false
+	}
+	return same(value, child.base)
+}
+
+// ─── Objects ─────────────────────────────────────────────────────────────────
+
+func (n *node) hasWrite(key string) bool  { return n.writes.has(key) }
+func (n *node) isDeleted(key string) bool { return n.deletes.has(key) }
+
+// objectHas is upstream's: a member not deleted, and written or the base's own.
+func (n *node) objectHas(key string) bool {
+	if n.isDeleted(key) {
+		return false
+	}
+	if n.hasWrite(key) {
 		return true
 	}
-	return false
+	_, ok := n.object()[key]
+	return ok
 }
 
-// maxNativeInsert is upstream's MAX_NATIVE_ARRAY_INSERT_ITEMS: up to this many
-// inserted items, Unshift and Splice run the native method, which moves a
-// hole as a hole; past it they run spliceArray, which moves it into an
-// undefined slot.
-const maxNativeInsert = 10_000
-
-// definedMoves is spliceArray's move for the slots it shifts: every one is
-// defined afresh, so a hole becomes an undefined slot. The native methods move
-// slots as they are, and so does a splice that inserts as many items as it
-// removes, since nothing moves.
-func definedMoves(moved []any, inserted, removed int) {
-	if inserted <= maxNativeInsert || inserted == removed {
-		return
+// objectValue is upstream's: the member as written, else as the base holds it
+// (even when deleted). ok is false when neither has it.
+func (n *node) objectValue(key string) (any, bool) {
+	if v, ok := n.writes.get(key); ok {
+		return v, true
 	}
-	for i, v := range moved {
-		if isHole(v) {
-			moved[i] = undefinedSlot
+	v, ok := n.object()[key]
+	return v, ok
+}
+
+func (n *node) setWrite(key string, value any) {
+	if n.writes == nil {
+		n.writes = &orderedMap[string]{}
+	}
+	n.writes.set(key, value)
+}
+
+func (n *node) setDeletion(key string) {
+	if n.deletes == nil {
+		n.deletes = &orderedMap[string]{}
+	}
+	n.deletes.set(key, nil)
+}
+
+// ownKeys is upstream's ownKeys trap: an object's members, integer-like first
+// (ascending), then the rest in order — the base's (in keyOrder, where pi
+// follows insertion order: D69), then the members this change added, in the
+// order it added them.
+func (n *node) ownKeys() []string {
+	base := n.object()
+	existingOnly := n.deletes.len() == 0 && n.readded.len() == 0
+	if existingOnly {
+		for k := range n.writes.keys() {
+			if _, ok := base[k]; !ok {
+				existingOnly = false
+				break
+			}
 		}
 	}
-}
-
-func newTransaction(base any) *transaction {
-	tx := &transaction{active: true, states: map[identity]*draftState{}, fresh: map[identity]bool{}}
-	tx.root = tx.stateFor(base)
-	return tx
-}
-
-// stateFor is upstream's getState: the state of container v, created on
-// first sight.
-func (tx *transaction) stateFor(v any) *draftState {
-	id, _ := identityOf(v)
-	if s := tx.states[id]; s != nil {
-		return s
+	if existingOnly {
+		return keyOrder(base)
 	}
-	s := &draftState{txn: tx, base: v}
-	s.draft = &Draft{s: s}
-	tx.states[id] = s
-	tx.created = append(tx.created, s)
-	return s
+	keys := make([]string, 0, len(base)+n.writes.len())
+	seen := make(map[string]bool, len(base)+n.writes.len())
+	for _, k := range keyOrder(base) {
+		if !n.isDeleted(k) && !n.readded.has(k) {
+			keys = append(keys, k)
+			seen[k] = true
+		}
+	}
+	for k := range n.writes.keys() {
+		if !seen[k] {
+			keys = append(keys, k)
+			seen[k] = true
+		}
+	}
+	var indices []int64
+	strs := make([]string, 0, len(keys))
+	for _, k := range keys {
+		if i, ok := canonicalIndex(k); ok {
+			indices = append(indices, i)
+		} else {
+			strs = append(strs, k)
+		}
+	}
+	slices.Sort(indices)
+	out := make([]string, 0, len(keys))
+	for _, i := range indices {
+		out = append(out, strconv.FormatInt(i, 10))
+	}
+	return append(out, strs...)
 }
 
-// stateOf is the state of container v, if one was created.
-func (tx *transaction) stateOf(v any) *draftState {
-	id, ok := identityOf(v)
-	if !ok {
+// markDirty is upstream's: the node joins the change's dirty list, once, and
+// every ancestor learns that something below it changed.
+func (n *node) markDirty() {
+	if n.dirty {
+		return
+	}
+	n.dirty = true
+	n.ctx.dirty = append(n.ctx.dirty, n)
+	for p := n.parent; p != nil; p = p.parent {
+		p.subtreeDirty = true
+	}
+}
+
+// ─── Arrays ──────────────────────────────────────────────────────────────────
+
+func (n *node) arrayOverlay() *arrayOverlay {
+	if n.array == nil {
+		n.array = newArrayOverlay(len(n.elements()))
+	}
+	return n.array
+}
+
+// entryValue is upstream's entryValueAt: the entry as overridden, else as its
+// base or insertion holds it.
+func (n *node) entryValue(p *piece, sourceIndex int) any {
+	a := n.array
+	if p.base() {
+		if v, ok := a.baseOverrides.get(sourceIndex); ok {
+			return v
+		}
+		return n.elements()[sourceIndex]
+	}
+	if v, ok := a.insertOverrides[p.source][sourceIndex]; ok {
+		return v
+	}
+	return p.source.refs[sourceIndex]
+}
+
+func (n *node) hasEntryOverride(p *piece, sourceIndex int) bool {
+	if p.base() {
+		return n.array.baseOverrides.has(sourceIndex)
+	}
+	_, ok := n.array.insertOverrides[p.source][sourceIndex]
+	return ok
+}
+
+func entrySlot(p *piece, sourceIndex int) slot {
+	if p.base() {
+		return slot{kind: baseEntry, index: sourceIndex}
+	}
+	return slot{kind: insertEntry, index: sourceIndex, source: p.source}
+}
+
+// entry is upstream's getArrayIndex: the element at a logical index, a Draft
+// for a container. nil past the end, which callers check first.
+func (n *node) entry(index int) any {
+	a := n.arrayOverlay()
+	if index >= a.length() {
 		return nil
 	}
-	return tx.states[id]
-}
-
-// draftValue is upstream's: a container read out of a draft comes back as
-// its draft, anything else as itself.
-func (tx *transaction) draftValue(v any) any {
+	p := a.locate(index)
+	sourceIndex := p.at(a.locatedOffset)
+	v := n.entryValue(p, sourceIndex)
 	if !isContainer(v) {
 		return v
 	}
-	return tx.stateFor(v).draft
+	return n.childFor(entrySlot(p, sourceIndex), v, !p.base() || n.hasEntryOverride(p, sourceIndex)).draft
 }
 
-// assign is upstream's cloneAssigned / assertJsonPrimitive: a value written
-// into a draft is checked and deep-copied at once, so later changes to the
-// caller's value — or to the draft it was read from — do not reach it.
-func (tx *transaction) assign(v any) (any, error) {
-	c := tx.cloner()
-	return c.clone(v, nil)
-}
-
-// cloner is the copy a draft write makes: assignRules, and every array it
-// allocates recorded as fresh.
-func (tx *transaction) cloner() cloner {
-	return cloner{rules: assignRules, fresh: tx.fresh}
-}
-
-// release is upstream's: the transaction ends, and every state forgets its
-// containers, so a handle retained past the change retains nothing else.
-func (tx *transaction) release() {
-	tx.active = false
-	for _, s := range tx.created {
-		s.base, s.own, s.named = nil, nil, nil
+// replacePieceRange is upstream's: remove `remove` entries at index and insert
+// the pieces there. An append of one fresh insertion to an array ending in the
+// tail of another extends that insertion instead of adding a piece.
+func (n *node) replacePieceRange(index, remove int, inserted []*piece) {
+	if remove == 0 && len(inserted) == 0 {
+		return
 	}
-	tx.created, tx.states, tx.root, tx.fresh = nil, nil, nil, nil
-}
-
-// current is the container as the draft holds it now: the copy once there is
-// one, the base until then.
-func (s *draftState) current() any {
-	if s.own != nil {
-		return s.own
-	}
-	return s.base
-}
-
-// ensureCopy is upstream's: the state's own shallow copy, made on first write.
-func (s *draftState) ensureCopy() any {
-	if s.own == nil {
-		switch b := s.base.(type) {
-		case map[string]any:
-			s.own = maps.Clone(b)
-		case []any:
-			s.own = cloneArray(b)
+	a := n.arrayOverlay()
+	if remove == 0 && index == a.length() && len(inserted) == 1 && a.root != nil {
+		addition := inserted[0]
+		tail := rightmost(a.root).piece
+		if !addition.base() && !tail.base() && tail.step == 1 && tail.start+tail.length == len(tail.source.refs) {
+			for offset := range addition.length {
+				tail.source.refs = append(tail.source.refs, addition.source.refs[addition.at(offset)])
+			}
+			extendRightmost(a.root, addition.length)
+			a.invalidateCaches()
+			a.structural = true
+			a.generation++
+			n.markDirty()
+			return
 		}
 	}
-	return s.own
+	left, rest := a.split(a.root, index)
+	_, right := a.split(rest, remove)
+	middle := a.treeFrom(inserted)
+	a.root = a.joinNormalized(a.joinNormalized(left, middle), right)
+	a.invalidateCaches()
+	a.structural = true
+	a.generation++
+	n.markDirty()
 }
 
-// ─── Finishing ───────────────────────────────────────────────────────────────
-
-// finish is upstream's finish() and the store's commit: fold the draft into a
-// revision, then release it either way.
-func (tx *transaction) finish() (any, error) {
-	defer tx.release()
-	v, err := tx.finalize(tx.root, map[*draftState]bool{}, map[*draftState]any{})
-	if err == nil {
-		err = tx.committed
-	}
-	if err != nil {
-		return nil, err
-	}
-	return v, nil
-}
-
-// finalize is upstream's: a state whose copy still equals its base drops the
-// copy; each member container with a state of its own is finalized in turn
-// (an object's in keyOrder) and, if it changed, written into this container's
-// copy (made now if the container itself was not written). An array that was
-// written must be dense.
-//
-// Which check reports a sparse array depends on where it came from. An array
-// of the revision is checked here, after its members, with draft.ts's text.
-// An array this change created is the transaction's own, which upstream
-// writes in place: its copy IS its base, so finalize drops it as unchanged and
-// never checks it, and the store's commit does — after finalize has walked
-// the whole tree, parent before child, with value.ts's text. That check is
-// recorded here in the commit's order, and finish reports it.
-func (tx *transaction) finalize(s *draftState, finalizing map[*draftState]bool, finalized map[*draftState]any) (any, error) {
-	if v, ok := finalized[s]; ok {
-		return v, nil
-	}
-	if finalizing[s] {
-		return nil, errors.New("delta: Cyclic draft state is not supported (a draft container reaches itself)")
-	}
-	finalizing[s] = true
-	defer delete(finalizing, s)
-
-	if s.own != nil && len(s.named) == 0 && shallowEqual(s.base, s.own) {
-		s.own = nil
-	}
-	current := s.current()
-	result := current
-	writable := s.own != nil
-	xs, isArray := current.([]any)
-	fresh := false
-	if isArray && writable {
-		id, _ := identityOf(s.base)
-		fresh = tx.fresh[id]
-	}
-	if fresh && tx.committed == nil {
-		tx.committed = denseError(xs, s.named, importRules)
-	}
-	member := func(v any) (any, bool, error) {
-		if !isContainer(v) {
-			return nil, false, nil
-		}
-		c := tx.stateOf(v)
-		if c == nil {
-			return nil, false, nil
-		}
-		f, err := tx.finalize(c, finalizing, finalized)
-		if err != nil || same(f, v) {
-			return nil, false, err
-		}
-		return f, true, nil
-	}
-	switch c := current.(type) {
-	case map[string]any:
-		for _, k := range keyOrder(c) {
-			f, changed, err := member(c[k])
-			if err != nil {
-				return nil, err
-			}
-			if !changed {
-				continue
-			}
-			if !writable {
-				result, writable = maps.Clone(c), true
-			}
-			result.(map[string]any)[k] = f
-		}
-	case []any:
-		for i, v := range c {
-			f, changed, err := member(v)
-			if err != nil {
-				return nil, err
-			}
-			if !changed {
-				continue
-			}
-			if !writable {
-				result, writable = cloneArray(c), true
-			}
-			result.([]any)[i] = f
-		}
-		if s.own != nil && !fresh {
-			if err := denseError(xs, s.named, assignRules); err != nil {
-				return nil, err
-			}
-		}
-	}
-	finalized[s] = result
-	return result, nil
-}
-
-// checkDense is denseError for the array a state holds now; nil for an
-// object.
-func (s *draftState) checkDense(rules cloneRules) error {
-	xs, ok := s.current().([]any)
-	if !ok {
+// insertPiece is upstream's: one piece of a new insertion holding values,
+// which are already the change's own.
+func insertPiece(values []any) []*piece {
+	if len(values) == 0 {
 		return nil
 	}
-	return denseError(xs, s.named, rules)
+	return []*piece{{source: &insertSource{refs: values}, start: 0, length: len(values), step: 1}}
 }
 
-// denseError is upstream's assertDenseArray over an array a draft holds: its
-// own keys — the indices that hold a value, "length" and any named property —
-// must number exactly its length plus one, or it is not "dense and contain
-// only indexed entries"; then no index may be empty, or it does not "contain
-// enumerable indexed data properties with defined values". The second text
-// needs as many named properties as holes, or an undefined slot, which is an
-// own key without a defined value.
-func denseError(xs []any, named map[string]any, rules cloneRules) error {
-	holes, undefineds := 0, 0
-	for _, v := range xs {
-		switch v.(type) {
-		case holeValue:
-			holes++
-		case undefinedValue:
-			undefineds++
+// insertPlacementPiece is upstream's: items copied and checked, every one
+// before any is inserted, as one new insertion.
+func insertPlacementPiece(items []any) ([]*piece, error) {
+	values := make([]any, len(items))
+	for i, item := range items {
+		v, err := clonePlacement(item)
+		if err != nil {
+			return nil, err
+		}
+		values[i] = v
+	}
+	return insertPiece(values), nil
+}
+
+// setEntry is upstream's setArrayIndex: an index up to the length, stored
+// already copied. Writing the value an entry already has changes nothing, and
+// writing a base entry's own scalar back drops its override.
+func (n *node) setEntry(index int, stored any) {
+	a := n.arrayOverlay()
+	length := a.length()
+	if index == length {
+		n.replacePieceRange(length, 0, insertPiece([]any{stored}))
+		return
+	}
+	p := a.locate(index)
+	sourceIndex := p.at(a.locatedOffset)
+	current := n.entryValue(p, sourceIndex)
+	if !isContainer(stored) && same(current, stored) {
+		return
+	}
+	if p.base() {
+		if !isContainer(stored) && same(stored, n.elements()[sourceIndex]) {
+			a.baseOverrides.delete(sourceIndex)
+		} else {
+			if a.baseOverrides == nil {
+				a.baseOverrides = &orderedMap[int]{}
+			}
+			a.baseOverrides.set(sourceIndex, stored)
+		}
+	} else {
+		overrides := a.insertOverrides[p.source]
+		if !isContainer(stored) && same(stored, p.source.refs[sourceIndex]) {
+			delete(overrides, sourceIndex)
+			if overrides != nil && len(overrides) == 0 {
+				delete(a.insertOverrides, p.source)
+			}
+		} else {
+			if overrides == nil {
+				if a.insertOverrides == nil {
+					a.insertOverrides = map[*insertSource]map[int]any{}
+				}
+				overrides = map[int]any{}
+				a.insertOverrides[p.source] = overrides
+			}
+			overrides[sourceIndex] = stored
 		}
 	}
+	n.markDirty()
+}
+
+// setLength is upstream's setArrayLength: shrinking removes entries, growing
+// inserts nulls.
+func (n *node) setLength(next int) {
+	current := n.arrayOverlay().length()
 	switch {
-	case len(named) != holes:
-		return &ValueError{Message: rules.dense}
-	case holes+undefineds > 0:
-		return &ValueError{Message: rules.defined}
+	case next == current:
+	case next < current:
+		n.replacePieceRange(next, current-next, nil)
+	default:
+		n.replacePieceRange(current, 0, insertPiece(make([]any, next-current)))
 	}
-	return nil
-}
-
-// shallowEqual is upstream's: the same kind, the same members, each Object.is
-// its counterpart.
-func shallowEqual(left, right any) bool {
-	switch l := left.(type) {
-	case map[string]any:
-		r, ok := right.(map[string]any)
-		if !ok || len(l) != len(r) {
-			return false
-		}
-		for k, v := range l {
-			w, ok := r[k]
-			if !ok || !objectIs(v, w) {
-				return false
-			}
-		}
-		return true
-	case []any:
-		r, ok := right.([]any)
-		if !ok || len(l) != len(r) {
-			return false
-		}
-		for i, v := range l {
-			if isEmptySlot(v) || isEmptySlot(r[i]) || !objectIs(v, r[i]) {
-				return false
-			}
-		}
-		return true
-	}
-	return false
 }
 
 // ─── Draft ───────────────────────────────────────────────────────────────────
@@ -377,159 +429,167 @@ func shallowEqual(left, right any) bool {
 // the drafts of member containers, one handle per container, so a handle may
 // be held and compared.
 //
-// Writes are copy-on-write against the committed revision, which they never
-// touch, and every value written is checked and deep-copied at once: a later
-// change to the caller's value, or to a draft it was read from, does not
-// reach it. A handle follows its container through array reordering and
-// insertion; once the container is removed from the tree, writes through the
-// handle are dropped.
+// Writes go to the change's overlay, never to the committed revision, and every
+// value written is checked and deep-copied at once: a later change to the
+// caller's value, or to a draft it was read from, does not reach it.
 //
 // Keys are given as any: a string is an object key, an int (or any integral Go
 // number) an array index, and a Key or Index is taken as is. On an array a
 // canonical numeric string is the index it spells; on an object an index is
 // the key it spells — as JavaScript coerces both.
 //
-// A draft is valid until its change is prepared or aborted. After that a write
-// returns ErrDraftRevoked and a read panics with it: a read has no error to
-// return, and using a settled draft is a bug in the caller, like a send on a
-// closed channel. A nil *Draft — what At returns for a member that is not a
-// container — reads as empty, and every write to it returns an error; so does
-// a zero Draft, which no change handed out.
+// A draft is usable until its change settles: it is prepared or aborted, or
+// the tracker adopts another change first. After that a write returns
+// ErrDraftSettled and a read panics with it: a read has no error to return,
+// and using a settled draft is a bug in the caller, like a send on a closed
+// channel. A nil *Draft — what At returns for a member that is not a container
+// — reads as empty, and every write to it returns an error; so does a zero
+// Draft, which no change handed out.
 //
 // A Draft is not safe for concurrent use.
-type Draft struct{ s *draftState }
+type Draft struct{ n *node }
 
 var (
-	// ErrDraftRevoked is returned by a write through a draft whose change was
-	// already prepared or aborted, and is the value a read through one panics
-	// with.
-	ErrDraftRevoked = errors.New("delta: Cannot use a draft outside its change callback (its change was prepared or aborted; begin a new change and read the draft from its State)")
-	errNilDraft     = errors.New("delta: no draft here: the member is absent or not an object or array (check At's result, or Set the member first)")
+	// ErrDraftSettled is returned by a write through a draft whose change has
+	// settled, and is the value a read through one panics with.
+	ErrDraftSettled = errors.New("delta: Cannot use a settled overlay (its change was prepared or aborted, or the tracker adopted a competing change; begin a new change and read the draft from its State)")
+	// errReadOnly is upstream's assertWritable text for a change being
+	// prepared, which no draft method can observe from Go.
+	errReadOnly = errors.New("delta: Prepared overlays are read-only (the change is being prepared; begin a new change to write again)")
+	errNilDraft = errors.New("delta: no draft here: the member is absent or not an object or array (check At's result, or Set the member first)")
+	// errArrayHole is upstream's TypeError for a write that would leave an
+	// array with a hole: deleting an element, or writing past the next index.
+	errArrayHole = errors.New("delta: Overlay arrays cannot contain holes (write at an index up to the array's length, and remove elements with Splice, Pop or Shift rather than Delete)")
+	// errArrayProperty is upstream's TypeError for a named property written on
+	// an array, which a JSON array cannot hold.
+	errArrayProperty = errors.New("delta: Only array indices and length can be written (an array draft holds elements at indices 0..length-1; write named members on an object draft)")
 )
 
-// live is the state behind a draft that may be written, or why it may not.
-func (d *Draft) live() (*draftState, error) {
-	if d == nil || d.s == nil {
+// readable is the node behind a draft being read, or why it cannot be.
+func (d *Draft) readable() (*node, error) {
+	if d == nil || d.n == nil {
 		return nil, errNilDraft
 	}
-	if !d.s.txn.active {
-		return nil, ErrDraftRevoked
+	if d.n.ctx.settled() {
+		return nil, ErrDraftSettled
 	}
-	return d.s, nil
+	return d.n, nil
 }
 
-// read is the state behind a draft being read: nil for a nil or zero draft; a
-// panic for a revoked one.
-func (d *Draft) read() *draftState {
-	if d == nil || d.s == nil {
+// live is the node behind a draft that may be written, or why it may not.
+func (d *Draft) live() (*node, error) {
+	n, err := d.readable()
+	if err != nil {
+		return nil, err
+	}
+	if n.ctx.status.value != statusOpen {
+		return nil, errReadOnly
+	}
+	return n, nil
+}
+
+// read is the node behind a draft being read: nil for a nil or zero draft; a
+// panic for a settled one.
+func (d *Draft) read() *node {
+	if d == nil || d.n == nil {
 		return nil
 	}
-	if !d.s.txn.active {
-		panic(ErrDraftRevoked)
+	if d.n.ctx.settled() {
+		panic(ErrDraftSettled)
 	}
-	return d.s
+	return d.n
 }
 
 // IsArray reports whether the draft is an array.
 func (d *Draft) IsArray() bool {
-	s := d.read()
-	if s == nil {
-		return false
-	}
-	_, ok := s.current().([]any)
-	return ok
+	n := d.read()
+	return n != nil && n.isArray()
 }
 
 // Len is an array's length or an object's member count.
 func (d *Draft) Len() int {
-	s := d.read()
-	if s == nil {
+	n := d.read()
+	switch {
+	case n == nil:
 		return 0
+	case n.isArray():
+		return n.arrayOverlay().length()
 	}
-	switch c := s.current().(type) {
-	case []any:
-		return len(c)
-	case map[string]any:
-		return len(c)
-	}
-	return 0
+	return len(n.ownKeys())
 }
 
-// Keys is Object.keys: an object's keys, integer-like first; or, as strings,
-// an array's indices that hold a value or an undefined slot (not its holes).
+// Keys is Object.keys: an array's indices, as strings, or an object's members
+// in the order ownKeys enumerates them.
 func (d *Draft) Keys() []string {
-	s := d.read()
-	if s == nil {
+	n := d.read()
+	switch {
+	case n == nil:
 		return nil
-	}
-	switch c := s.current().(type) {
-	case map[string]any:
-		return keyOrder(c)
-	case []any:
-		keys := make([]string, 0, len(c)+len(s.named))
-		for i, v := range c {
-			if !isHole(v) {
-				keys = append(keys, Index(i).String())
-			}
+	case n.isArray():
+		length := n.arrayOverlay().length()
+		keys := make([]string, length)
+		for i := range keys {
+			keys[i] = strconv.Itoa(i)
 		}
-		return append(keys, keyOrder(s.named)...)
+		return keys
 	}
-	return nil
+	return n.ownKeys()
 }
 
-// Has reports whether the member exists: an own property, or an array index
-// that is not a hole ("length" included, as JavaScript's `in` has it). An
-// undefined slot exists, though Get reads nothing there.
+// Has reports whether the member exists: an object's own member, or an
+// array's index below its length or its "length". Array.prototype's methods,
+// which JavaScript's `in` also sees on an array, are the Draft's own methods
+// here.
 func (d *Draft) Has(key any) bool {
-	if s := d.read(); s != nil {
-		if c, ok := s.current().([]any); ok {
-			if seg, err := parseSeg(key); err == nil {
-				if i, ok := arrayIndexOf(seg); ok {
-					return i < int64(len(c)) && !isHole(c[i])
-				}
-			}
-		}
+	n := d.read()
+	if n == nil {
+		return false
 	}
-	_, ok := d.Get(key)
-	return ok
+	seg, err := parseSeg(key)
+	if err != nil {
+		return false
+	}
+	if n.isArray() {
+		if k, ok := seg.(Key); ok && k == "length" {
+			return true
+		}
+		i, ok := arrayIndexOf(seg)
+		return ok && i < int64(n.arrayOverlay().length())
+	}
+	return n.objectHas(propertyKey(seg))
 }
 
 // Get is the member's value and whether it exists: a *Draft for an object or
 // array, the value itself otherwise. An array's "length" is its length.
 func (d *Draft) Get(key any) (any, bool) {
-	s := d.read()
-	if s == nil {
+	n := d.read()
+	if n == nil {
 		return nil, false
 	}
 	seg, err := parseSeg(key)
 	if err != nil {
 		return nil, false
 	}
-	switch c := s.current().(type) {
-	case map[string]any:
-		v, ok := c[propertyKey(seg)]
-		if !ok {
-			return nil, false
-		}
-		return s.txn.draftValue(v), true
-	case []any:
+	if n.isArray() {
+		a := n.arrayOverlay()
 		if k, ok := seg.(Key); ok && k == "length" {
-			return float64(len(c)), true
+			return float64(a.length()), true
 		}
 		i, ok := arrayIndexOf(seg)
-		if !ok {
-			v, ok := s.named[propertyKey(seg)]
-			if !ok {
-				return nil, false
-			}
-			return s.txn.draftValue(v), true
-		}
-		if i >= int64(len(c)) || isEmptySlot(c[i]) {
+		if !ok || i >= int64(a.length()) {
 			return nil, false
 		}
-		return s.txn.draftValue(c[i]), true
+		return n.entry(int(i)), true
 	}
-	return nil, false
+	k := propertyKey(seg)
+	if !n.objectHas(k) {
+		return nil, false
+	}
+	v, _ := n.objectValue(k)
+	if !isContainer(v) {
+		return v, true
+	}
+	return n.childFor(slot{kind: objectEntry, key: k}, v, n.hasWrite(k)).draft, true
 }
 
 // At is the draft of a member object or array, or nil when the member is
@@ -558,14 +618,114 @@ func arrayIndexOf(seg Seg) (int64, bool) {
 	return 0, false
 }
 
-// errArrayTooLong is growing an array past what a slice holds on this
-// platform: JavaScript keeps a long array sparse, and only a 32-bit build
-// reaches this (see D73 for what a 64-bit one allocates instead).
-func errArrayTooLong(length float64) error {
-	return fmt.Errorf("delta: an array of length %s is longer than a slice holds on this platform (at most %d elements); a 32-bit build cannot hold it, so keep the array shorter or use a 64-bit build", jsNumber(length), math.MaxInt)
+// Set assigns a member: an object property, or an array element at an index
+// up to the length (the length itself appends). nil is JSON null; a member is
+// removed with Delete. Assigning a scalar member the value it already has
+// changes nothing; a container is always copied in, and assigning a *Draft
+// copies what that draft holds now.
+//
+// On an array, "length" is SetLen, with value converted as JavaScript converts
+// an assigned length: null is 0, a boolean 0 or 1, a string the number it
+// spells, an array the number its elements' string spells ([2] is 2). Any
+// other key that is not an index is refused, as is an index past the length.
+func (d *Draft) Set(key any, value any) error {
+	n, err := d.live()
+	if err != nil {
+		return err
+	}
+	seg, err := parseSeg(key)
+	if err != nil {
+		return err
+	}
+	if n.isArray() {
+		if k, ok := seg.(Key); ok && k == "length" {
+			length, err := toArrayLength(value)
+			if err != nil {
+				return err
+			}
+			n.setLength(length)
+			return nil
+		}
+		i, ok := arrayIndexOf(seg)
+		if !ok {
+			return errArrayProperty
+		}
+		if i > int64(n.arrayOverlay().length()) {
+			return errArrayHole
+		}
+		stored, err := clonePlacement(value)
+		if err != nil {
+			return err
+		}
+		n.setEntry(int(i), stored)
+		return nil
+	}
+	k := propertyKey(seg)
+	stored, err := clonePlacement(value)
+	if err != nil {
+		return err
+	}
+	current, present := n.objectValue(k)
+	wasDeleted := n.isDeleted(k)
+	if !wasDeleted && present && !isContainer(stored) && same(current, stored) {
+		return nil
+	}
+	n.setWrite(k, stored)
+	if _, own := n.object()[k]; wasDeleted && own {
+		if n.readded == nil {
+			n.readded = &orderedMap[string]{}
+		}
+		n.readded.set(k, nil)
+	}
+	n.deletes.delete(k)
+	n.markDirty()
+	return nil
 }
 
-var errArrayHole = errors.New("delta: Draft arrays cannot contain holes (remove array elements with Splice, Pop or Shift, not Delete)")
+// Delete removes an object member; deleting one that is absent does nothing.
+// An array element cannot be deleted — that would leave a hole — so every
+// Delete on an array fails; use Splice, Pop or Shift.
+func (d *Draft) Delete(key any) error {
+	n, err := d.live()
+	if err != nil {
+		return err
+	}
+	seg, err := parseSeg(key)
+	if err != nil {
+		return err
+	}
+	if n.isArray() {
+		return errArrayHole
+	}
+	k := propertyKey(seg)
+	if !n.objectHas(k) {
+		return nil
+	}
+	n.writes.delete(k)
+	n.readded.delete(k)
+	n.setDeletion(k)
+	n.markDirty()
+	return nil
+}
+
+// SetLen is `array.length = n`: it truncates, or grows with nulls.
+func (d *Draft) SetLen(length int) error {
+	n, err := d.live()
+	if err != nil {
+		return err
+	}
+	if !n.isArray() {
+		return errors.New(`delta: SetLen on an object draft (SetLen sets an array's length; to write an object member named "length", use Set)`)
+	}
+	if length < 0 {
+		return errArrayLength(length)
+	}
+	if int64(length) > maxArrayIndex+1 {
+		return errArrayLength(length)
+	}
+	n.setLength(length)
+	return nil
+}
 
 // errArrayLength is upstream's RangeError for a length that is not an integer
 // from 0 to 2^32 - 1 once JavaScript has converted it.
@@ -573,355 +733,656 @@ func errArrayLength(v any) error {
 	return fmt.Errorf("delta: Invalid array length: %s (a length is an integer from 0 to 4294967295, or a value JavaScript's Number() makes one)", describe(v))
 }
 
-// Set assigns a member: an object property, or an array element — an existing
-// one, the slot one past the end, or any later slot, which leaves holes the
-// change must fill before it is prepared. nil is JSON null; a member is removed
-// with Delete. Assigning a scalar member the value it already has changes
-// nothing; a container is always copied in, and assigning a *Draft copies what
-// that draft holds now.
-//
-// On an array, a key that is not an index names a property, as it does in
-// JavaScript: the array holds it, Get reads it back, and — since a JSON array
-// has no such thing and an array's properties cannot be deleted — the change
-// can no longer be prepared. "length" is SetLen, with value converted as
-// JavaScript converts an assigned length: null is 0, a boolean 0 or 1, a
-// string the number it spells, an array the number its elements' string
-// spells ([2] is 2).
-func (d *Draft) Set(key any, value any) error {
-	s, err := d.live()
-	if err != nil {
-		return err
-	}
-	seg, err := parseSeg(key)
-	if err != nil {
-		return err
-	}
-	stored, err := s.txn.assign(value)
-	if err != nil {
-		return err
-	}
-	switch c := s.current().(type) {
-	case map[string]any:
-		k := propertyKey(seg)
-		if previous, ok := c[k]; ok && objectIs(previous, stored) {
-			return nil
-		}
-		s.ensureCopy().(map[string]any)[k] = stored
-	case []any:
-		if k, ok := seg.(Key); ok && k == "length" {
-			// Reflect.set(copy, "length", stored): ArraySetLength, which takes
-			// ToNumber of the value.
-			n, err := jsToNumber(stored)
-			if err != nil {
-				return err
-			}
-			return d.setLen(s, n, stored)
-		}
-		i, ok := arrayIndexOf(seg)
-		if !ok {
-			// A named property: JavaScript holds it on the array, and no revision
-			// can, so the change can no longer be prepared (and an array's
-			// properties cannot be deleted).
-			k := propertyKey(seg)
-			if previous, ok := s.named[k]; ok && objectIs(previous, stored) {
-				return nil
-			}
-			s.ensureCopy()
-			if s.named == nil {
-				s.named = map[string]any{}
-			}
-			s.named[k] = stored
-			return nil
-		}
-		if i >= math.MaxInt {
-			return errArrayTooLong(float64(i) + 1)
-		}
-		at := int(i)
-		if at < len(c) && !isEmptySlot(c[at]) && objectIs(c[at], stored) {
-			return nil
-		}
-		xs := s.ensureCopy().([]any)
-		for len(xs) < at {
-			xs = append(xs, hole)
-		}
-		if at == len(xs) {
-			xs = append(xs, stored)
-		} else {
-			xs[at] = stored
-		}
-		s.own = xs
-	}
-	return nil
+// errArrayTooLong is growing an array past what a slice holds on this
+// platform: only a 32-bit build reaches it (D73).
+func errArrayTooLong(length float64) error {
+	return fmt.Errorf("delta: an array of length %s is longer than a slice holds on this platform (at most %d elements); a 32-bit build cannot hold it, so keep the array shorter or use a 64-bit build", jsNumber(length), math.MaxInt)
 }
 
-// Delete removes an object property; deleting one that is absent does
-// nothing. An array element cannot be deleted — that would leave a hole — so
-// every Delete on an array fails; use Splice, Pop or Shift.
-func (d *Draft) Delete(key any) error {
-	s, err := d.live()
+// toArrayLength is upstream's: Number(v), which must be an integer from 0 to
+// 2^32 - 1.
+func toArrayLength(v any) (int, error) {
+	f, err := jsToNumber(v)
 	if err != nil {
-		return err
+		return 0, err
 	}
-	seg, err := parseSeg(key)
+	if !(f >= 0 && f < 1<<32 && f == math.Trunc(f)) {
+		return 0, errArrayLength(v)
+	}
+	if f > math.MaxInt {
+		return 0, errArrayTooLong(f)
+	}
+	return int(f), nil
+}
+
+// mutator is the start of every array method: upstream's mutatorNode.
+func (d *Draft) mutator(method string) (*node, error) {
+	n, err := d.live()
 	if err != nil {
-		return err
+		return nil, err
 	}
-	switch c := s.current().(type) {
-	case []any:
-		return errArrayHole
-	case map[string]any:
-		k := propertyKey(seg)
-		if _, ok := c[k]; !ok {
-			return nil
-		}
-		delete(s.ensureCopy().(map[string]any), k)
+	if !n.isArray() {
+		return nil, fmt.Errorf("delta: Array mutator called on incompatible receiver (%s applies to array drafts; this draft is an object)", method)
 	}
-	return nil
-}
-
-// SetLen is `array.length = n`: it truncates, or grows with holes that must
-// be filled before the change is prepared.
-func (d *Draft) SetLen(n int) error {
-	s, err := d.live()
-	if err != nil {
-		return err
-	}
-	if _, ok := s.current().([]any); !ok {
-		return errObjectMethod("SetLen")
-	}
-	return d.setLen(s, float64(n), n)
-}
-
-// setLen is ArraySetLength with the length already converted to n; v is the
-// value as assigned, for the error.
-func (d *Draft) setLen(s *draftState, n float64, v any) error {
-	c := s.current().([]any)
-	if n == float64(len(c)) {
-		return nil
-	}
-	xs := s.ensureCopy().([]any)
-	if !(n >= 0 && n <= maxArrayIndex+1 && n == math.Trunc(n)) {
-		return errArrayLength(v)
-	}
-	if n > math.MaxInt {
-		return errArrayTooLong(n)
-	}
-	length := int(n)
-	if length < len(xs) {
-		clear(xs[length:])
-		s.own = xs[:length]
-		return nil
-	}
-	for len(xs) < length {
-		xs = append(xs, hole)
-	}
-	s.own = xs
-	return nil
-}
-
-func errObjectMethod(method string) error {
-	return fmt.Errorf("delta: %s on an object draft (array methods apply to array drafts only)", method)
-}
-
-// array is the start of every array method: upstream's wrapped mutator, which
-// makes the copy it mutates.
-func (d *Draft) array(method string) (*draftState, []any, error) {
-	s, err := d.live()
-	if err != nil {
-		return nil, nil, err
-	}
-	if _, ok := s.current().([]any); !ok {
-		return nil, nil, errObjectMethod(method)
-	}
-	return s, s.ensureCopy().([]any), nil
-}
-
-// assignAll checks and copies every item before any is written.
-func (tx *transaction) assignAll(items []any) ([]any, error) {
-	out := make([]any, len(items))
-	for i, item := range items {
-		v, err := tx.assign(item)
-		if err != nil {
-			return nil, err
-		}
-		out[i] = v
-	}
-	return out, nil
+	return n, nil
 }
 
 // Push appends items and returns the new length.
 func (d *Draft) Push(items ...any) (int, error) {
-	s, xs, err := d.array("Push")
+	n, err := d.mutator("Push")
 	if err != nil {
 		return 0, err
 	}
-	stored, err := s.txn.assignAll(items)
+	length := n.arrayOverlay().length()
+	pieces, err := insertPlacementPiece(items)
 	if err != nil {
 		return 0, err
 	}
-	s.own = append(xs, stored...)
-	return len(xs) + len(stored), nil
+	n.replacePieceRange(length, 0, pieces)
+	return length + len(items), nil
 }
 
 // Pop removes and returns the last element — as a *Draft when it is a
-// container. ok is false when the array is empty (or the slot was a hole).
+// container, which the removal detaches. ok is false when the array is empty.
 func (d *Draft) Pop() (value any, ok bool, err error) {
-	s, xs, err := d.array("Pop")
-	if err != nil || len(xs) == 0 {
+	n, err := d.mutator("Pop")
+	if err != nil {
 		return nil, false, err
 	}
-	last := xs[len(xs)-1]
-	xs[len(xs)-1] = nil
-	s.own = xs[:len(xs)-1]
-	if isEmptySlot(last) {
+	length := n.arrayOverlay().length()
+	if length == 0 {
 		return nil, false, nil
 	}
-	return s.txn.draftValue(last), true, nil
+	value = n.entry(length - 1)
+	n.replacePieceRange(length-1, 1, nil)
+	return value, true, nil
 }
 
 // Shift removes and returns the first element — as a *Draft when it is a
-// container. ok is false when the array is empty (or the slot was a hole).
+// container, which the removal detaches. ok is false when the array is empty.
 func (d *Draft) Shift() (value any, ok bool, err error) {
-	s, xs, err := d.array("Shift")
-	if err != nil || len(xs) == 0 {
+	n, err := d.mutator("Shift")
+	if err != nil {
 		return nil, false, err
 	}
-	first := xs[0]
-	s.own = slices.Delete(xs, 0, 1)
-	if isEmptySlot(first) {
+	if n.arrayOverlay().length() == 0 {
 		return nil, false, nil
 	}
-	return s.txn.draftValue(first), true, nil
+	value = n.entry(0)
+	n.replacePieceRange(0, 1, nil)
+	return value, true, nil
 }
 
 // Unshift inserts items at the front and returns the new length.
 func (d *Draft) Unshift(items ...any) (int, error) {
-	s, xs, err := d.array("Unshift")
+	n, err := d.mutator("Unshift")
 	if err != nil {
 		return 0, err
 	}
-	stored, err := s.txn.assignAll(items)
+	pieces, err := insertPlacementPiece(items)
 	if err != nil {
 		return 0, err
 	}
-	definedMoves(xs, len(stored), 0)
-	s.own = slices.Insert(xs, 0, stored...)
-	return len(xs) + len(stored), nil
+	n.replacePieceRange(0, 0, pieces)
+	return n.arrayOverlay().length(), nil
 }
 
-// Splice is Array.prototype.splice(start, deleteCount, ...items): it removes
-// deleteCount elements at start and inserts items there, returning the
-// removed elements (containers as drafts, detached from the tree); a hole or
-// an undefined slot comes back as nil, JSON null, as JSON.stringify writes
-// pi's. A negative start counts from the end; both bounds are clamped to the
-// array.
-func (d *Draft) Splice(start, deleteCount int, items ...any) ([]any, error) {
-	s, xs, err := d.array("Splice")
-	if err != nil {
-		return nil, err
-	}
-	start = relativeIndex(start, len(xs))
-	remove := min(max(deleteCount, 0), len(xs)-start)
-	stored, err := s.txn.assignAll(items)
-	if err != nil {
-		return nil, err
-	}
-	removed := make([]any, remove)
-	for i, v := range xs[start : start+remove] {
-		if !isEmptySlot(v) {
-			removed[i] = s.txn.draftValue(v)
-		}
-	}
-	definedMoves(xs[start+remove:], len(stored), remove)
-	s.own = splice(xs, start, remove, stored)
-	return removed, nil
-}
-
-// relativeIndex is JavaScript's relative-index rule: negative counts from the
+// clampIndex is JavaScript's relative-index rule: negative counts from the
 // end, and both directions clamp to [0, length].
-func relativeIndex(i, length int) int {
+func clampIndex(i, length int) int {
 	if i < 0 {
 		return max(0, length+i)
 	}
 	return min(i, length)
 }
 
+// Splice is Array.prototype.splice(start, deleteCount, ...items): it removes
+// deleteCount elements at start and inserts items there, returning the
+// removed elements (containers as drafts, detached from the tree). A negative
+// start counts from the end; both bounds are clamped to the array.
+func (d *Draft) Splice(start, deleteCount int, items ...any) ([]any, error) {
+	n, err := d.mutator("Splice")
+	if err != nil {
+		return nil, err
+	}
+	length := n.arrayOverlay().length()
+	start = clampIndex(start, length)
+	remove := min(max(deleteCount, 0), length-start)
+	removed := make([]any, remove)
+	for offset := range removed {
+		removed[offset] = n.entry(start + offset)
+	}
+	pieces, err := insertPlacementPiece(items)
+	if err != nil {
+		return nil, err
+	}
+	n.replacePieceRange(start, remove, pieces)
+	n.setLength(length - remove + len(items))
+	return removed, nil
+}
+
+// Reverse reverses the array in place.
+func (d *Draft) Reverse() error {
+	n, err := d.mutator("Reverse")
+	if err != nil {
+		return err
+	}
+	a := n.arrayOverlay()
+	if a.length() < 2 {
+		return nil
+	}
+	pieces := slices.Clone(a.piecesOf())
+	slices.Reverse(pieces)
+	for _, p := range pieces {
+		p.start = p.at(p.length - 1)
+		p.step = -p.step
+	}
+	a.replaceAllPieces(pieces)
+	a.structural = true
+	a.generation++
+	a.plan = nil
+	n.markDirty()
+	return nil
+}
+
+// Fill is Array.prototype.fill(value, start, end): each slot in [start, end)
+// gets its own copy of value. Negative bounds count from the end; both clamp.
+// Pass Len() as end to fill to the end. An empty range checks nothing.
+func (d *Draft) Fill(value any, start, end int) error {
+	n, err := d.mutator("Fill")
+	if err != nil {
+		return err
+	}
+	length := n.arrayOverlay().length()
+	start, end = clampIndex(start, length), clampIndex(end, length)
+	if end <= start {
+		return nil
+	}
+	items := make([]any, end-start)
+	for i := range items {
+		v, err := clonePlacement(value)
+		if err != nil {
+			return err
+		}
+		items[i] = v
+	}
+	n.replacePieceRange(start, end-start, insertPiece(items))
+	return nil
+}
+
+// CopyWithin is Array.prototype.copyWithin(target, start, end): each element
+// of [start, end) is copied — as the draft holds it now — to the slot at the
+// same offset from target. Negative bounds count from the end; all clamp.
+// Pass Len() as end to copy to the end.
+func (d *Draft) CopyWithin(target, start, end int) error {
+	n, err := d.mutator("CopyWithin")
+	if err != nil {
+		return err
+	}
+	length := n.arrayOverlay().length()
+	target, start, end = clampIndex(target, length), clampIndex(start, length), clampIndex(end, length)
+	count := min(max(end-start, 0), length-target)
+	values := make([]any, count)
+	for offset := range values {
+		v, err := clonePlacement(n.entry(start + offset))
+		if err != nil {
+			return err
+		}
+		values[offset] = v
+	}
+	n.replacePieceRange(target, count, insertPiece(values))
+	return nil
+}
+
+// ─── Sort ────────────────────────────────────────────────────────────────────
+
+// sortToken names an entry while the order is being sorted: a base entry by
+// its index (>= 0), an inserted one by -(its position in the lists) - 1.
+type sortEntries struct {
+	sources []*insertSource
+	indices []int
+}
+
+func (e *sortEntries) source(token int) *insertSource {
+	if token < 0 {
+		return e.sources[-token-1]
+	}
+	return nil
+}
+
+func (e *sortEntries) index(token int) int {
+	if token < 0 {
+		return e.indices[-token-1]
+	}
+	return token
+}
+
 // Sort sorts the array in place, stably. cmp receives the elements as Get
 // returns them — containers as drafts, which it may read and even write. A nil
 // cmp is JavaScript's default order: by each element's String(), in UTF-16
 // code units; it fails, leaving the array as it was, when an element has no
-// string form (an object with a "toString" member — see jsString). As in
-// JavaScript, undefined slots follow the values and holes come last; neither
-// reaches cmp.
+// string form (an object with a "toString" member — see jsString). Values the
+// comparator writes over elements are put back afterwards, as upstream's sort
+// restores its overrides; writes inside the elements stay.
 func (d *Draft) Sort(cmp func(a, b any) int) error {
-	s, xs, err := d.array("Sort")
+	n, err := d.mutator("Sort")
 	if err != nil {
 		return err
 	}
-	present := slices.DeleteFunc(slices.Clone(xs), isEmptySlot)
-	undefineds := 0
-	for _, v := range xs {
-		if _, ok := v.(undefinedValue); ok {
-			undefineds++
+	a := n.arrayOverlay()
+	var entries sortEntries
+	baseValues := make([]any, len(n.elements()))
+	var insertedValues []any
+	order := make([]int, 0, a.length())
+	for _, p := range a.piecesOf() {
+		for offset := range p.length {
+			sourceIndex := p.at(offset)
+			if p.base() {
+				order = append(order, sourceIndex)
+				baseValues[sourceIndex] = n.sortValue(sourceIndex, &entries)
+			} else {
+				entries.sources = append(entries.sources, p.source)
+				entries.indices = append(entries.indices, sourceIndex)
+				token := -len(entries.sources)
+				order = append(order, token)
+				insertedValues = append(insertedValues, n.sortValue(token, &entries))
+			}
 		}
 	}
-	if cmp == nil {
-		if err := s.txn.sortByString(present); err != nil {
-			return err
+	value := func(token int) any {
+		if token < 0 {
+			return insertedValues[-token-1]
 		}
-	} else {
-		slices.SortStableFunc(present, func(a, b any) int {
-			return cmp(s.txn.draftValue(a), s.txn.draftValue(b))
-		})
+		return baseValues[token]
 	}
-	n := copy(xs, present)
-	for i := n; i < len(xs); i++ {
-		if i < n+undefineds {
-			xs[i] = undefinedSlot
-		} else {
-			xs[i] = hole
+	baseSnapshot := map[int]any{}
+	for i, v := range a.baseOverrides.all() {
+		baseSnapshot[i] = v
+	}
+	insertSnapshots := map[*insertSource]map[int]any{}
+	for source, overrides := range a.insertOverrides {
+		insertSnapshots[source] = maps.Clone(overrides)
+	}
+	generation := a.generation
+	if cmp != nil {
+		slices.SortStableFunc(order, func(l, r int) int { return cmp(value(l), value(r)) })
+	} else if len(order) > 1 {
+		// Each String() is taken once, before anything moves: the default
+		// order has no side effects, and with two or more elements V8 compares
+		// every one, so an element without a string form fails the sort either
+		// way (D74).
+		keys := make(map[int]string, len(order))
+		for _, token := range order {
+			s, err := jsString(value(token))
+			if err != nil {
+				return err
+			}
+			keys[token] = s
 		}
+		slices.SortStableFunc(order, func(l, r int) int { return jstext.CompareUTF16(keys[l], keys[r]) })
+	}
+	if len(baseSnapshot) > 0 || len(insertSnapshots) > 0 || a.baseOverrides.len() > 0 || len(a.insertOverrides) > 0 {
+		for _, token := range order {
+			n.restoreSortOverride(token, &entries, baseSnapshot, insertSnapshots)
+		}
+	}
+	comparatorWasStructural := a.generation != generation
+	currentLength := a.length()
+	samePrefix := currentLength >= len(order)
+	for i := 0; samePrefix && i < len(order); i++ {
+		samePrefix = a.sameSortTokenAt(i, order[i], &entries)
+	}
+	if !samePrefix {
+		n.replacePieceRange(0, min(len(order), currentLength), piecesFromSortOrder(order, &entries))
+	}
+	if comparatorWasStructural {
+		n.deduplicateEntries()
 	}
 	return nil
 }
 
-// sortByString is the default sort order. Each element's String() is taken
-// once, before anything moves, so an element without one fails the sort with
-// the array untouched, as in V8, which sorts a copy and writes it back only
-// when the sort completes. A single element is never compared, so it never
-// fails.
-func (tx *transaction) sortByString(items []any) error {
-	if len(items) < 2 {
-		return nil
-	}
-	type keyed struct {
-		key  string
-		item any
-	}
-	keys := make([]keyed, len(items))
-	for i, item := range items {
-		key, err := jsString(tx.draftValue(item), tx)
-		if err != nil {
-			return err
+// sortValue is upstream's publicSortValue: an entry as the comparator sees it.
+func (n *node) sortValue(token int, e *sortEntries) any {
+	a := n.array
+	source, sourceIndex := e.source(token), e.index(token)
+	var v any
+	var overridden bool
+	if source == nil {
+		v, overridden = a.baseOverrides.get(sourceIndex)
+		if !overridden {
+			v = n.elements()[sourceIndex]
 		}
-		keys[i] = keyed{key, item}
+	} else {
+		v, overridden = a.insertOverrides[source][sourceIndex]
+		if !overridden {
+			v = source.refs[sourceIndex]
+		}
 	}
-	slices.SortStableFunc(keys, func(a, b keyed) int { return jstext.CompareUTF16(a.key, b.key) })
-	for i, k := range keys {
-		items[i] = k.item
+	if !isContainer(v) {
+		return v
 	}
-	return nil
+	s := slot{kind: baseEntry, index: sourceIndex}
+	if source != nil {
+		s = slot{kind: insertEntry, index: sourceIndex, source: source}
+	}
+	return n.childFor(s, v, source != nil || a.baseOverrides.has(sourceIndex)).draft
 }
+
+// restoreSortOverride is upstream's: an entry's override as it was before the
+// comparator ran — restored, or dropped if it had none.
+func (n *node) restoreSortOverride(token int, e *sortEntries, baseSnapshot map[int]any, insertSnapshots map[*insertSource]map[int]any) {
+	a := n.array
+	source, sourceIndex := e.source(token), e.index(token)
+	if source == nil {
+		if v, ok := baseSnapshot[sourceIndex]; ok {
+			if a.baseOverrides == nil {
+				a.baseOverrides = &orderedMap[int]{}
+			}
+			a.baseOverrides.set(sourceIndex, v)
+		} else {
+			a.baseOverrides.delete(sourceIndex)
+		}
+		return
+	}
+	overrides := a.insertOverrides[source]
+	if v, ok := insertSnapshots[source][sourceIndex]; ok {
+		if overrides == nil {
+			if a.insertOverrides == nil {
+				a.insertOverrides = map[*insertSource]map[int]any{}
+			}
+			overrides = map[int]any{}
+			a.insertOverrides[source] = overrides
+		}
+		overrides[sourceIndex] = v
+		return
+	}
+	delete(overrides, sourceIndex)
+	if overrides != nil && len(overrides) == 0 {
+		delete(a.insertOverrides, source)
+	}
+}
+
+// sameSortTokenAt reports whether the logical index already holds the entry.
+func (a *arrayOverlay) sameSortTokenAt(logicalIndex, token int, e *sortEntries) bool {
+	p := a.locate(logicalIndex)
+	return p.at(a.locatedOffset) == e.index(token) && p.source == e.source(token)
+}
+
+// piecesFromSortOrder is upstream's: the sorted entries as pieces, runs merged.
+func piecesFromSortOrder(order []int, e *sortEntries) []*piece {
+	var pieces []*piece
+	for _, token := range order {
+		source, sourceIndex := e.source(token), e.index(token)
+		if len(pieces) > 0 {
+			previous := pieces[len(pieces)-1]
+			if previous.source == source {
+				if previous.length == 1 {
+					if step := sourceIndex - previous.start; step == 1 || step == -1 {
+						previous.step = step
+						previous.length = 2
+						continue
+					}
+				} else if previous.at(previous.length) == sourceIndex {
+					previous.length++
+					continue
+				}
+			}
+		}
+		pieces = append(pieces, &piece{source: source, start: sourceIndex, length: 1, step: 1})
+	}
+	return pieces
+}
+
+// deduplicateEntries is upstream's deduplicateArrayEntries: after a comparator
+// that edited the array's structure, an entry the sort placed twice keeps its
+// first place and every later one becomes an inserted copy.
+func (n *node) deduplicateEntries() {
+	a := n.array
+	seenBase := map[int]bool{}
+	seenInsert := map[*insertSource]map[int]bool{}
+	var next []*piece
+	duplicated := false
+	for _, p := range a.piecesOf() {
+		for offset := range p.length {
+			sourceIndex := p.at(offset)
+			var seen bool
+			if p.base() {
+				seen = seenBase[sourceIndex]
+				seenBase[sourceIndex] = true
+			} else {
+				indices := seenInsert[p.source]
+				if indices == nil {
+					indices = map[int]bool{}
+					seenInsert[p.source] = indices
+				}
+				seen = indices[sourceIndex]
+				indices[sourceIndex] = true
+			}
+			if seen {
+				duplicated = true
+				copied, err := n.clonePlacementStored(entrySlot(p, sourceIndex), n.entryValue(p, sourceIndex), !p.base() || n.hasEntryOverride(p, sourceIndex))
+				if err != nil {
+					// The entry is already the change's own, strict JSON.
+					panic(err)
+				}
+				next = appendMerged(next, insertPiece([]any{copied})[0])
+			} else {
+				next = appendMerged(next, &piece{source: p.source, start: sourceIndex, length: 1, step: 1})
+			}
+		}
+	}
+	if !duplicated {
+		return
+	}
+	a.replaceAllPieces(next)
+	a.structural = true
+	a.generation++
+	a.plan = nil
+	n.markDirty()
+}
+
+// ─── Placements ──────────────────────────────────────────────────────────────
+
+// Upstream's d5cba1d97 texts for a value a draft refuses to place.
+const (
+	placementCycle  = "Draft placements cannot contain cycles"
+	placementPlain  = "Draft placements must contain plain objects or arrays"
+	placementStrict = "Draft placements must contain strict JSON values"
+)
+
+// ValueError reports a value a draft cannot place: a cycle, a number that is
+// not finite, or a Go type with no JSON form. Message is upstream's TypeError
+// text.
+type ValueError struct {
+	Message string
+	// Value is the offending Go value, for a type or number error; nil for a
+	// cycle.
+	Value any
+}
+
+func (e *ValueError) Error() string {
+	if e.Message == placementCycle {
+		return "delta: " + e.Message + " (a container reaches itself; break the cycle before handing the value over)"
+	}
+	var got string
+	if f, ok := number(e.Value); ok {
+		got = strconv.FormatFloat(f, 'g', -1, 64)
+		if math.IsNaN(f) {
+			got = "NaN"
+		}
+	} else {
+		got = fmt.Sprintf("%T", e.Value)
+	}
+	return fmt.Sprintf("delta: %s: got %s (build values from nil, bool, string, a finite number, []any and map[string]any, as encoding/json decodes them)", e.Message, got)
+}
+
+// clonePlacement is upstream's: a value placed into a draft, copied and
+// checked. A draft is copied as it holds its content now.
+func clonePlacement(v any) (any, error) {
+	if d, ok := v.(*Draft); ok {
+		n, err := d.readable()
+		if err != nil {
+			return nil, err
+		}
+		return n.clonePlacementNode()
+	}
+	c := placementCopier{}
+	return c.copy(v)
+}
+
+// clonePlacementNode is upstream's: a node's content now, copied — through
+// the nodes of its members, where they have one.
+func (n *node) clonePlacementNode() (any, error) {
+	if n.ctx.settled() {
+		return nil, ErrDraftSettled
+	}
+	if n.isArray() {
+		a := n.arrayOverlay()
+		out := newArray(0)
+		for _, p := range a.piecesOf() {
+			for offset := range p.length {
+				sourceIndex := p.at(offset)
+				v, err := n.clonePlacementStored(entrySlot(p, sourceIndex), n.entryValue(p, sourceIndex), !p.base() || n.hasEntryOverride(p, sourceIndex))
+				if err != nil {
+					return nil, err
+				}
+				out = append(out, v)
+			}
+		}
+		return out, nil
+	}
+	keys := n.ownKeys()
+	out := make(map[string]any, len(keys))
+	for _, k := range keys {
+		value, _ := n.objectValue(k)
+		v, err := n.clonePlacementStored(slot{kind: objectEntry, key: k}, value, n.hasWrite(k))
+		if err != nil {
+			return nil, err
+		}
+		out[k] = v
+	}
+	return out, nil
+}
+
+// clonePlacementStored is upstream's: a member's value copied — through its
+// node when it has one, since that node may hold edits.
+func (n *node) clonePlacementStored(s slot, value any, placement bool) (any, error) {
+	if isContainer(value) {
+		if c := n.existingChild(s, value, placement); c != nil {
+			return c.clonePlacementNode()
+		}
+	}
+	c := placementCopier{}
+	return c.copy(value)
+}
+
+// placementCopier is upstream's cloneJson: a deep, checked copy into the
+// representation drafts hold — nil, bool, float64, string, []any and
+// map[string]any — with aliases expanded into independent copies. ancestors
+// holds the containers on the current path, which is how a cycle is told
+// apart from a container that merely occurs twice.
+type placementCopier struct {
+	ancestors map[identity]bool
+}
+
+func (c *placementCopier) copy(v any) (any, error) {
+	switch x := v.(type) {
+	case *Draft:
+		// A draft inside a placed value: pi's copy reads it through its traps.
+		n, err := x.readable()
+		if err != nil {
+			return nil, err
+		}
+		return n.clonePlacementNode()
+	case nil, bool, string:
+		return x, nil
+	case float64:
+		return finite(x, x)
+	case json.Number:
+		f, err := x.Float64()
+		if err != nil {
+			return nil, &ValueError{Message: placementStrict, Value: x}
+		}
+		return finite(f, x)
+	case []any:
+		return c.container(x)
+	case map[string]any:
+		return c.container(x)
+	}
+	rv := reflect.ValueOf(v)
+	switch rv.Kind() {
+	case reflect.Bool:
+		return rv.Bool(), nil
+	case reflect.String:
+		return rv.String(), nil
+	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
+		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64, reflect.Uintptr,
+		reflect.Float32, reflect.Float64:
+		f, _ := number(v)
+		return finite(f, v)
+	case reflect.Map, reflect.Slice, reflect.Array, reflect.Struct, reflect.Pointer:
+		// typeof "object" in JavaScript: a container, but not a plain one.
+		return nil, &ValueError{Message: placementPlain, Value: v}
+	}
+	return nil, &ValueError{Message: placementStrict, Value: v}
+}
+
+// finite is a number as a draft holds it: f, which v was converted to, unless
+// it is NaN or infinite.
+func finite(f float64, v any) (any, error) {
+	if math.IsNaN(f) || math.IsInf(f, 0) {
+		return nil, &ValueError{Message: placementStrict, Value: v}
+	}
+	return f, nil
+}
+
+func (c *placementCopier) container(v any) (any, error) {
+	id, _ := identityOf(v)
+	if id.ptr != 0 && c.ancestors[id] {
+		return nil, &ValueError{Message: placementCycle}
+	}
+	if c.ancestors == nil {
+		c.ancestors = map[identity]bool{}
+	}
+	c.ancestors[id] = true
+	defer delete(c.ancestors, id)
+	switch x := v.(type) {
+	case []any:
+		out := newArray(len(x))
+		for i, item := range x {
+			copied, err := c.copy(item)
+			if err != nil {
+				return nil, err
+			}
+			out[i] = copied
+		}
+		return out, nil
+	case map[string]any:
+		out := make(map[string]any, len(x))
+		// In enumeration order, so that of several bad members the one
+		// reported is always the same.
+		for _, k := range keyOrder(x) {
+			copied, err := c.copy(x[k])
+			if err != nil {
+				return nil, err
+			}
+			out[k] = copied
+		}
+		return out, nil
+	}
+	panic("unreachable: container called on a scalar")
+}
+
+// ─── JavaScript conversions ──────────────────────────────────────────────────
 
 // errNoPrimitive is the TypeError JavaScript's ToPrimitive throws for a JSON
 // object with an own "toString" member.
-var errNoPrimitive = errors.New(`delta: Cannot convert object to primitive value (an object with a "toString" member, or an array draft with a "toString" property, has no string form in JavaScript, because the member is not a function; rename the member, or sort with a comparator)`)
+var errNoPrimitive = errors.New(`delta: Cannot convert object to primitive value (an object with a "toString" member has no string form in JavaScript, because the member is not a function; rename the member, or sort with a comparator)`)
 
-// jsString is String(v) — ToPrimitive, then ToString — for a JSON value, the
-// conversion JavaScript's default sort order and an assigned array length
-// apply. A container read through a draft (a *Draft, or a member of one when
-// through is its transaction) is converted as the draft holds it now.
-func jsString(v any, through *transaction) (string, error) {
+// jsString is String(v) — ToPrimitive, then ToString — for a JSON value or a
+// draft, the conversion JavaScript's default sort order and an assigned array
+// length apply. A draft is converted as it holds its content now.
+func jsString(v any) (string, error) {
 	switch x := v.(type) {
 	case nil:
 		return "null", nil
@@ -930,50 +1391,26 @@ func jsString(v any, through *transaction) (string, error) {
 	case string:
 		return x, nil
 	case *Draft:
-		return containerString(x.s.current(), x.s.named, x.s.txn)
-	case map[string]any, []any:
-		if through != nil {
-			// Upstream's join reads each element through the proxy's get trap,
-			// which makes it a draft.
-			s := through.stateFor(x)
-			return containerString(s.current(), s.named, through)
+		n, err := x.readable()
+		if err != nil {
+			return "", err
 		}
-		return containerString(x, nil, nil)
-	}
-	f, _ := number(v)
-	return jsNumber(f), nil
-}
-
-// containerString is String() of an object or array. Neither has a primitive
-// value of its own: valueOf is Object.prototype's, which returns the object,
-// so the string is what toString makes of it — "[object Object]", or an
-// array's elements' strings joined with commas, null and holes as "". A JSON
-// value can only shadow those methods with members that are not functions:
-// an own "toString" leaves no conversion at all (TypeError), and an array's
-// named "join" sends Array.prototype.toString to Object.prototype.toString.
-func containerString(c any, named map[string]any, through *transaction) (string, error) {
-	switch x := c.(type) {
+		return n.string()
 	case map[string]any:
 		if _, ok := x["toString"]; ok {
 			return "", errNoPrimitive
 		}
 		return "[object Object]", nil
 	case []any:
-		if _, ok := named["toString"]; ok {
-			return "", errNoPrimitive
-		}
-		if _, ok := named["join"]; ok {
-			return "[object Array]", nil
-		}
 		var b strings.Builder
 		for i, item := range x {
 			if i > 0 {
 				b.WriteByte(',')
 			}
-			if item == nil || isEmptySlot(item) {
+			if item == nil {
 				continue
 			}
-			s, err := jsString(item, through)
+			s, err := jsString(item)
 			if err != nil {
 				return "", err
 			}
@@ -981,13 +1418,43 @@ func containerString(c any, named map[string]any, through *transaction) (string,
 		}
 		return b.String(), nil
 	}
-	return "", nil
+	f, _ := number(v)
+	return jsNumber(f), nil
 }
 
-// jsToNumber is ToNumber(v) for a JSON value: null 0, booleans 0 and 1, a
-// string by StringToNumber, and a container by the number its string spells
+// string is String() of a node's content: an array's elements' strings joined
+// with commas (null as ""), or "[object Object]" — neither has a primitive
+// value of its own, and a JSON object can shadow toString only with a member
+// that is not a function, which leaves it no string form at all.
+func (n *node) string() (string, error) {
+	if !n.isArray() {
+		if n.objectHas("toString") {
+			return "", errNoPrimitive
+		}
+		return "[object Object]", nil
+	}
+	var b strings.Builder
+	for i := range n.arrayOverlay().length() {
+		if i > 0 {
+			b.WriteByte(',')
+		}
+		item := n.entry(i)
+		if item == nil {
+			continue
+		}
+		s, err := jsString(item)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(s)
+	}
+	return b.String(), nil
+}
+
+// jsToNumber is ToNumber(v): null 0, booleans 0 and 1, a string by
+// StringToNumber, and a container or draft by the number its string spells
 // (ToPrimitive with hint number tries valueOf first, which never yields a
-// primitive for JSON, then toString).
+// primitive for JSON, then toString). Anything else is NaN.
 func jsToNumber(v any) (float64, error) {
 	switch x := v.(type) {
 	case nil:
@@ -999,8 +1466,8 @@ func jsToNumber(v any) (float64, error) {
 		return 0, nil
 	case string:
 		return stringToNumber(x), nil
-	case map[string]any, []any:
-		s, err := jsString(x, nil)
+	case map[string]any, []any, *Draft:
+		s, err := jsString(x)
 		if err != nil {
 			return 0, err
 		}
@@ -1115,60 +1582,4 @@ func isJSWhitespace(r rune) bool {
 		return true
 	}
 	return unicode.Is(unicode.Zs, r)
-}
-
-// Reverse reverses the array in place.
-func (d *Draft) Reverse() error {
-	_, xs, err := d.array("Reverse")
-	if err != nil {
-		return err
-	}
-	slices.Reverse(xs)
-	return nil
-}
-
-// Fill is Array.prototype.fill(value, start, end): each slot in [start, end)
-// gets its own copy of value. Negative bounds count from the end; both clamp.
-// Pass Len() as end to fill to the end.
-func (d *Draft) Fill(value any, start, end int) error {
-	s, xs, err := d.array("Fill")
-	if err != nil {
-		return err
-	}
-	from, to := relativeIndex(start, len(xs)), relativeIndex(end, len(xs))
-	for i := from; i < to; i++ {
-		stored, err := s.txn.assign(value)
-		if err != nil {
-			return err
-		}
-		xs[i] = stored
-	}
-	return nil
-}
-
-// CopyWithin is Array.prototype.copyWithin(target, start, end): each element
-// of [start, end) is copied — as the draft holds it now — to the slot at the
-// same offset from target. Negative bounds count from the end; all clamp.
-// Pass Len() as end to copy to the end.
-func (d *Draft) CopyWithin(target, start, end int) error {
-	s, xs, err := d.array("CopyWithin")
-	if err != nil {
-		return err
-	}
-	to := relativeIndex(target, len(xs))
-	from, final := relativeIndex(start, len(xs)), relativeIndex(end, len(xs))
-	count := min(max(final-from, 0), len(xs)-to)
-	source := slices.Clone(xs[from : from+count])
-	c := s.txn.cloner()
-	for offset, item := range source {
-		if isEmptySlot(item) {
-			return &ValueError{Message: undefinedMessage}
-		}
-		stored, err := c.clone(item, s.txn)
-		if err != nil {
-			return err
-		}
-		xs[to+offset] = stored
-	}
-	return nil
 }

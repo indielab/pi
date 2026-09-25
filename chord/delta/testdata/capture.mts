@@ -1,22 +1,20 @@
-// Captures what real pi's chord/delta does — the immutable tracker, its
-// copy-on-write drafts, and diffRevisions — the oracle behind
-// chord/delta/golden_test.go.
+// Captures what real pi's chord/delta does — the overlay tracker and its
+// drafts, and diffRevisions — the oracle behind chord/delta/golden_test.go.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> upstream_delta.json 9a139c62b
+//   e.g. ... capture.mts <dir> upstream_delta.json d5cba1d97
 //
 // <extraction> is a src extraction of packages/chord at <sha>:
 //   git -C ~/.cache/pi-upstream archive -o chord.tar <sha> packages/chord
 //   tar -xf chord.tar -C <dir>
-// packages/chord/src/delta imports nothing outside itself but type-only names
-// from ../types.ts (erased by --experimental-strip-types) and no third-party
-// package, so it needs no node_modules and no lockfile pinning. No npm build
-// carries 9a139c62b: it landed after v0.87.1 (f07218c4d).
+// packages/chord/src/delta imports nothing outside packages/chord/src but
+// type-only names (erased by --experimental-strip-types) and, from 19a0361be
+// on, ../json.ts, and no third-party package, so it needs no node_modules and
+// no lockfile pinning. No npm build carries these shas: they landed after
+// v0.87.1 (f07218c4d).
 //
-// upstream_delta.json was captured 2026-09-23 from a src extraction at
-// 9a139c62b under node v26.4.0. packages/chord/src is byte-identical at
-// b313731b8 except for 4bc1a2fe5's delta/astra and delta/cow prototypes, which
-// nothing imports.
+// upstream_delta.json names the sha it was captured at in its "sha" field;
+// the header of golden_test.go says which, and under which node.
 //
 // What is captured, and how the Go test reads it:
 //
@@ -28,36 +26,43 @@
 //   - "scenarios": scripts of tracker/draft steps (the step language below),
 //     run against pi's track(); every step's result — ops, values, returned
 //     values, or the error message — is recorded.
+//   - "generated": tracker cases too large to record, built by name here and
+//     in golden_test.go, recorded as their ops (or a hash) and a value hash.
 //   - "fuzz": state-fuzz.test.ts's randomized revisions, seed by seed, as a
 //     hash of every step's ops and value.
-//   - "probes": draft arrays too large to record after pi's spliceArray has
-//     moved holes into undefined slots, recorded as a summary each.
 //   - "differential": random scripts over a richer document and every draft
 //     operation, generated here against pi's live draft and recorded whole, so
 //     Go replays exactly what pi ran.
 //
 // Canonical JSON. Values and ops are written the way Go's encoding/json writes
 // them (object keys in byte order, U+2028/U+2029 escaped, -0 as "-0"), so the
-// Go test compares bytes. Go maps have no insertion order: that is a recorded
-// divergence (docs/UPSTREAM.md, "chord/delta immutable tracking"), and it is
-// the ONE normalization applied to pi's output — "ops" lists each object's
-// member ops in Go's enumeration order (integer-like keys ascending, then the
-// rest by UTF-16 code unit; deletes after sets, as upstream emits them), and
-// "raw" keeps pi's actual order wherever the two differ. Nothing else is
-// reordered: array ops, string ops and their counts are pi's exactly.
+// Go test compares bytes. A tracker's batches are pi's own, in pi's order: the
+// overlay emits them in the order the change made its edits, which the Go
+// overlay keeps too. diffRevisions walks an object's members in insertion
+// order, which a Go map does not have: that is a recorded divergence
+// (docs/UPSTREAM.md, D69), and it is the ONE normalization applied to pi's
+// output — a diff's "ops" list each object's member ops in Go's enumeration
+// order (integer-like keys ascending, then the rest by UTF-16 code unit;
+// deletes after sets, as diffRevisions emits them), and "raw" keeps pi's
+// actual order wherever the two differ.
 //
 // Step language (a step is a JSON object; "t", "c", "p" name the tracker,
 // change and prepared change and default to "main"):
-//   begin | prepare | adopt | abort | value            lifecycle; value records tracker.value
+//   begin | prepare | adopt | abort | value | revision lifecycle; value and revision read the tracker
 //   replace {value}                                   tracker.prepareReplace(value)
+//   abortPrepared | baseRevision                      prepared.abort(), prepared.baseRevision
 //   shared {at}               whether prepared.value holds prepared.base's container at "at"
 //   keys {at}                 Object.keys of the draft at "at"
 //   set {at, key, value}      append {at, key, text}  delete {at, key}      get {at, key}
 //   push {at, items}          unshift {at, items}     pop {at, as?}         shift {at, as?}
 //   splice {at, start, deleteCount, items}            reverse {at}          setLength {at, length}
-//   sort {at, by, desc?, bump?}                       fill {at, value, start, end}
+//   sort {at, by, desc?, bump?, write?, unshiftOnce?} fill {at, value, start, end}
 //     (by: a numeric field, "." for the element itself, or null for the
-//     default order; bump: a field the comparator increments on both sides)
+//     default order; bump: a field the comparator increments on both sides;
+//     write: [index, value] the comparator writes over an element, every call;
+//     unshiftOnce: items the comparator unshifts on its first call. Each is
+//     the same whichever pairs the sort compares, and how often: V8 and Go
+//     sort by different algorithms — D74)
 //   copyWithin {at, target, start, end}               hold {at, as}
 // "at" is a path of keys and indices from the change's root, or from the held
 // draft named by "from". Values may hold {"$held": name} (that draft),
@@ -195,6 +200,14 @@ function batch(ops: readonly Op[]): Batch {
 	out.ops = RAW(text);
 	if (rawText !== text) out.raw = RAW(rawText);
 	return out;
+}
+
+// The record of a tracker's batch: pi's ops in pi's order. Large batches are
+// recorded by hash.
+function trackerBatch(ops: readonly Op[]): Batch {
+	const text = canon(ops);
+	if (text.length > LARGE) return { opsHash: hash(text), opsBytes: text.length, opsHead: text.slice(0, 120) };
+	return { ops: RAW(text) };
 }
 
 // RAW marks canonical text to splice into the output verbatim.
@@ -697,7 +710,7 @@ class Runner {
 	}
 
 	prepared_(p: any): Record<string, unknown> {
-		const out: Record<string, unknown> = { ...batch(p.ops as Op[]), noop: p.value === p.base };
+		const out: Record<string, unknown> = { ...trackerBatch(p.ops as Op[]), noop: p.value === p.base };
 		const text = canon(p.value);
 		if (this.hashValues) out.valueHash = hash(text);
 		else out.value = RAW(text);
@@ -730,6 +743,13 @@ class Runner {
 			case "abort":
 				this.changes.get(c).abort();
 				return {};
+			case "abortPrepared":
+				this.prepared.get(p).abort();
+				return {};
+			case "baseRevision":
+				return { value: this.prepared.get(p).baseRevision };
+			case "revision":
+				return { value: this.trackers.get(t).revision };
 			case "value":
 				return this.hashValues
 					? { valueHash: hash(canon(this.trackers.get(t).value)) }
@@ -785,11 +805,20 @@ class Runner {
 				}
 				const direction = step.desc === true ? -1 : 1;
 				const bump = step.bump as string | undefined;
+				const write = step.write as [number, unknown] | undefined;
+				const unshiftOnce = step.unshiftOnce as unknown[] | undefined;
 				const field = (x: any) => (by === "." ? x : x[by]);
-				this.nav(step).sort((l: any, r: any) => {
+				const array = this.nav(step);
+				let unshifted = false;
+				array.sort((l: any, r: any) => {
 					if (bump !== undefined) {
 						l[bump]++;
 						r[bump]++;
+					}
+					if (write !== undefined) array[write[0]] = build(write[1], this.env);
+					if (unshiftOnce !== undefined && !unshifted) {
+						unshifted = true;
+						array.unshift(...unshiftOnce.map((x) => build(x, this.env)));
 					}
 					return (field(l) - field(r)) * direction;
 				});
@@ -857,17 +886,6 @@ scenario("abort revokes", { main: J(`{"child":{"value":1}}`) }, S(`[
 	{"do":"begin","c":"next"},
 	{"do":"abort","c":"next"}
 ]`));
-scenario("failed preparation releases the tracker", { main: J(`{"values":[1,2]}`) }, S(`[
-	{"do":"begin"},
-	{"do":"setLength","at":["values"],"length":4},
-	{"do":"prepare"},
-	{"do":"get","at":[],"key":"values"},
-	{"do":"abort"},
-	{"do":"prepare"},
-	{"do":"begin","c":"next"},
-	{"do":"abort","c":"next"},
-	{"do":"value"}
-]`));
 scenario("deep no-op keeps identity", { main: J(`{"value":{"nested":[1,2]}}`) }, S(`[
 	{"do":"begin"},
 	{"do":"set","at":[],"key":"value","value":{"nested":[1,2]}},
@@ -925,9 +943,9 @@ scenario("adopt during a change", { main: J(`{"value":0}`) }, S(`[
 	{"do":"adopt","p":"waiting"},
 	{"do":"value"}
 ]`));
-// tracker.ts adopt's order: a used or aborted prepared change is refused as
-// such even while another change is open.
-scenario("adopt checks used and aborted before the open change", { main: J(`{"value":0}`) }, S(`[
+// A used or aborted prepared change is refused as such while another change
+// is open.
+scenario("adopt refuses used and aborted changes while another is open", { main: J(`{"value":0}`) }, S(`[
 	{"do":"begin"},
 	{"do":"set","at":[],"key":"value","value":1},
 	{"do":"prepare","p":"used"},
@@ -1067,17 +1085,9 @@ scenario("deeply equal replacement", { main: J(`{"value":{"nested":1},"retained"
 	{"do":"adopt"},
 	{"do":"value"}
 ]`));
-// delta-clone.test.ts's refusals.
-scenario("import refusals", { main: J(`{"ok":true}`) }, S(`[
-	{"do":"replace","value":{"$cycle":true}},
-	{"do":"replace","value":{"value":{"$nan":true}}},
-	{"do":"replace","value":{"value":{"$date":true}}},
-	{"do":"value"}
-]`));
-// A scalar root. track() and prepareReplace() are typed `T extends object`,
-// but the import accepts any strict JSON value: a scalar revision publishes
-// ["r", scalar], and only beginChange refuses it (a draft needs a container,
-// and the WeakMap it keys by throws).
+// A scalar root. track() takes any root as it is, but a change drafts the
+// revision and a replacement roots an overlay on its value, and both key the
+// overlay's WeakMap by that container: a scalar throws.
 scenario("scalar roots", { main: J(`1`), none: J(`null`), obj: J(`{"a":1}`) }, S(`[
 	{"do":"value"},
 	{"do":"begin"},
@@ -1126,21 +1136,21 @@ scenario("length grow then fill", { main: J(`{"v":[1]}`) }, arrays(`{"do":"setLe
 scenario("length grow then fill objects", { main: J(`{"v":[]}`) }, arrays(`{"do":"setLength","at":["v"],"length":2},{"do":"fill","at":["v"],"value":{"n":1},"start":0,"end":2},{"do":"set","at":["v",0],"key":"n","value":2}`));
 scenario("length grow unfilled", { main: J(`{"v":[1]}`) }, arrays(`{"do":"setLength","at":["v"],"length":3},{"do":"set","at":["v"],"key":1,"value":2}`));
 scenario("length write through set", { main: J(`{"v":[1,2,3]}`) }, arrays(`{"do":"set","at":["v"],"key":"length","value":1},{"do":"get","at":["v"],"key":"length"}`));
-scenario("index write past the end then fill", { main: J(`{"v":[1]}`) }, arrays(`{"do":"set","at":["v"],"key":3,"value":4},{"do":"get","at":["v"],"key":2},{"do":"set","at":["v"],"key":1,"value":2},{"do":"set","at":["v"],"key":2,"value":3}`));
+scenario("index write past the end is refused", { main: J(`{"v":[1]}`) }, arrays(`{"do":"set","at":["v"],"key":3,"value":4},{"do":"get","at":["v"],"key":2},{"do":"set","at":["v"],"key":1,"value":2},{"do":"set","at":["v"],"key":2,"value":3}`));
 scenario("named property on an array", { main: J(`{"v":[1],"w":[]}`) }, arrays(`{"do":"set","at":["v"],"key":"name","value":{"n":1}},{"do":"get","at":["v","name"],"key":"n"},{"do":"set","at":["v"],"key":"name","value":2},{"do":"delete","at":["v"],"key":"name"},{"do":"hold","at":["v"],"as":"v"},{"do":"set","at":[],"key":"copy","value":{"$held":"v"}},{"do":"set","at":["w"],"key":4294967295,"value":1},{"do":"set","at":["w"],"key":-1,"value":1},{"do":"get","at":["w"],"key":-1}`));
 scenario("string-spelled index", { main: J(`{"v":[1,2]}`) }, arrays(`{"do":"set","at":["v"],"key":"1","value":9},{"do":"get","at":["v"],"key":"0"}`));
 scenario("fill negative bounds", { main: J(`{"v":[1,2,3,4,5]}`) }, arrays(`{"do":"fill","at":["v"],"value":"z","start":-3,"end":-1}`));
 scenario("fill empty range skips the value check", { main: J(`{"v":[1,2]}`) }, arrays(`{"do":"fill","at":["v"],"value":{"$nan":true},"start":1,"end":1}`));
 scenario("copyWithin overlapping", { main: J(`{"v":[1,2,3,4,5]}`) }, arrays(`{"do":"copyWithin","at":["v"],"target":1,"start":0,"end":4}`));
 scenario("copyWithin copies live drafts", { main: J(`{"v":[{"n":1},{"n":2},{"n":3}]}`) }, arrays(`{"do":"set","at":["v",0],"key":"n","value":7},{"do":"copyWithin","at":["v"],"target":2,"start":0,"end":1},{"do":"set","at":["v",0],"key":"n","value":8}`));
-scenario("copyWithin over a hole", { main: J(`{"v":[1]}`) }, arrays(`{"do":"setLength","at":["v"],"length":3},{"do":"copyWithin","at":["v"],"target":0,"start":1,"end":3}`));
+scenario("copyWithin over grown nulls", { main: J(`{"v":[1]}`) }, arrays(`{"do":"setLength","at":["v"],"length":3},{"do":"copyWithin","at":["v"],"target":0,"start":1,"end":3}`));
 scenario("nested permute", { main: J(`{"o":{"rows":[{"id":1},{"id":2},{"id":3}]}}`) }, arrays(`{"do":"sort","at":["o","rows"],"by":"id","desc":true}`));
 scenario("held handle follows reorder", { main: J(`{"v":[{"n":1},{"n":2},{"n":3}]}`) }, arrays(`{"do":"hold","at":["v",0],"as":"first"},{"do":"reverse","at":["v"]},{"do":"unshift","at":["v"],"items":[{"n":0}]},{"do":"set","from":"first","at":[],"key":"n","value":10}`));
 scenario("splice returns detached drafts", { main: J(`{"v":[{"n":1},{"n":2}]}`) }, arrays(`{"do":"splice","at":["v"],"start":0,"deleteCount":1,"items":[]},{"do":"get","at":["v",0],"key":"n"}`));
 scenario("assign a draft copies its current state", { main: J(`{"a":{"n":1,"deep":{"m":1}},"b":null}`) }, arrays(`{"do":"set","at":["a","deep"],"key":"m","value":2},{"do":"set","at":["a"],"key":"n","value":3},{"do":"hold","at":["a"],"as":"a"},{"do":"set","at":[],"key":"b","value":{"$held":"a"}},{"do":"set","from":"a","at":[],"key":"n","value":5}`));
 scenario("sort nested arrays by default order", { main: J(`{"v":[[2],[1],[1,0],[10],[],[null,1],[[3]]]}`) }, arrays(`{"do":"sort","at":["v"],"by":null}`));
-scenario("shift and pop a hole", { main: J(`{"v":[1]}`) }, arrays(`{"do":"setLength","at":["v"],"length":3},{"do":"reverse","at":["v"]},{"do":"shift","at":["v"]},{"do":"get","at":["v"],"key":0},{"do":"pop","at":["v"]},{"do":"set","at":["v"],"key":0,"value":5}`));
-scenario("sort puts holes last", { main: J(`{"v":["~","b"]}`) }, arrays(`{"do":"setLength","at":["v"],"length":4},{"do":"reverse","at":["v"]},{"do":"sort","at":["v"],"by":null},{"do":"get","at":["v"],"key":1},{"do":"get","at":["v"],"key":2},{"do":"fill","at":["v"],"value":0,"start":2,"end":4}`));
+scenario("shift and pop after growing with nulls", { main: J(`{"v":[1]}`) }, arrays(`{"do":"setLength","at":["v"],"length":3},{"do":"reverse","at":["v"]},{"do":"shift","at":["v"]},{"do":"get","at":["v"],"key":0},{"do":"pop","at":["v"]},{"do":"set","at":["v"],"key":0,"value":5}`));
+scenario("default sort after growing with nulls", { main: J(`{"v":["~","b"]}`) }, arrays(`{"do":"setLength","at":["v"],"length":4},{"do":"reverse","at":["v"]},{"do":"sort","at":["v"],"by":null},{"do":"get","at":["v"],"key":1},{"do":"get","at":["v"],"key":2},{"do":"fill","at":["v"],"value":0,"start":2,"end":4}`));
 scenario("negative zero write with another change", { main: J(`{"a":0,"b":1}`) }, arrays(`{"do":"set","at":[],"key":"a","value":-0},{"do":"set","at":[],"key":"b","value":2}`));
 scenario("delete then re-add a member", { main: J(`{"b":1,"a":1}`) }, arrays(`{"do":"delete","at":[],"key":"b"},{"do":"set","at":[],"key":"b","value":2},{"do":"set","at":[],"key":"a","value":2}`));
 scenario("reserved key written through a draft", { main: J(`{"x":{"v":1}}`) }, arrays(`{"do":"set","at":["x"],"key":"__proto__","value":{"polluted":true}}`));
@@ -1165,9 +1175,8 @@ sortBy(`{"xs":[{"toString":null},{"a":1}]}`);
 sortBy(`{"xs":[{"valueOf":"v"},{"a":1}]}`);
 sortBy(`{"xs":[{"toString":1}]}`);
 sortBy(`{"xs":[[null,[1,[2]]],[true,"x"],{"toString2":1},[{}]]}`);
-// An array draft can hold a named "toString" (no string form either) or a
-// named "join" (Array.prototype.toString then falls back to "[object Array]");
-// the change cannot be prepared afterwards, but the sort's outcome shows.
+// A named "toString", "join" or "valueOf" on an array draft is refused (only
+// indices and length can be written); the sort then runs as usual.
 sortBy(`{"xs":[[2],[1]]}`, `{"do":"set","at":["xs",0],"key":"toString","value":1}`);
 sortBy(`{"xs":[[1],[2],["[object Array]0"]]}`, `{"do":"set","at":["xs",0],"key":"join","value":1}`);
 sortBy(`{"xs":[[2],[1]]}`, `{"do":"set","at":["xs",0],"key":"valueOf","value":1}`);
@@ -1183,8 +1192,8 @@ sortBy(`{"xs":[1,0]}`, `{"do":"set","at":["xs"],"key":1,"value":-0}`);
 sortBy(`{"xs":[["a"],[["b"]]]}`);
 sortBy(`{"xs":[["l"],[{}]]}`);
 // The sort reads each element as the draft holds it now, through nested
-// drafts too: a written element orders by its new value, and a named
-// "toString" or "join" on a nested array reaches its String() as well.
+// drafts too: a written element orders by its new value (and a named property
+// on a nested array is refused, as above).
 sortBy(`{"xs":[[2],[1]]}`, `{"do":"set","at":["xs",0],"key":0,"value":0}`);
 sortBy(`{"xs":[[[2]],[[1]]]}`, `{"do":"set","at":["xs",0,0],"key":0,"value":0}`);
 sortBy(`{"xs":[[[2]],[[1]]]}`, `{"do":"set","at":["xs",0,0],"key":"toString","value":1}`);
@@ -1205,15 +1214,15 @@ scenario("a read-only branch keeps its identity", { main: J(`{"n":0,"o":{"p":{"q
 	{"do":"shared","at":[]}
 ]`));
 // Only a canonical index below 2^32 - 1 is an array index: "01" and
-// "4294967295" are named properties, which a revision cannot hold.
+// "4294967295" are named properties, which an array draft refuses.
 scenario("index-like keys on an array", { main: J(`{"xs":[1,2,3,4]}`) }, S(`[
 	{"do":"begin"},{"do":"set","at":["xs"],"key":"01","value":9},{"do":"get","at":["xs"],"key":1},{"do":"prepare"},
 	{"do":"begin"},{"do":"set","at":["xs"],"key":"4294967295","value":9},{"do":"get","at":["xs"],"key":"length"},{"do":"prepare"}
 ]`));
 scenario("copyWithin negative target", { main: J(`{"xs":[1,2,3,4]}`) }, arrays(`{"do":"copyWithin","at":["xs"],"target":-1,"start":0,"end":4}`));
-scenario("pop holes", { main: J(`{"v":[1]}`) }, arrays(`{"do":"setLength","at":["v"],"length":3},{"do":"pop","at":["v"]},{"do":"pop","at":["v"]},{"do":"pop","at":["v"]},{"do":"pop","at":["v"]}`));
-// Object.keys: an array's indices that hold a value, then its named
-// properties; an object's keys (inserted in Go's order here - D69).
+scenario("pop after growing with nulls", { main: J(`{"v":[1]}`) }, arrays(`{"do":"setLength","at":["v"],"length":3},{"do":"pop","at":["v"]},{"do":"pop","at":["v"]},{"do":"pop","at":["v"]},{"do":"pop","at":["v"]}`));
+// Object.keys: an array's indices; an object's keys (inserted in Go's order
+// here - D69).
 scenario("keys", { main: J(`{"o":{"a":1,"b":{},"2":0,"10":0},"xs":[1,2]}`) }, S(`[
 	{"do":"begin"},
 	{"do":"keys","at":[]},
@@ -1227,60 +1236,6 @@ scenario("keys", { main: J(`{"o":{"a":1,"b":{},"2":0,"10":0},"xs":[1,2]}`) }, S(
 	{"do":"abort"}
 ]`));
 sortBy(`{"xs":[[1,[2,[3]]],[1,2,3],"1,2,3 ",[null],[[]],""]}`);
-// The dense check has two texts per site. assertDenseArray counts own keys
-// first (holes and named properties change the count: "must be dense and
-// contain only indexed entries"), then looks for an empty index (as many named
-// properties as holes: "must contain enumerable indexed data properties with
-// defined values"). And two sites: finalize checks an array of the revision
-// (draft.ts, "Draft arrays ..."), but an array created in the change is owned
-// by the transaction, written in place, and dropped as equal to itself, so
-// only the store's commit sees it (value.ts, "Replicated state arrays ...") -
-// after finalize has walked the whole tree, parent before child.
-scenario("dense check on arrays created in the change", { main: J(`{"list":[1]}`) }, S(`[
-	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"set","at":["fresh"],"key":3,"value":5},{"do":"prepare"},
-	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"setLength","at":["fresh"],"length":3},{"do":"prepare"},
-	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"set","at":["fresh"],"key":"foo","value":1},{"do":"prepare"},
-	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"setLength","at":["fresh"],"length":2},{"do":"set","at":["fresh"],"key":"foo","value":1},{"do":"prepare"},
-	{"do":"begin"},{"do":"push","at":["list"],"items":[{"xs":[1]}]},{"do":"set","at":["list",1,"xs"],"key":2,"value":3},{"do":"prepare"},
-	{"do":"begin"},{"do":"set","at":["list"],"key":3,"value":5},{"do":"prepare"},
-	{"do":"begin"},{"do":"setLength","at":["list"],"length":2},{"do":"set","at":["list"],"key":"foo","value":1},{"do":"prepare"},
-	{"do":"begin"},{"do":"set","at":[],"key":"a","value":[1]},{"do":"setLength","at":["a"],"length":3},{"do":"setLength","at":["list"],"length":3},{"do":"prepare"},
-	{"do":"begin"},{"do":"set","at":[],"key":"a","value":[1]},{"do":"set","at":[],"key":"b","value":[1]},{"do":"setLength","at":["b"],"length":3},{"do":"setLength","at":["a"],"length":2},{"do":"set","at":["a"],"key":"foo","value":1},{"do":"prepare"},
-	{"do":"begin"},{"do":"set","at":[],"key":"p","value":[[1]]},{"do":"setLength","at":["p",0],"length":3},{"do":"setLength","at":["p"],"length":2},{"do":"set","at":["p"],"key":"foo","value":1},{"do":"prepare"},
-	{"do":"begin"},{"do":"set","at":[],"key":"fresh","value":[1]},{"do":"set","at":["fresh"],"key":1,"value":2},{"do":"set","at":["fresh"],"key":2,"value":3},{"do":"prepare"},
-	{"do":"begin"},{"do":"set","at":[],"key":"v","value":[[1],[2]]},{"do":"fill","at":["v"],"value":[7],"start":0,"end":1},{"do":"setLength","at":["v",0],"length":2},{"do":"prepare"},
-	{"do":"value"}
-]`));
-// Of several arrays that fail, the first in the walk is reported: here "a",
-// the one whose text differs, among six members inserted in key order.
-scenario("dense check reports the first array in key order", { main: J(`{"list":[1]}`) }, S(`[
-	{"do":"begin"},
-	{"do":"set","at":[],"key":"a","value":[1]},{"do":"set","at":[],"key":"b","value":[1]},{"do":"set","at":[],"key":"c","value":[1]},
-	{"do":"set","at":[],"key":"d","value":[1]},{"do":"set","at":[],"key":"e","value":[1]},{"do":"set","at":[],"key":"f","value":[1]},
-	{"do":"setLength","at":["a"],"length":2},{"do":"set","at":["a"],"key":"foo","value":1},
-	{"do":"setLength","at":["b"],"length":3},{"do":"setLength","at":["c"],"length":3},{"do":"setLength","at":["d"],"length":3},
-	{"do":"setLength","at":["e"],"length":3},{"do":"setLength","at":["f"],"length":3},{"do":"setLength","at":["list"],"length":0},
-	{"do":"prepare"},
-	{"do":"begin"},
-	{"do":"setLength","at":["list"],"length":3},{"do":"set","at":[],"key":"a","value":[1]},{"do":"setLength","at":["a"],"length":2},
-	{"do":"prepare"}
-]`));
-scenario("dense check on an array copyWithin created", { main: J(`{"v":[[1],[2]]}`) }, S(`[
-	{"do":"begin"},{"do":"copyWithin","at":["v"],"target":1,"start":0,"end":1},{"do":"setLength","at":["v",1],"length":3},{"do":"prepare"},
-	{"do":"begin"},{"do":"setLength","at":["v",1],"length":3},{"do":"prepare"}
-]`));
-scenario("dense check on arrays of the revision, child first", { main: J(`{"p":[[1]]}`) }, S(`[
-	{"do":"begin"},{"do":"setLength","at":["p",0],"length":3},{"do":"setLength","at":["p"],"length":2},{"do":"set","at":["p"],"key":"foo","value":1},{"do":"prepare"},
-	{"do":"value"}
-]`));
-// Copying a draft checks it at the assignment, with the draft's texts,
-// nested arrays included.
-scenario("assigning a draft that is not dense", { main: J(`{"list":[1],"v":{"inner":[1]}}`) }, S(`[
-	{"do":"begin"},{"do":"setLength","at":["list"],"length":2},{"do":"hold","at":["list"],"as":"list"},{"do":"set","at":[],"key":"copy","value":{"$held":"list"}},{"do":"abort"},
-	{"do":"begin"},{"do":"setLength","at":["list"],"length":2},{"do":"set","at":["list"],"key":"foo","value":1},{"do":"hold","at":["list"],"as":"list"},{"do":"set","at":[],"key":"copy","value":{"$held":"list"}},{"do":"abort"},
-	{"do":"begin"},{"do":"set","at":["v","inner"],"key":"name","value":1},{"do":"hold","at":["v"],"as":"v"},{"do":"set","at":[],"key":"copy","value":{"$held":"v"}},{"do":"push","at":["list"],"items":[{"$held":"v"}]},{"do":"abort"},
-	{"do":"value"}
-]`));
 // `array.length = v` is ArraySetLength: v goes through ToNumber (null 0,
 // booleans 0 and 1, strings as numeric literals after trimming JavaScript
 // whitespace, arrays and objects through their string form), and the result
@@ -1330,177 +1285,213 @@ scenario("keys past 2^31", { main: J(`{"o":{}}`) }, S(`[
 	{"do":"value"}
 ]`));
 
+// Changes compete: any number may be open on one revision. Adopting one stales
+// every other open change, whose drafts are then settled and which cannot be
+// prepared; a prepared competitor is refused as stale — or as aborted, once
+// aborted. Revisions count adoptions, no-ops included.
+scenario("competing changes", { main: J(`{"child":{"n":1},"value":0}`) }, S(`[
+	{"do":"begin","c":"a"},
+	{"do":"begin","c":"b"},
+	{"do":"hold","c":"b","at":["child"],"as":"bchild"},
+	{"do":"set","c":"a","at":[],"key":"value","value":1},
+	{"do":"set","c":"b","at":[],"key":"value","value":2},
+	{"do":"prepare","c":"a","p":"a"},
+	{"do":"baseRevision","p":"a"},
+	{"do":"adopt","p":"a"},
+	{"do":"revision"},
+	{"do":"get","c":"b","at":[],"key":"value"},
+	{"do":"get","from":"bchild","at":[],"key":"n"},
+	{"do":"set","from":"bchild","at":[],"key":"n","value":5},
+	{"do":"prepare","c":"b","p":"b"},
+	{"do":"prepare","c":"b","p":"b"},
+	{"do":"abort","c":"b"},
+	{"do":"prepare","c":"b","p":"b"},
+	{"do":"begin","c":"c"},
+	{"do":"set","c":"c","at":["child"],"key":"n","value":3},
+	{"do":"prepare","c":"c","p":"c"},
+	{"do":"baseRevision","p":"c"},
+	{"do":"adopt","p":"c"},
+	{"do":"revision"},
+	{"do":"value"}
+]`));
+scenario("prepared competitors", { main: J(`{"value":0}`) }, S(`[
+	{"do":"replace","value":{"value":1},"p":"first"},
+	{"do":"replace","value":{"value":2},"p":"second"},
+	{"do":"begin","c":"third"},
+	{"do":"set","c":"third","at":[],"key":"value","value":3},
+	{"do":"prepare","c":"third","p":"third"},
+	{"do":"replace","value":{"value":4},"p":"fourth"},
+	{"do":"adopt","p":"first"},
+	{"do":"adopt","p":"second"},
+	{"do":"adopt","p":"second"},
+	{"do":"abortPrepared","p":"third"},
+	{"do":"adopt","p":"third"},
+	{"do":"abort","c":"third"},
+	{"do":"abortPrepared","p":"fourth"},
+	{"do":"adopt","p":"fourth"},
+	{"do":"abortPrepared","p":"first"},
+	{"do":"adopt","p":"first"},
+	{"do":"revision"},
+	{"do":"value"}
+]`));
+scenario("revisions count no-ops", { main: J(`{"v":1}`) }, S(`[
+	{"do":"revision"},
+	{"do":"begin"},{"do":"prepare"},{"do":"baseRevision"},{"do":"adopt"},
+	{"do":"revision"},
+	{"do":"replace","value":{"v":1}},{"do":"baseRevision"},{"do":"adopt"},
+	{"do":"revision"},
+	{"do":"begin"},{"do":"abort"},
+	{"do":"revision"},
+	{"do":"value"}
+]`));
+// Arrays stay dense: an index past the length and an element deletion are
+// refused; growing the length inserts nulls, and shrinking it removes.
+scenario("arrays stay dense", { main: J(`{"v":[1,2]}`) }, arrays(`{"do":"set","at":["v"],"key":3,"value":4},{"do":"delete","at":["v"],"key":0},{"do":"set","at":["v"],"key":2,"value":3},{"do":"setLength","at":["v"],"length":5},{"do":"get","at":["v"],"key":4},{"do":"setLength","at":["v"],"length":4},{"do":"set","at":["v"],"key":4,"value":5}`));
+// A base element written back to its own scalar drops its override, a
+// repeated identical write keeps it, and null is a value like any other.
+scenario("overrides: null, restored, repeated", { main: J(`{"v":[1,2,3,4]}`) }, arrays(`{"do":"set","at":["v"],"key":0,"value":null},{"do":"set","at":["v"],"key":1,"value":9},{"do":"set","at":["v"],"key":1,"value":2},{"do":"set","at":["v"],"key":2,"value":7},{"do":"set","at":["v"],"key":2,"value":7},{"do":"get","at":["v"],"key":0}`));
+scenario("cancelled structural edits publish nothing", { main: J(`{"v":[1,2,3]}`) }, arrays(`{"do":"set","at":["v"],"key":1,"value":9},{"do":"set","at":["v"],"key":1,"value":2},{"do":"reverse","at":["v"]},{"do":"reverse","at":["v"]},{"do":"push","at":["v"],"items":[4]},{"do":"pop","at":["v"]}`));
+// A placement is checked whole before the draft changes: of push(valid,
+// invalid), nothing is inserted.
+scenario("a refused placement changes nothing", { main: J(`{"o":{},"v":[1]}`) }, arrays(`{"do":"push","at":["v"],"items":[2,{"$nan":true}]},{"do":"unshift","at":["v"],"items":[{"$cycle":true}]},{"do":"splice","at":["v"],"start":0,"deleteCount":1,"items":[{"$date":true}]},{"do":"fill","at":["v"],"value":{"$inf":true},"start":0,"end":1},{"do":"set","at":["o"],"key":"x","value":{"a":[1,{"$nan":true}]}},{"do":"get","at":["v"],"key":"length"},{"do":"keys","at":["o"]}`));
+// No op addresses a reserved key: an edit below one folds into a set of the
+// nearest safe ancestor, and writing or deleting one sets its object whole.
+scenario("a reserved key in the path folds into its safe ancestor", { main: J(`{"w":1,"x":{"__proto__":{"y":1},"z":1}}`) }, arrays(`{"do":"set","at":["x","__proto__"],"key":"y","value":2},{"do":"set","at":[],"key":"w","value":2}`));
+scenario("deleting a reserved key sets its object", { main: J(`{"x":{"constructor":1,"k":1}}`) }, arrays(`{"do":"delete","at":["x"],"key":"constructor"}`));
+// Edits inside a container this change placed publish with the placement.
+scenario("edits inside a placed container publish with it", { main: J(`{"a":null,"list":[]}`) }, arrays(`{"do":"set","at":[],"key":"a","value":{"b":1,"c":[]}},{"do":"set","at":["a"],"key":"b","value":2},{"do":"push","at":["a","c"],"items":[1]},{"do":"push","at":["list"],"items":[{"t":[]}]},{"do":"push","at":["list",0,"t"],"items":["x"]}`));
+// A structural edit publishes before the edits inside its entries, which
+// address the entries' final indices.
+scenario("a permutation, then edits at final paths", { main: J(`{"v":[{"n":1},{"n":2},{"n":3}]}`) }, arrays(`{"do":"hold","at":["v",0],"as":"first"},{"do":"reverse","at":["v"]},{"do":"set","from":"first","at":[],"key":"n","value":10},{"do":"set","at":["v",0],"key":"n","value":30},{"do":"unshift","at":["v"],"items":[{"n":0}]}`));
+scenario("a removed entry's handle is detached; its copy is not", { main: J(`{"v":[{"n":1},{"n":2}]}`) }, arrays(`{"do":"pop","at":["v"],"as":"popped"},{"do":"push","at":["v"],"items":[{"$held":"popped"}]},{"do":"set","from":"popped","at":[],"key":"n","value":9},{"do":"get","at":["v",1],"key":"n"},{"do":"set","at":["v",1],"key":"n","value":7}`));
+// A comparator's writes over elements are put back once the sort ends (its
+// writes inside elements stay); one that unshifts leaves an entry the sort
+// places twice, which becomes a copy.
+scenario("a sort puts back what its comparator wrote over elements", { main: J(`{"v":[3,1,2],"w":[3,1,2]}`) }, S(`[
+	{"do":"begin"},
+	{"do":"sort","at":["v"],"by":".","write":[0,99]},
+	{"do":"get","at":["v"],"key":0},
+	{"do":"set","at":["w"],"key":1,"value":50},
+	{"do":"sort","at":["w"],"by":".","write":[1,77]},
+	{"do":"get","at":["w"],"key":2},
+	{"do":"prepare"}
+]`));
+scenario("a sort whose comparator unshifts", { main: J(`{"v":[{"n":3},{"n":1},{"n":2}]}`) }, S(`[
+	{"do":"begin"},
+	{"do":"sort","at":["v"],"by":"n","unshiftOnce":[{"n":0}]},
+	{"do":"get","at":["v"],"key":"length"},
+	{"do":"set","at":["v",3],"key":"n","value":30},
+	{"do":"prepare"}
+]`));
+// A deeply equal container assignment keeps the committed container, and a
+// branch only read keeps its identity.
+scenario("a deeply equal assignment keeps the committed container", { main: J(`{"n":1,"o":{"a":[1,2]},"p":{"q":{}}}`) }, S(`[
+	{"do":"begin"},
+	{"do":"set","at":["o"],"key":"a","value":[1,2]},
+	{"do":"get","at":["p","q"],"key":"x"},
+	{"do":"set","at":[],"key":"n","value":2},
+	{"do":"prepare"},
+	{"do":"shared","at":["o","a"]},
+	{"do":"shared","at":["o"]},
+	{"do":"shared","at":["p"]},
+	{"do":"shared","at":[]}
+]`));
+
 // ─── Generated tracker cases ─────────────────────────────────────────────────
 
 const generated: unknown[] = [];
 {
-	// delta.test.ts "keeps large prepareReplace array edits narrow".
-	const rows = Array.from({ length: 10_000 }, (_, value) => ({ value, stable: { value } }));
-	const tracker = track({ rows });
-	const replacement = tracker.value.rows.slice();
-	replacement[5_000] = { value: -1, stable: replacement[5_000]!.stable };
-	generated.push({ name: "prepareReplace-rows-10000", ...batch(tracker.prepareReplace({ rows: replacement }).ops) });
+	// generate records one change built by name: golden_test.go builds the same
+	// root and makes the same edits.
+	const generate = (name: string, initial: object, edit: (draft: any) => void): void => {
+		const tracker = track(initial);
+		const base = JSON.parse(JSON.stringify(tracker.value));
+		const change = tracker.beginChange();
+		edit(change.state);
+		const prepared = change.prepare();
+		if (canon(applyImmutable(base, prepared.ops)) !== canon(prepared.value)) throw new Error(`${name}: pi's own ops do not replay`);
+		generated.push({ name, ...trackerBatch(prepared.ops), valueHash: hash(canon(prepared.value)) });
+	};
+	const range = (n: number) => Array.from({ length: n }, (_, value) => value);
 
+	// delta.test.ts "keeps large prepareReplace array edits narrow" — now one
+	// whole-root replacement.
+	{
+		const rows = range(10_000).map((value) => ({ value, stable: { value } }));
+		const tracker = track({ rows });
+		const replacement = tracker.value.rows.slice();
+		replacement[5_000] = { value: -1, stable: replacement[5_000]!.stable };
+		const prepared = tracker.prepareReplace({ rows: replacement });
+		generated.push({ name: "prepareReplace-rows-10000", ...trackerBatch(prepared.ops), valueHash: hash(canon(prepared.value)) });
+	}
 	// state-draft.test.ts "inserts 100,000 items with unshift/splice".
 	for (const method of ["unshift", "splice"] as const) {
-		const t = track({ values: [-1] });
-		const change = t.beginChange();
-		const items = Array.from({ length: 100_000 }, (_, value) => value);
-		if (method === "unshift") Reflect.apply(change.state.values.unshift, change.state.values, items);
-		else Reflect.apply(change.state.values.splice, change.state.values, [1, 0, ...items]);
-		const prepared = change.prepare();
-		generated.push({ name: `draft-${method}-100000`, ...batch(prepared.ops), valueHash: hash(canon(prepared.value)) });
-	}
-
-}
-
-// ─── Probes: undefined slots ─────────────────────────────────────────────────
-//
-// Past MAX_NATIVE_ARRAY_INSERT_ITEMS (10,000) inserted items, unshift and
-// splice move the array's elements with spliceArray, which defines every moved
-// slot: a hole it moves becomes an own property holding undefined. Such a slot
-// reads as undefined like a hole, but `in` and Object.keys see it, String()
-// joins it as "", the default sort puts it after the values and before the
-// holes (and never hands it to a comparator), copyWithin refuses to copy it,
-// native shift, splice, unshift and reverse move it as it is, and the dense
-// check fails on it with its second text. At 10,000 items the native method
-// runs, and holes stay holes. The inputs are too large to record, so each probe
-// records the draft array afterwards: its length, how many keys it has, `in`
-// and the value at some indices (negative ones count from the end), a hash of
-// its String(), what the steps threw (and returned, for the steps that return
-// {returned}; an array as `in` and the value at each index, plus its
-// JSON.stringify), and what preparing it throws.
-const probes: unknown[] = [];
-{
-	const insertItems = (n: number) => Array.from({ length: n }, (_, value) => value);
-	const spliceArgs = (start: number, remove: number, n: number) => [start, remove, ...insertItems(n)];
-	const probe = (name: string, build: (v: any) => void | { returned: unknown }, at: number[]) => {
-		const t = track({ v: [1] });
-		const change = t.beginChange();
-		const v = change.state.v;
-		const out: Record<string, unknown> = { name };
-		try {
-			const result = build(v);
-			out.stepError = null;
-			if (result !== undefined) {
-				const r = result.returned;
-				out.returned =
-					r === undefined
-						? { undefined: true }
-						: Array.isArray(r)
-							? {
-									array: Array.from({ length: r.length }, (_, i) =>
-										r[i] === undefined ? { has: i in r, undefined: true } : { has: true, value: r[i] },
-									),
-									json: JSON.stringify(r),
-								}
-							: { value: r };
-			}
-		} catch (error) {
-			out.stepError = (error as Error).message;
-		}
-		out.length = v.length;
-		out.keys = Object.keys(v).length;
-		out.stringHash = hash(String(v));
-		out.slots = at.map((position) => {
-			const index = position < 0 ? v.length + position : position;
-			const value = v[index];
-			return { index, has: index in v, ...(value === undefined ? { undefined: true } : { value }) };
+		generate(`draft-${method}-100000`, { values: [-1] }, (draft) => {
+			const items = range(100_000);
+			if (method === "unshift") Reflect.apply(draft.values.unshift, draft.values, items);
+			else Reflect.apply(draft.values.splice, draft.values, [1, 0, ...items]);
 		});
-		try {
-			change.prepare();
-			out.prepareError = null;
-		} catch (error) {
-			out.prepareError = (error as Error).message;
+	}
+	// tracker.test.ts's piece arrays.
+	generate("dense-rows-1000", { rows: range(1_000).map((value) => ({ value })) }, (draft) => {
+		for (const row of draft.rows) row.value += 1;
+	});
+	generate("dense-values-600", { values: range(1_000) }, (draft) => {
+		for (let index = 0; index < 600; index++) draft.values[index] = -index - 1;
+	});
+	generate("dense-nested-2000", { rows: range(2_000).map((value) => ({ nested: { value } })) }, (draft) => {
+		draft.rows[0].nested.value = -1;
+		for (let index = 500; index < 1_000; index++) draft.rows[index].nested.value = -index;
+	});
+	{
+		const rows: any[] = range(400).map(() => ({ flag: 0 }));
+		rows[100].special = JSON.parse(`{"__proto__":{"values":[${range(400).join(",")}]}}`);
+		generate("dense-reserved-400", { rows }, (draft) => {
+			for (let index = 0; index < 256; index++) draft.rows[index].flag = 1;
+			for (let index = 0; index < 256; index++) draft.rows[100].special.__proto__.values[index] = -index - 1;
+		});
+	}
+	generate(
+		"dense-covered-400",
+		{ rows: range(400).map((index) => ({ flag: 0, values: index === 100 ? range(400).map((value) => ({ value })) : [] })) },
+		(draft) => {
+			for (let index = 0; index < 256; index++) draft.rows[index].flag = 1;
+			for (let index = 0; index < 256; index++) draft.rows[100].values[index].value = -index - 1;
+			draft.rows[100].values.push({ value: 999 });
+		},
+	);
+	generate("dense-disjoint-1400", { values: range(1_400).map((value) => ({ value })) }, (draft) => {
+		for (const index of [97, 358, 897, 1_158]) draft.values[index].value = -index - 1;
+		for (let index = 100; index < 356; index++) draft.values[index].value = -index - 1;
+		for (let index = 900; index < 1_156; index++) draft.values[index].value = -index - 1;
+	});
+	generate("queue-20000", { values: range(20_000).map((value) => ({ value })) }, (draft) => {
+		for (let index = 0; index < 10_000; index++) {
+			draft.values.shift();
+			draft.values.push({ value: 20_000 + index });
 		}
-		probes.push(out);
-	};
-	probe("splice 10,001 items", (v) => {
-		v.length = 3;
-		Reflect.apply(v.splice, v, spliceArgs(0, 0, 10_001));
-	}, [-1, -2, -3, -4]);
-	probe("splice 10,000 items", (v) => {
-		v.length = 3;
-		Reflect.apply(v.splice, v, spliceArgs(0, 0, 10_000));
-	}, [-1, -2, -3, -4]);
-	probe("unshift 10,001 items", (v) => {
-		v.length = 3;
-		Reflect.apply(v.unshift, v, insertItems(10_001));
-	}, [-1, -2, -3, -4]);
-	probe("unshift 10,000 items", (v) => {
-		v.length = 3;
-		Reflect.apply(v.unshift, v, insertItems(10_000));
-	}, [-1, -2, -3, -4]);
-	probe("splice 10,001 items over a longer run", (v) => {
-		v.length = 20_005;
-		v[20_004] = 2;
-		Reflect.apply(v.splice, v, spliceArgs(1, 15_000, 10_001));
-	}, [0, 1, 10_000, 10_001, 10_002, -2, -1]);
-	probe("splice 10,001 items replacing as many", (v) => {
-		v.length = 10_005;
-		v[10_004] = 2;
-		Reflect.apply(v.splice, v, spliceArgs(1, 10_001, 10_001));
-	}, [0, 1, -3, -2, -1]);
-	probe("default sort", (v) => {
-		v.length = 3;
-		v[2] = -1;
-		Reflect.apply(v.unshift, v, insertItems(10_001));
-		v.length += 2;
-		v.sort();
-	}, [0, -6, -5, -4, -3, -2, -1]);
-	probe("comparator sort", (v) => {
-		v.length = 3;
-		v[2] = -1;
-		Reflect.apply(v.unshift, v, insertItems(10_001));
-		v.length += 2;
-		v.sort((a: number, b: number) => b - a);
-	}, [0, -6, -5, -4, -3, -2, -1]);
-	probe("shift, pop and reverse", (v) => {
-		v.length = 3;
-		Reflect.apply(v.unshift, v, insertItems(10_001));
-		v.push(7);
-		v.length += 1;
-		v.shift();
-		v.reverse();
-		v.pop();
-		v.splice(4, 1);
-		v.unshift(8);
-	}, [0, 1, 2, 3, 4, 5, -1]);
-	probe("copyWithin", (v) => {
-		v.length = 3;
-		Reflect.apply(v.unshift, v, insertItems(10_001));
-		v.copyWithin(0, 10_002, 10_003);
-	}, [0, -2, -1]);
-	probe("fill and set", (v) => {
-		v.length = 3;
-		Reflect.apply(v.unshift, v, insertItems(10_001));
-		v.fill(5, 10_002, 10_003);
-		v[10_003] = 6;
-	}, [-3, -2, -1]);
-	probe("pop of an undefined slot", (v) => {
-		v.length = 3;
-		Reflect.apply(v.unshift, v, insertItems(10_001));
-		return { returned: v.pop() };
-	}, [-2, -1]);
-	probe("shift of an undefined slot", (v) => {
-		v.length = 3;
-		Reflect.apply(v.unshift, v, insertItems(10_001));
-		v.reverse();
-		return { returned: v.shift() };
-	}, [0, 1]);
-	// The fallback defines only the slots it moves: a hole before start stays a
-	// hole.
-	probe("splice 10,001 items after a hole", (v) => {
-		v.length = 3;
-		Reflect.apply(v.splice, v, spliceArgs(2, 0, 10_001));
-	}, [0, 1, 2, 10_002, 10_003]);
-	// splice returns what it removed: an undefined slot comes back as an own
-	// undefined element, which JSON.stringify writes as null.
-	probe("splice of an undefined slot", (v) => {
-		v.length = 3;
-		Reflect.apply(v.unshift, v, insertItems(10_001));
-		return { returned: v.splice(10_002, 1) };
-	}, [-2, -1]);
+	});
+	generate("fragmentation-20000", { values: range(20_000).map((value) => ({ value })) }, (draft) => {
+		const held = [1, 1_001, 5_001, 10_001, 15_001, 19_999].map((index) => draft.values[index]);
+		for (let index = 0; index < 20_000; index += 2) draft.values.splice(index, 1, { value: -index - 1 });
+		for (const value of held) value.value += 100_000;
+	});
+	generate("null-overrides-10000", { values: range(10_000) }, (draft) => {
+		draft.values[17] = null;
+		draft.values[9_000] = null;
+	});
+	// The operation cap: 4,096 ops publish; one more is a replacement.
+	for (const n of [4_096, 4_097]) {
+		const initial: Record<string, number> = {};
+		for (let i = 0; i < n; i++) initial[i.toString(36)] = 0;
+		generate(`op-cap-object-${n}`, initial, (draft) => {
+			for (let i = 0; i < n; i++) draft[i.toString(36)] = 1;
+		});
+		generate(`op-cap-array-${n}`, { v: range(n).map(() => ({ x: 0 })), w: range(n).map(() => 0) }, (draft) => {
+			draft.v.reverse();
+			for (let i = 0; i < n; i++) draft.w[i] = i % 3 === 0 ? 1 : 0;
+		});
+	}
 }
 
 // ─── Fuzz: state-fuzz.test.ts ────────────────────────────────────────────────
@@ -1578,7 +1569,6 @@ for (let seed = 1; seed <= 100; seed++) {
 	const expected = clone(initial);
 	let replica = clone(tracker.value);
 	const stream = createHash("sha256");
-	let orderDiffers = 0;
 	for (let step = 0; step < 100; step++) {
 		const choice = Math.floor(rng() * 14);
 		const value = seed * 1_000 + step;
@@ -1591,11 +1581,9 @@ for (let seed = 1; seed <= 100; seed++) {
 		if (canon(tracker.value) !== canon(expected) || canon(replica) !== canon(expected)) {
 			throw new Error(`fuzz seed ${seed} step ${step} diverged in pi itself`);
 		}
-		const ordered = canon(goOrder(prepared.ops));
-		if (ordered !== canon(prepared.ops)) orderDiffers++;
-		stream.update(`${ordered}\n${canon(tracker.value)}\n`);
+		stream.update(`${canon(prepared.ops)}\n${canon(tracker.value)}\n`);
 	}
-	fuzz.push({ seed, hash: stream.digest("hex"), orderDiffers });
+	fuzz.push({ seed, hash: stream.digest("hex") });
 }
 
 // ─── Differential: random scripts over every draft operation ─────────────────
@@ -1754,6 +1742,6 @@ const differential: unknown[] = [];
 	}
 }
 
-const out = { sha, diffs, scenarios, generated, probes, fuzz, differential };
+const out = { sha, diffs, scenarios, generated, fuzz, differential };
 fs.writeFileSync(outFile, `${write(out)}\n`);
-console.log(`wrote ${outFile}: ${diffs.length} diffs, ${scenarios.length} scenarios, ${generated.length} generated, ${probes.length} probes, ${fuzz.length} fuzz seeds, ${differential.length} differential scripts`);
+console.log(`wrote ${outFile}: ${diffs.length} diffs, ${scenarios.length} scenarios, ${generated.length} generated, ${fuzz.length} fuzz seeds, ${differential.length} differential scripts`);

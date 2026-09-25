@@ -80,11 +80,7 @@ func cloneItems(items []any) []any {
 // mustTrack tracks a JSON literal.
 func mustTrack(t *testing.T, literal string) *Tracker[any] {
 	t.Helper()
-	tr, err := Track(tree(t, literal))
-	if err != nil {
-		t.Fatalf("Track(%s): %v", literal, err)
-	}
-	return tr
+	return Track(tree(t, literal))
 }
 
 // commit runs one change through a tracker — begin, mutate, prepare, adopt —

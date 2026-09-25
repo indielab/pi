@@ -2,216 +2,380 @@ package delta
 
 import (
 	"errors"
-	"fmt"
+	"weak"
 )
 
 // ─── Immutable tracking ──────────────────────────────────────────────────────
 //
 // Upstream's delta/tracker.ts. A tracker holds one committed, immutable
-// revision. A change drafts the next one; preparing it diffs the draft's
-// result against the committed revision into a batch of ops; adopting the
-// prepared result commits it. Nothing is published until the caller adopts —
-// which is what lets a replicated-state runtime commit, persist or discard a
-// change as one unit.
+// revision. A change opens an overlay draft on it; preparing the change emits
+// the ops the overlay recorded and materializes the revision they produce;
+// adopting the prepared change commits it by swapping the root. Nothing is
+// published until the caller adopts — which is what lets a replicated-state
+// runtime commit, persist or discard a change as one unit.
+//
+// Roots are trusted. Track and PrepareReplace take ownership of the value they
+// are handed without walking or copying it: it must be alias-free strict JSON
+// (nil, bool, a finite float64, string, []any, map[string]any, no container
+// reachable twice), and the caller must never modify it again. Only what a
+// draft is handed is checked and copied.
 
 // The lifecycle errors, with upstream's text. Adopt checks them in this order:
-// owner, used, aborted, active change, stale.
+// owner, used, aborted, stale.
 var (
-	ErrChangeActive      = errors.New("delta: Tracker already has an active change (prepare or abort it before beginning another, or before PrepareReplace)")
-	ErrChangeSettled     = errors.New("delta: Change has already been settled (it was prepared or aborted; begin a new change with Tracker.BeginChange)")
-	ErrForeignPrepared   = errors.New("delta: Prepared change belongs to a different tracker (adopt it on the tracker that prepared it)")
-	ErrPreparedUsed      = errors.New("delta: Prepared change has already been used (each prepared change is adopted at most once; prepare the next one from Tracker.Value)")
-	ErrPreparedAborted   = errors.New("delta: Prepared change has been aborted (its change was aborted after it was prepared; prepare it again)")
-	ErrAdoptDuringChange = errors.New("delta: Cannot adopt while a change is active (prepare or abort the active change first)")
-	ErrStalePrepared     = errors.New("delta: Prepared change is stale (the tracker adopted another revision after it was prepared; prepare it again against Tracker.Value)")
+	ErrChangeSettled   = errors.New("delta: Change has already been settled (it was prepared or aborted; begin a new change with Tracker.BeginChange)")
+	ErrForeignPrepared = errors.New("delta: Prepared change belongs to a different tracker (adopt it on the tracker that prepared it)")
+	ErrPreparedUsed    = errors.New("delta: Prepared change has already been used (each prepared change is adopted at most once; prepare the next one from Tracker.Value)")
+	ErrPreparedAborted = errors.New("delta: Prepared change has been aborted (it, or the change that prepared it, was aborted; prepare it again)")
+	ErrStalePrepared   = errors.New("delta: Prepared change is stale (the tracker adopted another revision after it was prepared; prepare it again against Tracker.Value)")
 
-	// ErrScalarRevision is BeginChange's refusal of a scalar revision, with
-	// the text of the TypeError pi's draft throws: it keys its states by the
-	// root in a WeakMap, which takes only objects.
-	ErrScalarRevision = errors.New("delta: Invalid value used as weak map key (a change drafts a JSON object or array, and the committed revision is a scalar; replace it with PrepareReplace)")
+	// errNotReady is upstream's refusal of a prepared change whose context is
+	// neither prepared nor settled, which no Go caller can hand Adopt.
+	errNotReady = errors.New("delta: Prepared change is not ready (prepare it with Change.Prepare or Tracker.PrepareReplace)")
+
+	// ErrScalarRevision is the refusal of a scalar root, with the text of the
+	// TypeError pi's overlay throws: it keys its nodes by their containers in a
+	// WeakMap, which takes only objects. A change drafts an object or array,
+	// and PrepareReplace takes one.
+	ErrScalarRevision = errors.New("delta: Invalid value used as weak map key (a change drafts a JSON object or array, and a replacement is one; this revision or value is a scalar)")
 
 	// ErrZeroTracker is Go's own: a Tracker that Track did not make holds no
 	// revision, so BeginChange, PrepareReplace and Adopt refuse it.
 	ErrZeroTracker = errors.New("delta: Tracker holds no revision (it is a zero Tracker; make one with Track)")
 )
 
-// owner is a tracker's identity as a prepared change records it. It is not
-// the tracker itself, so that a retained Prepared does not retain the tracker
-// (upstream's `#owner = {}`); it has a size so that two owners never share an
-// address.
-type owner struct{ _ byte }
-
-type preparedStatus uint8
+type status uint8
 
 const (
-	statusPrepared preparedStatus = iota
+	statusOpen status = iota
+	statusPrepared
 	statusConsumed
 	statusAborted
+	statusStale
 )
 
-// preparedMeta is upstream's PreparedMetadata: what Adopt checks, shared with
-// the Change that prepared it so that aborting the change invalidates it.
-type preparedMeta struct {
-	owner    *owner
-	revision int
-	status   preparedStatus
+// statusCell is a context's status, shared with the Change that prepared it
+// so that aborting the change after Prepare reaches the prepared change
+// without the Change retaining its context.
+type statusCell struct{ value status }
+
+// owner is a tracker's identity as its contexts record it, and the registry
+// of its open changes. It is not the tracker itself, so that a retained change
+// or prepared change does not retain the tracker or its revision (upstream's
+// `#owner = {}` and its WeakRef'd tracker). The registry holds its contexts
+// weakly: a change the caller drops is not kept alive by the tracker.
+type owner struct {
+	contexts    map[weak.Pointer[overlayContext]]struct{}
+	pruneBudget int
+}
+
+func (o *owner) register(c *overlayContext) {
+	c.registration = weak.Make(c)
+	c.registered = true
+	o.contexts[c.registration] = struct{}{}
+	o.pruneBudget--
+	if o.pruneBudget == 0 {
+		for p := range o.contexts {
+			if p.Value() == nil {
+				delete(o.contexts, p)
+			}
+		}
+		o.pruneBudget = max(256, len(o.contexts))
+	}
+}
+
+func (o *owner) release(c *overlayContext) {
+	if c.registered {
+		delete(o.contexts, c.registration)
+		c.registered = false
+	}
+}
+
+// invalidate is upstream's: adopting one change makes every other change open
+// on the tracker stale, and drops what their overlays hold. A change prepared
+// before is not registered; Adopt finds it stale by its revision.
+func (o *owner) invalidate(winner *overlayContext) {
+	for p := range o.contexts {
+		c := p.Value()
+		if c == nil || c == winner {
+			continue
+		}
+		if c.status.value == statusOpen || c.status.value == statusPrepared {
+			c.status.value = statusStale
+		}
+		c.release()
+	}
+	clear(o.contexts)
+	o.pruneBudget = 256
+}
+
+// overlayContext is upstream's OverlayContext: one change's overlay, or one
+// replacement's.
+type overlayContext struct {
+	owner        *owner
+	baseRevision int
+	status       *statusCell
+	root         *node
+	baseValue    any
+	dirty        []*node
+	nodes        []*node
+	// placed finds the node of a container this change placed, by identity:
+	// upstream's rawNodes, for the containers a draft copied in. Containers
+	// read from the revision are found by their slot (node.keyChildren,
+	// node.indexChildren), which needs no identity: an empty []any that
+	// encoding/json decoded has none of its own (value.go, anonymous).
+	placed      map[identity]*node
+	ops         []Op
+	opsReady    bool
+	replacement bool
+	// released is upstream's overlayReleased: the overlay is gone, and so is
+	// every use of its drafts.
+	released bool
+	// simpleObjectMaterialization is set when every edit was to objects below
+	// objects, so the prepared value is the overlay copied, not the base with
+	// the ops applied.
+	simpleObjectMaterialization bool
+	registration                weak.Pointer[overlayContext]
+	registered                  bool
+}
+
+func newContext(o *owner, baseRevision int, root any, replacement bool, base any) *overlayContext {
+	c := &overlayContext{
+		owner:        o,
+		baseRevision: baseRevision,
+		status:       &statusCell{},
+		baseValue:    base,
+		replacement:  replacement,
+		placed:       map[identity]*node{},
+	}
+	c.root = c.newNode(root, nil, slot{}, false)
+	return c
+}
+
+// newNode is upstream's createNode, the lookup aside (node.childFor).
+func (c *overlayContext) newNode(base any, parent *node, s slot, placement bool) *node {
+	n := &node{ctx: c, base: base, parent: parent, kind: s.kind, key: s.key, index: s.index, source: s.source, placement: placement}
+	n.draft = &Draft{n: n}
+	c.nodes = append(c.nodes, n)
+	return n
+}
+
+// settled is upstream's isSettledContext: no draft of the context may be used.
+func (c *overlayContext) settled() bool {
+	switch c.status.value {
+	case statusConsumed, statusAborted, statusStale:
+		return true
+	}
+	return c.released
+}
+
+// abort is upstream's abortContext.
+func (c *overlayContext) abort() {
+	switch c.status.value {
+	case statusAborted, statusConsumed, statusStale:
+		return
+	}
+	c.status.value = statusAborted
+	c.release()
+}
+
+// release is upstream's clearContext and releaseOverlayReferences: the
+// context leaves the registry and drops its overlay, node by node, so that a
+// draft handle the caller keeps retains neither the revision nor what the
+// change placed.
+func (c *overlayContext) release() {
+	c.owner.release(c)
+	for _, n := range c.nodes {
+		*n = node{ctx: c, draft: n.draft}
+	}
+	c.dirty, c.nodes, c.placed = nil, nil, nil
+	c.ops, c.root, c.baseValue = nil, nil, nil
+	c.released = true
 }
 
 // Tracker holds one committed revision of a JSON value and turns changes to it
 // into batches of ops. T is the root's Go type: map[string]any, []any, or any
-// when it is not known. The revision is an object or array to draft; a scalar
-// is accepted too, as pi's runtime accepts one under its `T extends object`
-// type, and only PrepareReplace can change it.
+// when it is not known.
 //
 // The committed revision is immutable: Value, and the Base, Value and Ops of
 // every Prepared, share its containers, and none of them may be modified.
 // Change it through BeginChange's draft, or replace it with PrepareReplace;
 // either way the result takes effect only when adopted.
 //
-// A Tracker is not safe for concurrent use. At most one change is active at a
-// time. The zero Tracker holds no revision and refuses every change with
+// Several changes may be open or prepared against one revision at a time;
+// adopting one makes every other stale. A Tracker is not safe for concurrent
+// use. The zero Tracker holds no revision and refuses every change with
 // ErrZeroTracker; make one with Track.
 type Tracker[T any] struct {
 	owner    *owner
 	value    T
 	revision int
-	changing bool
 }
 
-// Track starts tracking a deep copy of initial, a JSON object
-// (map[string]any) or array ([]any) — or a scalar, which BeginChange cannot
-// draft but PrepareReplace can replace. The copy is the first committed
-// revision: numbers become float64, a nil map or slice an empty one, and an
-// object or array reachable twice becomes two independent values. A cycle, a
-// number that is not finite, or a Go type with no JSON form is a *ValueError.
-func Track[T any](initial T) (*Tracker[T], error) {
-	v, err := importRoot[T](initial)
-	if err != nil {
-		return nil, err
-	}
-	return &Tracker[T]{owner: &owner{}, value: v}, nil
-}
-
-// importRoot imports a root value and returns it as T.
-func importRoot[T any](root T) (T, error) {
-	var zero T
-	v, err := importValue(root)
-	if err != nil {
-		return zero, err
-	}
-	if v == nil {
-		// JSON null: only an interface T holds it, and root was one.
-		return zero, nil
-	}
-	out, ok := v.(T)
-	if !ok {
-		return zero, fmt.Errorf("delta: a tracked revision is imported as nil, bool, float64, string, map[string]any or []any, and %T cannot hold the %T this one became (track with T = any, or with that type)", zero, v)
-	}
-	return out, nil
+// Track takes ownership of initial as the first committed revision, in O(1):
+// it is neither walked nor copied, so it must be alias-free strict JSON —
+// nil, bool, a finite float64, string, []any and map[string]any, no container
+// reachable twice — and the caller must never modify it again. A revision
+// that breaks the contract has unspecified behavior; check a value from
+// outside with chord.IsValue first.
+func Track[T any](initial T) *Tracker[T] {
+	return &Tracker[T]{owner: &owner{contexts: map[weak.Pointer[overlayContext]]struct{}{}, pruneBudget: 256}, value: initial}
 }
 
 // Value is the committed revision.
 func (t *Tracker[T]) Value() T { return t.value }
 
-// BeginChange opens a change: a draft of the committed revision that the
-// caller mutates, then prepares or aborts. A tracker has at most one active
-// change, and nothing can be adopted while it is open. A scalar revision has
-// no draft: ErrScalarRevision.
+// Revision counts the changes adopted: 0 for the initial revision. A no-op
+// counts too.
+func (t *Tracker[T]) Revision() int { return t.revision }
+
+// BeginChange opens a change: an overlay draft of the committed revision that
+// the caller mutates, across any amount of work, then prepares or aborts. It
+// never modifies the committed revision. A scalar revision has no draft:
+// ErrScalarRevision.
 func (t *Tracker[T]) BeginChange() (*Change[T], error) {
 	if t.owner == nil {
 		return nil, ErrZeroTracker
 	}
-	if t.changing {
-		return nil, ErrChangeActive
-	}
 	if !isContainer(any(t.value)) {
 		return nil, ErrScalarRevision
 	}
-	t.changing = true
-	tx := newTransaction(any(t.value))
-	return &Change[T]{tracker: t, txn: tx, root: tx.root.draft}, nil
+	c := newContext(t.owner, t.revision, any(t.value), false, any(t.value))
+	t.owner.register(c)
+	return &Change[T]{ctx: c, root: c.root.draft}, nil
 }
 
-// PrepareReplace prepares replacing the committed revision with a deep copy of
-// value. The ops are the diff between the two, so a replacement that differs
-// in one member publishes one op; one that is deeply equal publishes none, and
-// its Value is the committed revision itself.
+// PrepareReplace prepares replacing the committed revision with value, whole:
+// taking ownership of it, on Track's terms. When value is deeply equal to the
+// committed revision the ops are empty and the prepared Value is the committed
+// revision itself; otherwise they are one Replace, and the prepared Value is
+// value. value must be an object or array: ErrScalarRevision.
 func (t *Tracker[T]) PrepareReplace(value T) (*Prepared[T], error) {
 	if t.owner == nil {
 		return nil, ErrZeroTracker
 	}
-	if t.changing {
-		return nil, ErrChangeActive
+	if !isContainer(any(value)) {
+		return nil, ErrScalarRevision
 	}
-	candidate, err := importRoot[T](value)
+	c := newContext(t.owner, t.revision, any(value), true, any(t.value))
+	c.status.value = statusPrepared
+	t.owner.register(c)
+	p, err := materializePrepared[T](c)
 	if err != nil {
+		c.status.value = statusAborted
+		c.release()
 		return nil, err
 	}
-	return t.prepare(candidate), nil
+	return p, nil
 }
 
-// Adopt commits a prepared change. It must come from this tracker, be
-// neither used nor aborted, and have been prepared against the committed
-// revision; no change may be active. A nil or zero Prepared belongs to no
-// tracker.
+// Adopt commits a prepared change: an infallible swap of the root, since the
+// revision was materialized when it was prepared. It must come from this
+// tracker, be neither used nor aborted, and have been prepared against the
+// committed revision. Adopting a change makes every other open or prepared
+// change of the tracker stale. A nil or zero Prepared belongs to no tracker.
 func (t *Tracker[T]) Adopt(p *Prepared[T]) error {
 	if t.owner == nil {
 		return ErrZeroTracker
 	}
-	if p == nil || p.meta == nil || p.meta.owner != t.owner {
+	if p == nil || p.ctx == nil || p.ctx.owner != t.owner {
 		return ErrForeignPrepared
 	}
-	switch p.meta.status {
+	c := p.ctx
+	switch c.status.value {
 	case statusConsumed:
 		return ErrPreparedUsed
 	case statusAborted:
 		return ErrPreparedAborted
+	case statusStale:
+		return ErrStalePrepared
+	case statusPrepared:
+	default:
+		return errNotReady
 	}
-	if t.changing {
-		return ErrAdoptDuringChange
-	}
-	if p.meta.revision != t.revision || !same(any(t.value), any(p.base)) {
+	if c.baseRevision != t.revision {
+		c.status.value = statusStale
+		c.release()
 		return ErrStalePrepared
 	}
-	p.meta.status = statusConsumed
+	// Upstream also refuses a base that is not the committed value; with the
+	// revisions equal it always is (only Adopt moves either), and Go cannot
+	// compare an empty []any with no capacity by identity (value.go).
 	t.value = p.value
+	c.status.value = statusConsumed
 	t.revision++
+	t.owner.invalidate(c)
 	return nil
 }
 
-// prepareDraft finishes a change's draft into a prepared change, releasing
-// the tracker for the next change either way.
-func (t *Tracker[T]) prepareDraft(tx *transaction) (*Prepared[T], error) {
-	defer func() { t.changing = false }()
-	v, err := tx.finish()
-	if err != nil {
-		return nil, err
+// materializePrepared is upstream's: the ops, and the revision they produce —
+// the base itself for no ops, the overlay copied when only objects changed,
+// and otherwise the base with the ops applied. The overlay is dropped either
+// way.
+func materializePrepared[T any](c *overlayContext) (*Prepared[T], error) {
+	ops := c.ensureOperations()
+	base := c.baseValue
+	value := base
+	switch {
+	case len(ops) == 0:
+	case c.simpleObjectMaterialization:
+		value = c.root.cloneNode()
+	default:
+		v, err := materializeOperations(base, ops)
+		if err != nil {
+			return nil, err
+		}
+		value = v
 	}
-	return t.prepare(v.(T)), nil
+	p := &Prepared[T]{ctx: c, base: asT[T](base), value: asT[T](value), ops: ops}
+	c.release()
+	return p, nil
 }
 
-// prepare diffs candidate against the committed revision. An empty diff
-// prepares the committed revision itself, so a no-op keeps its identity.
-func (t *Tracker[T]) prepare(candidate T) *Prepared[T] {
-	base := t.value
-	ops := DiffRevisions(any(base), any(candidate))
-	value := candidate
-	if len(ops) == 0 {
-		value = base
+// materializeOperations is upstream's: the ops applied to base, copying each
+// container they touch once. A batch with no splice or permutation is the
+// tracker's own and skips validation (upstream's applyImmutableTrusted).
+func materializeOperations(base any, ops []Op) (any, error) {
+	trusted := true
+	for _, op := range ops {
+		switch op.(type) {
+		case Splice, Permute:
+			trusted = false
+		}
 	}
-	return &Prepared[T]{
-		meta:  &preparedMeta{owner: t.owner, revision: t.revision, status: statusPrepared},
-		base:  base,
-		value: value,
-		ops:   ops,
+	return applyBatch(base, ops, trusted)
+}
+
+// ensureOperations is upstream's: a change's ops were emitted when it was
+// prepared; a replacement's are none when it equals the base and one Replace
+// otherwise.
+func (c *overlayContext) ensureOperations() []Op {
+	if c.opsReady {
+		return c.ops
 	}
+	// Upstream reads the tracker's value here, which is the base: a
+	// replacement is materialized as it is prepared.
+	if jsonEqual(c.baseValue, c.root.base) {
+		c.ops = []Op{}
+	} else {
+		c.ops = []Op{Replace{Value: c.root.base}}
+	}
+	c.opsReady = true
+	return c.ops
+}
+
+// asT is v as the tracker's root type; the zero T for a nil v.
+func asT[T any](v any) T {
+	t, _ := v.(T)
+	return t
 }
 
 // Prepared is a change ready to adopt: the revision it was prepared against,
 // the revision it produces, and the ops between them. All three are shared
-// and must not be modified.
+// and must not be modified; the ops' payloads may be the same containers as
+// parts of Value.
 type Prepared[T any] struct {
-	meta  *preparedMeta
+	ctx   *overlayContext
 	base  T
 	value T
 	ops   []Op
@@ -225,82 +389,100 @@ func (p *Prepared[T]) Base() T { return p.base }
 func (p *Prepared[T]) Value() T { return p.value }
 
 // Ops is the batch that turns Base into Value — what a replica applies. It is
-// empty, not nil, for a no-op.
+// empty, not nil, for a no-op. Only the resulting value is contractual: the
+// same change may be published as different tuples.
 func (p *Prepared[T]) Ops() []Op { return p.ops }
 
-type changeStatus uint8
+// BaseRevision is the tracker revision the change was prepared against.
+func (p *Prepared[T]) BaseRevision() int {
+	if p.ctx == nil {
+		return 0
+	}
+	return p.ctx.baseRevision
+}
 
-const (
-	changeOpen changeStatus = iota
-	changePrepared
-	changeAborted
-)
+// Abort keeps the prepared change from being adopted; Value stays readable.
+// Aborting one already adopted, aborted or stale does nothing.
+func (p *Prepared[T]) Abort() {
+	if p.ctx != nil {
+		p.ctx.abort()
+	}
+}
 
 // Change is one open edit of a tracker's committed revision. Mutate State,
-// then Prepare it — or Abort it. Either settles the change and revokes its
-// drafts; a draft may be held across any amount of work in between, but not
-// past that.
+// then Prepare it — or Abort it. Either settles the change; its drafts may be
+// held across any amount of work in between, but not past that, nor past the
+// tracker adopting a competing change.
 //
 // A Change is not safe for concurrent use.
 type Change[T any] struct {
+	ctx      *overlayContext
+	prepared *statusCell
+	settled  bool
 	root     *Draft
-	tracker  *Tracker[T]
-	txn      *transaction
-	prepared *preparedMeta
-	status   changeStatus
 }
 
-// State is the draft of the root.
+// State is the draft of the root. After the change settles it is still
+// returned, but every use of it fails.
 func (c *Change[T]) State() *Draft { return c.root }
 
 // errZeroChange is Go's own: a Change that BeginChange did not open has no
 // draft to prepare.
 var errZeroChange = errors.New("delta: Change was never begun (it is a zero Change; open one with Tracker.BeginChange)")
 
-// Prepare settles the change: it finishes the draft and diffs the result
-// against the revision the change began from. The tracker is free for the next
-// change afterwards, whether or not Prepare succeeds; a failure (an array left
-// with holes) aborts the change.
+// Prepare settles the change: it emits the ops its overlay recorded and
+// materializes the revision they produce, without changing the tracker. A
+// change made stale by a competing adoption cannot be prepared: its drafts are
+// settled.
 func (c *Change[T]) Prepare() (*Prepared[T], error) {
-	if c.status != changeOpen {
+	if c.settled {
 		return nil, ErrChangeSettled
 	}
-	if c.tracker == nil {
+	ctx := c.ctx
+	if ctx == nil {
 		return nil, errZeroChange
 	}
-	t, tx := c.tracker, c.txn
-	c.tracker, c.txn = nil, nil
-	p, err := t.prepareDraft(tx)
+	if ctx.settled() {
+		return nil, ErrDraftSettled
+	}
+	if ctx.status.value != statusOpen {
+		return nil, errReadOnly
+	}
+	ctx.status.value = statusPrepared
+	defer func() { c.ctx = nil }()
+	if len(ctx.dirty) == 0 {
+		ctx.ops = []Op{}
+	} else {
+		ctx.ops = ctx.emitOperations()
+	}
+	ctx.opsReady = true
+	p, err := materializePrepared[T](ctx)
 	if err != nil {
-		c.status = changeAborted
+		ctx.status.value = statusAborted
+		ctx.release()
+		c.settled = true
 		return nil, err
 	}
-	c.prepared = p.meta
-	c.status = changePrepared
+	c.prepared = ctx.status
+	c.settled = true
 	return p, nil
 }
 
 // Abort settles the change without preparing it, or — after Prepare —
-// invalidates the prepared change if it has not been adopted. Aborting twice,
-// or aborting a zero Change, does nothing.
+// aborts the prepared change if it is still waiting to be adopted. Aborting
+// twice, or aborting a zero Change, does nothing.
 func (c *Change[T]) Abort() {
-	switch c.status {
-	case changeAborted:
-		return
-	case changePrepared:
-		if c.prepared.status == statusPrepared {
-			c.prepared.status = statusAborted
+	if c.settled {
+		if c.prepared != nil && c.prepared.value == statusPrepared {
+			c.prepared.value = statusAborted
 		}
 		c.prepared = nil
-		c.status = changeAborted
 		return
 	}
-	c.status = changeAborted
-	t, tx := c.tracker, c.txn
-	if t == nil {
+	if c.ctx == nil {
 		return
 	}
-	c.tracker, c.txn = nil, nil
-	tx.release()
-	t.changing = false
+	c.settled = true
+	c.ctx.abort()
+	c.ctx = nil
 }

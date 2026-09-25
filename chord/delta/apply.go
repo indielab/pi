@@ -2,7 +2,7 @@ package delta
 
 import (
 	"fmt"
-	"maps"
+	"reflect"
 	"slices"
 	"unicode/utf16"
 	"unicode/utf8"
@@ -31,8 +31,7 @@ import (
 //
 // A Tracker's batches, and what the encoder makes of them, are not the
 // consumer's to own: their payloads are the tracker's committed revisions,
-// which pi freezes — its apply throws a TypeError on them — and which Apply
-// would write into, silently. Apply those with ApplyImmutable (see the
+// which Apply would write into. Apply those with ApplyImmutable (see the
 // package doc, Streams).
 //
 // Apply is not transactional: ops before the failing one have already changed
@@ -42,7 +41,7 @@ import (
 // Takes decoded ops. Path ids and omitted paths are a wire concern — run the
 // decoder first if the ops came from a boundary.
 func Apply[T any](target T, ops []Op) (T, error) {
-	root, err := applyOps(target, ops, false)
+	root, err := applyOps(target, ops, nil)
 	return typed[T](root, err)
 }
 
@@ -52,8 +51,89 @@ func Apply[T any](target T, ops []Op) (T, error) {
 // it does not clone or freeze either complete input, and it treats op payloads
 // as immutable rather than copying them.
 func ApplyImmutable[T any](target T, ops []Op) (T, error) {
-	root, err := applyOps(target, ops, true)
-	return typed[T](root, err)
+	var root any = target
+	for _, op := range ops {
+		var err error
+		if root, err = applyOps(root, []Op{op}, ownedSet{}); err != nil {
+			return typed[T](nil, err)
+		}
+	}
+	return typed[T](root, nil)
+}
+
+// applyBatch is the tracker's own immutable application of a batch it
+// materializes (upstream's apply-immutable-batch.ts, and with trusted set
+// apply-immutable-trusted.ts, which skips the validation of ops the tracker
+// made itself): each container the batch touches is copied once, then written
+// in place for the rest of the batch.
+func applyBatch(root any, ops []Op, trusted bool) (any, error) {
+	owned := ownedSet{}
+	for _, op := range ops {
+		if op == nil {
+			return nil, fmt.Errorf("%w: op is nil", ErrInvalidOp)
+		}
+		if !trusted {
+			if err := op.Validate(); err != nil {
+				return nil, err
+			}
+		}
+		next, err := applyOne(root, op, owned)
+		if err != nil {
+			return nil, err
+		}
+		root = next
+	}
+	return root, nil
+}
+
+// ownedSet holds the containers an immutable application copied: those it may
+// write in place. A map is known by its header, a slice by its backing array,
+// which every copy allocates for itself — capacity at least one, so that no
+// copy shares the zero-size address of an empty []any.
+type ownedSet map[uintptr]bool
+
+// owns reports whether v is a copy this application made.
+func (o ownedSet) owns(v any) bool {
+	switch v.(type) {
+	case map[string]any, []any:
+		return o[reflect.ValueOf(v).Pointer()]
+	}
+	return false
+}
+
+// adopt records v, a copy this application made or re-headered.
+func (o ownedSet) adopt(v any) {
+	switch x := v.(type) {
+	case map[string]any:
+		o[reflect.ValueOf(x).Pointer()] = true
+	case []any:
+		if cap(x) > 0 {
+			o[reflect.ValueOf(x).Pointer()] = true
+		}
+	}
+}
+
+// claim is the container to write: v itself once owned, else a shallow copy
+// of it, owned from now on.
+func (o ownedSet) claim(v any) any {
+	if o.owns(v) {
+		return v
+	}
+	var c any
+	switch x := v.(type) {
+	case map[string]any:
+		m := make(map[string]any, len(x))
+		for k, item := range x {
+			m[k] = item
+		}
+		c = m
+	case []any:
+		c = cloneArray(x)
+	default:
+		return v
+	}
+	o.adopt(c)
+	return c
 }
 
 // typed returns root as the replica's own type. A nil root is the zero T: an
@@ -70,7 +150,9 @@ func typed[T any](root any, err error) (T, error) {
 	return v, nil
 }
 
-func applyOps(root any, ops []Op, clone bool) (any, error) {
+// applyOps applies ops in order. owned is nil for the mutable applier; else
+// the set of containers already copied, written in place from then on.
+func applyOps(root any, ops []Op, owned ownedSet) (any, error) {
 	for _, op := range ops {
 		if op == nil {
 			return nil, fmt.Errorf("%w: op is nil (a batch is a []Op of Replace, Set, Delete, Append, Truncate, Splice or Permute; run ParseOp on wire input first)", ErrInvalidOp)
@@ -81,7 +163,7 @@ func applyOps(root any, ops []Op, clone bool) (any, error) {
 		if err := op.Validate(); err != nil {
 			return nil, err
 		}
-		next, err := applyOne(root, op, clone)
+		next, err := applyOne(root, op, owned)
 		if err != nil {
 			return nil, err
 		}
@@ -90,13 +172,13 @@ func applyOps(root any, ops []Op, clone bool) (any, error) {
 	return root, nil
 }
 
-func applyOne(root any, op Op, clone bool) (any, error) {
+func applyOne(root any, op Op, owned ownedSet) (any, error) {
 	switch op := op.(type) {
 	case Replace:
 		// Adopted, not copied. See Apply.
 		return op.Value, nil
 	case Splice:
-		return walk(root, op.Path, clone, func(node any) (any, error) {
+		return walk(root, op.Path, owned, func(node any) (any, error) {
 			xs, ok := node.([]any)
 			if !ok {
 				return nil, &PathError{Ref: op.Path}
@@ -104,10 +186,10 @@ func applyOne(root any, op Op, clone bool) (any, error) {
 			return splice(xs, op.Index, op.Remove, op.Items), nil
 		})
 	case Permute:
-		// With clone set, walk has already copied the array itself — upstream's
-		// copyContainers along the full path, as for a splice — so the
-		// reorder below never touches the caller's value.
-		return walk(root, op.Path, clone, func(node any) (any, error) {
+		// With owned set, walk has already copied the array itself —
+		// upstream's copyContainers along the full path, as for a splice — so
+		// the reorder below never touches the caller's value.
+		return walk(root, op.Path, owned, func(node any) (any, error) {
 			xs, ok := node.([]any)
 			if !ok || len(xs) != len(op.Permutation) {
 				return nil, &PathError{Ref: op.Path}
@@ -119,15 +201,15 @@ func applyOne(root any, op Op, clone bool) (any, error) {
 			return xs, nil
 		})
 	case Set:
-		return atParent(root, op.Path, clone, func(parent any, key Seg) (any, error) {
+		return atParent(root, op.Path, owned, func(parent any, key Seg) (any, error) {
 			return write(parent, key, op.Path, func(any) (any, error) { return op.Value, nil })
 		})
 	case Delete:
-		return atParent(root, op.Path, clone, func(parent any, key Seg) (any, error) {
+		return atParent(root, op.Path, owned, func(parent any, key Seg) (any, error) {
 			return remove(parent, key, op.Path)
 		})
 	case Append:
-		return atParent(root, op.Path, clone, func(parent any, key Seg) (any, error) {
+		return atParent(root, op.Path, owned, func(parent any, key Seg) (any, error) {
 			return write(parent, key, op.Path, func(current any) (any, error) {
 				s, ok := current.(string)
 				if !ok {
@@ -137,7 +219,7 @@ func applyOne(root any, op Op, clone bool) (any, error) {
 			})
 		})
 	case Truncate:
-		return atParent(root, op.Path, clone, func(parent any, key Seg) (any, error) {
+		return atParent(root, op.Path, owned, func(parent any, key Seg) (any, error) {
 			return write(parent, key, op.Path, func(current any) (any, error) {
 				s, ok := current.(string)
 				if !ok {
@@ -156,25 +238,32 @@ func applyOne(root any, op Op, clone bool) (any, error) {
 // walk descends path from root and hands fn the value it addresses; fn's result
 // replaces that value. Every container on the way down is written back on the
 // way up, so a slice that fn (or a child) re-headers stays attached to its
-// parent. With clone set, each container along the path — the leaf included —
-// is shallow-copied before it is written and the originals are left as they
-// were: upstream's copyContainers, fused with the write it prepares for.
+// parent. With owned set, each container along the path — the leaf included —
+// is claimed before it is written: copied unless this application already
+// copied it, and the originals left as they were — upstream's copyContainers,
+// fused with the write it prepares for.
 //
 // The rules are upstream's resolveValue: own keys only, an index where the
 // node is an array (a key there is unsafe, not merely unresolvable), and a
-// PathError naming the whole path being resolved. With clone set they are
+// PathError naming the whole path being resolved. With owned set they are
 // copyContainers', which asks whether the node owns the segment before it
 // applies the array rule: a key an array does not own is unresolvable, and
 // only one it owns — a canonical index below its length, or "length" — is
 // unsafe.
-func walk(root any, path Path, clone bool, fn func(node any) (any, error)) (any, error) {
+func walk(root any, path Path, owned ownedSet, fn func(node any) (any, error)) (any, error) {
 	var descend func(node any, rest Path) (any, error)
 	descend = func(node any, rest Path) (any, error) {
-		if clone {
-			node = shallow(node)
+		if owned != nil {
+			node = owned.claim(node)
 		}
 		if len(rest) == 0 {
-			return fn(node)
+			next, err := fn(node)
+			if err == nil && owned != nil {
+				// A splice or an append may re-header the slice onto a new backing
+				// array, which this application allocated too.
+				owned.adopt(next)
+			}
+			return next, err
 		}
 		seg := rest[0]
 		switch c := node.(type) {
@@ -193,7 +282,7 @@ func walk(root any, path Path, clone bool, fn func(node any) (any, error)) (any,
 		case []any:
 			i, ok := seg.(Index)
 			if !ok {
-				if clone && !ownsKey(c, seg) {
+				if owned != nil && !ownsKey(c, seg) {
 					return nil, &PathError{Ref: path}
 				}
 				return nil, &UnsafePathError{Segment: seg}
@@ -228,9 +317,9 @@ func ownsKey(xs []any, key Seg) bool {
 // which Validate has already guaranteed exists — and hands fn the container
 // and that last segment. The parent must be a container: upstream's resolve
 // reports anything else as an unresolvable parent path.
-func atParent(root any, path Path, clone bool, fn func(parent any, key Seg) (any, error)) (any, error) {
+func atParent(root any, path Path, owned ownedSet, fn func(parent any, key Seg) (any, error)) (any, error) {
 	parent := path[:len(path)-1]
-	return walk(root, parent, clone, func(node any) (any, error) {
+	return walk(root, parent, owned, func(node any) (any, error) {
 		switch c := node.(type) {
 		case map[string]any:
 			if c == nil {
@@ -245,17 +334,6 @@ func atParent(root any, path Path, clone bool, fn func(parent any, key Seg) (any
 	})
 }
 
-// shallow copies one container level; anything else is returned as is.
-func shallow(node any) any {
-	switch c := node.(type) {
-	case map[string]any:
-		return maps.Clone(c)
-	case []any:
-		return slices.Clone(c)
-	}
-	return node
-}
-
 // ─── Leaf writes ─────────────────────────────────────────────────────────────
 
 // write reads parent[key] — nil when absent, upstream's own-property read of
@@ -266,9 +344,9 @@ func shallow(node any) any {
 // a sparse array does not survive a JSON round trip, so a gap already produces
 // state a replica cannot match, and one op could otherwise allocate a
 // 4.29-billion-entry array. Growth stays possible and stays proportional: a
-// draft refuses to prepare an array with holes, so a producer grows one by
-// writing every new element, and the splice that publishes them grows with the
-// gap.
+// draft refuses a write past the next index, so a producer grows an array by
+// inserting every new element, and the splice that publishes them grows with
+// the gap.
 func write(parent any, key Seg, path Path, fn func(current any) (any, error)) (any, error) {
 	switch p := parent.(type) {
 	case map[string]any:

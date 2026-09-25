@@ -35,23 +35,18 @@ func mustPrepare[T any](t *testing.T, c *Change[T]) *Prepared[T] {
 	return p
 }
 
-func obj(v any) map[string]any { return v.(map[string]any) }
+func asObject(v any) map[string]any { return v.(map[string]any) }
 
-// delta.test.ts "keeps a draft alive across await and adopts only a prepared
-// change": the committed value is a detached copy, and nothing reaches it
-// until the prepared change is adopted.
-func TestTrackerAdoptsOnlyAPreparedChange(t *testing.T) {
-	input := map[string]any{"count": 1, "nested": map[string]any{"text": "a"}, "values": []any{1}}
-	tr, err := Track(input)
-	if err != nil {
-		t.Fatal(err)
-	}
-	wantJSON(t, tr.Value(), input)
-	if same(tr.Value(), input) || same(tr.Value()["nested"], input["nested"]) {
-		t.Error("Track adopted the caller's containers; it must copy them")
-	}
-	if n := tr.Value()["count"]; n != 1.0 {
-		t.Errorf("count = %#v, want float64(1): revisions hold JavaScript numbers", n)
+// tracker.test.ts "materializes an immutable next revision and adopts it by
+// pointer swap" and "takes O(1) immutable ownership for replacement and its
+// operation payload": Track and PrepareReplace keep what they are handed,
+// and nothing reaches the committed revision until the prepared change is
+// adopted.
+func TestTrackerTakesOwnership(t *testing.T) {
+	input := map[string]any{"count": 1.0, "nested": map[string]any{"text": "a"}, "values": []any{1.0}}
+	tr := Track(input)
+	if !same(tr.Value(), input) {
+		t.Error("Track copied the root; it takes ownership")
 	}
 
 	c := mustBegin(t, tr)
@@ -60,27 +55,39 @@ func TestTrackerAdoptsOnlyAPreparedChange(t *testing.T) {
 	go func() { runtime.Gosched(); close(done) }()
 	<-done // a draft outlives any amount of work between writes
 	concat(t, c.State().At("nested"), "text", "b")
-	_, err = c.State().At("values").Push(2)
+	_, err := c.State().At("values").Push(2)
 	must(t, err)
-	wantJSON(t, tr.Value(), input)
+	wantJSON(t, tr.Value(), tree(t, `{"count": 1, "nested": {"text": "a"}, "values": [1]}`))
 
 	p := mustPrepare(t, c)
-	if !same(p.Base(), tr.Value()) {
+	if !same(p.Base(), input) {
 		t.Error("Base is not the committed revision")
 	}
 	wantJSON(t, p.Value(), tree(t, `{"count": 2, "nested": {"text": "ab"}, "values": [1, 2]}`))
-	wantJSON(t, tr.Value(), input)
-	if err := mustPanic(t, func() { c.State().Get("count") }); !errors.Is(err, ErrDraftRevoked) {
-		t.Errorf("read after Prepare: panic %v, want ErrDraftRevoked", err)
+	wantJSON(t, tr.Value(), tree(t, `{"count": 1, "nested": {"text": "a"}, "values": [1]}`))
+	if err := mustPanic(t, func() { c.State().Get("count") }); !errors.Is(err, ErrDraftSettled) {
+		t.Errorf("read after Prepare: panic %v, want ErrDraftSettled", err)
 	}
 	must(t, tr.Adopt(p))
 	if !same(tr.Value(), p.Value()) {
 		t.Error("Adopt did not commit the prepared revision itself")
 	}
+
+	replacement := map[string]any{"count": 3.0}
+	pr, err := tr.PrepareReplace(replacement)
+	must(t, err)
+	if !same(pr.Value(), replacement) {
+		t.Error("PrepareReplace copied the replacement; it takes ownership")
+	}
+	if r, ok := pr.Ops()[0].(Replace); !ok || len(pr.Ops()) != 1 || !same(r.Value, replacement) {
+		t.Errorf("replacement ops %s, want one Replace carrying the replacement itself", jsonText(t, pr.Ops()))
+	}
 }
 
-// delta.test.ts "normalizes a deep no-op to exact previous identity" and
-// "copies replacement input and applies the same no-op normalization".
+// tracker.test.ts "normalizes a deeply equal replacement without changing
+// committed identity" and delta.test.ts "normalizes a deep no-op to exact
+// previous identity": a no-op prepares the committed revision itself, and
+// adopting it still advances the revision.
 func TestTrackerNoOpKeepsIdentity(t *testing.T) {
 	tr := mustTrack(t, `{"value": {"nested": [1, 2]}}`)
 	c := mustBegin(t, tr)
@@ -91,47 +98,30 @@ func TestTrackerNoOpKeepsIdentity(t *testing.T) {
 	}
 	base := tr.Value()
 	must(t, tr.Adopt(p))
-	if !same(tr.Value(), base) {
-		t.Error("adopting a no-op replaced the committed revision")
+	if !same(tr.Value(), base) || tr.Revision() != 1 {
+		t.Errorf("adopting a no-op: same revision value %v, revision %d (want 1)", same(tr.Value(), base), tr.Revision())
 	}
-
-	tr2 := mustTrack(t, `{"nested": {"value": 1}}`)
-	replacement := map[string]any{"nested": map[string]any{"value": 2}}
-	p2, err := tr2.PrepareReplace(replacement)
-	if err != nil {
-		t.Fatal(err)
-	}
-	obj(replacement["nested"])["value"] = 9
-	if v := obj(obj(p2.Value())["nested"])["value"]; v != 2.0 {
-		t.Errorf("prepared value saw the caller's later write: %v", v)
-	}
-	must(t, tr2.Adopt(p2))
-	noop, err := tr2.PrepareReplace(tree(t, `{"nested": {"value": 2}}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !same(noop.Value(), tr2.Value()) || len(noop.Ops()) != 0 {
+	noop, err := tr.PrepareReplace(tree(t, `{"value": {"nested": [1, 2]}}`))
+	must(t, err)
+	if !same(noop.Value(), tr.Value()) || len(noop.Ops()) != 0 || noop.BaseRevision() != 1 {
 		t.Error("an equal replacement is not the committed revision itself")
 	}
 }
 
-// delta.test.ts "rejects foreign, stale, repeated, and overlapping changes",
-// "invalidates a prepared result when its change is aborted", "makes
-// competing same-base preparations stale after adopting a no-op": each
-// refusal is its sentinel, and a refusal changes nothing.
+// tracker.test.ts "allows competing contexts and invalidates loser views",
+// "rejects foreign and aborted prepared values", "lets a settled Change abort
+// its prepared result": each refusal is its sentinel, and a refusal changes
+// nothing.
 func TestTrackerLifecycleErrors(t *testing.T) {
 	first := mustTrack(t, `{"value": 0}`)
 	second := mustTrack(t, `{"value": 0}`)
-	c := mustBegin(t, first)
-	if _, err := first.BeginChange(); !errors.Is(err, ErrChangeActive) {
-		t.Errorf("second BeginChange: %v", err)
-	}
-	if _, err := first.PrepareReplace(tree(t, `{"value": 5}`)); !errors.Is(err, ErrChangeActive) {
-		t.Errorf("PrepareReplace during a change: %v", err)
-	}
-	must(t, c.State().Set("value", 1))
-	p := mustPrepare(t, c)
-	if _, err := c.Prepare(); !errors.Is(err, ErrChangeSettled) {
+	winner := mustBegin(t, first)
+	loser := mustBegin(t, first)
+	held := loser.State()
+	must(t, winner.State().Set("value", 1))
+	must(t, held.Set("value", 2))
+	p := mustPrepare(t, winner)
+	if _, err := winner.Prepare(); !errors.Is(err, ErrChangeSettled) {
 		t.Errorf("second Prepare: %v", err)
 	}
 	if err := second.Adopt(p); !errors.Is(err, ErrForeignPrepared) {
@@ -144,45 +134,45 @@ func TestTrackerLifecycleErrors(t *testing.T) {
 	if err := first.Adopt(p); !errors.Is(err, ErrPreparedUsed) {
 		t.Errorf("repeated Adopt: %v", err)
 	}
+	if err := held.Set("value", 3); !errors.Is(err, ErrDraftSettled) {
+		t.Errorf("write through the loser's draft: %v", err)
+	}
+	if _, err := loser.Prepare(); !errors.Is(err, ErrDraftSettled) {
+		t.Errorf("Prepare of the loser: %v", err)
+	}
+	loser.Abort()
+	if _, err := loser.Prepare(); !errors.Is(err, ErrChangeSettled) {
+		t.Errorf("Prepare after Abort: %v", err)
+	}
 
 	stale, err := first.PrepareReplace(tree(t, `{"value": 2}`))
 	must(t, err)
-	winner, err := first.PrepareReplace(tree(t, `{"value": 3}`))
+	aborted, err := first.PrepareReplace(tree(t, `{"value": 4}`))
 	must(t, err)
-	must(t, first.Adopt(winner))
+	next, err := first.PrepareReplace(tree(t, `{"value": 3}`))
+	must(t, err)
+	must(t, first.Adopt(next))
 	for range 2 {
 		if err := first.Adopt(stale); !errors.Is(err, ErrStalePrepared) {
 			t.Errorf("stale Adopt: %v", err)
 		}
 	}
+	aborted.Abort()
+	if err := first.Adopt(aborted); !errors.Is(err, ErrPreparedAborted) {
+		t.Errorf("Adopt of a stale prepared change aborted first: %v, want aborted", err)
+	}
 	wantJSON(t, first.Value(), tree(t, `{"value": 3}`))
 
-	waiting, err := first.PrepareReplace(tree(t, `{"value": 4}`))
-	must(t, err)
-	open := mustBegin(t, first)
-	if err := first.Adopt(waiting); !errors.Is(err, ErrAdoptDuringChange) {
-		t.Errorf("Adopt during a change: %v", err)
+	c := mustBegin(t, first)
+	must(t, c.State().Set("value", 9))
+	pc := mustPrepare(t, c)
+	c.Abort()
+	c.Abort()
+	if err := first.Adopt(pc); !errors.Is(err, ErrPreparedAborted) {
+		t.Errorf("Adopt after the change's Abort: %v", err)
 	}
-	open.Abort()
-	must(t, first.Adopt(waiting))
-
-	aborted := mustBegin(t, first)
-	must(t, aborted.State().Set("value", 9))
-	pa := mustPrepare(t, aborted)
-	aborted.Abort()
-	aborted.Abort()
-	if err := first.Adopt(pa); !errors.Is(err, ErrPreparedAborted) {
-		t.Errorf("Adopt after Abort: %v", err)
-	}
-
-	noopTracker := mustTrack(t, `{"value": {"count": 1}}`)
-	a, err := noopTracker.PrepareReplace(tree(t, `{"value": {"count": 1}}`))
-	must(t, err)
-	b, err := noopTracker.PrepareReplace(tree(t, `{"value": {"count": 1}}`))
-	must(t, err)
-	must(t, noopTracker.Adopt(a))
-	if err := noopTracker.Adopt(b); !errors.Is(err, ErrStalePrepared) {
-		t.Errorf("competing no-op: %v, want stale", err)
+	if got := first.Revision(); got != 2 {
+		t.Errorf("revision %d, want 2", got)
 	}
 }
 
@@ -201,8 +191,8 @@ func noPanic(t *testing.T, what string, fn func() error) (err error) {
 // Go only: the zero values of the exported types. A zero Tracker holds no
 // revision and a zero Prepared was prepared by no tracker, so each call
 // reports how to get a real one instead of panicking — the zero Prepared as
-// upstream's adopt reports any object that is not a PreparedImpl ("belongs to
-// a different tracker", tracker.ts:135-136).
+// upstream's adopt reports anything it did not prepare ("belongs to a
+// different tracker").
 func TestTrackerZeroValues(t *testing.T) {
 	var zero Tracker[any]
 	if err := noPanic(t, "BeginChange on a zero Tracker", func() error { _, err := zero.BeginChange(); return err }); !errors.Is(err, ErrZeroTracker) {
@@ -220,9 +210,11 @@ func TestTrackerZeroValues(t *testing.T) {
 	if err := noPanic(t, "Adopt on a zero Tracker", func() error { return zero.Adopt(p) }); !errors.Is(err, ErrZeroTracker) {
 		t.Errorf("Adopt on a zero Tracker: %v, want ErrZeroTracker", err)
 	}
-	if err := noPanic(t, "Adopt of a zero Prepared", func() error { return tr.Adopt(&Prepared[any]{}) }); !errors.Is(err, ErrForeignPrepared) {
+	zeroPrepared := &Prepared[any]{}
+	if err := noPanic(t, "Adopt of a zero Prepared", func() error { return tr.Adopt(zeroPrepared) }); !errors.Is(err, ErrForeignPrepared) {
 		t.Errorf("Adopt of a zero Prepared: %v, want ErrForeignPrepared", err)
 	}
+	noPanic(t, "a zero Prepared", func() error { zeroPrepared.Abort(); _ = zeroPrepared.BaseRevision(); return nil })
 	must(t, tr.Adopt(p)) // the refusals changed nothing
 
 	var change Change[any]
@@ -245,200 +237,39 @@ func TestTrackerZeroValues(t *testing.T) {
 	})
 }
 
-// delta.test.ts "aborts and revokes without changing the committed value" and
-// "releases the tracker and revokes drafts when preparation fails".
-func TestTrackerAbortAndFailedPrepareRelease(t *testing.T) {
+// tracker.test.ts "aborts idempotently and revokes held descendants".
+func TestTrackerAbortSettlesDrafts(t *testing.T) {
 	tr := mustTrack(t, `{"child": {"value": 1}, "values": [1, 2]}`)
 	c := mustBegin(t, tr)
 	child := c.State().At("child")
 	must(t, child.Set("value", 2))
 	c.Abort()
 	wantJSON(t, tr.Value(), tree(t, `{"child": {"value": 1}, "values": [1, 2]}`))
-	if err := mustPanic(t, func() { child.Get("value") }); !errors.Is(err, ErrDraftRevoked) {
+	if err := mustPanic(t, func() { child.Get("value") }); !errors.Is(err, ErrDraftSettled) {
 		t.Errorf("read after Abort: %v", err)
 	}
-	if err := child.Set("value", 3); !errors.Is(err, ErrDraftRevoked) {
+	if err := child.Set("value", 3); !errors.Is(err, ErrDraftSettled) {
 		t.Errorf("write after Abort: %v", err)
+	}
+	if err := c.State().Set("placed", child); !errors.Is(err, ErrDraftSettled) {
+		t.Errorf("placing a settled draft: %v", err)
 	}
 	c.Abort()
 	if _, err := c.Prepare(); !errors.Is(err, ErrChangeSettled) {
 		t.Errorf("Prepare after Abort: %v", err)
 	}
-
-	c = mustBegin(t, tr)
-	must(t, c.State().At("values").SetLen(4))
-	_, err := c.Prepare()
-	var ve *ValueError
-	if !errors.As(err, &ve) || !strings.Contains(err.Error(), "dense") {
-		t.Fatalf("Prepare over holes: %v, want the dense-array ValueError", err)
+	other := mustBegin(t, tr)
+	if err := other.State().Set("placed", child); !errors.Is(err, ErrDraftSettled) {
+		t.Errorf("placing another change's settled draft: %v", err)
 	}
-	if err := mustPanic(t, func() { c.State().Len() }); !errors.Is(err, ErrDraftRevoked) {
-		t.Errorf("draft after a failed Prepare: %v", err)
-	}
-	c.Abort()
-	if _, err := c.Prepare(); !errors.Is(err, ErrChangeSettled) {
-		t.Errorf("Prepare after a failed Prepare: %v", err)
-	}
-	mustBegin(t, tr).Abort() // the tracker was released
+	other.Abort()
 }
 
-// delta.test.ts "keeps large prepareReplace array edits narrow": the
-// replacement is imported (so shares nothing with the revision) and still
-// diffs to one leaf op. testdata pins the op itself.
-func TestTrackerPrepareReplaceIsNarrowAndReplays(t *testing.T) {
-	rows := make([]any, 10_000)
-	for i := range rows {
-		rows[i] = map[string]any{"value": i, "stable": map[string]any{"value": i}}
-	}
-	tr, err := Track(map[string]any{"rows": rows})
-	must(t, err)
-	replacement := append([]any(nil), tr.Value()["rows"].([]any)...)
-	replacement[5_000] = map[string]any{"value": -1, "stable": obj(replacement[5_000])["stable"]}
-	p, err := tr.PrepareReplace(map[string]any{"rows": replacement})
-	must(t, err)
-	wantOps(t, p.Ops(), `[["s", ["rows", 5000, "value"], -1]]`)
-	replica, err := ApplyImmutable(p.Base(), p.Ops())
-	must(t, err)
-	wantJSON(t, replica, p.Value())
-}
-
-// delta-clone.test.ts "deeply detaches and freezes the imported revision" and
-// "preserves null prototypes and expands aliases"; state-value.test.ts
-// "imports detached frozen JSON and expands aliases".
-func TestTrackerImportDetachesAndExpandsAliases(t *testing.T) {
-	shared := map[string]any{"nested": []any{map[string]any{"n": 1}}}
-	input := map[string]any{
-		"point": map[string]any{"x": 3, "y": 7, "pressure": 0.1},
-		"rows":  []any{map[string]any{"values": []any{0, false, nil, "text", map[string]any{"n": 1}}}},
-		"left":  shared,
-		"right": shared,
-	}
-	tr, err := Track(input)
-	must(t, err)
-	v := tr.Value()
-	if same(v["point"], input["point"]) || same(v["rows"], input["rows"]) {
-		t.Error("imported containers are the caller's")
-	}
-	if same(v["left"], v["right"]) || same(obj(v["left"])["nested"], obj(v["right"])["nested"]) {
-		t.Error("an alias in the input is still one container in the revision")
-	}
-	obj(input["point"])["x"] = 99
-	if x := obj(v["point"])["x"]; x != 3.0 {
-		t.Errorf("revision saw the caller's later write: %v", x)
-	}
-}
-
-// Numbers of every Go kind are one JavaScript number, and a typed nil
-// container is an empty one — the tracker's representation, whatever Go
-// handed it. Anything else with no JSON form is refused with pi's text.
-func TestTrackerImportRepresentation(t *testing.T) {
-	type myInt int
-	type myFloat float64
-	tr, err := Track(map[string]any{
-		"int": 1, "int64": int64(2), "uint8": uint8(3), "float32": float32(0.5), "named": myInt(4),
-		"namedFloat": myFloat(6.5), "number": json.Number("5e2"), "nilMap": map[string]any(nil), "nilSlice": []any(nil),
-	})
-	must(t, err)
-	wantJSON(t, tr.Value(), tree(t, `{"int":1,"int64":2,"uint8":3,"float32":0.5,"named":4,"namedFloat":6.5,"number":500,"nilMap":{},"nilSlice":[]}`))
-	for k, v := range tr.Value() {
-		switch v.(type) {
-		case float64, map[string]any, []any:
-		default:
-			t.Errorf("%s imported as %T", k, v)
-		}
-	}
-	if obj := tr.Value()["nilMap"].(map[string]any); obj == nil {
-		t.Error("a nil map imported as nil")
-	}
-
-	cases := []struct {
-		value any
-		text  string
-	}{
-		{math.NaN(), "Replicated state values must be strict JSON"},
-		{math.Inf(-1), "Replicated state values must be strict JSON"},
-		{json.Number("1e400"), "Replicated state values must be strict JSON"},
-		// Every numeric kind is checked, not only float64: pi's assertPrimitive
-		// is Number.isFinite on the one number type.
-		{float32(math.NaN()), "Replicated state values must be strict JSON"},
-		{float32(math.Inf(1)), "Replicated state values must be strict JSON"},
-		{float32(math.Inf(-1)), "Replicated state values must be strict JSON"},
-		{json.Number("NaN"), "Replicated state values must be strict JSON"},
-		{json.Number("Inf"), "Replicated state values must be strict JSON"},
-		{json.Number("-Infinity"), "Replicated state values must be strict JSON"},
-		{func() {}, "Replicated state values must be strict JSON"},
-		{complex(1, 2), "Replicated state values must be strict JSON"},
-		{make(chan int), "Replicated state values must be strict JSON"},
-		{time.Unix(0, 0), "Replicated state containers must be plain objects or arrays"},
-		{&struct{}{}, "Replicated state containers must be plain objects or arrays"},
-		{map[string]string{"a": "b"}, "Replicated state containers must be plain objects or arrays"},
-		{[]string{"a"}, "Replicated state containers must be plain objects or arrays"},
-		{[]byte("a"), "Replicated state containers must be plain objects or arrays"},
-	}
-	for _, tc := range cases {
-		_, err := Track(map[string]any{"v": tc.value})
-		var ve *ValueError
-		if !errors.As(err, &ve) || ve.Message != tc.text {
-			t.Errorf("Track(%T %v): %v, want %q", tc.value, tc.value, err, tc.text)
-		}
-	}
-	// The same refusals through PrepareReplace and a draft write, which says
-	// so in draft.ts's words; the committed revision is untouched.
-	tr, err = Track(map[string]any{"v": 1, "xs": []any{}})
-	must(t, err)
-	for _, bad := range []any{float32(math.NaN()), float32(math.Inf(1)), json.Number("NaN")} {
-		var ve *ValueError
-		if _, err := tr.PrepareReplace(map[string]any{"v": bad}); !errors.As(err, &ve) || ve.Message != "Replicated state values must be strict JSON" {
-			t.Errorf("PrepareReplace(%T %v): %v", bad, bad, err)
-		}
-		c := mustBegin(t, tr)
-		if err := c.State().Set("v", bad); !errors.As(err, &ve) || ve.Message != "Assigned values must be strict JSON values" {
-			t.Errorf("Set(%T %v): %v", bad, bad, err)
-		}
-		if _, err := c.State().At("xs").Push(bad); !errors.As(err, &ve) || ve.Message != "Assigned values must be strict JSON values" {
-			t.Errorf("Push(%T %v): %v", bad, bad, err)
-		}
-		c.Abort()
-	}
-	wantJSON(t, tr.Value(), tree(t, `{"v": 1, "xs": []}`))
-	// The error names the number, whatever kind it came as.
-	if _, err := Track(map[string]any{"v": float32(math.Inf(-1))}); err == nil || !strings.Contains(err.Error(), "got -Inf") {
-		t.Errorf("float32 -Inf: %v, want the error to say it got -Inf", err)
-	}
-	cyclic := map[string]any{}
-	cyclic["self"] = cyclic
-	if _, err := Track(cyclic); err == nil || !strings.Contains(err.Error(), "Replicated state cannot contain cycles") {
-		t.Errorf("cycle: %v", err)
-	}
-	loop := make([]any, 1)
-	loop[0] = loop
-	if _, err := Track(map[string]any{"v": loop}); err == nil || !strings.Contains(err.Error(), "cycles") {
-		t.Errorf("array cycle: %v", err)
-	}
-	// A scalar root is a revision, as in pi's runtime (golden "scalar
-	// roots"). It has no draft, and the refusal leaves no change active.
-	for _, root := range []any{nil, 1.0, "x", true} {
-		tr, err := Track(root)
-		if err != nil {
-			t.Fatalf("Track(%#v): %v", root, err)
-		}
-		if _, err := tr.BeginChange(); !errors.Is(err, ErrScalarRevision) {
-			t.Errorf("BeginChange on %#v: %v, want ErrScalarRevision", root, err)
-		}
-		if _, err := tr.PrepareReplace(map[string]any{}); err != nil {
-			t.Errorf("PrepareReplace after the refused change on %#v: %v", root, err)
-		}
-	}
-	// A typed root keeps the type the import gives it: numbers become float64.
-	if _, err := Track(1); err == nil || !strings.Contains(err.Error(), "int cannot hold the float64") {
-		t.Errorf("Track[int]: %v, want the error to name both types", err)
-	}
-}
-
-// delta-clone.test.ts "copies assigned and inserted values immediately" and
-// state.test.ts "copies assigned values by value": one Go map assigned twice
+// delta-clone.test.ts and tracker.test.ts "clones property, index, push,
+// unshift, splice, fill, and copyWithin placements" and "expands repeated
+// source aliases into independent placements": one Go map placed twice
 // becomes two values, and neither sees the caller's later writes.
-func TestDraftCopiesAssignedValues(t *testing.T) {
+func TestDraftCopiesPlacements(t *testing.T) {
 	tr := mustTrack(t, `{"rows": [], "left": null, "right": null}`)
 	assigned := map[string]any{"nested": map[string]any{"value": 1}}
 	c := mustBegin(t, tr)
@@ -446,7 +277,7 @@ func TestDraftCopiesAssignedValues(t *testing.T) {
 	must(t, err)
 	must(t, c.State().Set("left", assigned))
 	must(t, c.State().Set("right", assigned))
-	obj(assigned["nested"])["value"] = 9
+	asObject(assigned["nested"])["value"] = 9
 	if v, _ := c.State().At("rows").At(0).At("nested").Get("value"); v != 1.0 {
 		t.Errorf("draft saw the caller's write: %v", v)
 	}
@@ -463,16 +294,36 @@ func TestDraftCopiesAssignedValues(t *testing.T) {
 	wantJSON(t, replica, v)
 }
 
-// state-draft.test.ts "copies only changed branches" and state-value.test.ts
-// "commits transaction copies in place while sharing unchanged branches".
+// tracker.test.ts "shares immutable operation placements with the
+// materialized candidate": a placement's payload is the container the
+// prepared revision holds.
+func TestTrackerPayloadsShareWithValue(t *testing.T) {
+	tr := mustTrack(t, `{"rows": [{"id": 0}], "meta": {}}`)
+	c := mustBegin(t, tr)
+	_, err := c.State().At("rows").Push(map[string]any{"id": 1})
+	must(t, err)
+	p := mustPrepare(t, c)
+	splice, ok := p.Ops()[0].(Splice)
+	if !ok {
+		t.Fatalf("ops %s, want a splice first", jsonText(t, p.Ops()))
+	}
+	if placed := p.Value().(map[string]any)["rows"].([]any)[1]; !same(placed, splice.Items[0]) {
+		t.Error("the prepared revision holds a copy of the splice's payload")
+	}
+}
+
+// state-draft.test.ts "copies only changed branches", and tracker.test.ts
+// "uses one proxy identity per accessed container" and "does not dirty
+// read-only traversals".
 func TestDraftCopiesOnlyChangedBranches(t *testing.T) {
-	tr := mustTrack(t, `{"changed": {"count": 1, "sibling": {"value": "kept"}}, "untouched": {"value": 2}}`)
+	tr := mustTrack(t, `{"changed": {"count": 1, "sibling": {"value": "kept"}}, "untouched": {"value": 2}, "read": {"x": {}}}`)
 	base := tr.Value().(map[string]any)
 	c := mustBegin(t, tr)
 	first := c.State().At("changed")
 	if c.State().At("changed") != first {
 		t.Error("two reads of one member are two drafts")
 	}
+	c.State().At("read").At("x").Get("y")
 	must(t, first.Set("count", 3))
 	p := mustPrepare(t, c)
 	v := p.Value().(map[string]any)
@@ -481,15 +332,15 @@ func TestDraftCopiesOnlyChangedBranches(t *testing.T) {
 		t.Error("the root was not copied")
 	case same(v["changed"], base["changed"]):
 		t.Error("the changed branch was not copied")
-	case !same(obj(v["changed"])["sibling"], obj(base["changed"])["sibling"]):
+	case !same(asObject(v["changed"])["sibling"], asObject(base["changed"])["sibling"]):
 		t.Error("an unchanged sibling was copied")
-	case !same(v["untouched"], base["untouched"]):
-		t.Error("an untouched branch was copied")
+	case !same(v["untouched"], base["untouched"]), !same(v["read"], base["read"]):
+		t.Error("an untouched or only-read branch was copied")
 	}
 }
 
-// A copy that ends up equal to its base is dropped, so a branch written and
-// restored keeps its identity even when the change has other effects.
+// tracker.test.ts "normalizes restored overrides and cancelled structural
+// edits to no operations": written-and-restored branches keep their identity.
 func TestDraftRestoredBranchKeepsIdentity(t *testing.T) {
 	tr := mustTrack(t, `{"a": 1, "o": {"x": 1}, "v": [1, 2]}`)
 	base := tr.Value().(map[string]any)
@@ -509,53 +360,130 @@ func TestDraftRestoredBranchKeepsIdentity(t *testing.T) {
 	wantOps(t, p.Ops(), `[["s", ["a"], 2]]`)
 }
 
-// Two empty arrays are two arrays. A Go slice's identity is its backing array,
-// and two make([]any, 0) share one zero-size address — so the tracker gives
-// every array it owns a slot of its own, or writes to one empty array would
-// land in the other.
+// Two empty arrays are two arrays. encoding/json gives every [] it decodes one
+// zero-size address, so a revision's empty arrays have no identity of their
+// own (value.go, anonymous); the overlay finds their nodes by where they sit,
+// so writes to one never land in another.
 func TestDraftEmptyArraysAreDistinct(t *testing.T) {
-	tr := mustTrack(t, `{"a": [], "b": [], "c": {"d": [], "e": []}}`)
+	tr := mustTrack(t, `{"a": [], "b": [], "c": {"d": [], "e": []}, "rows": [[], []]}`)
 	c := mustBegin(t, tr)
-	if c.State().At("a") == c.State().At("b") {
+	if c.State().At("a") == c.State().At("b") || c.State().At("rows").At(0) == c.State().At("rows").At(1) {
 		t.Fatal("two empty arrays share one draft")
 	}
 	_, err := c.State().At("a").Push(1)
 	must(t, err)
 	_, err = c.State().At("c").At("e").Push(2)
 	must(t, err)
+	_, err = c.State().At("rows").At(1).Push(5)
+	must(t, err)
 	must(t, c.State().Set("f", []any{}))
 	must(t, c.State().Set("g", []any{}))
 	_, err = c.State().At("g").Push(3)
 	must(t, err)
 	p := mustPrepare(t, c)
-	wantJSON(t, p.Value(), tree(t, `{"a": [1], "b": [], "c": {"d": [], "e": [2]}, "f": [], "g": [3]}`))
+	wantJSON(t, p.Value(), tree(t, `{"a": [1], "b": [], "c": {"d": [], "e": [2]}, "f": [], "g": [3], "rows": [[], [5]]}`))
 	must(t, tr.Adopt(p))
 	c = mustBegin(t, tr)
 	_, err = c.State().At("f").Push(4)
 	must(t, err)
-	wantJSON(t, mustPrepare(t, c).Value(), tree(t, `{"a": [1], "b": [], "c": {"d": [], "e": [2]}, "f": [4], "g": [3]}`))
+	wantJSON(t, mustPrepare(t, c).Value(), tree(t, `{"a": [1], "b": [], "c": {"d": [], "e": [2]}, "f": [4], "g": [3], "rows": [[], [5]]}`))
 }
 
-// state.test.ts "expands reused owned subtrees into independent placements":
-// a replacement that reuses one of the revision's own subtrees twice is
-// imported as two.
-func TestTrackerReusedSubtreesBecomeIndependent(t *testing.T) {
-	tr := mustTrack(t, `{"left": {"value": 1}, "right": {"value": 2}}`)
-	left := obj(tr.Value())["left"]
-	p, err := tr.PrepareReplace(map[string]any{"left": left, "right": left})
-	must(t, err)
-	must(t, tr.Adopt(p))
-	v := obj(tr.Value())
-	if same(v["left"], v["right"]) || same(v["left"], left) {
-		t.Error("a reused subtree is shared")
-	}
+// Go values in, JSON values out: a placement of any Go numeric kind is one
+// JavaScript number, and a typed nil container an empty one. Anything else
+// with no JSON form is refused with pi's text, and a refused placement leaves
+// the draft as it was.
+func TestDraftPlacementRepresentation(t *testing.T) {
+	type myInt int
+	type myFloat float64
+	tr := mustTrack(t, `{"xs": []}`)
 	c := mustBegin(t, tr)
-	must(t, c.State().At("left").Set("value", 9))
-	wantJSON(t, mustPrepare(t, c).Value(), tree(t, `{"left": {"value": 9}, "right": {"value": 1}}`))
+	must(t, c.State().Set("v", map[string]any{
+		"int": 1, "int64": int64(2), "uint8": uint8(3), "float32": float32(0.5), "named": myInt(4),
+		"namedFloat": myFloat(6.5), "number": json.Number("5e2"), "nilMap": map[string]any(nil), "nilSlice": []any(nil),
+	}))
+	v, _ := c.State().At("v").Get("nilMap")
+	if d, ok := v.(*Draft); !ok || d.Len() != 0 || d.IsArray() {
+		t.Errorf("a nil map placed as %#v, want an empty object", v)
+	}
+	p := mustPrepare(t, c)
+	wantJSON(t, asObject(p.Value())["v"], tree(t, `{"int":1,"int64":2,"uint8":3,"float32":0.5,"named":4,"namedFloat":6.5,"number":500,"nilMap":{},"nilSlice":[]}`))
+	for k, v := range asObject(asObject(p.Value())["v"]) {
+		switch v.(type) {
+		case float64, map[string]any, []any:
+		default:
+			t.Errorf("%s placed as %T", k, v)
+		}
+	}
+
+	cases := []struct {
+		value any
+		text  string
+	}{
+		{math.NaN(), placementStrict},
+		{math.Inf(-1), placementStrict},
+		{json.Number("1e400"), placementStrict},
+		{float32(math.NaN()), placementStrict},
+		{float32(math.Inf(1)), placementStrict},
+		{json.Number("NaN"), placementStrict},
+		{func() {}, placementStrict},
+		{complex(1, 2), placementStrict},
+		{make(chan int), placementStrict},
+		{time.Unix(0, 0), placementPlain},
+		{&struct{}{}, placementPlain},
+		{map[string]string{"a": "b"}, placementPlain},
+		{[]string{"a"}, placementPlain},
+		{[]byte("a"), placementPlain},
+	}
+	c = mustBegin(t, tr)
+	for _, tc := range cases {
+		var ve *ValueError
+		if err := c.State().Set("v", map[string]any{"nested": tc.value}); !errors.As(err, &ve) || ve.Message != tc.text {
+			t.Errorf("Set(%T %v): %v, want %q", tc.value, tc.value, err, tc.text)
+		}
+		if _, err := c.State().At("xs").Push(1, tc.value); !errors.As(err, &ve) || ve.Message != tc.text {
+			t.Errorf("Push(%T %v): %v, want %q", tc.value, tc.value, err, tc.text)
+		}
+	}
+	if n := c.State().At("xs").Len(); n != 0 || c.State().Has("v") {
+		t.Errorf("a refused placement changed the draft: %d items, v present %v", n, c.State().Has("v"))
+	}
+	// The error names the number, whatever kind it came as.
+	if err := c.State().Set("v", float32(math.Inf(-1))); err == nil || !strings.Contains(err.Error(), "got -Inf") {
+		t.Errorf("float32 -Inf: %v, want the error to say it got -Inf", err)
+	}
+	cyclic := map[string]any{}
+	cyclic["self"] = cyclic
+	if err := c.State().Set("v", cyclic); err == nil || !strings.Contains(err.Error(), placementCycle) {
+		t.Errorf("cycle: %v", err)
+	}
+	loop := make([]any, 1)
+	loop[0] = loop
+	if _, err := c.State().At("xs").Push(loop); err == nil || !strings.Contains(err.Error(), placementCycle) {
+		t.Errorf("array cycle: %v", err)
+	}
+	c.Abort()
+	wantJSON(t, tr.Value(), tree(t, `{"xs": []}`))
+
+	// A scalar root is a revision, as in pi's runtime (golden "scalar
+	// roots"). It has no draft, and a replacement must be a container.
+	for _, root := range []any{nil, 1.0, "x", true} {
+		tr := Track(root)
+		if _, err := tr.BeginChange(); !errors.Is(err, ErrScalarRevision) {
+			t.Errorf("BeginChange on %#v: %v, want ErrScalarRevision", root, err)
+		}
+		if _, err := tr.PrepareReplace(2.0); !errors.Is(err, ErrScalarRevision) {
+			t.Errorf("PrepareReplace of a scalar on %#v: %v, want ErrScalarRevision", root, err)
+		}
+		if _, err := tr.PrepareReplace(map[string]any{}); err != nil {
+			t.Errorf("PrepareReplace of an object on %#v: %v", root, err)
+		}
+	}
 }
 
 // A nil draft — what At returns for a member that is absent or a scalar —
-// reads as empty, and every write to it reports the missing link.
+// reads as empty, and every write to it reports the missing link. An array
+// method on an object draft is upstream's incompatible receiver.
 func TestDraftNilAndKindErrors(t *testing.T) {
 	tr := mustTrack(t, `{"n": 1, "o": {}, "v": []}`)
 	c := mustBegin(t, tr)
@@ -585,11 +513,16 @@ func TestDraftNilAndKindErrors(t *testing.T) {
 		"Reverse":    func() error { return o.Reverse() },
 		"Fill":       func() error { return o.Fill(1, 0, 0) },
 		"CopyWithin": func() error { return o.CopyWithin(0, 0, 0) },
-		"SetLen":     func() error { return o.SetLen(0) },
 	} {
-		if err := call(); err == nil || !strings.Contains(err.Error(), name+" on an object draft") {
+		if err := call(); err == nil || !strings.Contains(err.Error(), "Array mutator called on incompatible receiver ("+name) {
 			t.Errorf("%s on an object: %v", name, err)
 		}
+	}
+	if err := o.SetLen(0); err == nil || !strings.Contains(err.Error(), "SetLen on an object draft") {
+		t.Errorf("SetLen on an object: %v", err)
+	}
+	if err := c.State().At("v").SetLen(-1); err == nil || !strings.Contains(err.Error(), "Invalid array length") {
+		t.Errorf("SetLen(-1): %v", err)
 	}
 	if err := c.State().Set(true, 1); !errors.Is(err, ErrInvalidOp) {
 		t.Errorf("Set with a bool key: %v", err)
@@ -598,33 +531,44 @@ func TestDraftNilAndKindErrors(t *testing.T) {
 	wantJSON(t, tr.Value(), tree(t, `{"n": 1, "o": {}, "v": []}`))
 }
 
-// Characterization of two documented reads with no pi value to capture: Len
-// of an object is its member count (Object.keys(o).length), and Splice
-// returns nil for a removed hole — pi's removed array holds a hole there,
-// which JSON.stringify writes as null — never the draft's own marker for one.
+// Characterization of documented reads with no pi value to capture: Len of an
+// object is its member count (Object.keys(o).length), and Splice, Pop and
+// Shift hand back removed containers as drafts detached from the tree, whose
+// writes publish nothing.
 func TestDraftGoReads(t *testing.T) {
-	tr := mustTrack(t, `{"o": {"a": 1, "b": 2, "c": 3}, "v": [1]}`)
+	tr := mustTrack(t, `{"o": {"a": 1, "b": 2, "c": 3}, "v": [{"n": 1}, 2, {"n": 3}]}`)
 	c := mustBegin(t, tr)
 	if n := c.State().At("o").Len(); n != 3 {
 		t.Errorf("Len of a 3-member object = %d", n)
 	}
+	must(t, c.State().At("o").Delete("b"))
+	if n := c.State().At("o").Len(); n != 2 {
+		t.Errorf("Len after a delete = %d", n)
+	}
 	v := c.State().At("v")
-	must(t, v.SetLen(3))
-	removed, err := v.Splice(0, 3)
+	removed, err := v.Splice(0, 2)
 	must(t, err)
-	if len(removed) != 3 || removed[0] != 1.0 || removed[1] != nil || removed[2] != nil {
-		t.Errorf("Splice over holes returned %#v, want [1, nil, nil]", removed)
+	if len(removed) != 2 || removed[1] != 2.0 {
+		t.Fatalf("Splice returned %#v", removed)
 	}
-	if got := jsonText(t, removed); got != `[1,null,null]` {
-		t.Errorf("Splice over holes marshals as %s, want [1,null,null] as JSON.stringify writes pi's", got)
+	detached, ok := removed[0].(*Draft)
+	if !ok {
+		t.Fatalf("a removed object came back as %T", removed[0])
 	}
-	c.Abort()
+	must(t, detached.Set("n", 10))
+	last, ok, err := v.Pop()
+	must(t, err)
+	if d, isDraft := last.(*Draft); !ok || !isDraft || d.Len() != 1 {
+		t.Fatalf("Pop returned %#v", last)
+	}
+	p := mustPrepare(t, c)
+	wantJSON(t, p.Value(), tree(t, `{"o": {"a": 1, "c": 3}, "v": []}`))
 }
 
 // ─── Retention ───────────────────────────────────────────────────────────────
 //
-// delta-retention.test.ts: what a settled change, an unadopted prepared
-// change and a revoked draft may still hold.
+// delta-tracker/retention.test.ts: what a settled change, an unadopted
+// prepared change, a stale competitor and a settled draft may still hold.
 
 func collected[T any](t *testing.T, w weak.Pointer[T], what string) {
 	t.Helper()
@@ -637,10 +581,8 @@ func collected[T any](t *testing.T, w weak.Pointer[T], what string) {
 	t.Errorf("%s is still retained", what)
 }
 
-func payloadTracker(t *testing.T) *Tracker[map[string]any] {
-	tr, err := Track(map[string]any{"payload": nil})
-	must(t, err)
-	return tr
+func payloadTracker() *Tracker[map[string]any] {
+	return Track(map[string]any{"payload": nil})
 }
 
 func bigPayload() map[string]any {
@@ -656,7 +598,7 @@ func abortedPayload(t *testing.T, tr *Tracker[map[string]any]) (weak.Pointer[Dra
 	c := mustBegin(t, tr)
 	must(t, c.State().Set("payload", bigPayload()))
 	rows := c.State().At("payload").At("rows")
-	backing := rows.s.base.([]any)
+	backing := rows.n.base.([]any)
 	c.Abort()
 	return weak.Make(rows), weak.Make(&backing[0])
 }
@@ -666,7 +608,7 @@ func unadoptedPrepared(t *testing.T, tr *Tracker[map[string]any]) weak.Pointer[a
 	c := mustBegin(t, tr)
 	must(t, c.State().Set("payload", bigPayload()))
 	p := mustPrepare(t, c)
-	rows := obj(p.Value()["payload"])["rows"].([]any)
+	rows := asObject(p.Value()["payload"])["rows"].([]any)
 	return weak.Make(&rows[0])
 }
 
@@ -681,8 +623,7 @@ func draftHandles(t *testing.T, tr *Tracker[map[string]any]) weak.Pointer[Draft]
 
 var retainedHandles []*Draft
 
-// A draft handle retained past its change retains nothing of the change: the
-// Go form of upstream's RELEASED_BASE, which every released state points at.
+// A draft handle retained past its change retains nothing of the change.
 //
 //go:noinline
 func retainedHandle(t *testing.T, tr *Tracker[map[string]any]) weak.Pointer[any] {
@@ -690,7 +631,7 @@ func retainedHandle(t *testing.T, tr *Tracker[map[string]any]) weak.Pointer[any]
 	must(t, c.State().Set("payload", bigPayload()))
 	payload := c.State().At("payload")
 	rows := payload.At("rows")
-	backing := rows.s.base.([]any)
+	backing := rows.n.base.([]any)
 	c.Abort()
 	retainedHandles = append(retainedHandles, payload, rows)
 	return weak.Make(&backing[0])
@@ -698,9 +639,12 @@ func retainedHandle(t *testing.T, tr *Tracker[map[string]any]) weak.Pointer[any]
 
 var retainedSettled []any
 
+// A tracker whose settled change and prepared change are retained is still
+// collected, and so is its committed payload.
+//
 //go:noinline
 func settledLifecycle(t *testing.T) (weak.Pointer[Tracker[map[string]any]], weak.Pointer[any]) {
-	tr := payloadTracker(t)
+	tr := payloadTracker()
 	c := mustBegin(t, tr)
 	must(t, c.State().Set("payload", map[string]any{"rows": []any{map[string]any{"value": 1}}}))
 	retained := mustPrepare(t, c)
@@ -710,29 +654,62 @@ func settledLifecycle(t *testing.T) (weak.Pointer[Tracker[map[string]any]], weak
 	future, err := tr.PrepareReplace(map[string]any{"payload": bigPayload()})
 	must(t, err)
 	must(t, tr.Adopt(future))
-	rows := obj(future.Value()["payload"])["rows"].([]any)
+	rows := asObject(future.Value()["payload"])["rows"].([]any)
 	return weak.Make(tr), weak.Make(&rows[0])
+}
+
+// retention.worker.ts "stale-unprepared-change": a competitor the caller keeps
+// retains nothing of the revision it was begun on once another change is
+// adopted.
+//
+//go:noinline
+func staleUnprepared(t *testing.T) (*Tracker[map[string]any], weak.Pointer[any]) {
+	tr := Track(map[string]any{"payload": bigPayload()})
+	stale := mustBegin(t, tr)
+	must(t, stale.State().At("payload").At("rows").At(0).Set("value", -1))
+	obsolete := asObject(tr.Value()["payload"])["rows"].([]any)
+	winner, err := tr.PrepareReplace(map[string]any{"payload": map[string]any{"rows": []any{map[string]any{"value": 1}}}})
+	must(t, err)
+	must(t, tr.Adopt(winner))
+	if _, err := stale.Prepare(); !errors.Is(err, ErrDraftSettled) {
+		t.Errorf("Prepare of the stale change: %v", err)
+	}
+	retainedSettled = append(retainedSettled, stale)
+	return tr, weak.Make(&obsolete[0])
+}
+
+// retention.worker.ts "retained-settled-prepared": a prepared change keeps its
+// revisions readable.
+//
+//go:noinline
+func retainedPrepared(t *testing.T) (*Prepared[map[string]any], weak.Pointer[any]) {
+	tr := Track(map[string]any{"payload": bigPayload()})
+	c := mustBegin(t, tr)
+	must(t, c.State().Set("n", 1))
+	p := mustPrepare(t, c)
+	rows := asObject(p.Base()["payload"])["rows"].([]any)
+	return p, weak.Make(&rows[0])
 }
 
 func TestTrackerRetention(t *testing.T) {
 	t.Run("aborted-payload", func(t *testing.T) {
-		tr := payloadTracker(t)
+		tr := payloadTracker()
 		handle, backing := abortedPayload(t, tr)
 		collected(t, handle, "an aborted change's draft")
 		collected(t, backing, "an aborted change's payload")
 		wantJSON(t, tr.Value(), tree(t, `{"payload": null}`))
 	})
 	t.Run("unadopted-prepared", func(t *testing.T) {
-		tr := payloadTracker(t)
+		tr := payloadTracker()
 		collected(t, unadoptedPrepared(t, tr), "an unadopted prepared payload")
 		wantJSON(t, tr.Value(), tree(t, `{"payload": null}`))
 	})
 	t.Run("retained-handle", func(t *testing.T) {
-		tr := payloadTracker(t)
-		collected(t, retainedHandle(t, tr), "the payload behind a retained, revoked draft")
+		tr := payloadTracker()
+		collected(t, retainedHandle(t, tr), "the payload behind a retained, settled draft")
 	})
 	t.Run("draft-handles", func(t *testing.T) {
-		tr := payloadTracker(t)
+		tr := payloadTracker()
 		collected(t, draftHandles(t, tr), "an aborted change's member draft")
 		wantJSON(t, tr.Value(), tree(t, `{"payload": null}`))
 	})
@@ -740,5 +717,20 @@ func TestTrackerRetention(t *testing.T) {
 		tracker, future := settledLifecycle(t)
 		collected(t, tracker, "a tracker whose settled change and prepared change are retained")
 		collected(t, future, "a dropped tracker's committed payload")
+	})
+	t.Run("stale-unprepared-change", func(t *testing.T) {
+		tr, obsolete := staleUnprepared(t)
+		collected(t, obsolete, "the revision a retained stale change was begun on")
+		wantJSON(t, tr.Value(), tree(t, `{"payload": {"rows": [{"value": 1}]}}`))
+	})
+	t.Run("retained-settled-prepared", func(t *testing.T) {
+		p, base := retainedPrepared(t)
+		for range 5 {
+			runtime.GC()
+		}
+		if base.Value() == nil {
+			t.Error("a retained Prepared lost its base revision")
+		}
+		runtime.KeepAlive(p)
 	})
 }
