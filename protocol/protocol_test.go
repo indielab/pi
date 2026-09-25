@@ -511,6 +511,30 @@ func TestV8ValidatesAttachmentRouteUpdates(t *testing.T) {
 	assertServerRejected(t, "attachment of the wrong type", wireV8(t, map[string]any{
 		"type": "attachment", "attachment": "session-1",
 	}))
+
+	// A route the envelope carries is held to the session target's own
+	// constraints in both directions. pi at 49681e1b7 refuses each of these
+	// from encodeServerMessage and from its message decoder alike.
+	for _, test := range []struct {
+		name   string
+		target SessionTarget
+	}{
+		{"invalid serverId", SessionTarget{ServerID: "server-1", SessionID: "session-1", AttachmentID: "attachment-1"}},
+		{"version-7 serverId", SessionTarget{ServerID: "00000000-0000-7000-8000-000000000001", SessionID: "session-1", AttachmentID: "attachment-1"}},
+		{"empty sessionId", SessionTarget{ServerID: testServerID, AttachmentID: "attachment-1"}},
+		{"empty attachmentId", SessionTarget{ServerID: testServerID, SessionID: "session-1"}},
+	} {
+		assertServerRejected(t, "attachment with "+test.name, wireV8(t, map[string]any{
+			"type": "attachment",
+			"attachment": map[string]any{
+				"serverId":     string(test.target.ServerID),
+				"sessionId":    test.target.SessionID,
+				"attachmentId": test.target.AttachmentID,
+			},
+		}))
+		_, err := EncodeServerMessageV8(&AttachmentEnvelope{Type: "attachment", Attachment: &test.target}, nil)
+		assertValidationError(t, "encoding an attachment with "+test.name, err)
+	}
 }
 
 // "rejects malformed request boundaries: %s"
