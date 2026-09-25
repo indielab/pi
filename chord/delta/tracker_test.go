@@ -806,3 +806,19 @@ func TestTrackerWideObjectWriteIsLinear(t *testing.T) {
 		t.Errorf("%v allocations to prepare one write to a 20,000-member object", allocs)
 	}
 }
+
+// A nil map or slice root is JSON null — encoding/json writes it so, and a
+// base batch carries it so — and pi's overlay refuses a null root as it does a
+// scalar (its WeakMap takes only objects). Drafting it as an empty container
+// would publish ops a replica built from that base cannot apply.
+func TestTrackerRefusesANilRoot(t *testing.T) {
+	if _, err := Track[map[string]any](nil).BeginChange(); !errors.Is(err, ErrScalarRevision) {
+		t.Errorf("BeginChange on a nil map: %v, want ErrScalarRevision", err)
+	}
+	if _, err := Track[[]any](nil).BeginChange(); !errors.Is(err, ErrScalarRevision) {
+		t.Errorf("BeginChange on a nil slice: %v, want ErrScalarRevision", err)
+	}
+	if _, err := Track(map[string]any{"a": 1.0}).PrepareReplace(nil); !errors.Is(err, ErrScalarRevision) {
+		t.Errorf("PrepareReplace of a nil map: %v, want ErrScalarRevision", err)
+	}
+}

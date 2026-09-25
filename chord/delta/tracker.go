@@ -38,7 +38,7 @@ var (
 	// TypeError pi's overlay throws: it keys its nodes by their containers in a
 	// WeakMap, which takes only objects. A change drafts an object or array,
 	// and PrepareReplace takes one.
-	ErrScalarRevision = errors.New("delta: Invalid value used as weak map key (a change drafts a JSON object or array, a map[string]any or []any, and a replacement is one; this revision or value is a scalar, or a Go type the tracker does not hold)")
+	ErrScalarRevision = errors.New("delta: Invalid value used as weak map key (a change drafts a JSON object or array, a map[string]any or []any, and a replacement is one; this revision or value is a scalar, null — a nil map or slice among them — or a Go type the tracker does not hold)")
 
 	// ErrZeroTracker is Go's own: a Tracker that Track did not make holds no
 	// revision, so BeginChange, PrepareReplace and Adopt refuse it.
@@ -194,6 +194,20 @@ func (c *overlayContext) release() {
 	c.released = true
 }
 
+// draftable reports whether a root can have an overlay: an object or array —
+// not a scalar, and not a nil map or slice, which is JSON null (encoding/json
+// writes it so, and a base batch carries it so), as pi's overlay refuses a
+// null root.
+func draftable(root any) bool {
+	switch x := root.(type) {
+	case map[string]any:
+		return x != nil
+	case []any:
+		return x != nil
+	}
+	return false
+}
+
 // Tracker holds one committed revision of a JSON value and turns changes to it
 // into batches of ops. T is the root's Go type: map[string]any, []any, or any
 // when it is not known.
@@ -236,13 +250,13 @@ func (t *Tracker[T]) Revision() int { return t.revision }
 
 // BeginChange opens a change: an overlay draft of the committed revision that
 // the caller mutates, across any amount of work, then prepares or aborts. It
-// never modifies the committed revision. A scalar revision has no draft:
-// ErrScalarRevision.
+// never modifies the committed revision. A scalar or null revision — a nil
+// map or slice is null — has no draft: ErrScalarRevision.
 func (t *Tracker[T]) BeginChange() (*Change[T], error) {
 	if t.owner == nil {
 		return nil, ErrZeroTracker
 	}
-	if !isContainer(any(t.value)) {
+	if !draftable(any(t.value)) {
 		return nil, ErrScalarRevision
 	}
 	c := newContext(t.owner, t.revision, any(t.value), false, any(t.value))
@@ -254,12 +268,12 @@ func (t *Tracker[T]) BeginChange() (*Change[T], error) {
 // taking ownership of it, on Track's terms (build it with chord.CopyJSON). When value is deeply equal to the
 // committed revision the ops are empty and the prepared Value is the committed
 // revision itself; otherwise they are one Replace, and the prepared Value is
-// value. value must be an object or array: ErrScalarRevision.
+// value. value must be an object or array, not nil: ErrScalarRevision.
 func (t *Tracker[T]) PrepareReplace(value T) (*Prepared[T], error) {
 	if t.owner == nil {
 		return nil, ErrZeroTracker
 	}
-	if !isContainer(any(value)) {
+	if !draftable(any(value)) {
 		return nil, ErrScalarRevision
 	}
 	c := newContext(t.owner, t.revision, any(value), true, any(t.value))
