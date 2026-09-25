@@ -63,6 +63,11 @@ func wantServiceValueError(t *testing.T, err error, what string, contains ...str
 	if sve.What != what {
 		t.Errorf("What = %q, want %q", sve.What, what)
 	}
+	// The rule that failed is the error's cause, for errors.Is and errors.As.
+	// (A nested op's own error reaches it flattened to text: ledger D47.)
+	if cause := errors.Unwrap(sve); cause == nil || cause != sve.Err {
+		t.Errorf("errors.Unwrap(%q) = %v, want Err, the rule that failed", err, cause)
+	}
 	for _, s := range append([]string{"invalid " + what}, contains...) {
 		if !strings.Contains(err.Error(), s) {
 			t.Errorf("error %q does not mention %q", err, s)
