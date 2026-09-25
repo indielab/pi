@@ -30,6 +30,10 @@
 //   - "an abort while an error body is read": the server answers 500,
 //     application/json, and writes the start of the error body as one chunk;
 //     the signal aborts 150ms after that;
+//   - "an abort while a retryable error body is read" (the adapters that
+//     retry through retryProviderRequest): the same with a 429 carrying
+//     retry-after: 120, past the 60s maxRetryDelayMs default, under
+//     maxRetries 1;
 //   - "an already-aborted signal" and "an abort before the response arrives"
 //     (pi-messages only; the other four adapters' are in
 //     abort-before-response): the server never answers, and the signal is
@@ -90,6 +94,7 @@ type Mode =
 	| "an abort from the callback on its read's last event"
 	| "an abort from the callback with the next read already in"
 	| "an abort while an error body is read"
+	| "an abort while a retryable error body is read"
 	| "an already-aborted signal"
 	| "an abort before the response arrives"
 	| "the connection drops mid-body"
@@ -107,6 +112,7 @@ const streamModes: Mode[] = [
 	"an abort from the callback with the next read already in",
 ];
 const errorBody: Mode = "an abort while an error body is read";
+const retryableErrorBody: Mode = "an abort while a retryable error body is read";
 const requestModes: Mode[] = ["an already-aborted signal", "an abort before the response arrives"];
 const drops: Mode = "the connection drops mid-body";
 const errorBodyDrops: Mode = "the connection drops while an error body is read";
@@ -131,7 +137,7 @@ const adapters = [
 		provider: "anthropic",
 		id: "claude-sonnet-4-5",
 		module: await load("api/anthropic-messages.ts"),
-		modes: [...streamModes, errorBody, drops, customBody],
+		modes: [...streamModes, errorBody, drops, customBody, retryableErrorBody],
 		segments: [
 			anthropicEvent("message_start", {
 				type: "message_start",
@@ -155,14 +161,28 @@ const adapters = [
 			piMessagesEvent({ type: "text_delta", contentIndex: 0, delta: " and more" }),
 		],
 	},
-	{ api: "openai-completions", provider: "openai", id: "gpt-4o", module: await load("api/openai-completions.ts"), modes: [errorBody], segments: [] },
-	{ api: "openai-responses", provider: "openai", id: "gpt-5-mini", module: await load("api/openai-responses.ts"), modes: [errorBody], segments: [] },
+	{
+		api: "openai-completions",
+		provider: "openai",
+		id: "gpt-4o",
+		module: await load("api/openai-completions.ts"),
+		modes: [errorBody, retryableErrorBody],
+		segments: [],
+	},
+	{
+		api: "openai-responses",
+		provider: "openai",
+		id: "gpt-5-mini",
+		module: await load("api/openai-responses.ts"),
+		modes: [errorBody, retryableErrorBody],
+		segments: [],
+	},
 	{
 		api: "google-generative-ai",
 		provider: "google",
 		id: "gemini-2.5-flash",
 		module: await load("api/google-generative-ai.ts"),
-		modes: [errorBody],
+		modes: [errorBody, retryableErrorBody],
 		segments: [],
 	},
 ];
@@ -170,6 +190,7 @@ const firstSegmentEvents = 3;
 const errorBodyStart = '{"error":{"message":"cut short';
 
 let status = "";
+let extraHead = "";
 let segments: string[] = [];
 let answer = true;
 let dropAfterWrite = false;
@@ -186,7 +207,7 @@ const server = net.createServer((sock) => {
 		buf = buf.subarray(headEnd + 4 + len);
 		if (!answer) return;
 		const contentType = status === "200 OK" ? "text/event-stream" : "application/json";
-		sock.write(`HTTP/1.1 ${status}\r\nContent-Type: ${contentType}\r\nTransfer-Encoding: chunked\r\n\r\n${segments.map(chunk).join("")}`);
+		sock.write(`HTTP/1.1 ${status}\r\nContent-Type: ${contentType}\r\n${extraHead}Transfer-Encoding: chunked\r\n\r\n${segments.map(chunk).join("")}`);
 		onSegmentWritten();
 		if (dropAfterWrite) setTimeout(() => sock.destroy(), 100);
 	});
@@ -216,8 +237,9 @@ const baseUrlFor = (mode: Mode) => {
 const runs = [];
 for (const a of adapters) {
 	for (const mode of a.modes) {
-		const errorStatus = mode === errorBody || mode === errorBodyDrops;
-		status = errorStatus ? "500 Internal Server Error" : "200 OK";
+		const errorStatus = mode === errorBody || mode === errorBodyDrops || mode === retryableErrorBody;
+		status = mode === retryableErrorBody ? "429 Too Many Requests" : errorStatus ? "500 Internal Server Error" : "200 OK";
+		extraHead = mode === retryableErrorBody ? "retry-after: 120\r\n" : "";
 		segments = errorStatus
 			? [errorBodyStart]
 			: mode === "an abort from the callback with the next read already in"
@@ -227,7 +249,9 @@ for (const a of adapters) {
 		dropAfterWrite = mode === drops || mode === errorBodyDrops;
 		const controller = new AbortController();
 		onSegmentWritten =
-			mode === "an abort while a read is pending" || mode === errorBody ? () => setTimeout(() => controller.abort(), 150) : () => {};
+			mode === "an abort while a read is pending" || mode === errorBody || mode === retryableErrorBody
+				? () => setTimeout(() => controller.abort(), 150)
+				: () => {};
 		if (mode === "an already-aborted signal") controller.abort();
 		if (mode === "an abort before the response arrives") setTimeout(() => controller.abort(), 150);
 		const model = {
@@ -259,6 +283,7 @@ for (const a of adapters) {
 		const out = a.module.stream(model, { messages: [{ role: "user", content: "hi", timestamp: 1 }] }, {
 			apiKey: "test-api-key",
 			signal: controller.signal,
+			...(mode === retryableErrorBody ? { maxRetries: 1 } : {}),
 			...(mode === customBody ? { fetch: customFetch } : {}),
 			...(mode === customRejects
 				? {
@@ -282,6 +307,7 @@ for (const a of adapters) {
 			api: a.api,
 			mode,
 			...(answer ? { status: Number.parseInt(status), segments } : {}),
+			...(mode === retryableErrorBody ? { retryAfter: "120", maxRetries: 1 } : {}),
 			...(mode === customBody ? { status: 200, segments: a.segments.slice(0, 1), customBodyError } : {}),
 			...(mode === badHeader ? { headers: { "x-test": badHeaderValue } } : {}),
 			...(mode === customRejects ? { customFetchError } : {}),

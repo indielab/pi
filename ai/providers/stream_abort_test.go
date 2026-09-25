@@ -34,7 +34,11 @@ type streamAbortRun struct {
 	// Status and Segments are what the server wrote before holding the
 	// connection, each segment one HTTP chunk and one body read; zero and
 	// empty when it never answered.
-	Status       int      `json:"status"`
+	Status int `json:"status"`
+	// RetryAfter is the retry-after header a retryable error carried, and
+	// MaxRetries the maxRetries the run streamed with.
+	RetryAfter   string   `json:"retryAfter"`
+	MaxRetries   int      `json:"maxRetries"`
 	Segments     []string `json:"segments"`
 	Observed     []string `json:"observed"`
 	Events       []string `json:"events"`
@@ -268,14 +272,18 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 			case "an abort from the callback with events left in its read", "an abort from the callback on its read's last event",
 				"an abort from the callback with the next read already in":
 				opts.HTTPClient = heldDoer{&heldBody{ctx: ctx, segments: slices.Clone(run.Segments)}}
-			case "an abort while an error body is read":
-				// The server answers the run's status with the start of the
-				// body and holds; the abort lands 100ms on, while the adapter
-				// reads the rest. (Were it to land before the response, pi's
-				// message would be the same.)
+			case "an abort while an error body is read", "an abort while a retryable error body is read":
+				// The server answers the run's status (with its retry-after)
+				// and the start of the body and holds; the abort lands 100ms
+				// on, while the adapter reads the rest. (Were it to land before
+				// the response, pi's message would be the same.)
+				opts.MaxRetries = run.MaxRetries
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					io.Copy(io.Discard, r.Body)
 					w.Header().Set("Content-Type", "application/json")
+					if run.RetryAfter != "" {
+						w.Header().Set("Retry-After", run.RetryAfter)
+					}
 					w.WriteHeader(run.Status)
 					io.WriteString(w, run.Segments[0])
 					w.(http.Flusher).Flush()

@@ -450,6 +450,11 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 			// error, so render it lazily.
 			var providerMsg string
 			body := readAndCloseBody(resp)
+			// The SDK throws once it has read the body, and pi's catch
+			// checks the signal before it reads a retry delay.
+			if aborted() {
+				return nil, errRequestAborted
+			}
 			if cfg.providerError != nil {
 				providerMsg = cfg.providerError(resp.StatusCode, body)
 			}

@@ -158,6 +158,24 @@
 			"diagnostics": []
 		},
 		{
+			"api": "anthropic-messages",
+			"mode": "an abort while a retryable error body is read",
+			"status": 429,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"retryAfter": "120",
+			"maxRetries": 1,
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "Request aborted",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
 			"api": "pi-messages",
 			"mode": "an abort while a read is pending",
 			"status": 200,
@@ -434,6 +452,24 @@
 			"diagnostics": []
 		},
 		{
+			"api": "openai-completions",
+			"mode": "an abort while a retryable error body is read",
+			"status": 429,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"retryAfter": "120",
+			"maxRetries": 1,
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "Request aborted",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
 			"api": "openai-responses",
 			"mode": "an abort while an error body is read",
 			"status": 500,
@@ -450,12 +486,48 @@
 			"diagnostics": []
 		},
 		{
+			"api": "openai-responses",
+			"mode": "an abort while a retryable error body is read",
+			"status": 429,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"retryAfter": "120",
+			"maxRetries": 1,
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "Request aborted",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
 			"api": "google-generative-ai",
 			"mode": "an abort while an error body is read",
 			"status": 500,
 			"segments": [
 				"{\"error\":{\"message\":\"cut short"
 			],
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "aborted",
+			"errorMessage": "Request aborted",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "google-generative-ai",
+			"mode": "an abort while a retryable error body is read",
+			"status": 429,
+			"segments": [
+				"{\"error\":{\"message\":\"cut short"
+			],
+			"retryAfter": "120",
+			"maxRetries": 1,
 			"observed": [],
 			"events": [
 				"error"
