@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -263,13 +264,6 @@ func normalizeZero(v any) any {
 // generatedDiff builds a "gen" case's inputs exactly as capture.mts does.
 func generatedDiff(t *testing.T, name string) (before, after any) {
 	t.Helper()
-	obj := func(kv ...any) map[string]any {
-		m := make(map[string]any, len(kv)/2)
-		for i := 0; i < len(kv); i += 2 {
-			m[kv[i].(string)] = kv[i+1]
-		}
-		return m
-	}
 	values := func(n int) []any {
 		out := make([]any, n)
 		for i := range out {
@@ -559,10 +553,12 @@ func snapshot(v any) any {
 
 func (r *runner) exec(step map[string]any) (o outcome) {
 	defer func() {
-		// A read through a revoked draft panics where pi throws.
+		// A read through a settled draft panics where pi throws, and so does a
+		// step that reads a property of undefined. A runtime error is a bug in
+		// the port, not an outcome to compare.
 		if p := recover(); p != nil {
 			err, ok := p.(error)
-			if !ok {
+			if _, crashed := p.(runtime.Error); !ok || crashed {
 				panic(p)
 			}
 			o = outcome{err: err}

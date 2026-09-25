@@ -6,45 +6,35 @@ import "iter"
 // order, setting an existing key keeps its place, and a deleted key that is set
 // again goes to the end. The overlay emits ops in the order its writes,
 // deletions and overrides were first made, as upstream's Maps and Sets do, so
-// that order has to be kept.
-type orderedMap[K comparable] struct {
-	entries []orderedEntry[K]
+// that order has to be kept. The zero value is an empty map.
+type orderedMap[K comparable, V any] struct {
+	entries []orderedEntry[K, V]
 	at      map[K]int // the index in entries of each live key
 }
 
-type orderedEntry[K comparable] struct {
+type orderedEntry[K comparable, V any] struct {
 	key   K
-	value any
+	value V
 	live  bool
 }
 
-func (m *orderedMap[K]) len() int {
-	if m == nil {
-		return 0
-	}
-	return len(m.at)
-}
+func (m *orderedMap[K, V]) len() int { return len(m.at) }
 
-func (m *orderedMap[K]) get(k K) (any, bool) {
-	if m == nil {
-		return nil, false
-	}
+func (m *orderedMap[K, V]) get(k K) (V, bool) {
 	i, ok := m.at[k]
 	if !ok {
-		return nil, false
+		var zero V
+		return zero, false
 	}
 	return m.entries[i].value, true
 }
 
-func (m *orderedMap[K]) has(k K) bool {
-	if m == nil {
-		return false
-	}
+func (m *orderedMap[K, V]) has(k K) bool {
 	_, ok := m.at[k]
 	return ok
 }
 
-func (m *orderedMap[K]) set(k K, v any) {
+func (m *orderedMap[K, V]) set(k K, v V) {
 	if i, ok := m.at[k]; ok {
 		m.entries[i].value = v
 		return
@@ -53,19 +43,16 @@ func (m *orderedMap[K]) set(k K, v any) {
 		m.at = map[K]int{}
 	}
 	m.at[k] = len(m.entries)
-	m.entries = append(m.entries, orderedEntry[K]{key: k, value: v, live: true})
+	m.entries = append(m.entries, orderedEntry[K, V]{key: k, value: v, live: true})
 }
 
-func (m *orderedMap[K]) delete(k K) {
-	if m == nil {
-		return
-	}
+func (m *orderedMap[K, V]) delete(k K) {
 	i, ok := m.at[k]
 	if !ok {
 		return
 	}
 	delete(m.at, k)
-	m.entries[i] = orderedEntry[K]{}
+	m.entries[i] = orderedEntry[K, V]{}
 	if len(m.at) == 0 {
 		m.entries = m.entries[:0]
 	} else if len(m.entries) > 32 && len(m.at) < len(m.entries)/2 {
@@ -74,7 +61,7 @@ func (m *orderedMap[K]) delete(k K) {
 }
 
 // compact drops the dead entries, keeping the live ones in order.
-func (m *orderedMap[K]) compact() {
+func (m *orderedMap[K, V]) compact() {
 	live := m.entries[:0]
 	for _, e := range m.entries {
 		if e.live {
@@ -87,11 +74,8 @@ func (m *orderedMap[K]) compact() {
 }
 
 // all yields the live entries in insertion order.
-func (m *orderedMap[K]) all() iter.Seq2[K, any] {
-	return func(yield func(K, any) bool) {
-		if m == nil {
-			return
-		}
+func (m *orderedMap[K, V]) all() iter.Seq2[K, V] {
+	return func(yield func(K, V) bool) {
 		for _, e := range m.entries {
 			if e.live && !yield(e.key, e.value) {
 				return
@@ -101,10 +85,10 @@ func (m *orderedMap[K]) all() iter.Seq2[K, any] {
 }
 
 // keys yields the live keys in insertion order.
-func (m *orderedMap[K]) keys() iter.Seq[K] {
+func (m *orderedMap[K, V]) keys() iter.Seq[K] {
 	return func(yield func(K) bool) {
-		for k := range m.all() {
-			if !yield(k) {
+		for _, e := range m.entries {
+			if e.live && !yield(e.key) {
 				return
 			}
 		}

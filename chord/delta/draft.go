@@ -57,9 +57,9 @@ type node struct {
 	// An object's overlay: written members, deleted ones, and base members
 	// deleted and written again (which must be deleted on the replica first, so
 	// that its key order follows the draft's).
-	writes  *orderedMap[string]
-	deletes *orderedMap[string]
-	readded *orderedMap[string]
+	writes  orderedMap[string, any]
+	deletes orderedMap[string, struct{}]
+	readded orderedMap[string, struct{}]
 
 	array *arrayOverlay
 
@@ -174,19 +174,8 @@ func (n *node) objectValue(key string) (any, bool) {
 	return v, ok
 }
 
-func (n *node) setWrite(key string, value any) {
-	if n.writes == nil {
-		n.writes = &orderedMap[string]{}
-	}
-	n.writes.set(key, value)
-}
-
-func (n *node) setDeletion(key string) {
-	if n.deletes == nil {
-		n.deletes = &orderedMap[string]{}
-	}
-	n.deletes.set(key, nil)
-}
+func (n *node) setWrite(key string, value any) { n.writes.set(key, value) }
+func (n *node) setDeletion(key string)         { n.deletes.set(key, struct{}{}) }
 
 // ownKeys is upstream's ownKeys trap: an object's members, integer-like first
 // (ascending), then the rest in order — the base's (in keyOrder, where pi
@@ -344,8 +333,8 @@ func (n *node) entry(index int) any {
 	if index >= a.length() {
 		return nil
 	}
-	p := a.locate(index)
-	sourceIndex := p.at(a.locatedOffset)
+	p, offset := a.locate(index)
+	sourceIndex := p.at(offset)
 	v := n.entryValue(p, sourceIndex)
 	if !isContainer(v) {
 		return v
@@ -419,8 +408,8 @@ func (n *node) setEntry(index int, stored any) {
 		n.replacePieceRange(length, 0, insertPiece([]any{stored}))
 		return
 	}
-	p := a.locate(index)
-	sourceIndex := p.at(a.locatedOffset)
+	p, offset := a.locate(index)
+	sourceIndex := p.at(offset)
 	current := n.entryValue(p, sourceIndex)
 	if !isContainer(stored) && same(current, stored) {
 		return
@@ -429,9 +418,6 @@ func (n *node) setEntry(index int, stored any) {
 		if !isContainer(stored) && same(stored, n.elements()[sourceIndex]) {
 			a.baseOverrides.delete(sourceIndex)
 		} else {
-			if a.baseOverrides == nil {
-				a.baseOverrides = &orderedMap[int]{}
-			}
 			a.baseOverrides.set(sourceIndex, stored)
 		}
 	} else {
@@ -731,10 +717,7 @@ func (d *Draft) Set(key any, value any) error {
 	}
 	n.setWrite(k, stored)
 	if _, own := n.object()[k]; wasDeleted && own {
-		if n.readded == nil {
-			n.readded = &orderedMap[string]{}
-		}
-		n.readded.set(k, nil)
+		n.readded.set(k, struct{}{})
 	}
 	n.deletes.delete(k)
 	n.markDirty()
@@ -915,8 +898,9 @@ func (d *Draft) Splice(start, deleteCount int, items ...any) ([]any, error) {
 	if err != nil {
 		return nil, err
 	}
+	// Upstream then sets the length to length - remove + len(items), which the
+	// splice has already made it.
 	n.replacePieceRange(start, remove, pieces)
-	n.setLength(length - remove + len(items))
 	return removed, nil
 }
 
@@ -995,25 +979,14 @@ func (d *Draft) CopyWithin(target, start, end int) error {
 
 // ─── Sort ────────────────────────────────────────────────────────────────────
 
-// sortToken names an entry while the order is being sorted: a base entry by
-// its index (>= 0), an inserted one by -(its position in the lists) - 1.
-type sortEntries struct {
-	sources []*insertSource
-	indices []int
-}
-
-func (e *sortEntries) source(token int) *insertSource {
-	if token < 0 {
-		return e.sources[-token-1]
-	}
-	return nil
-}
-
-func (e *sortEntries) index(token int) int {
-	if token < 0 {
-		return e.indices[-token-1]
-	}
-	return token
+// sortEntry is one entry of an array being sorted: where it comes from — a base
+// index (source nil) or an insertion's — what the comparator sees of it, and,
+// for the default order, its String().
+type sortEntry struct {
+	source *insertSource
+	index  int
+	value  any
+	key    string
 }
 
 // Sort sorts the array in place, stably. cmp receives the elements as Get
@@ -1029,30 +1002,13 @@ func (d *Draft) Sort(cmp func(a, b any) int) error {
 		return err
 	}
 	a := n.arrayOverlay()
-	var entries sortEntries
-	baseValues := make([]any, len(n.elements()))
-	var insertedValues []any
-	order := make([]int, 0, a.length())
+	entries := make([]sortEntry, 0, a.length())
 	for _, p := range a.piecesOf() {
 		for offset := range p.length {
-			sourceIndex := p.at(offset)
-			if p.base() {
-				order = append(order, sourceIndex)
-				baseValues[sourceIndex] = n.sortValue(sourceIndex, &entries)
-			} else {
-				entries.sources = append(entries.sources, p.source)
-				entries.indices = append(entries.indices, sourceIndex)
-				token := -len(entries.sources)
-				order = append(order, token)
-				insertedValues = append(insertedValues, n.sortValue(token, &entries))
-			}
+			e := sortEntry{source: p.source, index: p.at(offset)}
+			e.value = n.sortValue(e)
+			entries = append(entries, e)
 		}
-	}
-	value := func(token int) any {
-		if token < 0 {
-			return insertedValues[-token-1]
-		}
-		return baseValues[token]
 	}
 	baseSnapshot := map[int]any{}
 	for i, v := range a.baseOverrides.all() {
@@ -1064,41 +1020,38 @@ func (d *Draft) Sort(cmp func(a, b any) int) error {
 	}
 	generation := a.generation
 	if cmp != nil {
-		slices.SortStableFunc(order, func(l, r int) int { return cmp(value(l), value(r)) })
+		slices.SortStableFunc(entries, func(l, r sortEntry) int { return cmp(l.value, r.value) })
 		// A comparator that prepares or aborts the change, or adopts a
 		// competitor, settles it: upstream leaves such a comparator
 		// unspecified, and the overlay it would go on to write is gone.
 		if n.ctx.settled() {
 			return ErrDraftSettled
 		}
-	} else if len(order) > 1 {
+	} else if len(entries) > 1 {
 		// Each String() is taken once, before anything moves: the default
 		// order has no side effects, and with two or more elements V8 compares
 		// every one, so an element without a string form fails the sort either
 		// way (D74).
-		keys := make(map[int]string, len(order))
-		for _, token := range order {
-			s, err := jsString(value(token))
-			if err != nil {
+		for i := range entries {
+			if entries[i].key, err = jsString(entries[i].value); err != nil {
 				return err
 			}
-			keys[token] = s
 		}
-		slices.SortStableFunc(order, func(l, r int) int { return jstext.CompareUTF16(keys[l], keys[r]) })
+		slices.SortStableFunc(entries, func(l, r sortEntry) int { return jstext.CompareUTF16(l.key, r.key) })
 	}
 	if len(baseSnapshot) > 0 || len(insertSnapshots) > 0 || a.baseOverrides.len() > 0 || len(a.insertOverrides) > 0 {
-		for _, token := range order {
-			n.restoreSortOverride(token, &entries, baseSnapshot, insertSnapshots)
+		for _, e := range entries {
+			n.restoreSortOverride(e, baseSnapshot, insertSnapshots)
 		}
 	}
 	comparatorWasStructural := a.generation != generation
 	currentLength := a.length()
-	samePrefix := currentLength >= len(order)
-	for i := 0; samePrefix && i < len(order); i++ {
-		samePrefix = a.sameSortTokenAt(i, order[i], &entries)
+	samePrefix := currentLength >= len(entries)
+	for i := 0; samePrefix && i < len(entries); i++ {
+		samePrefix = a.holdsEntryAt(i, entries[i])
 	}
 	if !samePrefix {
-		n.replacePieceRange(0, min(len(order), currentLength), piecesFromSortOrder(order, &entries))
+		n.replacePieceRange(0, min(len(entries), currentLength), piecesFromSortOrder(entries))
 	}
 	if comparatorWasStructural {
 		n.deduplicateEntries()
@@ -1107,93 +1060,90 @@ func (d *Draft) Sort(cmp func(a, b any) int) error {
 }
 
 // sortValue is upstream's publicSortValue: an entry as the comparator sees it.
-func (n *node) sortValue(token int, e *sortEntries) any {
+func (n *node) sortValue(e sortEntry) any {
 	a := n.array
-	source, sourceIndex := e.source(token), e.index(token)
 	var v any
 	var overridden bool
-	if source == nil {
-		v, overridden = a.baseOverrides.get(sourceIndex)
+	if e.source == nil {
+		v, overridden = a.baseOverrides.get(e.index)
 		if !overridden {
-			v = n.elements()[sourceIndex]
+			v = n.elements()[e.index]
 		}
 	} else {
-		v, overridden = a.insertOverrides[source][sourceIndex]
+		v, overridden = a.insertOverrides[e.source][e.index]
 		if !overridden {
-			v = source.refs[sourceIndex]
+			v = e.source.refs[e.index]
 		}
 	}
 	if !isContainer(v) {
 		return v
 	}
-	s := slot{kind: baseEntry, index: sourceIndex}
-	if source != nil {
-		s = slot{kind: insertEntry, index: sourceIndex, source: source}
+	s := slot{kind: baseEntry, index: e.index}
+	if e.source != nil {
+		s = slot{kind: insertEntry, index: e.index, source: e.source}
 	}
-	return n.childFor(s, v, source != nil || a.baseOverrides.has(sourceIndex)).draft
+	return n.childFor(s, v, e.source != nil || a.baseOverrides.has(e.index)).draft
 }
 
 // restoreSortOverride is upstream's: an entry's override as it was before the
 // comparator ran — restored, or dropped if it had none.
-func (n *node) restoreSortOverride(token int, e *sortEntries, baseSnapshot map[int]any, insertSnapshots map[*insertSource]map[int]any) {
+func (n *node) restoreSortOverride(e sortEntry, baseSnapshot map[int]any, insertSnapshots map[*insertSource]map[int]any) {
 	a := n.array
-	source, sourceIndex := e.source(token), e.index(token)
-	if source == nil {
-		if v, ok := baseSnapshot[sourceIndex]; ok {
-			if a.baseOverrides == nil {
-				a.baseOverrides = &orderedMap[int]{}
-			}
-			a.baseOverrides.set(sourceIndex, v)
+	if e.source == nil {
+		if v, ok := baseSnapshot[e.index]; ok {
+			a.baseOverrides.set(e.index, v)
 		} else {
-			a.baseOverrides.delete(sourceIndex)
+			a.baseOverrides.delete(e.index)
 		}
 		return
 	}
-	overrides := a.insertOverrides[source]
-	if v, ok := insertSnapshots[source][sourceIndex]; ok {
+	overrides := a.insertOverrides[e.source]
+	if v, ok := insertSnapshots[e.source][e.index]; ok {
 		if overrides == nil {
 			if a.insertOverrides == nil {
 				a.insertOverrides = map[*insertSource]map[int]any{}
 			}
 			overrides = map[int]any{}
-			a.insertOverrides[source] = overrides
+			a.insertOverrides[e.source] = overrides
 		}
-		overrides[sourceIndex] = v
+		overrides[e.index] = v
 		return
 	}
-	delete(overrides, sourceIndex)
+	delete(overrides, e.index)
 	if overrides != nil && len(overrides) == 0 {
-		delete(a.insertOverrides, source)
+		delete(a.insertOverrides, e.source)
 	}
 }
 
-// sameSortTokenAt reports whether the logical index already holds the entry.
-func (a *arrayOverlay) sameSortTokenAt(logicalIndex, token int, e *sortEntries) bool {
-	p := a.locate(logicalIndex)
-	return p.at(a.locatedOffset) == e.index(token) && p.source == e.source(token)
+// holdsEntryAt is upstream's sameSortTokenAt: whether the logical index
+// already holds the entry.
+func (a *arrayOverlay) holdsEntryAt(logicalIndex int, e sortEntry) bool {
+	p, offset := a.locate(logicalIndex)
+	return p.at(offset) == e.index && p.source == e.source
 }
 
 // piecesFromSortOrder is upstream's: the sorted entries as pieces, runs merged.
-func piecesFromSortOrder(order []int, e *sortEntries) []*piece {
+// Unlike appendMerged, a run of several entries is extended by an entry that
+// continues it in its own step, whichever that is.
+func piecesFromSortOrder(entries []sortEntry) []*piece {
 	var pieces []*piece
-	for _, token := range order {
-		source, sourceIndex := e.source(token), e.index(token)
+	for _, e := range entries {
 		if len(pieces) > 0 {
 			previous := pieces[len(pieces)-1]
-			if previous.source == source {
+			if previous.source == e.source {
 				if previous.length == 1 {
-					if step := sourceIndex - previous.start; step == 1 || step == -1 {
+					if step := e.index - previous.start; step == 1 || step == -1 {
 						previous.step = step
 						previous.length = 2
 						continue
 					}
-				} else if previous.at(previous.length) == sourceIndex {
+				} else if previous.at(previous.length) == e.index {
 					previous.length++
 					continue
 				}
 			}
 		}
-		pieces = append(pieces, &piece{source: source, start: sourceIndex, length: 1, step: 1})
+		pieces = append(pieces, &piece{source: e.source, start: e.index, length: 1, step: 1})
 	}
 	return pieces
 }
@@ -1249,8 +1199,9 @@ func (n *node) deduplicateEntries() {
 // ─── Placements ──────────────────────────────────────────────────────────────
 
 // ValueError reports a value a draft cannot place: a cycle, a number that is
-// not finite, or a Go type with no JSON form. Message is upstream's copyJson
-// TypeError text (chord.ValueError is the same type).
+// not finite, or a Go type with no JSON form. Its Message is upstream's
+// copyJson TypeError text, and its Value the offending Go value (nil for a
+// cycle). chord.ValueError is the same type.
 type ValueError = jsonvalue.Error
 
 // clonePlacement is upstream's: a value placed into a draft, copied and
@@ -1378,8 +1329,12 @@ func jsString(v any) (string, error) {
 		}
 		return b.String(), nil
 	}
-	f, _ := number(v)
-	return jsNumber(f), nil
+	if f, ok := number(v); ok {
+		return jsNumber(f), nil
+	}
+	// A Go value with no JSON form, inside a plain value handed to
+	// Set("length", …): an object, to JavaScript's String().
+	return "[object Object]", nil
 }
 
 // string is String() of a node's content: an array's elements' strings joined

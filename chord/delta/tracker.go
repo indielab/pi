@@ -2,7 +2,6 @@ package delta
 
 import (
 	"errors"
-	"slices"
 	"weak"
 )
 
@@ -39,7 +38,7 @@ var (
 	// TypeError pi's overlay throws: it keys its nodes by their containers in a
 	// WeakMap, which takes only objects. A change drafts an object or array,
 	// and PrepareReplace takes one.
-	ErrScalarRevision = errors.New("delta: Invalid value used as weak map key (a change drafts a JSON object or array, and a replacement is one; this revision or value is a scalar)")
+	ErrScalarRevision = errors.New("delta: Invalid value used as weak map key (a change drafts a JSON object or array, a map[string]any or []any, and a replacement is one; this revision or value is a scalar, or a Go type the tracker does not hold)")
 
 	// ErrZeroTracker is Go's own: a Tracker that Track did not make holds no
 	// revision, so BeginChange, PrepareReplace and Adopt refuse it.
@@ -346,7 +345,7 @@ func materializeOperations(base any, ops []Op) (any, error) {
 	for _, op := range ops {
 		switch op.(type) {
 		case Splice, Permute:
-			return applyImmutableBatches(base, slices.Values([][]Op{ops}))
+			return applyOps(base, ops, newOwnedSet())
 		}
 	}
 	return applyTrusted(base, ops)

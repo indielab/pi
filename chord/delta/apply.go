@@ -54,7 +54,7 @@ func Apply[T any](target T, ops []Op) (T, error) {
 // safely fan out to several in-process consumers. It does not clone or freeze
 // either complete input, and the result shares containers with both.
 func ApplyImmutable[T any](target T, ops []Op) (T, error) {
-	root, err := applyImmutableBatches(target, slices.Values([][]Op{ops}))
+	root, err := applyOps(target, ops, newOwnedSet())
 	return typed[T](root, err)
 }
 

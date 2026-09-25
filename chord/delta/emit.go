@@ -31,7 +31,9 @@ func (c *overlayContext) emitOperations() []Op {
 		return ops
 	}
 	ops := []Op{}
-	var forcedFolds, emissionPaths, denseIndices, denseRegions orderedMap[*node]
+	var forcedFolds, emissionPaths orderedMap[*node, Path]
+	var denseIndices orderedMap[*node, *denseCandidates]
+	var denseRegions orderedMap[*node, []denseRegion]
 	for _, n := range c.dirty {
 		recordDenseArrayPosition(n, &denseIndices)
 		if n.isArray() {
@@ -44,12 +46,12 @@ func (c *overlayContext) emitOperations() []Op {
 			}
 		}
 	}
-	for array, v := range denseIndices.all() {
+	for array, candidates := range denseIndices.all() {
 		path, ok := array.resolvePath()
 		if !ok || reservedIndex(path) >= 0 {
 			continue
 		}
-		if regions := v.(*denseCandidates).regions(); len(regions) > 0 {
+		if regions := candidates.regions(); len(regions) > 0 {
 			denseRegions.set(array, regions)
 		}
 	}
@@ -80,18 +82,16 @@ func (c *overlayContext) emitOperations() []Op {
 	}
 	maxDepth := 0
 	for _, path := range emissionPaths.all() {
-		maxDepth = max(maxDepth, len(path.(Path)))
+		maxDepth = max(maxDepth, len(path))
 	}
 	buckets := make([][]*node, maxDepth+1)
 	for n, path := range emissionPaths.all() {
-		depth := len(path.(Path))
-		buckets[depth] = append(buckets[depth], n)
+		buckets[len(path)] = append(buckets[len(path)], n)
 	}
 	folded := map[*node]bool{}
 	for _, bucket := range buckets {
 		for _, n := range bucket {
-			v, _ := emissionPaths.get(n)
-			path := v.(Path)
+			path, _ := emissionPaths.get(n)
 			if n.hasPlacementAncestor() || hasFoldedAncestor(n, folded) {
 				continue
 			}
@@ -102,8 +102,7 @@ func (c *overlayContext) emitOperations() []Op {
 			}
 			if n.isArray() {
 				regions, _ := denseRegions.get(n)
-				r, _ := regions.([]denseRegion)
-				ops = n.emitArrayOperations(path, ops, r)
+				ops = n.emitArrayOperations(path, ops, regions)
 			} else {
 				ops, _ = n.emitObjectOperations(path, ops)
 			}
@@ -212,28 +211,28 @@ func (n *node) emitArrayOperations(path Path, ops []Op, regions []denseRegion) [
 	}
 	if a.structural {
 		plan := n.buildPlan()
-		for i := 0; i < len(plan.removeRuns); i += 2 {
+		for _, r := range plan.removals {
 			if len(ops) > maxDeltaOperations {
 				return ops
 			}
-			ops = append(ops, Splice{Path: path, Index: plan.removeRuns[i], Remove: plan.removeRuns[i+1], Items: []any{}})
+			ops = append(ops, Splice{Path: path, Index: r.start, Remove: r.length, Items: []any{}})
 		}
 		if plan.permutation != nil {
 			ops = append(ops, Permute{Path: path, Permutation: plan.permutation})
 		}
 		pieces := a.piecesOf()
-		for run := 0; run < len(plan.insertRuns); run += 3 {
+		for _, run := range plan.insertions {
 			if len(ops) > maxDeltaOperations {
 				return ops
 			}
 			items := []any{}
-			for _, p := range pieces[plan.insertRuns[run+1]:plan.insertRuns[run+2]] {
+			for _, p := range pieces[run.first:run.end] {
 				for offset := range p.length {
 					sourceIndex := p.at(offset)
 					items = append(items, n.cloneStored(entrySlot(p, sourceIndex), n.entryValue(p, sourceIndex), true))
 				}
 			}
-			ops = append(ops, Splice{Path: path, Index: plan.insertRuns[run], Remove: 0, Items: items})
+			ops = append(ops, Splice{Path: path, Index: run.at, Remove: 0, Items: items})
 		}
 	}
 	for baseIndex, value := range a.baseOverrides.all() {
@@ -270,7 +269,7 @@ func (n *node) buildPlan() *arrayPlan {
 			targetBase = append(targetBase, index)
 		}
 	}
-	var removeRuns []int
+	var removals []span
 	for end := len(base); end > 0; {
 		if retained[end-1] {
 			end--
@@ -280,7 +279,7 @@ func (n *node) buildPlan() *arrayPlan {
 		for start > 0 && !retained[start-1] {
 			start--
 		}
-		removeRuns = append(removeRuns, start, end-start)
+		removals = append(removals, span{start: start, length: end - start})
 		end = start
 	}
 	var retainedBase []int
@@ -291,7 +290,7 @@ func (n *node) buildPlan() *arrayPlan {
 	}
 	var permutation []int
 	if !slices.Equal(targetBase, retainedBase) {
-		positions := make(map[int]int, len(retainedBase))
+		positions := make([]int, len(base))
 		for i, index := range retainedBase {
 			positions[index] = i
 		}
@@ -300,7 +299,7 @@ func (n *node) buildPlan() *arrayPlan {
 			permutation[i] = positions[index]
 		}
 	}
-	var insertRuns []int
+	var insertions []insertionRun
 	logical := 0
 	for i := 0; i < len(pieces); {
 		if pieces[i].base() {
@@ -308,15 +307,15 @@ func (n *node) buildPlan() *arrayPlan {
 			i++
 			continue
 		}
-		start, length := i, 0
+		run := insertionRun{at: logical, first: i}
 		for i < len(pieces) && !pieces[i].base() {
-			length += pieces[i].length
+			logical += pieces[i].length
 			i++
 		}
-		insertRuns = append(insertRuns, logical, start, i)
-		logical += length
+		run.end = i
+		insertions = append(insertions, run)
 	}
-	a.plan = &arrayPlan{removeRuns: removeRuns, permutation: permutation, insertRuns: insertRuns}
+	a.plan = &arrayPlan{removals: removals, permutation: permutation, insertions: insertions}
 	return a.plan
 }
 
@@ -326,8 +325,8 @@ func (n *node) cloneRegion(r denseRegion) []any {
 	a := n.arrayOverlay()
 	out := make([]any, 0, r.length)
 	for index := r.start; index < r.start+r.length; index++ {
-		p := a.locate(index)
-		sourceIndex := p.at(a.locatedOffset)
+		p, offset := a.locate(index)
+		sourceIndex := p.at(offset)
 		out = append(out, n.cloneStored(entrySlot(p, sourceIndex), n.entryValue(p, sourceIndex), !p.base() || n.hasEntryOverride(p, sourceIndex)))
 	}
 	return out
@@ -441,7 +440,7 @@ func (n *node) resolvePath() (Path, bool) {
 	if !ok {
 		return nil, false
 	}
-	if !p.holds(n, p.entryValue(a.locate(index), n.index)) {
+	if piece, _ := a.locate(index); !p.holds(n, p.entryValue(piece, n.index)) {
 		return nil, false
 	}
 	n.path, n.resolved = child(parentPath, Index(index)), true
@@ -557,9 +556,9 @@ func (c *denseCandidates) regions() []denseRegion {
 	return regions
 }
 
-func candidatesFor(groups *orderedMap[*node], array *node) *denseCandidates {
-	if v, ok := groups.get(array); ok {
-		return v.(*denseCandidates)
+func candidatesFor(groups *orderedMap[*node, *denseCandidates], array *node) *denseCandidates {
+	if c, ok := groups.get(array); ok {
+		return c
 	}
 	c := &denseCandidates{length: len(array.elements())}
 	groups.set(array, c)
@@ -568,7 +567,7 @@ func candidatesFor(groups *orderedMap[*node], array *node) *denseCandidates {
 
 // recordDenseArrayPosition is upstream's: a dirty node inside an entry of a
 // non-structural array — through objects — counts as an edit of that entry.
-func recordDenseArrayPosition(n *node, groups *orderedMap[*node]) {
+func recordDenseArrayPosition(n *node, groups *orderedMap[*node, *denseCandidates]) {
 	c := n
 	for p := c.parent; p != nil; p = c.parent {
 		if p.isArray() {
@@ -592,9 +591,9 @@ func recordDenseArrayPosition(n *node, groups *orderedMap[*node]) {
 
 // hasCoveringDenseRegion is upstream's: an array above the node publishes the
 // entry it sits in as part of a region splice.
-func hasCoveringDenseRegion(n *node, path Path, denseRegions *orderedMap[*node]) bool {
+func hasCoveringDenseRegion(n *node, path Path, denseRegions *orderedMap[*node, []denseRegion]) bool {
 	for p := n.parent; p != nil; p = p.parent {
-		v, ok := denseRegions.get(p)
+		regions, ok := denseRegions.get(p)
 		if !ok {
 			continue
 		}
@@ -602,7 +601,7 @@ func hasCoveringDenseRegion(n *node, path Path, denseRegions *orderedMap[*node])
 		if !ok || len(path) <= len(parentPath) || !slices.Equal(path[:len(parentPath)], parentPath) {
 			continue
 		}
-		if index, ok := path[len(parentPath)].(Index); ok && regionContaining(v.([]denseRegion), int(index)) {
+		if index, ok := path[len(parentPath)].(Index); ok && regionContaining(regions, int(index)) {
 			return true
 		}
 	}

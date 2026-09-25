@@ -54,9 +54,6 @@ func TestTrackerTakesOwnership(t *testing.T) {
 
 	c := mustBegin(t, tr)
 	must(t, c.State().Set("count", 2))
-	done := make(chan struct{})
-	go func() { runtime.Gosched(); close(done) }()
-	<-done // a draft outlives any amount of work between writes
 	concat(t, c.State().At("nested"), "text", "b")
 	_, err := c.State().At("values").Push(2)
 	must(t, err)

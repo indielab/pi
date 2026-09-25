@@ -1,6 +1,9 @@
 package delta
 
-import "slices"
+import (
+	"slices"
+	"sort"
+)
 
 // ─── Array overlays: the piece table ─────────────────────────────────────────
 //
@@ -49,15 +52,21 @@ type pieceLocation struct {
 	minimum, maximum int
 }
 
-// arrayPlan is how a structural edit publishes: removal runs (start, length)
-// from the right, the permutation of the retained base entries (nil when they
-// keep their order), and runs of inserted pieces (logical index, first piece,
-// end piece).
+// arrayPlan is how a structural edit publishes: runs of base entries removed,
+// from the right; the permutation of the retained base entries (nil when they
+// keep their order); and runs of inserted pieces at their final indices.
 type arrayPlan struct {
-	removeRuns  []int
+	removals    []span
 	permutation []int
-	insertRuns  []int
+	insertions  []insertionRun
 }
+
+// span is a run of base indices.
+type span struct{ start, length int }
+
+// insertionRun is a run of consecutive inserted pieces, pieces[first:end] of
+// the flattened sequence, landing at logical index at.
+type insertionRun struct{ at, first, end int }
 
 // arrayOverlay is upstream's ArrayOverlay: an array draft's pieces, the values
 // written over base or inserted entries, and caches of the flattened pieces and
@@ -65,13 +74,12 @@ type arrayPlan struct {
 type arrayOverlay struct {
 	root            *pieceNode
 	pieces          []*piece
-	baseOverrides   *orderedMap[int]
+	baseOverrides   orderedMap[int, any]
 	insertOverrides map[*insertSource]map[int]any
 	structural      bool
 	generation      int
 	plan            *arrayPlan
 	seed            uint32
-	locatedOffset   int
 	baseLocations   []pieceLocation
 	insertLocations map[*insertSource][]pieceLocation
 }
@@ -259,9 +267,8 @@ func (a *arrayOverlay) replaceAllPieces(pieces []*piece) {
 
 func (a *arrayOverlay) length() int { return elements(a.root) }
 
-// locate is the piece holding logical index, with the entry's offset in it
-// left in locatedOffset.
-func (a *arrayOverlay) locate(index int) *piece {
+// locate is the piece holding logical index, and the entry's offset in it.
+func (a *arrayOverlay) locate(index int) (*piece, int) {
 	n := a.root
 	for n != nil {
 		leftLength := elements(n.left)
@@ -272,8 +279,7 @@ func (a *arrayOverlay) locate(index int) *piece {
 			index -= leftLength + n.piece.length
 			n = n.right
 		default:
-			a.locatedOffset = index - leftLength
-			return n.piece
+			return n.piece, index - leftLength
 		}
 	}
 	panic("delta: array overlay index is out of range")
@@ -296,25 +302,16 @@ func (a *arrayOverlay) invalidateCaches() {
 	a.plan = nil
 }
 
-// mergePieces fuses each piece with the next wherever one continues the other,
-// in place, as upstream's mergePieces does its array.
+// mergePieces fuses each piece with the one before wherever it continues it,
+// in place, as upstream's mergePieces does its array — by appendMerged's rule,
+// which is the same.
 func mergePieces(pieces []*piece) []*piece {
-	for i := 1; i < len(pieces); {
-		left, right := pieces[i-1], pieces[i]
-		sameSource := left.source == right.source
-		switch {
-		case sameSource && left.length == 1 && right.length == 1 && abs(right.start-left.start) == 1:
-			left.step = right.start - left.start
-			left.length = 2
-			pieces = append(pieces[:i], pieces[i+1:]...)
-		case sameSource && left.step == right.step && left.at(left.length) == right.start:
-			left.length += right.length
-			pieces = append(pieces[:i], pieces[i+1:]...)
-		default:
-			i++
-		}
+	merged := pieces[:0]
+	for _, p := range pieces {
+		merged = appendMerged(merged, p)
 	}
-	return pieces
+	clear(pieces[len(merged):])
+	return merged
 }
 
 // appendMerged is upstream's appendMergedPiece: add p to the end of pieces,
@@ -377,15 +374,8 @@ func (a *arrayOverlay) findEntryIndex(source *insertSource, sourceIndex int) (in
 	if source != nil {
 		locations = a.insertLocations[source]
 	}
-	low, high := 0, len(locations)
-	for low < high {
-		middle := (low + high) / 2
-		if locations[middle].minimum <= sourceIndex {
-			low = middle + 1
-		} else {
-			high = middle
-		}
-	}
+	// The last piece whose range starts at or before sourceIndex.
+	low := sort.Search(len(locations), func(i int) bool { return locations[i].minimum > sourceIndex })
 	if low == 0 {
 		return 0, false
 	}

@@ -35,9 +35,9 @@ type identity struct {
 func identityOf(v any) (identity, bool) {
 	switch c := v.(type) {
 	case map[string]any:
-		return identity{ptr: reflect.ValueOf(c).Pointer(), len: -1}, true
+		return identity{ptr: reflect.ValueOf(v).Pointer(), len: -1}, true
 	case []any:
-		return identity{ptr: reflect.ValueOf(c).Pointer(), len: len(c)}, true
+		return identity{ptr: reflect.ValueOf(v).Pointer(), len: len(c)}, true
 	}
 	return identity{}, false
 }
