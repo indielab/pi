@@ -373,5 +373,151 @@
 			"ok": true,
 			"json": "1"
 		}
+	],
+	"bounds": [
+		{
+			"name": "depth_at_limit",
+			"options": {
+				"maxDepth": 2
+			},
+			"hex": "818101",
+			"encoded": "818101",
+			"decodeOk": true
+		},
+		{
+			"name": "depth_past_limit",
+			"options": {
+				"maxDepth": 1
+			},
+			"hex": "818101",
+			"encodeError": "CBOR nesting depth exceeds configured limit of 1",
+			"decodeError": "CBOR nesting depth exceeds configured limit of 1"
+		},
+		{
+			"name": "map_depth_at_limit",
+			"options": {
+				"maxDepth": 2
+			},
+			"hex": "a16161a1616201",
+			"encoded": "a16161a1616201",
+			"decodeOk": true
+		},
+		{
+			"name": "map_depth_past_limit",
+			"options": {
+				"maxDepth": 1
+			},
+			"hex": "a16161a1616201",
+			"encodeError": "CBOR nesting depth exceeds configured limit of 1",
+			"decodeError": "CBOR nesting depth exceeds configured limit of 1"
+		},
+		{
+			"name": "text_at_limit",
+			"options": {
+				"maxByteLength": 4
+			},
+			"hex": "63616263",
+			"encoded": "63616263",
+			"decodeOk": true
+		},
+		{
+			"name": "text_past_limit",
+			"options": {
+				"maxByteLength": 3
+			},
+			"hex": "63616263",
+			"encodeError": "CBOR byte length exceeds configured limit of 3",
+			"decodeError": "CBOR byte length exceeds configured limit of 3"
+		},
+		{
+			"name": "text_over_limit",
+			"options": {
+				"maxByteLength": 3
+			},
+			"hex": "6461626364",
+			"encodeError": "CBOR text string length exceeds configured limit of 3",
+			"decodeError": "CBOR byte length exceeds configured limit of 3"
+		},
+		{
+			"name": "bytes_at_limit",
+			"options": {
+				"maxByteLength": 4
+			},
+			"hex": "43010203",
+			"encoded": "43010203",
+			"decodeOk": true
+		},
+		{
+			"name": "bytes_past_limit",
+			"options": {
+				"maxByteLength": 3
+			},
+			"hex": "43010203",
+			"encodeError": "CBOR byte length exceeds configured limit of 3",
+			"decodeError": "CBOR byte length exceeds configured limit of 3"
+		},
+		{
+			"name": "bytes_over_limit",
+			"options": {
+				"maxByteLength": 3
+			},
+			"hex": "4401020304",
+			"encodeError": "CBOR byte string length exceeds configured limit of 3",
+			"decodeError": "CBOR byte length exceeds configured limit of 3"
+		},
+		{
+			"name": "nested_length_at_limit",
+			"options": {
+				"maxByteLength": 35
+			},
+			"hex": "81836a616161616161616161616a626262626262626262626a63636363636363636363",
+			"encoded": "81836a616161616161616161616a626262626262626262626a63636363636363636363",
+			"decodeOk": true
+		},
+		{
+			"name": "nested_length_past_limit",
+			"options": {
+				"maxByteLength": 34
+			},
+			"hex": "81836a616161616161616161616a626262626262626262626a63636363636363636363",
+			"encodeError": "CBOR byte length exceeds configured limit of 34",
+			"decodeError": "CBOR byte length exceeds configured limit of 34"
+		},
+		{
+			"name": "array_at_limit",
+			"options": {
+				"maxContainerLength": 2
+			},
+			"hex": "820102",
+			"encoded": "820102",
+			"decodeOk": true
+		},
+		{
+			"name": "array_past_limit",
+			"options": {
+				"maxContainerLength": 1
+			},
+			"hex": "820102",
+			"encodeError": "CBOR array length exceeds configured limit of 1",
+			"decodeError": "CBOR array length exceeds configured limit of 1"
+		},
+		{
+			"name": "map_at_limit",
+			"options": {
+				"maxContainerLength": 2
+			},
+			"hex": "a2616101616202",
+			"encoded": "a2616101616202",
+			"decodeOk": true
+		},
+		{
+			"name": "map_past_limit",
+			"options": {
+				"maxContainerLength": 1
+			},
+			"hex": "a2616101616202",
+			"encodeError": "CBOR map length exceeds configured limit of 1",
+			"decodeError": "CBOR map length exceeds configured limit of 1"
+		}
 	]
 }

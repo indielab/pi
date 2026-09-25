@@ -118,4 +118,45 @@ const decoded = decodeCases.map(([name, hexBytes]) => {
 	}
 });
 
-console.log(JSON.stringify({ encoded, rejects, decoded }, null, "\t"));
+// Every limit at its bound and one past it, both ways. The two rows of a pair
+// differ by one in the option, never in the value. An "over" row's string is
+// itself past the cap, which the encoder checks before the output's length.
+// `hex` is the value under the default limits; `encoded` or `encodeError` is
+// encodeCbor(value, options), `decodeOk` or `decodeError` is
+// decodeCbor(hex, options).
+const boundCases: Array<[string, unknown, Record<string, number>]> = [
+	["depth_at_limit", [[1]], { maxDepth: 2 }],
+	["depth_past_limit", [[1]], { maxDepth: 1 }],
+	["map_depth_at_limit", { a: { b: 1 } }, { maxDepth: 2 }],
+	["map_depth_past_limit", { a: { b: 1 } }, { maxDepth: 1 }],
+	["text_at_limit", "abc", { maxByteLength: 4 }],
+	["text_past_limit", "abc", { maxByteLength: 3 }],
+	["text_over_limit", "abcd", { maxByteLength: 3 }],
+	["bytes_at_limit", new Uint8Array([1, 2, 3]), { maxByteLength: 4 }],
+	["bytes_past_limit", new Uint8Array([1, 2, 3]), { maxByteLength: 3 }],
+	["bytes_over_limit", new Uint8Array([1, 2, 3, 4]), { maxByteLength: 3 }],
+	["nested_length_at_limit", [["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"]], { maxByteLength: 35 }],
+	["nested_length_past_limit", [["aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"]], { maxByteLength: 34 }],
+	["array_at_limit", [1, 2], { maxContainerLength: 2 }],
+	["array_past_limit", [1, 2], { maxContainerLength: 1 }],
+	["map_at_limit", { a: 1, b: 2 }, { maxContainerLength: 2 }],
+	["map_past_limit", { a: 1, b: 2 }, { maxContainerLength: 1 }],
+];
+const bounds = boundCases.map(([name, value, options]) => {
+	const bytes = encodeCbor(value);
+	const out: Record<string, unknown> = { name, options, hex: hex(bytes) };
+	try {
+		out.encoded = hex(encodeCbor(value, options));
+	} catch (error) {
+		out.encodeError = (error as Error).message;
+	}
+	try {
+		decodeCbor(bytes, options);
+		out.decodeOk = true;
+	} catch (error) {
+		out.decodeError = (error as Error).message;
+	}
+	return out;
+});
+
+console.log(JSON.stringify({ encoded, rejects, decoded, bounds }, null, "\t"));

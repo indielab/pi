@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -34,6 +35,21 @@ type upstreamVectors struct {
 		JSON  string `json:"json"`
 		Error string `json:"error"`
 	} `json:"decoded"`
+	Bounds []boundsVector `json:"bounds"`
+}
+
+// boundsVector is one limit at its bound or one past it, as pi resolves it
+// both ways: Hex is the value under the default limits, Encoded or
+// EncodeError is what pi's encoder makes of the value under Options, and
+// DecodeOK or DecodeError what its decoder makes of Hex.
+type boundsVector struct {
+	Name        string         `json:"name"`
+	Options     map[string]int `json:"options"`
+	Hex         string         `json:"hex"`
+	Encoded     string         `json:"encoded"`
+	EncodeError string         `json:"encodeError"`
+	DecodeOK    bool           `json:"decodeOk"`
+	DecodeError string         `json:"decodeError"`
 }
 
 func loadVectors(t *testing.T) upstreamVectors {
@@ -339,6 +355,156 @@ func TestEncodeOmitEmptyDropsAbsentOptionalFields(t *testing.T) {
 	}
 	if hex.EncodeToString(got) != want {
 		t.Errorf("omitempty does not match pi's undefined-dropping\n got %s\nwant %s", hex.EncodeToString(got), want)
+	}
+}
+
+// boundForm is one Go spelling of a bounds vector's value. Each spelling takes
+// its own path through the limit checks, and pi's outcome for the value is
+// the outcome for every one of them. A RawItem has no upstream counterpart
+// (D56): it is held to what pi does with the same item encoded in place,
+// because a relayed span must be bounded exactly as the value would be. Its
+// error may say more than pi's, so it need only contain pi's text.
+type boundForm struct {
+	name  string
+	value any
+	raw   bool
+}
+
+type boundsMapDepth struct {
+	A struct {
+		B int64 `cbor:"b"`
+	} `cbor:"a"`
+}
+
+type boundsMap struct {
+	A int64 `cbor:"a"`
+	B int64 `cbor:"b"`
+}
+
+// boundForms spells a bounds vector's value every way the encoder checks it,
+// slicing any nested RawItem out of pi's own bytes for the value.
+func boundForms(t *testing.T, name string, item RawItem) []boundForm {
+	t.Helper()
+	family := name
+	for _, suffix := range []string{"_at_limit", "_past_limit", "_over_limit"} {
+		family = strings.TrimSuffix(family, suffix)
+	}
+	whole := boundForm{"whole RawItem", item, true}
+	switch family {
+	case "depth":
+		return []boundForm{
+			{"value", []any{[]any{int64(1)}}, false},
+			whole,
+			{"nested RawItem", []any{item[1:]}, true},
+		}
+	case "map_depth":
+		var s boundsMapDepth
+		s.A.B = 1
+		return []boundForm{
+			{"value", map[string]any{"a": map[string]any{"b": int64(1)}}, false},
+			{"struct", s, false},
+			{"ordered object", OrderedObject{{Key: "a", Value: OrderedObject{{Key: "b", Value: int64(1)}}}}, false},
+			whole,
+			{"nested RawItem", map[string]any{"a": item[3:]}, true},
+		}
+	case "text":
+		return []boundForm{{"value", string(item[1:]), false}, whole}
+	case "bytes":
+		return []boundForm{{"value", []byte(item[1:]), false}, whole}
+	case "nested_length":
+		return []boundForm{
+			{"value", []any{[]any{"aaaaaaaaaa", "bbbbbbbbbb", "cccccccccc"}}, false},
+			whole,
+			{"nested RawItem", []any{item[1:]}, true},
+		}
+	case "array":
+		return []boundForm{{"value", []any{int64(1), int64(2)}, false}, whole}
+	case "map":
+		return []boundForm{
+			{"value", map[string]any{"a": int64(1), "b": int64(2)}, false},
+			{"struct", boundsMap{A: 1, B: 2}, false},
+			{"ordered object", OrderedObject{{Key: "a", Value: int64(1)}, {Key: "b", Value: int64(2)}}, false},
+			whole,
+		}
+	}
+	t.Fatalf("bounds vector %q has no Go forms; add them to boundForms", name)
+	return nil
+}
+
+// TestBoundsMatchUpstream: every limit admits a value exactly at it and
+// refuses one a unit past it, in the encoder and the decoder, with pi's text —
+// and so does every spelling of the value that the port checks separately:
+// structs, OrderedObjects, and RawItems whole or nested. DecodeRaw capturing a
+// top-level entry must agree with Decode.
+func TestBoundsMatchUpstream(t *testing.T) {
+	vectors := loadVectors(t).Bounds
+	if len(vectors) == 0 {
+		t.Fatal("no bounds vectors: regenerate testdata/upstream_vectors.json from gen-vectors.ts")
+	}
+	for _, vector := range vectors {
+		t.Run(vector.Name, func(t *testing.T) {
+			if (vector.Encoded == "") == (vector.EncodeError == "") || vector.DecodeOK == (vector.DecodeError != "") {
+				t.Fatalf("malformed vector: %+v", vector)
+			}
+			opts := &Options{}
+			for name, limit := range vector.Options {
+				switch name {
+				case "maxByteLength":
+					opts.MaxByteLength = ptr(limit)
+				case "maxContainerLength":
+					opts.MaxContainerLength = ptr(limit)
+				case "maxDepth":
+					opts.MaxDepth = ptr(limit)
+				default:
+					t.Fatalf("unknown option %q", name)
+				}
+			}
+			item, err := hex.DecodeString(vector.Hex)
+			if err != nil {
+				t.Fatalf("bad vector hex: %v", err)
+			}
+
+			for _, form := range boundForms(t, vector.Name, item) {
+				got, err := Encode(form.value, opts)
+				switch {
+				case vector.EncodeError == "" && err != nil:
+					t.Errorf("Encode(%s) refused a value pi encodes as %s: %v", form.name, vector.Encoded, err)
+				case vector.EncodeError == "" && hex.EncodeToString(got) != vector.Encoded:
+					t.Errorf("Encode(%s) = %x, pi encodes %s", form.name, got, vector.Encoded)
+				case vector.EncodeError != "" && err == nil:
+					t.Errorf("Encode(%s) = %x, pi refuses it: %s", form.name, got, vector.EncodeError)
+				case vector.EncodeError != "" && form.raw && !strings.Contains(err.Error(), vector.EncodeError):
+					t.Errorf("Encode(%s) error %q does not carry pi's %q", form.name, err, vector.EncodeError)
+				case vector.EncodeError != "" && !form.raw && err.Error() != vector.EncodeError:
+					t.Errorf("Encode(%s) error\n got %q\nwant %q", form.name, err, vector.EncodeError)
+				}
+			}
+
+			var captures [][]string
+			switch {
+			case strings.HasPrefix(vector.Name, "map_depth_"):
+				captures = [][]string{nil, {"a"}}
+			case strings.HasPrefix(vector.Name, "map_"):
+				captures = [][]string{nil, {"a", "b"}}
+			default:
+				captures = [][]string{nil}
+			}
+			for _, keys := range captures {
+				got, err := DecodeRaw(item, opts, keys...)
+				switch {
+				case vector.DecodeOK && err != nil:
+					t.Errorf("DecodeRaw capturing %q refused bytes pi decodes: %v", keys, err)
+				case vector.DecodeOK && len(keys) == 0:
+					if want, _ := Decode(item, nil); !reflect.DeepEqual(got, want) {
+						t.Errorf("decoded %#v under the limit, %#v without it", got, want)
+					}
+				case !vector.DecodeOK && err == nil:
+					t.Errorf("DecodeRaw capturing %q = %#v, pi refuses it: %s", keys, got, vector.DecodeError)
+				case !vector.DecodeOK && err.Error() != vector.DecodeError:
+					t.Errorf("DecodeRaw capturing %q error\n got %q\nwant %q", keys, err, vector.DecodeError)
+				}
+			}
+		})
 	}
 }
 
