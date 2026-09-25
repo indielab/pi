@@ -2098,8 +2098,11 @@ var anthropicMessageEvents = map[string]bool{
 // whatever the handling does to the request; an abort seen before a read
 // fails the stream "Request was aborted". A read the abort cuts short rejects
 // with undici's AbortError, "This operation was aborted" (errOperationAborted).
-// Lines end at "\r", "\n" or "\r\n" (pi's consumeLine); a "\r" that ends what
-// has been read waits for the next read, in case it is half of a "\r\n".
+// Lines end at "\r", "\n" or "\r\n" (pi's consumeLine), within what has been
+// read: a "\r" that ends a read ends its line then and there, so a "\r\n"
+// split across two reads is two line breaks, the second an empty line that
+// dispatches the event so far — pi's reader, which the SSE spec's would not
+// be.
 //
 // The body is text as pi's TextDecoder makes it: one byte-order mark at the
 // very start is dropped, and invalid UTF-8 becomes U+FFFD per maximal subpart
@@ -2201,8 +2204,8 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 	}
 
 	read := make([]byte, 32*1024)
-	// buf holds what has been read and not yet consumed as lines; buf[:searched]
-	// holds no line break, bar a "\r" at searched waiting for the next read.
+	// buf holds what has been read and not yet consumed as lines;
+	// buf[:searched] holds no line break.
 	var buf []byte
 	searched := 0
 	for eof := false; ; {
@@ -2224,15 +2227,8 @@ func iterateAnthropicSSE(body io.Reader, ctx context.Context, onEvent func(any) 
 			}
 			end := searched + i
 			next := end + 1
-			if buf[end] == '\r' {
-				// Nothing follows a read that ended the body or failed.
-				if next == len(buf) && readErr == nil {
-					searched = end
-					break
-				}
-				if next < len(buf) && buf[next] == '\n' {
-					next++
-				}
+			if buf[end] == '\r' && next < len(buf) && buf[next] == '\n' {
+				next++
 			}
 			if end-start > maxAnthropicSSELine {
 				return errAnthropicSSELineTooLong()

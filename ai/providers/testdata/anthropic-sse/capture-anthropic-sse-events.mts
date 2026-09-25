@@ -5,14 +5,14 @@
 // iterateAnthropicEvents parse-failure message).
 //
 //   node --experimental-strip-types capture-anthropic-sse-events.mts <extraction> <pi npm dir> <out.json> <sha>
-//   e.g. ... capture-anthropic-sse-events.mts <dir> ~/.cache/pi-npm/0.87.1 anthropic-sse-events-8676a0dcd.json 8676a0dcd
+//   e.g. ... capture-anthropic-sse-events.mts <dir> ~/.cache/pi-npm/0.87.1 anthropic-sse-events-49681e1b7.json 49681e1b7
 //
 // <extraction> holds packages/ai at <sha> (`git archive <sha> packages/ai |
 // tar -x -C <dir>` from the upstream clone), with packages/ai/node_modules
 // resolving pi-ai's dependencies. The npm build's node_modules serves once its
-// copies match what <sha>'s package-lock.json locks; at 8676a0dcd that is
-// @anthropic-ai/sdk 0.124.0 and partial-json 0.1.7, integrity-identical to
-// ~/.cache/pi-npm/0.87.1's. The adapter runs from SOURCE: onProviderStreamEvent
+// copies match what <sha>'s package-lock.json locks; at 49681e1b7 (as at
+// 8676a0dcd) that is @anthropic-ai/sdk 0.124.0 and partial-json 0.1.7,
+// integrity-identical to ~/.cache/pi-npm/0.87.1's. The adapter runs from SOURCE: onProviderStreamEvent
 // is in no published build yet. The model is the npm build's MODELS entry the
 // upstream suite uses (anthropic/claude-haiku-4-5).
 //
@@ -34,7 +34,12 @@
 //   rawSeed    true when the message's content still holds a block member as
 //              the raw non-string value content_block_start seeded it with
 //              (the stream failed before a delta converted it), which the
-//              port's string field cannot hold: that member is not compared.
+//              port's string field cannot hold: that member is not compared;
+//   oneByte    what pi made of the same body read one byte per read, when
+//              that differs from the whole body in one read (observed, pushed,
+//              message and v8Cause as above): pi's reader splits lines per
+//              read, so a "\r" that ends a read ends its line, and a "\r\n"
+//              split across two reads is two line breaks.
 // A row may make the observer throw ("observer boom") on the observed event at
 // index throwAt, after aborting the request when abortFirst is set.
 import fs from "node:fs";
@@ -57,9 +62,21 @@ const { MODELS } = await import(pathToFileURL(path.join(pkg, "dist/models.genera
 const model = MODELS.anthropic["claude-haiku-4-5"];
 if (!model) throw new Error("catalog has no anthropic/claude-haiku-4-5");
 
-function createFakeAnthropicClient(body: string | Uint8Array): any {
+function createFakeAnthropicClient(body: string | Uint8Array | ReadableStream<Uint8Array>): any {
 	const response = new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 	return { beta: { messages: { create: () => ({ asResponse: async () => response }) } } };
+}
+
+// A body that hands its reader one byte per read.
+function oneBytePerRead(sse: string | Uint8Array): ReadableStream<Uint8Array> {
+	const bytes = typeof sse === "string" ? new TextEncoder().encode(sse) : sse;
+	let i = 0;
+	return new ReadableStream({
+		pull(c) {
+			if (i < bytes.length) c.enqueue(bytes.slice(i, ++i));
+			else c.close();
+		},
+	});
 }
 
 // A framed event, as the suite's createSseResponse writes one.
@@ -199,6 +216,11 @@ const cases: Case[] = [
 	},
 	// Lines split on a lone CR too.
 	{ name: "rawSplitsOnCR", sse: "event: message_start\rdata: null\r\r" },
+	// A "\r\n" is one line break within a read. Read one byte per read, each
+	// "\r" ends its line at the end of its read and the "\n" that starts the
+	// next read ends an empty one, which flushes the event before its data
+	// line: its oneByte outcome is a parse failure of empty data.
+	{ name: "crlfLineEndings", sse: frames(...minimal).replaceAll("\n", "\r\n") },
 	// A JSON syntax error: the message embeds V8's JSON.parse text, then data=
 	// (the data lines joined with a newline) and raw= (the lines joined with a
 	// literal backslash-n).
@@ -568,16 +590,19 @@ const oauthContext = normalizeContext({
 		{ role: "user", content: "Hello", timestamp: 1 },
 	],
 });
-const rows = [];
-for (const c of cases) {
+const v8ParseFailure = /^Could not parse Anthropic SSE event [a-z_]+: (Unexpected|Expected)/;
+
+// run streams one case, the body whole in one read or one byte per read.
+async function run(c: Case, oneByte: boolean) {
 	const observed: string[] = [];
 	const controller = new AbortController();
+	const body = () => (oneByte ? oneBytePerRead(c.sse) : c.sse);
 	const transport = c.oauth
 		? {
 				apiKey: oauthToken,
-				fetch: async () => new Response(c.sse, { status: 200, headers: { "content-type": "text/event-stream" } }),
+				fetch: async () => new Response(body(), { status: 200, headers: { "content-type": "text/event-stream" } }),
 			}
-		: { client: createFakeAnthropicClient(c.sse) };
+		: { client: createFakeAnthropicClient(body()) };
 	const s = streamAnthropic(model, c.oauth ? oauthContext : context, {
 		...transport,
 		signal: controller.signal,
@@ -596,17 +621,7 @@ for (const c of cases) {
 	const pushed: Array<string | null> = [];
 	for await (const event of s) pushed.push(event.type ?? null);
 	const message = await s.result();
-	if (c.v8Cause && !/^Could not parse Anthropic SSE event [a-z_]+: (Unexpected|Expected)/.test(message.errorMessage)) {
-		throw new Error(`${c.name}: not a JSON.parse failure: ${message.errorMessage}`);
-	}
-	rows.push({
-		name: c.name,
-		...(typeof c.sse === "string" ? { sse: c.sse } : { sseBase64: Buffer.from(c.sse).toString("base64") }),
-		...(c.v8Cause ? { v8Cause: true } : {}),
-		...(c.throwAt !== undefined ? { throwAt: c.throwAt } : {}),
-		...(c.abortFirst ? { abortFirst: true } : {}),
-		...(c.oauth ? { oauth: true } : {}),
-		...(c.rawSeed ? { rawSeed: true } : {}),
+	return {
 		observed,
 		pushed,
 		message: {
@@ -624,6 +639,29 @@ for (const c of cases) {
 					}
 				: {}),
 		},
+	};
+}
+
+const rows = [];
+for (const c of cases) {
+	const whole = await run(c, false);
+	if (c.v8Cause && !v8ParseFailure.test(whole.message.errorMessage)) {
+		throw new Error(`${c.name}: not a JSON.parse failure: ${whole.message.errorMessage}`);
+	}
+	const oneByte = await run(c, true);
+	const differs = JSON.stringify(oneByte) !== JSON.stringify(whole);
+	rows.push({
+		name: c.name,
+		...(typeof c.sse === "string" ? { sse: c.sse } : { sseBase64: Buffer.from(c.sse).toString("base64") }),
+		...(c.v8Cause ? { v8Cause: true } : {}),
+		...(c.throwAt !== undefined ? { throwAt: c.throwAt } : {}),
+		...(c.abortFirst ? { abortFirst: true } : {}),
+		...(c.oauth ? { oauth: true } : {}),
+		...(c.rawSeed ? { rawSeed: true } : {}),
+		...whole,
+		...(differs
+			? { oneByte: { ...oneByte, ...(v8ParseFailure.test(oneByte.message.errorMessage ?? "") ? { v8Cause: true } : {}) } }
+			: {}),
 	});
 }
 // One row per line, so a re-capture diffs row by row.

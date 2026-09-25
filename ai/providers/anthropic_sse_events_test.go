@@ -20,21 +20,30 @@ import (
 // anthropicSSEEventsCaptureFile is written by
 // testdata/anthropic-sse/capture-anthropic-sse-events.mts, which streams pi's
 // anthropic-messages adapter from source at the named sha.
-const anthropicSSEEventsCaptureFile = "testdata/anthropic-sse/anthropic-sse-events-8676a0dcd.json"
+const anthropicSSEEventsCaptureFile = "testdata/anthropic-sse/anthropic-sse-events-49681e1b7.json"
 
 type anthropicSSEEventsRow struct {
 	Name string `json:"name"`
 	SSE  string `json:"sse"`
 	// SSEBase64 is the body instead when it is not valid UTF-8.
 	SSEBase64  []byte `json:"sseBase64"`
-	V8Cause    bool   `json:"v8Cause"`
 	ThrowAt    *int   `json:"throwAt"`
 	AbortFirst bool   `json:"abortFirst"`
 	// OAuth rows stream with an OAuth token and one current tool, Read.
 	OAuth bool `json:"oauth"`
 	// RawSeed rows end with a block member pi holds as the raw non-string
 	// value it was seeded with, which the port's string field cannot hold.
-	RawSeed  bool     `json:"rawSeed"`
+	RawSeed bool `json:"rawSeed"`
+	// The outcome of the body whole, in one read.
+	anthropicSSEOutcome
+	// OneByte is the outcome of the body read one byte per read, when it is
+	// not the whole body's.
+	OneByte *anthropicSSEOutcome `json:"oneByte"`
+}
+
+// anthropicSSEOutcome is what pi made of a row's body read one way.
+type anthropicSSEOutcome struct {
+	V8Cause  bool     `json:"v8Cause"`
 	Observed []string `json:"observed"`
 	// Pushed holds each pushed event's type; pi's null (no type) decodes to "".
 	Pushed  []string `json:"pushed"`
@@ -115,16 +124,17 @@ func streamAnthropicSSEEvents(t *testing.T, ctx context.Context, body string, oa
 	return &model, pushed, stream.Result()
 }
 
-// assertAnthropicMessageMatchesPi compares the final message with pi's. Where
-// pi's error embeds V8's JSON.parse text (v8Cause), which the port does not
+// assertAnthropicMessageMatchesPi compares the final message with pi's in the
+// outcome it names (the whole body's, or its one-byte reading's). Where pi's
+// error embeds V8's JSON.parse text (v8Cause), which the port does not
 // reproduce, the text on either side of it must still be pi's exactly.
-func assertAnthropicMessageMatchesPi(t *testing.T, row anthropicSSEEventsRow, final *ai.AssistantMessage) {
+func assertAnthropicMessageMatchesPi(t *testing.T, row anthropicSSEEventsRow, outcome anthropicSSEOutcome, final *ai.AssistantMessage) {
 	t.Helper()
-	want := row.Message
+	want := outcome.Message
 	if final.StopReason != want.StopReason {
 		t.Errorf("stopReason = %s, want %s (%s)", final.StopReason, want.StopReason, final.ErrorMessage)
 	}
-	if row.V8Cause {
+	if outcome.V8Cause {
 		gotHead, gotCause, gotTail, gotOK := splitAnthropicParseFailure(final.ErrorMessage)
 		wantHead, _, wantTail, wantOK := splitAnthropicParseFailure(want.ErrorMessage)
 		if !gotOK || !wantOK || gotHead != wantHead || gotTail != wantTail || gotCause == "" {
@@ -331,22 +341,31 @@ func TestAnthropicSSEEventsMatchPi(t *testing.T) {
 			if !reflect.DeepEqual(pushed, row.Pushed) {
 				t.Errorf("pushed = %q, want %q", pushed, row.Pushed)
 			}
-			assertAnthropicMessageMatchesPi(t, row, final)
-			// pi's pushed events and message do not depend on observing, nor on
-			// how the body arrives: one byte per read (a byte-order mark, a
-			// CRLF or a multi-byte character split across reads included).
+			assertAnthropicMessageMatchesPi(t, row, row.anthropicSSEOutcome, final)
+			// pi's pushed events and message do not depend on observing. How
+			// the body arrives is another matter: pi splits lines per read, so
+			// a "\r" that ends a read ends its line, and a "\r\n" split across
+			// two reads is two line breaks — read one byte per read, a body
+			// with CRLF line endings fails where the whole body in one read
+			// does not (the row's oneByte outcome). A byte-order mark or a
+			// multi-byte character split across reads changes nothing.
 			if row.ThrowAt == nil {
-				_, pushed, final := streamAnthropicSSEEvents(t, context.Background(), row.body(), row.OAuth, ai.StreamOptions{})
+				whole := ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{HTTPClient: cannedDoer{status: http.StatusOK, body: row.body()}}}
+				_, pushed, final := streamAnthropicSSEEvents(t, context.Background(), row.body(), row.OAuth, whole)
 				if !reflect.DeepEqual(pushed, row.Pushed) {
 					t.Errorf("without an observer: pushed = %q, want %q", pushed, row.Pushed)
 				}
-				assertAnthropicMessageMatchesPi(t, row, final)
+				assertAnthropicMessageMatchesPi(t, row, row.anthropicSSEOutcome, final)
+				want := row.anthropicSSEOutcome
+				if row.OneByte != nil {
+					want = *row.OneByte
+				}
 				oneByte := ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{HTTPClient: cannedDoer{status: http.StatusOK, body: row.body(), oneByte: true}}}
 				_, pushed, final = streamAnthropicSSEEvents(t, context.Background(), row.body(), row.OAuth, oneByte)
-				if !reflect.DeepEqual(pushed, row.Pushed) {
-					t.Errorf("one byte per read: pushed = %q, want %q", pushed, row.Pushed)
+				if !reflect.DeepEqual(pushed, want.Pushed) {
+					t.Errorf("one byte per read: pushed = %q, want %q", pushed, want.Pushed)
 				}
-				assertAnthropicMessageMatchesPi(t, row, final)
+				assertAnthropicMessageMatchesPi(t, row, want, final)
 			}
 		})
 	}
