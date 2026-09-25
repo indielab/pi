@@ -53,28 +53,9 @@ func incompleteUTF8Suffix(b []byte) int {
 		if lead < 0xC0 {
 			continue // a continuation byte: its lead is further back
 		}
-		// needed counts the continuation bytes the lead takes; lower and
-		// upper bound the first of them, which rules out overlong forms,
-		// surrogates and code points past U+10FFFF (as jstext.DecodeUTF8).
-		needed, lower, upper := 0, byte(0x80), byte(0xBF)
-		switch {
-		case lead >= 0xC2 && lead <= 0xDF:
-			needed = 1
-		case lead >= 0xE0 && lead <= 0xEF:
-			needed = 2
-			if lead == 0xE0 {
-				lower = 0xA0
-			} else if lead == 0xED {
-				upper = 0x9F
-			}
-		case lead >= 0xF0 && lead <= 0xF4:
-			needed = 3
-			if lead == 0xF0 {
-				lower = 0x90
-			} else if lead == 0xF4 {
-				upper = 0x8F
-			}
-		default:
+		// The bounds jstext.DecodeUTF8 reads the sequence with.
+		needed, lower, upper := jstext.UTF8Lead(lead)
+		if needed == 0 {
 			return 0 // a byte no sequence starts with
 		}
 		if k-1 >= needed {
