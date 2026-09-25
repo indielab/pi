@@ -2,6 +2,7 @@ package protocol
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"math"
@@ -664,6 +665,122 @@ func TestV8EnforcesOutboundFrameLimits(t *testing.T) {
 	assertValidationError(t, "client hello over the limit", err)
 	_, err = EncodeServerMessageV8(NewServerHelloV8(testServerID), opts)
 	assertValidationError(t, "server hello over the limit", err)
+}
+
+// A maxFrameLength above cbor's 16MB default admits an opaque payload above it,
+// in both directions. pi at 49681e1b7, under node with maxFrameLength 40MB,
+// encodes each message below with encodeClientMessage or encodeServerMessage and
+// reads the frame back through its message decoder; the digests are of those
+// frames. The payload's strict-JSON check re-reads its span, which the frame's
+// limits have already bounded, so the re-read must not apply a limit of its own.
+func TestV8OpaquePayloadsLargerThanTheCBORDefault(t *testing.T) {
+	const mb = 1024 * 1024
+	limit := 40 * mb
+	opts := &FrameOptions{MaxFrameLength: &limit}
+	raw := func(value any) cbor.RawItem {
+		t.Helper()
+		encoded, err := cbor.Encode(value, &cbor.Options{MaxByteLength: &limit})
+		if err != nil {
+			t.Fatalf("cbor.Encode: %v", err)
+		}
+		return cbor.RawItem(encoded)
+	}
+	text := strings.Repeat("x", 17*mb)
+	// Twenty 1MB strings: no single string is over the default, only the span.
+	chunks := make([]any, 20)
+	for i := range chunks {
+		chunks[i] = strings.Repeat(string(rune('a'+i)), mb)
+	}
+	request := func(call any) ClientMessageV8 {
+		return NewRequestV8("request-1", NewServerTarget(testServerID), raw(call))
+	}
+
+	for _, test := range []struct {
+		name    string
+		message any
+		sha256  string
+	}{
+		{"call_17MB_text", request(text), "5ac657c3ffda6c00e7d9cdabb34501dab231cff105b2ce32be7818e80bd20d9d"},
+		{"call_20x1MB_array", request(chunks), "3c64ab46d57f4a59beea3ea62ac5c30d6f7f517c946a7a51bbc32102977719e7"},
+		{"result_17MB_text", &ResponseEnvelopeV8{Type: "response", ID: "request-1", OK: true, Result: raw(text)},
+			"304046914f1a624141f78f9d8f55f362f83b0e2a3aeef3e46e644f2ecd88c047"},
+		{"update_17MB_text", &ServiceEventEnvelope{Type: "service_update", SubscriptionID: "subscription-1", Update: raw(map[string]any{"text": text})},
+			"23f4549e10b2455d59cec573c1ad6c7718afc4c5b93aca267cb8c7f25f816d35"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			// pi's frame, built without the envelope encoder under test.
+			payload, err := cbor.Encode(test.message, &cbor.Options{MaxByteLength: &limit})
+			if err != nil {
+				t.Fatalf("cbor.Encode: %v", err)
+			}
+			frame, err := EncodeFrame(payload)
+			if err != nil {
+				t.Fatalf("EncodeFrame: %v", err)
+			}
+			if digest := sha256.Sum256(frame); hex.EncodeToString(digest[:]) != test.sha256 {
+				t.Fatalf("the fixture is not pi's frame: sha256 %x, want %s", digest, test.sha256)
+			}
+
+			var decoded []any
+			var encoded []byte
+			var decodeErr, encodeErr error
+			switch message := test.message.(type) {
+			case ClientMessageV8:
+				decoder, err := NewClientMessageDecoderV8(opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				messages, err := decoder.Push(frame)
+				for _, m := range messages {
+					decoded = append(decoded, m)
+				}
+				decodeErr = errors.Join(err, decoder.End())
+				encoded, encodeErr = EncodeClientMessageV8(message, opts)
+			case ServerMessageV8:
+				decoder, err := NewServerMessageDecoderV8(opts)
+				if err != nil {
+					t.Fatal(err)
+				}
+				messages, err := decoder.Push(frame)
+				for _, m := range messages {
+					decoded = append(decoded, m)
+				}
+				decodeErr = errors.Join(err, decoder.End())
+				encoded, encodeErr = EncodeServerMessageV8(message, opts)
+			}
+
+			if decodeErr != nil {
+				t.Errorf("decode: the port refuses pi's frame: %v", decodeErr)
+			} else if len(decoded) != 1 || !reflect.DeepEqual(decoded[0], test.message) {
+				t.Errorf("decode: got %d messages, want the one pi encoded", len(decoded))
+			}
+			if encodeErr != nil {
+				t.Errorf("encode: the port refuses what pi encodes: %v", encodeErr)
+			} else if !bytes.Equal(encoded, frame) {
+				t.Errorf("encode: the frame diverges from pi's (sha256 %x)", sha256.Sum256(encoded))
+			}
+		})
+	}
+
+	// The frame's limit still binds. Under the default limit pi refuses to
+	// encode the same request ("CBOR text string length exceeds configured
+	// limit of 16777216"), and a default decoder refuses the 40MB frame.
+	big := request(text)
+	_, err := EncodeClientMessageV8(big, nil)
+	assertValidationError(t, "a 17MB call under the default frame limit", err)
+	if !strings.Contains(err.Error(), "exceeds configured limit of 16777216") {
+		t.Errorf("error %q does not name the limit", err)
+	}
+	frame, err := EncodeClientMessageV8(big, opts)
+	if err != nil {
+		t.Fatalf("EncodeClientMessageV8 at 40MB: %v", err)
+	}
+	decoder, err := NewClientMessageDecoderV8(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = decoder.Push(frame)
+	assertValidationError(t, "a 17MB frame under the default frame limit", err)
 }
 
 // "incrementally decodes fragmented and coalesced client messages"

@@ -206,8 +206,15 @@ func requireTarget(target RpcTarget) error {
 
 // requireOpaqueJSON checks that raw holds exactly one CBOR item and that the
 // item is a strict JSON value: no byte strings, no non-finite numbers.
+//
+// The re-read is bounded by the item's own length, not by cbor's 16MB default.
+// Size is the frame's to limit, and it already has: an inbound span was read
+// under the decoder's maxFrameLength, and an outbound one is checked against it
+// when the envelope is encoded. A default here would refuse, in both
+// directions, a payload that a larger maxFrameLength admits and pi accepts.
 func requireOpaqueJSON(name string, raw cbor.RawItem) error {
-	value, err := cbor.Decode(raw, nil)
+	length := len(raw)
+	value, err := cbor.Decode(raw, &cbor.Options{MaxByteLength: &length})
 	if err != nil {
 		return invalidf("%s must hold exactly one CBOR item: %s", name, err.Error())
 	}
