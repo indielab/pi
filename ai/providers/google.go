@@ -15,7 +15,6 @@ import (
 	"maps"
 	"math"
 	"net/http"
-	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -480,7 +479,8 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		cfg.timeoutMs = googleHeadersTimeoutMs
 		resp, err := sendWithRetry(ctx, build, cfg)
 		if err != nil {
-			fail(googleFetchError(err))
+			// Neither @google/genai nor pi's catch adds to fetch's rejection.
+			fail(undiciFetchError(err))
 			return
 		}
 		defer resp.Body.Close()
@@ -1672,21 +1672,6 @@ func googleResponseBody(resp *http.Response) (io.Reader, error) {
 // caller's options say; pi's CLI installs the same value as its
 // httpIdleTimeoutMs default. A variable only so a test can shorten it.
 var googleHeadersTimeoutMs = 300_000
-
-// googleFetchError is the error pi reports when the request gets no response:
-// fetch rejects with undici's TypeError "fetch failed" whatever the transport
-// failure was — a refused, dropped or unreachable connection, a failed TLS
-// handshake, a malformed response, or undici's own connect and headers
-// timeouts — and neither @google/genai nor pi's catch adds to that message.
-// client.Do reports every such failure as a *url.Error whose Op is the
-// method.
-func googleFetchError(err error) error {
-	var sent *url.Error
-	if errors.As(err, &sent) && sent.Op == "Post" {
-		return errors.New("fetch failed")
-	}
-	return err
-}
 
 // codedBody undoes one content coding the way undici's decoding pipeline
 // does, through node's zlib streams (createGunzip, and createInflate, which

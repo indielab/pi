@@ -1121,7 +1121,7 @@ func TestGoogleFetchErrorIsFetchFailedForEveryTransportFailure(t *testing.T) {
 		io.ErrUnexpectedEOF,
 	} {
 		err := &url.Error{Op: "Post", URL: "https://generativelanguage.googleapis.com/v1beta/models/g:streamGenerateContent?alt=sse", Err: cause}
-		if got := googleFetchError(err); got.Error() != "fetch failed" {
+		if got := undiciFetchError(err); got.Error() != "fetch failed" {
 			t.Errorf("%v (timeout %v) → %q; pi: \"fetch failed\"", cause, err.Timeout(), got)
 		}
 	}

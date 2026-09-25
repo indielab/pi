@@ -354,6 +354,70 @@
 			"diagnostics": []
 		},
 		{
+			"api": "pi-messages",
+			"mode": "the request gets no response: the connection is refused",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
+			"mode": "the request gets no response: the server closes the connection",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
+			"mode": "the request gets no response: the response is not HTTP",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
+			"mode": "the request gets no response: undici's client refuses a header value",
+			"headers": {
+				"x-test": "a\u0001b"
+			},
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
+			"api": "pi-messages",
+			"mode": "a custom fetch rejects",
+			"customFetchError": "the custom fetch failed",
+			"observed": [],
+			"events": [
+				"error"
+			],
+			"stopReason": "error",
+			"errorMessage": "the custom fetch failed",
+			"content": "[]",
+			"diagnostics": []
+		},
+		{
 			"api": "openai-completions",
 			"mode": "an abort while an error body is read",
 			"status": 500,

@@ -9,6 +9,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"sync"
@@ -351,6 +352,21 @@ func readSDKErrorBody(ctx context.Context, body io.Reader) ([]byte, error) {
 		return nil, errRequestAborted
 	}
 	return data, nil
+}
+
+// undiciFetchError is what fetch rejects with when a request sent through
+// the port's own client gets no response: undici's TypeError "fetch failed",
+// whatever the transport failure was — a refused, dropped or unreachable
+// connection, a failed TLS handshake, a malformed response, a header value
+// its client refuses, or undici's own connect and headers timeouts. client.Do
+// reports every such failure as a *url.Error whose Op is the method; any
+// other error is returned as it is.
+func undiciFetchError(err error) error {
+	var sent *url.Error
+	if errors.As(err, &sent) && sent.Op == "Post" {
+		return errors.New("fetch failed")
+	}
+	return err
 }
 
 // errTerminated is the message of the TypeError undici's fetch errors a

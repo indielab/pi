@@ -40,7 +40,12 @@
 //     the SDK adapters' error text is K18's): the same after a 500's start;
 //   - "a custom fetch's body fails mid-body": the caller's options.fetch
 //     answers 200 with a body that delivers the first segment and then fails
-//     with its own error (customBodyError); no server is involved.
+//     with its own error (customBodyError); no server is involved;
+//   - "the request gets no response: ..." (pi-messages only; the SDK
+//     adapters' are K21's): the connection is refused (port 1), the server
+//     closes it on the request, the server answers with bytes that are not
+//     HTTP, or a header value (U+0001) undici's client refuses; and "a custom
+//     fetch rejects" (customFetchError).
 // Recorded per run: the status and segments the server wrote, the event types
 // onProviderStreamEvent received, the stream's event types, and the final
 // stopReason, errorMessage, content and diagnostic types.
@@ -89,7 +94,12 @@ type Mode =
 	| "an abort before the response arrives"
 	| "the connection drops mid-body"
 	| "the connection drops while an error body is read"
-	| "a custom fetch's body fails mid-body";
+	| "a custom fetch's body fails mid-body"
+	| "the request gets no response: the connection is refused"
+	| "the request gets no response: the server closes the connection"
+	| "the request gets no response: the response is not HTTP"
+	| "the request gets no response: undici's client refuses a header value"
+	| "a custom fetch rejects";
 const streamModes: Mode[] = [
 	"an abort while a read is pending",
 	"an abort from the callback with events left in its read",
@@ -102,6 +112,14 @@ const drops: Mode = "the connection drops mid-body";
 const errorBodyDrops: Mode = "the connection drops while an error body is read";
 const customBody: Mode = "a custom fetch's body fails mid-body";
 const customBodyError = "the custom fetch's body failed";
+const refused: Mode = "the request gets no response: the connection is refused";
+const closes: Mode = "the request gets no response: the server closes the connection";
+const notHTTP: Mode = "the request gets no response: the response is not HTTP";
+const badHeader: Mode = "the request gets no response: undici's client refuses a header value";
+const customRejects: Mode = "a custom fetch rejects";
+const customFetchError = "the custom fetch failed";
+const noResponseModes = [refused, closes, notHTTP, badHeader, customRejects];
+const badHeaderValue = `a${String.fromCharCode(1)}b`;
 
 const anthropicEvent = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 const piMessagesEvent = (data: unknown) => `data: ${JSON.stringify(data)}\n\n`;
@@ -129,7 +147,7 @@ const adapters = [
 		provider: "radius",
 		id: "auto",
 		module: await load("api/pi-messages.ts"),
-		modes: [...streamModes, errorBody, ...requestModes, drops, errorBodyDrops, customBody],
+		modes: [...streamModes, errorBody, ...requestModes, drops, errorBodyDrops, customBody, ...noResponseModes],
 		segments: [
 			piMessagesEvent({ type: "start" }) +
 				piMessagesEvent({ type: "text_start", contentIndex: 0 }) +
@@ -176,6 +194,24 @@ const server = net.createServer((sock) => {
 });
 await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
 const port = (server.address() as net.AddressInfo).port;
+// The no-response servers: one closes the connection on the request, one
+// answers bytes that are not HTTP.
+const closer = net.createServer((sock) => {
+	sock.on("data", () => sock.destroy());
+	sock.on("error", () => {});
+});
+await new Promise<void>((resolve) => closer.listen(0, "127.0.0.1", resolve));
+const notHTTPServer = net.createServer((sock) => {
+	sock.on("data", () => sock.end("NOT HTTP\r\n\r\n"));
+	sock.on("error", () => {});
+});
+await new Promise<void>((resolve) => notHTTPServer.listen(0, "127.0.0.1", resolve));
+const baseUrlFor = (mode: Mode) => {
+	if (mode === refused) return "http://127.0.0.1:1";
+	if (mode === closes || mode === badHeader) return `http://127.0.0.1:${(closer.address() as net.AddressInfo).port}`;
+	if (mode === notHTTP) return `http://127.0.0.1:${(notHTTPServer.address() as net.AddressInfo).port}`;
+	return `http://127.0.0.1:${port}`;
+};
 
 const runs = [];
 for (const a of adapters) {
@@ -187,7 +223,7 @@ for (const a of adapters) {
 			: mode === "an abort from the callback with the next read already in"
 				? a.segments
 				: a.segments.slice(0, 1);
-		answer = !requestModes.includes(mode) && mode !== customBody;
+		answer = !requestModes.includes(mode) && mode !== customBody && !noResponseModes.includes(mode);
 		dropAfterWrite = mode === drops || mode === errorBodyDrops;
 		const controller = new AbortController();
 		onSegmentWritten =
@@ -199,7 +235,7 @@ for (const a of adapters) {
 			name: a.id,
 			api: a.api,
 			provider: a.provider,
-			baseUrl: `http://127.0.0.1:${port}`,
+			baseUrl: baseUrlFor(mode),
 			reasoning: false,
 			input: ["text"],
 			cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
@@ -224,6 +260,14 @@ for (const a of adapters) {
 			apiKey: "test-api-key",
 			signal: controller.signal,
 			...(mode === customBody ? { fetch: customFetch } : {}),
+			...(mode === customRejects
+				? {
+						fetch: async () => {
+							throw new Error(customFetchError);
+						},
+					}
+				: {}),
+			...(mode === badHeader ? { headers: { "x-test": badHeaderValue } } : {}),
 			onProviderStreamEvent: async (event: { type?: string }) => {
 				observed.push(event.type ?? "");
 				const first = mode === "an abort from the callback with events left in its read" || mode === "an abort from the callback with the next read already in";
@@ -239,6 +283,8 @@ for (const a of adapters) {
 			mode,
 			...(answer ? { status: Number.parseInt(status), segments } : {}),
 			...(mode === customBody ? { status: 200, segments: a.segments.slice(0, 1), customBodyError } : {}),
+			...(mode === badHeader ? { headers: { "x-test": badHeaderValue } } : {}),
+			...(mode === customRejects ? { customFetchError } : {}),
 			observed,
 			events,
 			stopReason: msg.stopReason,
@@ -249,6 +295,8 @@ for (const a of adapters) {
 	}
 }
 server.close();
+closer.close();
+notHTTPServer.close();
 
 fs.writeFileSync(
 	outFile,

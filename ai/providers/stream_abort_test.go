@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -45,6 +46,41 @@ type streamAbortRun struct {
 	Diagnostics []string `json:"diagnostics"`
 	// CustomBodyError is the error a custom fetch's body failed with.
 	CustomBodyError string `json:"customBodyError"`
+	// Headers are the options.headers the run streamed with.
+	Headers map[string]string `json:"headers"`
+	// CustomFetchError is the error a custom fetch rejected with.
+	CustomFetchError string `json:"customFetchError"`
+}
+
+// rejectingDoer fails every request with err, as a custom fetch rejects.
+type rejectingDoer struct{ err error }
+
+func (d rejectingDoer) Do(*http.Request) (*http.Response, error) { return nil, d.err }
+
+// serveRawOnce answers every connection on a loopback listener by reading the
+// request's first bytes and then writing reply, which may be empty, and
+// closing the connection.
+func serveRawOnce(t *testing.T, reply string) string {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				defer conn.Close()
+				conn.Read(make([]byte, 64*1024))
+				io.WriteString(conn, reply)
+			}()
+		}
+	}()
+	return "http://" + ln.Addr().String()
 }
 
 func loadStreamAbortCapture(t *testing.T) []streamAbortRun {
@@ -261,6 +297,20 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 				if run.Mode == "an already-aborted signal" {
 					cancel()
 				}
+			case "the request gets no response: the connection is refused":
+				baseURL = "http://127.0.0.1:1"
+			case "the request gets no response: the server closes the connection":
+				baseURL = serveRawOnce(t, "")
+			case "the request gets no response: the response is not HTTP":
+				baseURL = serveRawOnce(t, "NOT HTTP\r\n\r\n")
+			case "the request gets no response: undici's client refuses a header value":
+				baseURL = serveRawOnce(t, "")
+				opts.Headers = ai.ProviderHeaders{}
+				for name, value := range run.Headers {
+					opts.Headers[name] = ai.HeaderValue(value)
+				}
+			case "a custom fetch rejects":
+				opts.HTTPClient = rejectingDoer{errors.New(run.CustomFetchError)}
 			case "a custom fetch's body fails mid-body":
 				// A custom client is pi's custom fetch: its body's own error is
 				// the stream's.
