@@ -80,7 +80,7 @@ type baseURLCapture struct {
 
 func loadBaseURLCapture(t *testing.T) baseURLCapture {
 	t.Helper()
-	raw, err := os.ReadFile("testdata/base-url/base-url-49681e1b7.json")
+	raw, err := os.ReadFile("testdata/base-url/base-url-2b0a123de.json")
 	if err != nil {
 		t.Fatalf("read the base-url capture: %v (regenerate it with testdata/base-url/capture.mts)", err)
 	}

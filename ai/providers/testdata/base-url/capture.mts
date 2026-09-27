@@ -3,13 +3,19 @@
 // TestBaseURLRequestsMatchPi in this package.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> base-url-49681e1b7.json 49681e1b7
+//   e.g. ... capture.mts <dir> base-url-2b0a123de.json 2b0a123de
 //
 // <extraction> holds `git archive <sha> packages/ai package-lock.json` from the
 // upstream clone, plus a node_modules resolving pi-ai's dependencies (the npm
 // build's). The script refuses to write unless each SDK it runs
 // (@anthropic-ai/sdk, openai, @google/genai) resolves to the version AND
-// integrity the sha's package-lock.json locks.
+// integrity the sha's package-lock.json locks at the path it resolved to:
+// packages/ai/node_modules/<name> for a copy the lockfile nests for pi-ai,
+// node_modules/<name> otherwise. Since ab30693d6 it nests openai 7.19.0 there
+// (the root keeps 6.40.0): unpack `npm pack openai@7.19.0` (check its sha512
+// against the lockfile) to packages/ai/node_modules/openai and record that
+// integrity in packages/ai/node_modules/.package-lock.json under
+// "node_modules/openai", as npm records an installed package.
 //
 // Each adapter streams with each base URL and an onPayload that counts its
 // calls. pi's `new URL(...)` — the SDKs' request URL, pi-messages' own, built
@@ -67,9 +73,17 @@ for (const name of ["@anthropic-ai/sdk", "openai", "@google/genai"]) {
 	let root = dir;
 	while (path.basename(root) !== "node_modules") root = path.dirname(root);
 	const installed = JSON.parse(fs.readFileSync(path.join(root, ".package-lock.json"), "utf8")).packages[`node_modules/${name}`];
-	const locked = lock.packages[`node_modules/${name}`];
-	if (locked.version !== version || locked.integrity !== installed?.integrity) {
-		console.error(`${name} mismatch: ${sha} locks ${locked.version} ${locked.integrity}, resolved ${version} ${installed?.integrity}`);
+	// The lockfile entry for the path it resolved to: pi-ai's own nested copy
+	// (packages/ai/node_modules/<name>, as openai is since ab30693d6) or the
+	// root one (node_modules/<name>). Where the lockfile nests a copy for
+	// pi-ai, pi-ai must resolve that one.
+	const resolvedKey = path.relative(extraction, dir);
+	const key = resolvedKey.startsWith("..") || path.isAbsolute(resolvedKey) ? `node_modules/${name}` : resolvedKey;
+	const nestedKey = `packages/ai/node_modules/${name}`;
+	const locked = lock.packages[key];
+	if ((lock.packages[nestedKey] && key !== nestedKey) || locked?.version !== version || locked.integrity !== installed?.integrity) {
+		const want = lock.packages[nestedKey] ? nestedKey : key;
+		console.error(`${name} mismatch: ${sha} locks ${lock.packages[want]?.version} ${lock.packages[want]?.integrity} at ${want}, resolved ${version} ${installed?.integrity} at ${key}`);
 		process.exit(1);
 	}
 	sdks.push(`${name} ${version} ${locked.integrity}`);
