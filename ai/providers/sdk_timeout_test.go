@@ -91,7 +91,7 @@ func TestSDKAdaptersWaitOnUndiciHeadersTimeout(t *testing.T) {
 				if tc.undici && adapter != "anthropic-messages" {
 					want = openaiHeadersTimeoutText
 				}
-				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 				defer cancel()
 				start := time.Now()
 				final := streamSDKAdapter(ctx, adapter, server.URL, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
@@ -120,6 +120,9 @@ func TestSDKAdaptersWaitOnUndiciHeadersTimeout(t *testing.T) {
 // answers the handshake fails both openai loops "Request timed out." after
 // 10.5s.
 func TestSDKAdaptersConnectTimeoutIsNotUndicisHeadersTimeout(t *testing.T) {
+	if testing.Short() {
+		t.Skip("waits on net/http's 10s TLS handshake timeout")
+	}
 	shortenUndiciHeadersTimeout(t, 100)
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -147,7 +150,7 @@ func TestSDKAdaptersConnectTimeoutIsNotUndicisHeadersTimeout(t *testing.T) {
 	for _, adapter := range []string{"openai-completions", "openai-responses"} {
 		t.Run(adapter, func(t *testing.T) {
 			t.Parallel()
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 			defer cancel()
 			final := streamSDKAdapter(ctx, adapter, "https://"+ln.Addr().String(), ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}})
 			if final.StopReason != ai.StopError || final.ErrorMessage != "Request timed out." {

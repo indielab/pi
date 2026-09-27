@@ -1489,14 +1489,14 @@ func TestHTTPErrorFailFastMatchesPi(t *testing.T) {
 					if column == "openai-responses/xai" {
 						m.Provider = "xai"
 					}
-					final = StreamOpenAIResponses(context.Background(), &m, req, &OpenAIResponsesOptions{StreamOptions: opts}).Result()
+					final = StreamOpenAIResponses(t.Context(), &m, req, &OpenAIResponsesOptions{StreamOptions: opts}).Result()
 				case "openai-completions":
 					m := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL}
-					final = StreamOpenAICompletions(context.Background(), m, req, &OpenAIOptions{StreamOptions: opts}).Result()
+					final = StreamOpenAICompletions(t.Context(), m, req, &OpenAIOptions{StreamOptions: opts}).Result()
 				case "anthropic-messages":
 					m := anthropicUAModel()
 					m.BaseURL = server.URL
-					final = StreamAnthropic(context.Background(), m, req, &AnthropicOptions{StreamOptions: opts}).Result()
+					final = StreamAnthropic(t.Context(), m, req, &AnthropicOptions{StreamOptions: opts}).Result()
 				default:
 					t.Fatalf("no Go adapter for column %s", column)
 				}

@@ -500,11 +500,7 @@ func TestPiMessagesAbsentProviderThinkingLevelLeavesExistingLevel(t *testing.T) 
 // pi's stream at 49681e1b7 (node v26.4.0): a server that reads the request
 // and never answers → [error] "fetch failed" after 301s, timeoutMs 50.
 func TestPiMessagesHeadersTimeoutFailsFetch(t *testing.T) {
-	if undiciHeadersTimeoutMs != 300_000 {
-		t.Fatalf("undiciHeadersTimeoutMs %d; undici's headersTimeout default is 300000", undiciHeadersTimeoutMs)
-	}
-	defer func(ms int) { undiciHeadersTimeoutMs = ms }(undiciHeadersTimeoutMs)
-	undiciHeadersTimeoutMs = 50
+	shortenUndiciHeadersTimeout(t, 50)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		io.Copy(io.Discard, r.Body)
 		<-r.Context().Done()

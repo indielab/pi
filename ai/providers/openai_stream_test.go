@@ -538,6 +538,9 @@ func TestOpenAIStreamAbortErrorReadEndsLikeTheSDK(t *testing.T) {
 		for read, reader := range openaiStreamReads {
 			t.Run(name+"/"+read, func(t *testing.T) {
 				body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(context.Canceled))
+				// The request stays live: context.Background can never be
+				// done, so the reads are not raced against it
+				// (newOpenAIAbortableBody).
 				readOpenAIStreamLikeTheSDK(t, context.Background(), body, row.SDK.Aborted, nil, nil)
 			})
 		}
@@ -554,7 +557,7 @@ func TestOpenAIStreamAbortEndsTheReadingLikeTheSDK(t *testing.T) {
 	for name, row := range c.Dispatch {
 		for read, reader := range openaiStreamReads {
 			t.Run(name+"/"+read, func(t *testing.T) {
-				ctx, cancel := context.WithCancel(context.Background())
+				ctx, cancel := context.WithCancel(t.Context())
 				defer cancel()
 				onItem := func(n int) {
 					if n == 1 {

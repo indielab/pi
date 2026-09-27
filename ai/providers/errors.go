@@ -110,7 +110,7 @@ func formatCompletionsHTTPError(status int, body []byte) error {
 	if errBody := e.body(); errBody != "" && !strings.Contains(message, errBody) {
 		message = fmt.Sprintf("%d: %s", status, errBody)
 	}
-	raw := rawOptional(rawOptional(e.error)["metadata"])["raw"]
+	raw := rawOptional(rawOptional(e.errJSON)["metadata"])["raw"]
 	if !rawTruthy(raw) {
 		return errors.New(message)
 	}
@@ -135,8 +135,8 @@ func formatCompletionsHTTPError(status int, body []byte) error {
 // or absent for the error itself (`{error: body}`); any other value's `error`
 // member is the error — undefined for a string, a number or true.
 type openaiStatusError struct {
-	error json.RawMessage
-	text  string
+	errJSON json.RawMessage
+	text    string
 }
 
 func newOpenAIStatusError(body []byte) openaiStatusError {
@@ -147,11 +147,11 @@ func newOpenAIStatusError(body []byte) openaiStatusError {
 	switch jsonValueKind(body) {
 	case '{':
 		if member := rawOptional(body)["error"]; !rawNullish(member) {
-			return openaiStatusError{error: member}
+			return openaiStatusError{errJSON: member}
 		}
-		return openaiStatusError{error: body}
+		return openaiStatusError{errJSON: body}
 	case '[':
-		return openaiStatusError{error: body}
+		return openaiStatusError{errJSON: body}
 	}
 	return openaiStatusError{}
 }
@@ -161,7 +161,7 @@ func newOpenAIStatusError(body []byte) openaiStatusError {
 // `${status} ${msg}`, or `${status} status code (no body)` when both are
 // empty. Nothing here is capped — pi's cap applies to the body half only.
 func (e openaiStatusError) message(status int) string {
-	msg := openaiSDKErrorDetail(e.error)
+	msg := openaiSDKErrorDetail(e.errJSON)
 	if msg == "" {
 		msg = e.text
 	}
@@ -178,10 +178,10 @@ func (e openaiStatusError) message(status int) string {
 // empty object, null or undefined — yields "" (pi: undefined), and the SDK
 // message stands.
 func (e openaiStatusError) body() string {
-	if len(rawOptional(e.error)) == 0 {
+	if len(rawOptional(e.errJSON)) == 0 {
 		return ""
 	}
-	text, ok := jsStringify(e.error)
+	text, ok := jsStringify(e.errJSON)
 	if !ok {
 		return ""
 	}

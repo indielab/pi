@@ -148,10 +148,18 @@ type openaiAbortableBody struct {
 // ignores it ends the stream promptly.
 const openaiAbandonedReadGrace = 100 * time.Millisecond
 
+// maxAbortableRead bounds one raced read, and with it the buffer an
+// openaiAbortableBody keeps.
+const maxAbortableRead = 32 << 10
+
 // newOpenAIAbortableBody races body's reads against ctx, unless ctx can never
-// be done.
+// be done or body is the port's own client's (fetchBody), whose read already
+// fails at once when ctx ends.
 func newOpenAIAbortableBody(ctx context.Context, body io.Reader) io.Reader {
 	if ctx == nil || ctx.Done() == nil {
+		return body
+	}
+	if _, own := body.(fetchBody); own {
 		return body
 	}
 	return &openaiAbortableBody{ctx: ctx, body: body}
@@ -161,6 +169,7 @@ func (b *openaiAbortableBody) Read(p []byte) (int, error) {
 	if b.ctx.Err() != nil {
 		return 0, errOperationAborted
 	}
+	p = p[:min(len(p), maxAbortableRead)]
 	if cap(b.buf) < len(p) {
 		b.buf = make([]byte, len(p))
 	}

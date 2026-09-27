@@ -254,13 +254,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			return
 		}
 		defer resp.Body.Close()
-		// The SDK fetches with undici unless the caller hands pi its own fetch:
-		// the body then fails as undici's does (fetchBody), "terminated" for a
-		// connection that drops mid-body.
-		var respBody io.Reader = resp.Body
-		if _, custom := customHTTPClient(opts.HTTPClient); !custom {
-			respBody = fetchBody{ctx, resp.Body}
-		}
+		respBody := sdkResponseBody(ctx, resp, opts.HTTPClient)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			data, err := readSDKErrorBody(ctx, respBody)
 			if err != nil {

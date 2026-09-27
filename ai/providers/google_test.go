@@ -1072,11 +1072,7 @@ func TestGoogleIgnoresTimeoutMs(t *testing.T) {
 // reads the request and never answers → [error] "fetch failed" after 301s,
 // timeoutMs 50 or 1000 alike.
 func TestGoogleHeadersTimeoutFailsFetch(t *testing.T) {
-	if undiciHeadersTimeoutMs != 300_000 {
-		t.Fatalf("undiciHeadersTimeoutMs %d; undici's headersTimeout default is 300000", undiciHeadersTimeoutMs)
-	}
-	defer func(ms int) { undiciHeadersTimeoutMs = ms }(undiciHeadersTimeoutMs)
-	undiciHeadersTimeoutMs = 50
+	shortenUndiciHeadersTimeout(t, 50)
 	release := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		select {

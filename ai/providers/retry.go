@@ -372,6 +372,11 @@ func readSDKErrorBody(ctx context.Context, body io.Reader) ([]byte, error) {
 func sdkErrorText(body io.Reader) []byte {
 	data, err := io.ReadAll(body)
 	if err != nil {
+		// context.Canceled from a custom client's body stands for the
+		// AbortError a custom fetch's body throws, whose message is undici's.
+		if errors.Is(err, context.Canceled) {
+			err = errOperationAborted
+		}
 		return []byte(err.Error())
 	}
 	return data
@@ -590,7 +595,10 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 		if cfg.httpClient == nil {
 			err = fetchRefusal(req)
 			req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
-				WroteRequest: func(httptrace.WroteRequestInfo) { wrote.Store(true) },
+				// net/http can retry a request on a fresh connection when the
+				// write on a reused one fails, so each attempt starts unwritten.
+				GetConn:      func(string) { wrote.Store(false) },
+				WroteRequest: func(info httptrace.WroteRequestInfo) { wrote.Store(info.Err == nil) },
 			}))
 		}
 		if err == nil {
@@ -614,14 +622,14 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 			continue
 		}
 		if (resp.StatusCode < 200 || resp.StatusCode >= 300) && aborted() {
-			readAndCloseBody(ctx, resp, cfg.httpClient == nil)
+			readAndCloseBody(resp, sdkResponseBody(ctx, resp, cfg.httpClient))
 			return nil, errRequestAborted
 		}
 		if shouldRetryResponse(resp) && attempt < attempts-1 {
 			// The body is only needed to quote the provider in a fail-fast
 			// error, so render it lazily.
 			var providerMsg string
-			body := readAndCloseBody(ctx, resp, cfg.httpClient == nil)
+			body := readAndCloseBody(resp, sdkResponseBody(ctx, resp, cfg.httpClient))
 			// The SDK throws once it has read the body, and pi's catch
 			// checks the signal before it reads a retry delay.
 			if aborted() {
@@ -647,22 +655,29 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 	return nil, fmt.Errorf("request failed after %d attempts", attempts)
 }
 
-// readAndCloseBody consumes and closes a retryable response body, returning the
-// text its SDK parses (sdkErrorText) so a fail-fast error can quote the
-// provider's message; own is whether the port's own client sent the request,
-// whose body is read as undici's (fetchBody). The 1 MiB cap matches the volume
-// the previous discard-only drain read, so connection reuse is unchanged.
-func readAndCloseBody(ctx context.Context, resp *http.Response, own bool) []byte {
+// readAndCloseBody consumes and closes a retryable response's body, read
+// through body (sdkResponseBody), returning the text its SDK parses
+// (sdkErrorText) so a fail-fast error can quote the provider's message. The
+// 1 MiB cap matches the volume the previous discard-only drain read, so
+// connection reuse is unchanged.
+func readAndCloseBody(resp *http.Response, body io.Reader) []byte {
 	if resp == nil || resp.Body == nil {
 		return nil
-	}
-	var body io.Reader = resp.Body
-	if own {
-		body = fetchBody{ctx, body}
 	}
 	text := sdkErrorText(io.LimitReader(body, 1<<20))
 	_ = resp.Body.Close()
 	return text
+}
+
+// sdkResponseBody is resp's body as an SDK adapter reads it. The SDKs fetch
+// with undici unless the caller hands pi its own fetch, so a body the port's
+// own client fetched fails as undici's does (fetchBody): "terminated" for a
+// connection that drops mid-body.
+func sdkResponseBody(ctx context.Context, resp *http.Response, httpClient ai.HTTPDoer) io.Reader {
+	if _, custom := customHTTPClient(httpClient); custom {
+		return resp.Body
+	}
+	return fetchBody{ctx, resp.Body}
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {
