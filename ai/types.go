@@ -1251,10 +1251,17 @@ type ProviderRequestOptions struct {
 	// caller values overriding provider defaults. A nil value suppresses a
 	// provider/API default header of the same name (see ProviderHeaders).
 	Headers ProviderHeaders
-	// TimeoutMs bounds the wait for a response's headers; zero means 10
-	// minutes. The google-generative-ai adapter ignores it, as pi's does:
-	// @google/genai gets no timeout, and fetch's own 300-second headers
-	// timeout bounds that wait instead.
+	// TimeoutMs bounds the wait for a response's headers on anthropic-messages,
+	// openai-completions and openai-responses, as pi's timeoutMs does through
+	// their SDKs' timeout option; zero means the SDKs' default, 10 minutes.
+	// google-generative-ai and pi-messages ignore it, as pi's do: neither gives
+	// its request a timeout. Every adapter's own client also gives up at
+	// undici's headersTimeout, 300 seconds, as pi's fetch does whatever
+	// timeoutMs says, so a zero TimeoutMs, or one above 300000, waits 300
+	// seconds, and the openai loops then fail with openai 7.19.0's text for
+	// undici's timeout rather than "Request timed out.". Only a custom
+	// HTTPClient waits longer, and TimeoutMs does not reach one (see
+	// HTTPClient); google-generative-ai, which refuses one, cannot.
 	TimeoutMs int
 	// MaxRetries caps client-side retry attempts for providers that support them.
 	MaxRetries int
@@ -1269,11 +1276,23 @@ type ProviderRequestOptions struct {
 	// rejects any other value, mirroring pi's `options.fetch !== globalThis.fetch`
 	// guard, because @google/genai cannot take a custom fetch.
 	//
-	// An override owns its own transport, so the TimeoutMs response-header cap
-	// that the default client applies is the caller's to reproduce — pi keeps
-	// that timeout because its SDKs apply it outside fetch, so this is a
-	// deliberate divergence (see docs/UPSTREAM.md). It does not affect
-	// WebSocket transports.
+	// An override owns its own transport, so neither bound the default client
+	// puts on the wait for headers reaches it: undici's 300-second
+	// headersTimeout, the default fetch's own, and TimeoutMs, which pi keeps
+	// under a custom fetch because its SDKs apply it outside fetch — a
+	// deliberate divergence (docs/UPSTREAM.md D13) whose cap is the caller's
+	// to reproduce. It does not affect WebSocket transports.
+	//
+	// The openai adapters read an override's streamed body as openai 7.19.0
+	// does, racing each read against the request's context: Read is called on
+	// a goroutine of its own, and once the context is done a pending Read gets
+	// 100ms (docs/UPSTREAM.md D88). An error it returns by then, other than
+	// context.Canceled, fails the stream with that error; anything else, or
+	// nothing, ends the stream as an abort. The adapter then closes the body,
+	// possibly while that Read is still running, so Close must be safe to call
+	// during a Read, and a Read that ignores both the context and Close holds
+	// its goroutine for good. An *http.Client's body meets all of this: its
+	// Read returns as soon as the request's context ends.
 	HTTPClient HTTPDoer
 	// Env holds provider-scoped environment overrides. When set, a non-empty
 	// value here takes precedence over os.Getenv for provider configuration such

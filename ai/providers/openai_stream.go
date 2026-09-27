@@ -55,8 +55,9 @@ const utf8BOM = "\xef\xbb\xbf"
 // Once it is done, nothing more is dispatched — not even what has already been
 // read, since the SDK checks the signal before every line and before its final
 // flush — and the reading ends without an error, a read still waiting on the
-// body included (openaiAbortableBody); pi's adapter then runs its post-loop
-// checks. A read that fails with an abort ends the reading the same way, since
+// body included unless it fails within openaiAbandonedReadGrace
+// (openaiAbortableBody, docs/UPSTREAM.md D88); pi's adapter then runs its
+// post-loop checks. A read that fails with an abort ends the reading the same way, since
 // the SDK's Stream swallows a transport abort: undici's AbortError, which the
 // port's own client's body fails with once ctx is done (fetchBody), and
 // context.Canceled from a custom client's body, the Go stand-in for the
@@ -126,14 +127,23 @@ const maxOpenAISSELine = 16 << 20
 // openaiAbortableBody is a body as the SDK's createAbortableSSESource reads
 // it: each read raced against ctx. Once ctx is done, every read fails with
 // undici's AbortError at once, and a read still waiting on the body is given
-// openaiAbandonedReadGrace to finish: what it returns then is the read's, as
-// the body's own failure in reaction to the abort reaches the SDK ahead of
-// its interruption — a custom fetch's body that errors on the abort fails
-// pi's stream with its own error — and otherwise the read is abandoned. It
-// finishes in the background into a buffer of its own, what it returns is
-// dropped, and the read fails with the AbortError, so a body that ignores the
-// cancellation still ends the stream. The adapter closes the body once the
-// reading has ended, as the SDK cancels its reader.
+// openaiAbandonedReadGrace to finish. What it returns by then is the read's,
+// so a body that fails in that window fails the stream with its own error
+// (context.Canceled, an abort, aside); past it the read is abandoned and
+// fails with the AbortError, so a body that ignores the cancellation still
+// ends the stream. An abandoned read finishes in the background into a buffer
+// of its own and what it returns is dropped; one that never returns keeps its
+// goroutine for good. The adapter closes the body once its stream has ended,
+// which can be while an abandoned read is still in the body's Read; the SDK
+// cancels its reader at the abort.
+//
+// The window is the port's (docs/UPSTREAM.md D88). The SDK settles its race
+// by JavaScript's event order: a custom fetch's body keeps its own error only
+// if it errors its stream before the microtask the SDK's abort listener
+// queues — at once from an abort listener, or a microtask later from one
+// that fires ahead of the SDK's — and one that fails any later, even after
+// setTimeout(0), ends pi's stream as an abort. Go has no such order: a body
+// answers ctx on a goroutine of its own.
 type openaiAbortableBody struct {
 	ctx  context.Context
 	body io.Reader
@@ -144,8 +154,12 @@ type openaiAbortableBody struct {
 
 // openaiAbandonedReadGrace is how long a read still waiting on the body when
 // ctx ends is given to finish (see openaiAbortableBody): long enough for a
-// body that fails in reaction to the cancellation, short enough that one that
-// ignores it ends the stream promptly.
+// body that fails in reaction to the cancellation to keep its error, as
+// stream-abort's `a custom fetch's body fails once the signal aborts` row
+// needs, and short enough that one that ignores the cancellation ends the
+// stream promptly. pi keeps such an error only when it comes ahead of the
+// SDK's abort microtask, and ends the stream at once for a body that ignores
+// the abort (docs/UPSTREAM.md D88).
 const openaiAbandonedReadGrace = 100 * time.Millisecond
 
 // maxAbortableRead bounds one raced read, and with it the buffer an
