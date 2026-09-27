@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/iotest"
 	"time"
 
 	"github.com/sky-valley/pi/ai"
@@ -690,4 +691,26 @@ func googleRetryStream(t *testing.T, baseURL string, opts ai.StreamOptions) *ai.
 	model := &ai.Model{ID: "gemini-2.5-flash", Api: ai.APIGoogleGenerativeAI, Provider: "google", BaseURL: baseURL}
 	req := ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}
 	return StreamGoogle(context.Background(), model, ai.NormalizeContext(req), &GoogleOptions{StreamOptions: opts})
+}
+
+// sdkErrorText is the SDKs' `response.text().catch(err =>
+// castToError(err).message)`: a read that fails leaves its error's message.
+// context.Canceled from a custom client's body stands for the AbortError a
+// custom fetch's body throws, so it reads as undici's AbortError text.
+func TestSDKErrorTextQuotesAFailedRead(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body io.Reader
+		want string
+	}{
+		{"whole body", strings.NewReader(`{"error":{"message":"x"}}`), `{"error":{"message":"x"}}`},
+		{"dropped connection", io.MultiReader(strings.NewReader(`{"err`), iotest.ErrReader(errTerminated)), "terminated"},
+		{"custom body aborted", io.MultiReader(strings.NewReader(`{"err`), iotest.ErrReader(context.Canceled)), "This operation was aborted"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := string(sdkErrorText(tc.body)); got != tc.want {
+				t.Fatalf("sdkErrorText = %q, want %q", got, tc.want)
+			}
+		})
+	}
 }
