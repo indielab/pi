@@ -1007,6 +1007,7 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 			fail(err)
 			return
 		}
+		nullBody := nullResponseBody(resp)
 		defer resp.Body.Close()
 		var respBody io.Reader = resp.Body
 		if !custom {
@@ -1035,6 +1036,12 @@ func StreamPiMessages(ctx context.Context, model *ai.Model, req ai.TranscriptCon
 				return
 			}
 			fail(createPiMessagesResponseError(model, url, resp.StatusCode, responseStatusText(resp), jstext.DecodeUTF8(stripBOM(data))))
+			return
+		}
+		// pi: `if (!response.body) throw new Error(`${model.provider} response has
+		// no body`)`, before any event, so no start (nullResponseBody).
+		if nullBody {
+			fail(fmt.Errorf("%s response has no body", model.Provider))
 			return
 		}
 

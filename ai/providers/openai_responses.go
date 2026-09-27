@@ -408,7 +408,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			fail(openaiFetchError(err))
 			return
 		}
-		nullBody := openaiNullBody(resp)
+		nullBody := nullResponseBody(resp)
 		defer resp.Body.Close()
 		respBody := sdkResponseBody(ctx, resp, opts.HTTPClient)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {

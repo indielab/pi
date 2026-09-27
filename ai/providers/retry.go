@@ -555,6 +555,20 @@ func nullBodyStatus(status int) bool {
 	return status == http.StatusNoContent || status == http.StatusResetContent
 }
 
+// nullResponseBody reports whether pi finds resp's body null: at a status
+// fetch gives a null body (nullBodyStatus), and for a custom HTTPClient's nil
+// Body, which stands for a custom fetch's null body at any status. It makes a
+// nil Body http.NoBody, so an error response's reads as a null one does, as
+// "". http.NoBody itself is not null: net/http gives it to a 200 whose
+// Content-Length is 0, where fetch's body is empty.
+func nullResponseBody(resp *http.Response) bool {
+	if resp.Body == nil {
+		resp.Body = http.NoBody
+		return true
+	}
+	return nullBodyStatus(resp.StatusCode)
+}
+
 // sendWithRetry issues the request built by build, retrying transient network
 // errors (like 5xx) and retryable HTTP statuses with backoff. build must
 // produce a fresh *http.Request on each call (request bodies are single-use).

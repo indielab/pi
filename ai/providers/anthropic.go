@@ -507,6 +507,11 @@ func normalizeToolCallID(id string) string {
 	return cleaned
 }
 
+// errAnthropicNoBody is what pi's iterateAnthropicEvents throws on its first
+// iteration when the response's body is null (nullResponseBody), after pi has
+// awaited onResponse and pushed start.
+var errAnthropicNoBody = errors.New("Attempted to iterate over an Anthropic response with no body")
+
 // StreamAnthropic streams an assistant response from the Anthropic Messages API.
 //
 // The transcript is resolved before anything reads it: a model with
@@ -691,6 +696,7 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 			fail(sdkFetchError(err))
 			return
 		}
+		nullBody := nullResponseBody(resp)
 		defer resp.Body.Close()
 		respBody := sdkResponseBody(ctx, resp, opts.HTTPClient)
 
@@ -714,6 +720,10 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		}
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
+		if nullBody {
+			fail(errAnthropicNoBody)
+			return
+		}
 
 		// blocks is pi's `output.content` as its handler holds it: each block's
 		// builder with the two fields pi deletes on content_block_stop — the
