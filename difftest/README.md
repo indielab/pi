@@ -304,8 +304,8 @@ calling the adapter — `capture.mjs` whenever the backend has `utils/transcript
    - `api` — `openai-completions`, `google-generative-ai`, `anthropic-messages`,
      `openai-responses`.
    - `entry` — `"stream"` or `"streamSimple"`. Some behavior only exists on one:
-     the model+request `samplingParams` merge, for instance, happens in pi's
-     `simple-options.ts` and so is `streamSimple`-only.
+     the `maxTokens` default and its clamp to the context window, for instance,
+     happen in pi's `simple-options.ts` and so are `streamSimple`-only.
    - `model`, `context` — pi's own wire shapes. Go decodes them through
      `ai.Model` / `ai.UnmarshalMessage`, so they must be valid pi JSON.
    - `options` — pi-shaped camelCase.

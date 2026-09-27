@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"context"
 	"fmt"
 	"testing"
 
@@ -35,7 +34,7 @@ func capturedStreamPayload(t *testing.T, model *ai.Model, opts ai.StreamOptions)
 	var captured map[string]any
 	opts.APIKey = "fake-key"
 	opts.OnPayload = capturingHook(&captured)
-	final := ai.Complete(context.Background(), model, baseReq(), &opts)
+	final := ai.Complete(t.Context(), model, baseReq(), &opts)
 	if captured == nil {
 		t.Fatalf("payload was never built (stream ended %s: %q)", final.StopReason, final.ErrorMessage)
 	}
@@ -53,7 +52,7 @@ func capturedSimplePayload(
 	var captured map[string]any
 	opts.APIKey = "fake-key"
 	opts.OnPayload = capturingHook(&captured)
-	final := stream(context.Background(), model, ai.NormalizeContext(baseReq()), &opts).Result()
+	final := stream(t.Context(), model, ai.NormalizeContext(baseReq()), &opts).Result()
 	if captured == nil {
 		t.Fatalf("payload was never built (stream ended %s: %q)", final.StopReason, final.ErrorMessage)
 	}
@@ -117,12 +116,51 @@ func TestSamplingParamsModelDefaultsUnderRequest(t *testing.T) {
 	}
 }
 
+// Model defaults alone reach a direct Stream's body: pi #9506's own case, a
+// complete() call that passes no samplingParams. pi's test always sends a
+// request key, which would leave a model merge guarded on the request's map
+// green.
+func TestSamplingParamsModelLevel(t *testing.T) {
+	for _, api := range []ai.Api{ai.APIOpenAICompletions, ai.APIOpenAIResponses} {
+		t.Run(string(api), func(t *testing.T) {
+			model := samplingModel(func(m *ai.Model) {
+				m.Api = api
+				m.SamplingParams = map[string]any{"temperature": 1, "top_p": 0.95}
+			})
+			body := capturedStreamPayload(t, model, ai.StreamOptions{})
+			if body["temperature"] != 1 || body["top_p"] != 0.95 {
+				t.Fatalf("model sampling params not applied: temperature=%v top_p=%v", body["temperature"], body["top_p"])
+			}
+		})
+	}
+}
+
+// StreamSimple passes the request's keys through and the adapter merges them
+// over the model's defaults. pi tests completions with a bare model; the
+// responses entry and the clashing model default are the port's rows.
 func TestSamplingParamsThroughStreamSimple(t *testing.T) {
-	body := capturedSimplePayload(t, StreamSimpleOpenAICompletions, samplingModel(nil), ai.SimpleStreamOptions{
-		StreamOptions: ai.StreamOptions{SamplingParams: map[string]any{"top_p": 0.5}},
-	})
-	if body["top_p"] != 0.5 {
-		t.Fatalf("top_p = %v, want 0.5", body["top_p"])
+	for _, tc := range []struct {
+		api    ai.Api
+		stream ai.StreamSimpleFunction
+	}{
+		{ai.APIOpenAICompletions, StreamSimpleOpenAICompletions},
+		{ai.APIOpenAIResponses, StreamSimpleOpenAIResponses},
+	} {
+		t.Run(string(tc.api), func(t *testing.T) {
+			model := samplingModel(func(m *ai.Model) {
+				m.Api = tc.api
+				m.SamplingParams = map[string]any{"top_p": 0.95, "min_p": 0.05}
+			})
+			body := capturedSimplePayload(t, tc.stream, model, ai.SimpleStreamOptions{
+				StreamOptions: ai.StreamOptions{SamplingParams: map[string]any{"top_p": 0.5}},
+			})
+			if body["top_p"] != 0.5 {
+				t.Errorf("request key must win: top_p = %v, want 0.5", body["top_p"])
+			}
+			if body["min_p"] != 0.05 {
+				t.Errorf("model default must apply: min_p = %v, want 0.05", body["min_p"])
+			}
+		})
 	}
 }
 
