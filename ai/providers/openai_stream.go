@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -376,6 +377,25 @@ func iterateOpenAIStream(body io.Reader, ctx context.Context, yield func(openaiS
 
 // errOpenAIStreamDone ends readOpenAISSE's reading at "[DONE]".
 var errOpenAIStreamDone = errors.New("the openai stream's [DONE] ended the reading")
+
+// errOpenAIStreamNoBody is the OpenAIError the SDK's _iterSSEMessages throws on
+// the Stream's first iteration when the response's body is null: after pi has
+// awaited onResponse and pushed start, before any item reaches the observer.
+var errOpenAIStreamNoBody = errors.New("Attempted to iterate over a response with no body")
+
+// openaiNullBody reports whether the SDK finds resp's body null: at a status
+// fetch gives a null body (nullBodyStatus), and for a custom HTTPClient's nil
+// Body, which stands for a custom fetch's null body at any status. It makes a
+// nil Body http.NoBody, so an error response's reads as the SDK reads a null
+// one, as "". http.NoBody itself is not null: net/http gives it to a 200 whose
+// Content-Length is 0, where fetch's body is empty.
+func openaiNullBody(resp *http.Response) bool {
+	if resp.Body == nil {
+		resp.Body = http.NoBody
+		return true
+	}
+	return nullBodyStatus(resp.StatusCode)
+}
 
 // errOpenAIStreamMalformedJSON is the SyntaxError the SDK's Stream throws for
 // an event whose data JSON.parse rejects, whatever the reason.

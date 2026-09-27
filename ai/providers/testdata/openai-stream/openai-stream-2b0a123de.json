@@ -10741,6 +10741,143 @@
 				"thinking": []
 			}
 		},
+		"completions/empty-body": {
+			"adapter": "completions",
+			"sse": "",
+			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Stream ended without finish_reason",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"completions/null-body-204": {
+			"adapter": "completions",
+			"sse": "",
+			"status": 204,
+			"hold": false,
+			"abortOnEvent": 0,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Attempted to iterate over a response with no body",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"completions/null-body-205": {
+			"adapter": "completions",
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+			"status": 205,
+			"hold": false,
+			"abortOnEvent": 0,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Attempted to iterate over a response with no body",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"completions/custom-fetch-null-body": {
+			"adapter": "completions",
+			"sse": "",
+			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
+			"customNullBody": true,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Attempted to iterate over a response with no body",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"completions/custom-fetch-null-body-500": {
+			"adapter": "completions",
+			"sse": "",
+			"status": 500,
+			"hold": false,
+			"abortOnEvent": 0,
+			"customNullBody": true,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 0,
+				"stopReason": "error",
+				"errorMessage": "500 status code (no body)",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
 		"responses/callback-throws": {
 			"adapter": "responses",
 			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
@@ -10976,6 +11113,143 @@
 					"cacheWrite": "0",
 					"reasoning": "0",
 					"totalTokens": "6"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"responses/empty-body": {
+			"adapter": "responses",
+			"sse": "",
+			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"responses/null-body-204": {
+			"adapter": "responses",
+			"sse": "",
+			"status": 204,
+			"hold": false,
+			"abortOnEvent": 0,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Attempted to iterate over a response with no body",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"responses/null-body-205": {
+			"adapter": "responses",
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
+			"status": 205,
+			"hold": false,
+			"abortOnEvent": 0,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Attempted to iterate over a response with no body",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"responses/custom-fetch-null-body": {
+			"adapter": "responses",
+			"sse": "",
+			"status": 200,
+			"hold": false,
+			"abortOnEvent": 0,
+			"customNullBody": true,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Attempted to iterate over a response with no body",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"responses/custom-fetch-null-body-500": {
+			"adapter": "responses",
+			"sse": "",
+			"status": 500,
+			"hold": false,
+			"abortOnEvent": 0,
+			"customNullBody": true,
+			"outcome": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 0,
+				"stopReason": "error",
+				"errorMessage": "OpenAI API error (500): 500 status code (no body)",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
 				},
 				"toolCalls": [],
 				"thinking": []

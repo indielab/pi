@@ -34,8 +34,9 @@
 //             onProviderStreamEvent observed, and how the stream ended.
 //   completions / responses
 //             adapter-specific bodies, with the same record as above.
-//   hooks     the callback and onResponse failing, a non-2xx response, and
-//             a request aborted while the server holds the connection open.
+//   hooks     the callback and onResponse failing, a non-2xx response, a
+//             request aborted while the server holds the connection open, and
+//             a response whose body is null (a 204, a 205, a custom fetch's).
 //   pricing   responses' service-tier pricing: which tier a completed
 //             response's service_tier leaves in force.
 //   lines     the SDK's LineDecoder over a body cut into reads that split a
@@ -291,6 +292,9 @@ type Hooks = {
 	// abortOnEvent aborts the request, without throwing, as the observer sees
 	// that event (1-based).
 	abortOnEvent?: number;
+	// nullBodyStatus answers the request with a custom fetch's
+	// `new Response(null, { status })` instead of the server.
+	nullBodyStatus?: number;
 };
 
 async function piRun(api: any, baseModel: Record<string, unknown>, baseUrl: string, hooks: Hooks = {}): Promise<Outcome> {
@@ -299,10 +303,12 @@ async function piRun(api: any, baseModel: Record<string, unknown>, baseUrl: stri
 	const observed: string[] = [];
 	let sameModel = true;
 	let onResponseCalls = 0;
+	const status = hooks.nullBodyStatus;
 	const final = await quietly(() =>
 		api.streamSimple(model, context, {
 			apiKey: "k",
 			signal: controller.signal,
+			...(status === undefined ? {} : { fetch: async () => new Response(null, { status }) }),
 			onProviderStreamEvent: (data: unknown, eventModel: unknown) => {
 				observed.push(JSON.stringify(data));
 				sameModel &&= eventModel === model;
@@ -866,7 +872,16 @@ const out: {
 	responses: Record<string, Row>;
 	hooks: Record<
 		string,
-		{ adapter: string; sse: string; status: number; hold: boolean; abortOnEvent: number; outcome: Outcome }
+		{
+			adapter: string;
+			sse: string;
+			status: number;
+			hold: boolean;
+			abortOnEvent: number;
+			// customNullBody: a custom fetch answered with `new Response(null, { status })`.
+			customNullBody?: boolean;
+			outcome: Outcome;
+		}
 	>;
 	pricing: Record<string, { sse: string; serviceTier: string; stopReason: string; costTotal: number }>;
 	lines: Record<string, { chunks: string[]; lines: string[] }>;
@@ -942,6 +957,15 @@ for (const [adapter, [api, model]] of Object.entries(adapters)) {
 	// reads nothing after [DONE], so the stream ends while the server still
 	// holds the connection.
 	cases["done-then-held"] = [{ status: 200, contentType: "text/event-stream", body: doneHeldBodies[adapter as keyof typeof doneHeldBodies], hold: true }, {}];
+	// A 2xx response whose body is null: fetch gives a 204 or 205 one whatever
+	// the server sends, and a custom fetch can answer with one at any status.
+	// The SDK's Stream throws on its first iteration, after onResponse and
+	// start; a non-2xx one reads as an empty body. An empty body is not null.
+	cases["empty-body"] = [{ status: 200, contentType: "text/event-stream", body: "" }, {}];
+	cases["null-body-204"] = [{ status: 204, contentType: "text/event-stream", body: "" }, {}];
+	cases["null-body-205"] = [{ status: 205, contentType: "text/event-stream", body }, {}];
+	cases["custom-fetch-null-body"] = [{ status: 200, contentType: "text/event-stream", body: "" }, { nullBodyStatus: 200 }];
+	cases["custom-fetch-null-body-500"] = [{ status: 500, contentType: "application/json", body: "" }, { nullBodyStatus: 500 }];
 	for (const [name, [reply, hooks]] of Object.entries(cases)) {
 		out.hooks[`${adapter}/${name}`] = {
 			adapter,
@@ -949,6 +973,7 @@ for (const [adapter, [api, model]] of Object.entries(adapters)) {
 			status: reply.status,
 			hold: reply.hold ?? false,
 			abortOnEvent: hooks.abortOnEvent ?? 0,
+			...(hooks.nullBodyStatus === undefined ? {} : { customNullBody: true }),
 			outcome: await piRun(api, model, route(reply), hooks),
 		};
 	}

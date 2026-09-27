@@ -253,6 +253,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 			fail(openaiFetchError(err))
 			return
 		}
+		nullBody := openaiNullBody(resp)
 		defer resp.Body.Close()
 		respBody := sdkResponseBody(ctx, resp, opts.HTTPClient)
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -275,6 +276,10 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 		}
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
+		if nullBody {
+			fail(errOpenAIStreamNoBody)
+			return
+		}
 
 		var textBuilder *blockBuilder
 		// pi ensureToolCallBlock keeps BOTH maps (openai-completions.ts:229-265):

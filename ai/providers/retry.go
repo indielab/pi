@@ -546,6 +546,15 @@ func (b fetchBody) Read(p []byte) (int, error) {
 // with (fetch errors the body's stream on abort).
 var errOperationAborted = errors.New("This operation was aborted")
 
+// nullBodyStatus reports whether a response with this status reaches pi with
+// a null body whatever the server sent: 204 and 205, the null body statuses
+// (101, 103, 204, 205, 304) a 2xx response can have. undici neither reads nor
+// decodes such a body, and the Response constructor refuses one, so a custom
+// fetch's is null too. net/http reads a 205's body like any other.
+func nullBodyStatus(status int) bool {
+	return status == http.StatusNoContent || status == http.StatusResetContent
+}
+
 // sendWithRetry issues the request built by build, retrying transient network
 // errors (like 5xx) and retryable HTTP statuses with backoff. build must
 // produce a fresh *http.Request on each call (request bodies are single-use).

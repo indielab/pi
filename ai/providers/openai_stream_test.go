@@ -49,6 +49,9 @@ type openaiStreamOutcome struct {
 	// Thinking are the thinking blocks, JSON.stringify'd, the signature as
 	// String().
 	Thinking []string `json:"thinking"`
+	// events are the Go stream's event types, in order; the capture does not
+	// record pi's.
+	events []ai.EventType
 }
 
 type openaiStreamThrown struct {
@@ -102,9 +105,12 @@ type openaiStreamCapture struct {
 		Status  int    `json:"status"`
 		// Hold keeps the connection open after the body; AbortOnEvent aborts
 		// the request as the observer sees that event (1-based, 0 never).
-		Hold         bool                `json:"hold"`
-		AbortOnEvent int                 `json:"abortOnEvent"`
-		Outcome      openaiStreamOutcome `json:"outcome"`
+		Hold         bool `json:"hold"`
+		AbortOnEvent int  `json:"abortOnEvent"`
+		// CustomNullBody answers the request with a custom fetch's
+		// `new Response(null, { status })` instead of the server.
+		CustomNullBody bool                `json:"customNullBody"`
+		Outcome        openaiStreamOutcome `json:"outcome"`
 	} `json:"hooks"`
 	// Lines is the SDK's LineDecoder over chunk sequences that cut a line
 	// ending across reads: the lines it made of them, flushed at the end.
@@ -169,6 +175,18 @@ type openaiStreamHooks struct {
 	// that event (1-based).
 	abortOnEvent int
 	hold         bool
+	// customNullBody answers the request with a custom HTTPClient's nil Body
+	// (nullBodyDoer) instead of the server.
+	customNullBody bool
+}
+
+// nullBodyDoer is a custom HTTPClient that answers every request with this
+// status and a nil Body: pi's custom fetch answering with
+// `new Response(null, { status })`.
+type nullBodyDoer int
+
+func (status nullBodyDoer) Do(r *http.Request) (*http.Response, error) {
+	return &http.Response{StatusCode: int(status), Header: http.Header{}, Request: r}, nil
 }
 
 // runOpenAIStreamAdapter streams body, served with status, through the Go
@@ -199,6 +217,9 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 	defer cancel()
 	opts := &ai.SimpleStreamOptions{}
 	opts.APIKey = "k"
+	if hooks.customNullBody {
+		opts.HTTPClient = nullBodyDoer(status)
+	}
 	var observed []string
 	sameModel := true
 	opts.OnProviderStreamEvent = func(data any, eventModel *ai.Model) error {
@@ -227,13 +248,19 @@ func runOpenAIStreamAdapter(t *testing.T, adapter string, status int, body strin
 		}
 		return nil
 	}
-	var final *ai.AssistantMessage
+	var stream *ai.AssistantMessageEventStream
 	if adapter == "completions" {
-		final = StreamSimpleOpenAICompletions(ctx, model, req, opts).Result()
+		stream = StreamSimpleOpenAICompletions(ctx, model, req, opts)
 	} else {
-		final = StreamSimpleOpenAIResponses(ctx, model, req, opts).Result()
+		stream = StreamSimpleOpenAIResponses(ctx, model, req, opts)
 	}
+	var events []ai.EventType
+	for e := range stream.Events() {
+		events = append(events, e.Type)
+	}
+	final := stream.Result()
 	outcome := openaiStreamOutcome{
+		events:          events,
 		Observed:        observed,
 		SameModel:       sameModel,
 		OnResponseCalls: onResponseCalls,
@@ -693,6 +720,44 @@ func TestOpenAIStreamOnResponseLikePi(t *testing.T) {
 					t.Errorf("onResponse ran %d times, pi %d", got.OnResponseCalls, want.OnResponseCalls)
 				}
 				compareOpenAIStreamEnding(t, got, want)
+			})
+		}
+	}
+}
+
+// A 2xx response whose body is null fails both adapters as pi's fail: the
+// SDK's Stream throws on its first iteration, after pi has awaited onResponse
+// and pushed start, before anything reaches the observer. fetch gives a 204 or
+// a 205 a null body whatever the server sends — the 205 row's server sends a
+// whole stream, which net/http reads — and a custom fetch's null body, a
+// custom HTTPClient's nil Body, is null at any status. A non-2xx one reads as
+// an empty body, and an empty body is not null: a 200's, which net/http hands
+// over as http.NoBody, ends in the adapters' post-loop checks.
+func TestOpenAIStreamNullBodyLikePi(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	for _, name := range []string{"empty-body", "null-body-204", "null-body-205", "custom-fetch-null-body", "custom-fetch-null-body-500"} {
+		for _, adapter := range []string{"completions", "responses"} {
+			t.Run(adapter+"/"+name, func(t *testing.T) {
+				row, ok := c.Hooks[adapter+"/"+name]
+				if !ok {
+					t.Fatalf("%s has no hooks row %s/%s; rerun capture.mts", openaiStreamCaptureFile, adapter, name)
+				}
+				got := runOpenAIStreamAdapter(t, adapter, row.Status, row.SSE, openaiStreamHooks{customNullBody: row.CustomNullBody})
+				want := row.Outcome
+				if got.OnResponseCalls != want.OnResponseCalls {
+					t.Errorf("onResponse ran %d times, pi %d", got.OnResponseCalls, want.OnResponseCalls)
+				}
+				compareOpenAIStreamObserved(t, got, want)
+				compareOpenAIStreamEnding(t, got, want)
+				// pi pushes start right after onResponse, and a response that
+				// never reaches onResponse fails with its error alone.
+				wantEvents := []ai.EventType{ai.EventStart, ai.EventError}
+				if want.OnResponseCalls == 0 {
+					wantEvents = []ai.EventType{ai.EventError}
+				}
+				if !slices.Equal(got.events, wantEvents) {
+					t.Errorf("events = %v, pi's %v", got.events, wantEvents)
+				}
 			})
 		}
 	}
