@@ -9,11 +9,13 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sky-valley/pi/ai"
@@ -378,11 +380,13 @@ func undiciFetchError(err error) error {
 }
 
 // undiciHeadersTimeoutMs bounds the wait for a response's headers on the
-// port's own client where pi's request is a bare fetch (google through
-// @google/genai, pi-messages): undici's headersTimeout, 300 seconds, which
-// fetch applies whatever the caller's options say; its expiry is one more
-// "fetch failed" (undiciFetchError). pi's CLI installs the same value as its
-// httpIdleTimeoutMs default. A variable only so a test can shorten it.
+// port's own client, which stands for undici's fetch: undici's headersTimeout,
+// 300 seconds, which fetch applies whatever the caller's options say. pi's CLI
+// installs the same value as its httpIdleTimeoutMs default. Where pi's request
+// is a bare fetch (google through @google/genai, pi-messages) its expiry is one
+// more "fetch failed" (undiciFetchError); an SDK adapter's own timeoutMs timer
+// can only cut the wait shorter, and wins a tie, having started first
+// (sendWithRetry). A variable only so a test can shorten it.
 var undiciHeadersTimeoutMs = 300_000
 
 // fetchRejection is a send that got no response: the error the port's own
@@ -393,6 +397,10 @@ var undiciHeadersTimeoutMs = 300_000
 type fetchRejection struct {
 	err    error
 	custom bool
+	// headersTimeout is set when the port's own client gave up waiting for
+	// the headers of a request it had written at undiciHeadersTimeoutMs,
+	// before any timeoutMs of the SDK's: undici's UND_ERR_HEADERS_TIMEOUT.
+	headersTimeout bool
 }
 
 func (e *fetchRejection) Error() string { return e.err.Error() }
@@ -409,6 +417,22 @@ var (
 
 // sdkTimedOut is the SDKs' test of a rejection's text.
 var sdkTimedOut = regexp.MustCompile(`(?i)timed? ?out`)
+
+// errOpenAIHeadersTimeout is openai 7.19.0's APIConnectionTimeoutError for a
+// fetch that failed on undici's headersTimeout (UND_ERR_HEADERS_TIMEOUT).
+var errOpenAIHeadersTimeout = errors.New("Request timed out. Node.js fetch timed out waiting for response headers; configure a matching undici fetch and fetchOptions.dispatcher with an Agent whose headersTimeout is at least the SDK timeout.")
+
+// openaiFetchError is sdkFetchError for the two openai loops: openai 7.19.0
+// words a rejection whose cause is undici's headers timeout apart
+// (errOpenAIHeadersTimeout). @anthropic-ai/sdk 0.124.0 does not, so
+// anthropic's is "Request timed out." like any other timeout.
+func openaiFetchError(err error) error {
+	var rejected *fetchRejection
+	if errors.As(err, &rejected) && rejected.headersTimeout {
+		return errOpenAIHeadersTimeout
+	}
+	return sdkFetchError(err)
+}
 
 // sdkFetchError is the error an SDK adapter (anthropic, both openai loops)
 // fails with for err from sendWithRetry. The SDKs throw a rejected fetch as
@@ -508,10 +532,19 @@ var errOperationAborted = errors.New("This operation was aborted")
 // (cfg.providerError non-nil) a server-requested delay above
 // cfg.maxRetryDelayMs terminates the loop with the fail-fast error from
 // validateServerRetryDelay.
+//
+// The port's own client waits for a response's headers until the first of
+// cfg.timeoutMs (an SDK's own timer, which starts first and so wins a tie) and
+// undici's headersTimeout (undiciHeadersTimeoutMs); a rejection marks which
+// one it was (fetchRejection.headersTimeout). Only a wait once the request is
+// written is the headers timeout: a connection or TLS handshake that times out
+// is undici's connect timeout.
 func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg retryConfig) (*http.Response, error) {
 	client := cfg.httpClient
+	undiciTimesOutFirst := false
 	if client == nil {
-		client = sharedClient(cfg.timeoutMs)
+		client = sharedClient(min(cfg.timeoutMs, undiciHeadersTimeoutMs))
+		undiciTimesOutFirst = undiciHeadersTimeoutMs < cfg.timeoutMs
 	}
 	attempts := cfg.maxRetries + 1
 	var lastErr error
@@ -529,8 +562,12 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 		// requests before sending anything; the SDK sees that as any other
 		// rejected fetch.
 		var resp *http.Response
+		var wrote atomic.Bool
 		if cfg.httpClient == nil {
 			err = fetchRefusal(req)
+			req = req.WithContext(httptrace.WithClientTrace(req.Context(), &httptrace.ClientTrace{
+				WroteRequest: func(httptrace.WroteRequestInfo) { wrote.Store(true) },
+			}))
 		}
 		if err == nil {
 			resp, err = client.Do(req)
@@ -539,7 +576,9 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 			if aborted() {
 				return nil, errRequestAborted
 			}
-			err = &fetchRejection{err: err, custom: cfg.httpClient != nil}
+			var sent *url.Error
+			headersTimeout := undiciTimesOutFirst && wrote.Load() && errors.As(err, &sent) && sent.Timeout()
+			err = &fetchRejection{err: err, custom: cfg.httpClient != nil, headersTimeout: headersTimeout}
 			lastErr = err
 			if attempt == attempts-1 {
 				return nil, err
