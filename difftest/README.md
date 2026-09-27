@@ -268,6 +268,8 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 | `deepseek` | dist | `thinkingFormat: "deepseek"`, `requiresReasoningContentOnAssistantMessages` |
 | `openrouter` | dist | `thinkingFormat: "openrouter"` + `cacheControlFormat: "anthropic"` breakpoints |
 | `sampling-params` | dist | model+request `samplingParams` merged per key, applied **last** so they override named fields |
+| `sampling-params-stream` | src | the same inputs through the native `stream()` entry: the adapter merges the model's defaults, so a direct call gets them too (upstream `c01f687e5`; 0.87.1 merges only in `streamSimple`) |
+| `sampling-params-stream-responses` | src | the openai-responses twin, where a sampling key overrides `max_output_tokens` |
 | `baseten-thinking` | dist | `thinkingFormat: "baseten"` → `chat_template_args` + `reasoning_effort` via `thinkingLevelMap` |
 | `baseten-thinking-off` | dist | the same, thinking OFF: `omitWhenOff`, `thinkingLevelMap.off` |
 | `gemini3-tool-ids` | dist | gemini major ≥ 3 ⇒ `functionCall`/`functionResponse` carry `id` |
@@ -284,13 +286,9 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 
 The `backend` column above is a snapshot. Scenarios flip `src` -> `dist` as releases
 ship the surface they cover, so re-read `scenarios/*.json` rather than this table when
-the distinction matters. **As of 2026-09-24 the suite is 61 scenarios, all
-`dist`** (60 at the 0.87.1 re-pin, plus `replayed-args-index-keys-openai-completions`). The nine transcript-model scenarios (`9e05370b2`: the three
-`responses-deferred-*`, `anthropic-native-tool-changes`,
-`kimi-k3-anchored-tool-additions` and the four `responses-midconvo-*`) had been owed
-the flip since 0.86.1 shipped the transcript model, and
-`empty-text-part-openai-completions` (`1b6ddca87`) shipped in 0.87.1. With no `src`
-scenario, `run.sh` skips the upstream extraction.
+the distinction matters. **As of 2026-09-27 the suite is 63 scenarios: 61 `dist`
+and 2 `src`** — `sampling-params-stream` and `sampling-params-stream-responses`
+(`c01f687e5`), which flip to `dist` with the first release that ships it.
 
 From `9e05370b2` on, the api adapters take a normalized transcript that only
 `normalizeContext` produces. Both arms normalize the scenario's `context` before

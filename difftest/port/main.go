@@ -110,7 +110,7 @@ type scenarioOptions struct {
 	Reasoning       *string             `json:"reasoning"`
 	ThinkingBudgets *ai.ThinkingBudgets `json:"thinkingBudgets"`
 
-	// openai-completions `stream` entry only.
+	// The native `stream` entries (openai-completions, openai-responses) only.
 	ReasoningEffort *string `json:"reasoningEffort"`
 	// ToolChoice serves both entries: the native `stream` one takes it verbatim,
 	// and the simple entry narrows it to pi's "auto"/"none" (upstream e5dde9a76).
@@ -220,6 +220,14 @@ func capture(sc scenario, model *ai.Model, raw ai.Context, o scenarioOptions) (a
 		opts := o.simple()
 		opts.OnPayload = hook
 		final = providers.StreamSimpleOpenAIResponses(context.Background(), model, req, &opts).Result()
+
+	case sc.API == "openai-responses":
+		opts := &providers.OpenAIResponsesOptions{StreamOptions: o.base(), ToolChoice: o.ToolChoice}
+		if o.ReasoningEffort != nil {
+			opts.ReasoningEffort = *o.ReasoningEffort
+		}
+		opts.OnPayload = hook
+		final = providers.StreamOpenAIResponses(context.Background(), model, req, opts).Result()
 
 	default:
 		return nil, fmt.Errorf("no Go dispatch for api=%q entry=%q (add one to capture() in go/main.go)", sc.API, sc.Entry)
