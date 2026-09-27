@@ -4,11 +4,20 @@
 // jstrim_test.go in this package.
 //
 //   node --experimental-strip-types capture-jstrim.mts <extraction> <out.json> <sha>
-//   e.g. ... capture-jstrim.mts <dir> jstrim-7140838fd.json 7140838fd
+//   e.g. ... capture-jstrim.mts <dir> jstrim-2b0a123de.json 2b0a123de
 //
-// <extraction> holds packages/ai at <sha> (`git archive <sha> packages/ai` from
-// the upstream clone) and a node_modules resolving pi-ai's dependencies (the npm
-// build 0.85.1's, which carries openai 6.40.0 and @google/genai 1.52.0).
+// <extraction> holds `git archive <sha> packages/ai package-lock.json` from the
+// upstream clone and a node_modules resolving pi-ai's dependencies (the npm
+// build's). The script refuses to write unless each SDK it runs
+// (@anthropic-ai/sdk, openai, @google/genai) resolves to the version AND
+// integrity the sha's package-lock.json locks at the path it resolved to:
+// packages/ai/node_modules/<name> for a copy the lockfile nests for pi-ai,
+// node_modules/<name> otherwise. Since ab30693d6 it nests openai 7.19.0 there
+// (the root keeps 6.40.0): unpack `npm pack openai@7.19.0` (check its sha512
+// against the lockfile) to packages/ai/node_modules/openai and record that
+// integrity in packages/ai/node_modules/.package-lock.json under
+// "node_modules/openai", as npm records an installed package. The SDKs read,
+// with their integrity, and the node version are recorded as `source`.
 //
 // `bodies` are request bodies: from onPayload, which throws, except google's,
 // which is the REST body @google/genai POSTs to a local server (onPayload sees
@@ -24,6 +33,7 @@ import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 const [extraction, outFile, sha] = process.argv.slice(2);
@@ -32,6 +42,33 @@ if (!extraction || !outFile || !sha) {
 	process.exit(2);
 }
 const src = path.join(extraction, "packages/ai/src");
+const require = createRequire(path.join(src, "api/openai-completions.ts"));
+const lock = JSON.parse(fs.readFileSync(path.join(extraction, "package-lock.json"), "utf8"));
+const sdks: string[] = [];
+for (const name of ["@anthropic-ai/sdk", "openai", "@google/genai"]) {
+	let dir = path.dirname(require.resolve(name));
+	while (!fs.existsSync(path.join(dir, "package.json")) || JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).name !== name) {
+		dir = path.dirname(dir);
+	}
+	const version = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).version as string;
+	let root = dir;
+	while (path.basename(root) !== "node_modules") root = path.dirname(root);
+	const installed = JSON.parse(fs.readFileSync(path.join(root, ".package-lock.json"), "utf8")).packages[`node_modules/${name}`];
+	// The lockfile entry for the path it resolved to: pi-ai's own nested copy
+	// (packages/ai/node_modules/<name>, as openai is since ab30693d6) or the
+	// root one (node_modules/<name>). Where the lockfile nests a copy for
+	// pi-ai, pi-ai must resolve that one.
+	const resolvedKey = path.relative(extraction, dir);
+	const key = resolvedKey.startsWith("..") || path.isAbsolute(resolvedKey) ? `node_modules/${name}` : resolvedKey;
+	const nestedKey = `packages/ai/node_modules/${name}`;
+	const locked = lock.packages[key];
+	if ((lock.packages[nestedKey] && key !== nestedKey) || locked?.version !== version || locked.integrity !== installed?.integrity) {
+		const want = lock.packages[nestedKey] ? nestedKey : key;
+		console.error(`${name} mismatch: ${sha} locks ${lock.packages[want]?.version} ${lock.packages[want]?.integrity} at ${want}, resolved ${version} ${installed?.integrity} at ${key}`);
+		process.exit(1);
+	}
+	sdks.push(`${name} ${version} ${locked.integrity}`);
+}
 const load = (file: string) => import(pathToFileURL(path.join(src, file)).href);
 const { normalizeContext } = await load("utils/transcript.ts");
 const anthropic = await load("api/anthropic-messages.ts");
@@ -436,6 +473,7 @@ for (const bytes of retryAfterBytes) {
 
 const out = {
 	sha,
+	source: `upstream ${sha} packages/ai/src, ${sdks.join(", ")}, node ${process.version}`,
 	bodies: {
 		anthropic: await capturePayload(anthropic, anthropicModel, anthropicContext, { apiKey: "test-key" }),
 		completions: await capturePayload(completions, completionsModel, completionsContext, { apiKey: "test-key" }),

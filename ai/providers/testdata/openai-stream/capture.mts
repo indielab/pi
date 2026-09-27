@@ -2,14 +2,21 @@
 // read an SSE body — the oracle behind openai_stream_test.go in this package.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> openai-stream-002fc8385.json 002fc8385
+//   e.g. ... capture.mts <dir> openai-stream-2b0a123de.json 2b0a123de
 //
-// <extraction> holds packages/ai at <sha> (`git archive <sha> packages/ai` from
-// the upstream clone, prefix kept) and a node_modules resolving pi-ai's
-// dependencies. The openai package there must be the version package-lock.json
-// locks at <sha> — 6.40.0 at 002fc8385, integrity
-// sha512-MWtTjd/gQt4jpbji61NTgFWJLoY/PdRJ6wG9/ZDRMYNMlBKrCrSlkLI+KgHP1vR1qT6LKSAyAqIxno6lcK9JiA==,
-// which the npm 0.87.1 build's node_modules carries. The version read is
+// <extraction> holds `git archive <sha> packages/ai package-lock.json` from the
+// upstream clone (prefix kept) and a node_modules resolving pi-ai's
+// dependencies. The script reads the openai package pi-ai's src resolves, and
+// refuses to write unless it is the version AND integrity the sha's
+// package-lock.json locks at the path it resolved to: since ab30693d6 the
+// lockfile nests pi-ai's openai (7.19.0, integrity
+// sha512-MX2s3u2L5racTO0CC/SWpCOasJQBCJrqLKXK+l82cAhdeF8mPMBEe/gxMm0ZFa2xpKpOFLRjxv5afYEZbBXmbQ==)
+// at packages/ai/node_modules/openai, while the root node_modules keeps 6.40.0
+// for the other workspaces. With the npm 0.87.1 build's node_modules as the
+// root (6.40.0), unpack `npm pack openai@7.19.0` (check its sha512 against the
+// lockfile) to packages/ai/node_modules/openai and record that integrity in
+// packages/ai/node_modules/.package-lock.json under "node_modules/openai", as
+// npm records an installed package. The version, integrity and node version are
 // recorded in the output.
 //
 // Every body is served from a loopback server, so nothing needs a key or the
@@ -20,8 +27,9 @@
 //             through chat.completions.create and responses.create alike, and
 //             over the body delivered whole and one byte per read (the script
 //             fails if any two differ) — and, the same two ways, over the body
-//             followed by an aborted read and by a failed one; `completions`
-//             and `responses`
+//             followed by an aborted read and by a failed one, and with the
+//             stream's own signal aborted as its first item is yielded;
+//             `completions` and `responses`
 //             are pi's adapters over the same body: the provider stream events
 //             onProviderStreamEvent observed, and how the stream ended.
 //   completions / responses
@@ -36,6 +44,7 @@ import fs from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 
 const [extraction, outFile, sha] = process.argv.slice(2);
@@ -48,8 +57,35 @@ const load = (file: string) => import(pathToFileURL(path.join(src, file)).href);
 const { normalizeContext } = await load("utils/transcript.ts");
 const completions = await load("api/openai-completions.ts");
 const responses = await load("api/openai-responses.ts");
-const openaiDir = path.join(extraction, "node_modules/openai");
-const openaiVersion = JSON.parse(fs.readFileSync(path.join(openaiDir, "package.json"), "utf8")).version;
+// sdkSource is the directory, version and integrity of the copy of the npm
+// package name pi-ai's src resolves. It must be what the sha's
+// package-lock.json locks at the path it resolved to: packages/ai/node_modules/
+// <name> when the lockfile nests it for pi-ai (and then pi-ai must resolve that
+// copy), node_modules/<name> otherwise.
+const lock = JSON.parse(fs.readFileSync(path.join(extraction, "package-lock.json"), "utf8"));
+function sdkSource(name: string): { dir: string; version: string; integrity: string } {
+	let dir = path.dirname(createRequire(path.join(src, "api/openai-completions.ts")).resolve(name));
+	while (!fs.existsSync(path.join(dir, "package.json")) || JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).name !== name) {
+		dir = path.dirname(dir);
+	}
+	const version = JSON.parse(fs.readFileSync(path.join(dir, "package.json"), "utf8")).version as string;
+	let root = dir;
+	while (path.basename(root) !== "node_modules") root = path.dirname(root);
+	const installed = JSON.parse(fs.readFileSync(path.join(root, ".package-lock.json"), "utf8")).packages[`node_modules/${name}`];
+	const resolvedKey = path.relative(extraction, dir);
+	const key = resolvedKey.startsWith("..") || path.isAbsolute(resolvedKey) ? `node_modules/${name}` : resolvedKey;
+	const nestedKey = `packages/ai/node_modules/${name}`;
+	const locked = lock.packages[key];
+	if ((lock.packages[nestedKey] && key !== nestedKey) || locked?.version !== version || locked.integrity !== installed?.integrity) {
+		const want = lock.packages[nestedKey] ? nestedKey : key;
+		console.error(`${name} mismatch: ${sha} locks ${lock.packages[want]?.version} ${lock.packages[want]?.integrity} at ${want}, resolved ${version} ${installed?.integrity} at ${key}`);
+		process.exit(1);
+	}
+	return { dir, version, integrity: locked.integrity };
+}
+const openai = sdkSource("openai");
+const openaiDir = openai.dir;
+const openaiVersion = openai.version;
 const { default: OpenAI } = await import(pathToFileURL(path.join(openaiDir, "index.mjs")).href);
 const { Stream } = await import(pathToFileURL(path.join(openaiDir, "core/streaming.mjs")).href);
 const { LineDecoder } = await import(pathToFileURL(path.join(openaiDir, "internal/decoders/line.mjs")).href);
@@ -98,10 +134,12 @@ const sse = (body: Body) => route({ status: 200, contentType: "text/event-stream
 type Thrown = { name: string; message: string; error?: string };
 type SDKReading = { yields: string[]; threw: Thrown | null };
 // A dispatch row's `sdk` also records the body read to its end and then
-// failing: `aborted` with an AbortError, as a cancelled request's body read
-// throws (the SDK's Stream swallows it and simply ends), and `readFailed` with
-// any other error (it propagates).
-type SDKReadings = SDKReading & { aborted: SDKReading; readFailed: SDKReading };
+// failing: `aborted` with an AbortError while the stream's signal is live, as a
+// custom fetch's body can throw one (the SDK's Stream swallows it and simply
+// ends), and `readFailed` with any other error (it propagates); and
+// `abortedOnFirst`, the body read whole with the stream's own signal aborted as
+// its first item is yielded (the SDK dispatches nothing after that).
+type SDKReadings = SDKReading & { aborted: SDKReading; readFailed: SDKReading; abortedOnFirst: SDKReading };
 
 function thrown(error: unknown): Thrown {
 	const e = error as { constructor?: { name?: string }; message?: string; error?: unknown };
@@ -124,8 +162,9 @@ async function sdkRead(body: Body, open: (client: any) => Promise<AsyncIterable<
 // sdkReadStream is the SDK's Stream over the body delivered as a stream of
 // reads, whole or one byte per read, and ending cleanly or with a failed read
 // (end). A line ending split across reads ("\r" | "\n") is measured rather
-// than assumed to read like the whole body.
-async function sdkReadStream(body: Body, bytewise: boolean, end?: Error): Promise<SDKReading> {
+// than assumed to read like the whole body. With abortOnItem, the Stream's
+// signal aborts as that item (1-based) is yielded.
+async function sdkReadStream(body: Body, bytewise: boolean, end?: Error, abortOnItem?: number): Promise<SDKReading> {
 	const bytes = typeof body === "string" ? new TextEncoder().encode(body) : new Uint8Array(body);
 	let at = 0;
 	const byteStream = new ReadableStream<Uint8Array>({
@@ -142,9 +181,11 @@ async function sdkReadStream(body: Body, bytewise: boolean, end?: Error): Promis
 		},
 	});
 	const yields: string[] = [];
+	const controller = new AbortController();
 	try {
-		for await (const item of Stream.fromSSEResponse(new Response(byteStream), new AbortController())) {
+		for await (const item of Stream.fromSSEResponse(new Response(byteStream), controller)) {
 			yields.push(JSON.stringify(item));
+			if (yields.length === abortOnItem) controller.abort();
 		}
 	} catch (error) {
 		return { yields, threw: thrown(error) };
@@ -154,9 +195,9 @@ async function sdkReadStream(body: Body, bytewise: boolean, end?: Error): Promis
 
 // sdkReadEndingIn reads the body whole and one byte per read, ending in end,
 // and fails unless the two agree.
-async function sdkReadEndingIn(body: Body, end?: () => Error): Promise<SDKReading> {
-	const whole = await sdkReadStream(body, false, end?.());
-	const bytewise = await sdkReadStream(body, true, end?.());
+async function sdkReadEndingIn(body: Body, end?: () => Error, abortOnItem?: number): Promise<SDKReading> {
+	const whole = await sdkReadStream(body, false, end?.(), abortOnItem);
+	const bytewise = await sdkReadStream(body, true, end?.(), abortOnItem);
 	if (JSON.stringify(whole) !== JSON.stringify(bytewise)) {
 		throw new Error(`the body read whole and one byte at a time differ:\n${JSON.stringify(whole)}\n${JSON.stringify(bytewise)}`);
 	}
@@ -189,6 +230,7 @@ async function sdkReading(body: Body): Promise<SDKReadings> {
 			...chat,
 			aborted: await sdkReadEndingIn(body, () => new DOMException("This operation was aborted", "AbortError")),
 			readFailed: await sdkReadEndingIn(body, () => new TypeError("terminated")),
+			abortedOnFirst: await sdkReadEndingIn(body, undefined, 1),
 		};
 	});
 }
@@ -338,11 +380,16 @@ const dispatch: Record<string, Body> = {
 	"multi-line-data": `data: {"id":"m",\ndata: "choices":[{"index":0,"delta":{"content":"joined"}}]}\n\ndata: ${FIN}\n\n`,
 	"unterminated-trailing-event": `data: ${A}\n\ndata: ${FIN}\n`,
 	"unterminated-no-newline": `data: ${A}\n\ndata: ${FIN}`,
+	// Only data that is exactly "[DONE]" ends the stream; anything else is JSON.
 	"done-prefix": `data: ${A}\n\ndata: ${FIN}\n\ndata: [DONE]extra\n\ndata: ${B}\n\n`,
+	"done-trailing-space": `data: ${A}\n\ndata: ${FIN}\n\ndata: [DONE] \n\n`,
 	"done-exact-first": `data: [DONE]\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	"done-mid-line": `data: ${A}\n\ndata: [DONE\n\ndata: ${FIN}\n\n`,
 	crlf: `data: ${A}\r\n\r\ndata: ${B}\r\n\r\ndata: ${FIN}\r\n\r\n`,
 	"lone-cr": `data: ${A}\r\rdata: ${B}\r\rdata: ${FIN}\r\r`,
+	// Any two line endings in a row end an event: "\n\r\n" and "\r\n\n" too.
+	"lf-crlf-separators": `data: ${A}\n\r\ndata: ${B}\n\r\ndata: ${FIN}\n\r\n`,
+	"crlf-lf-separators": `data: ${A}\r\n\ndata: ${B}\r\n\ndata: ${FIN}\r\n\n`,
 	"mixed-line-endings": `data: ${A}\r\n\ndata: ${B}\n\r\ndata: ${FIN}\r\r\n`,
 	// "\r\n" is one line ending, so an event's fields stay one event: a second
 	// line ending inside it would dispatch the half read so far.
@@ -352,7 +399,21 @@ const dispatch: Record<string, Body> = {
 	"field-value-spacing": `data:${A}\n\ndata:  ${FIN}\n\n`,
 	"data-field-without-colon": `data\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	"bom-at-line-start": `data: ${A}\n\n${BOM}data: ${B}\n\n${BOM}${BOM}data: ${chunk("c", "z")}\n\ndata: ${FIN}\n\n`,
+	// An event named "error" fails the stream with the APIError for its data's
+	// `error` member, or for the data itself when that member is null or
+	// absent (`data?.error ?? data`); only the exact name counts.
 	"event-named-error": `event: error\ndata: ${A}\n\ndata: ${FIN}\n\n`,
+	"event-named-error-with-error": `data: ${A}\n\nevent: error\ndata: ${J({ error: { message: "inner", metadata: { raw: "r2" } } })}\n\ndata: ${FIN}\n\n`,
+	"event-named-error-null-error": `data: ${A}\n\nevent: error\ndata: ${J({ error: null, message: "m" })}\n\ndata: ${FIN}\n\n`,
+	"event-named-error-falsy-error": `data: ${A}\n\nevent: error\ndata: ${J({ error: false, message: "m" })}\n\ndata: ${FIN}\n\n`,
+	"event-named-error-metadata-raw": `data: ${A}\n\nevent: error\ndata: ${J({ message: "m", metadata: { raw: "r" } })}\n\ndata: ${FIN}\n\n`,
+	"event-named-error-null": `data: ${A}\n\nevent: error\ndata: null\n\ndata: ${FIN}\n\n`,
+	"event-named-error-string": `data: ${A}\n\nevent: error\ndata: "boom"\n\ndata: ${FIN}\n\n`,
+	"event-named-error-array": `data: ${A}\n\nevent: error\ndata: [1,{"message":"m"}]\n\ndata: ${FIN}\n\n`,
+	"event-named-error-unparseable": `data: ${A}\n\nevent: error\ndata: {oops\n\ndata: ${FIN}\n\n`,
+	"event-named-error-case": `data: ${A}\n\nevent: Error\ndata: ${J({ message: "m" })}\n\ndata: ${FIN}\n\n`,
+	// The OpenAI Responses API's own error event, named on its event: line.
+	"event-named-error-responses-shape": `data: ${A}\n\nevent: error\ndata: ${J({ type: "error", code: "rate_limit_exceeded", message: "slow down", param: null, sequence_number: 1 })}\n\ndata: ${FIN}\n\n`,
 	"event-name-empty": `event:\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	"thread-event": `event: thread.message\ndata: {"id":"t","error":{"message":"not thrown"}}\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	scalars: `data: 5\n\ndata: "s"\n\ndata: [1,{"k":2}]\n\ndata: true\n\ndata: false\n\ndata: 0\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
@@ -390,9 +451,10 @@ const dispatch: Record<string, Body> = {
 	"error-chunk-empty-object": errorChunk({}),
 	"error-chunk-empty-array": errorChunk([]),
 	"error-chunk-integer-keys": errorChunk({ b: 1, 2: "x", 1: "y", code: 1.5e21 }),
-	// The SDK's Stream swallows an error isAbortError matches, which includes
-	// any whose message names Expo fetch's FetchRequestCanceledException: the
-	// stream ends there, and pi's adapter runs its post-loop checks.
+	// An error item whose message names Expo fetch's
+	// FetchRequestCanceledException fails the stream like any other: openai
+	// 6's Stream swallowed it, taking it for an abort; 7.19.0's catch spares
+	// only a transport abort, never an APIError.
 	"error-chunk-fetch-canceled": errorChunk({ message: "upstream: FetchRequestCanceledException" }),
 	"error-chunk-fetch-canceled-string": errorChunk("FetchRequestCanceledException"),
 	"error-chunk-fetch-canceled-object-message": errorChunk({ message: { cause: "FetchRequestCanceledException" } }),
@@ -401,16 +463,17 @@ const dispatch: Record<string, Body> = {
 	"error-values-falsy": `data: ${J({ id: "n", error: null })}\n\ndata: ${J({ id: "e", error: "" })}\n\ndata: ${J({ id: "z", error: 0 })}\n\ndata: ${J({ id: "f", error: false })}\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	"error-key-case": `data: ${J({ Error: { message: "boom" } })}\n\ndata: ${A}\n\ndata: ${FIN}\n\n`,
 	"error-after-done": `data: ${A}\n\ndata: ${FIN}\n\ndata: [DONE]\n\ndata: ${J({ error: { message: "late" } })}\n\n`,
-	// JSON.parse throws its SyntaxError on these, which fails pi's stream with
-	// V8's message. Nothing is repaired first, however little would fix it: a
-	// raw control character in a string, an escape JSON does not have.
+	// JSON.parse rejects these, and the SDK fails the stream with its own
+	// SyntaxError text, whatever JSON.parse's reason. Nothing is repaired
+	// first, however little would fix it: a raw control character in a string,
+	// an escape JSON does not have.
 	"unparseable-data": `data: ${A}\n\ndata: {not json\n\ndata: ${FIN}\n\n`,
 	"event-without-data": `data: ${A}\n\nevent: ping\n\ndata: ${FIN}\n\n`,
 	"control-character-in-string": `data: ${A}\n\ndata: {"id":"c","choices":[{"index":0,"delta":{"content":"a\tb"}}]}\n\ndata: ${FIN}\n\n`,
 	"invalid-escape": `data: ${A}\n\ndata: {"id":"c","choices":[{"index":0,"delta":{"content":"a\\qb"}}]}\n\ndata: ${FIN}\n\n`,
 	"unexpected-token-in-context": `data: ${A}\n\ndata: {"id":"c","choices":[],"n":nul}\n\ndata: ${FIN}\n\n`,
 	"thread-event-unparseable": `data: ${A}\n\nevent: thread.run\ndata: {not json\n\ndata: ${FIN}\n\n`,
-	// After [DONE] the SDK ignores every event before parsing it.
+	// [DONE] ends the stream: the SDK reads nothing after it.
 	"unparseable-after-done": `data: ${A}\n\ndata: ${FIN}\n\ndata: [DONE]\n\ndata: {not json\n\n`,
 	// Each line is decoded by a TextDecoder, which writes one U+FFFD per
 	// maximal subpart of an invalid UTF-8 sequence (WHATWG), not one per byte.
@@ -796,6 +859,8 @@ const bodyFields = (body: Body) =>
 const out: {
 	sha: string;
 	openai: string;
+	openaiIntegrity: string;
+	node: string;
 	dispatch: Record<string, Row>;
 	completions: Record<string, Row>;
 	responses: Record<string, Row>;
@@ -805,7 +870,18 @@ const out: {
 	>;
 	pricing: Record<string, { sse: string; serviceTier: string; stopReason: string; costTotal: number }>;
 	lines: Record<string, { chunks: string[]; lines: string[] }>;
-} = { sha, openai: openaiVersion, dispatch: {}, completions: {}, responses: {}, hooks: {}, pricing: {}, lines: {} };
+} = {
+	sha,
+	openai: openaiVersion,
+	openaiIntegrity: openai.integrity,
+	node: process.version,
+	dispatch: {},
+	completions: {},
+	responses: {},
+	hooks: {},
+	pricing: {},
+	lines: {},
+};
 
 for (const [name, body] of Object.entries(dispatch)) {
 	out.dispatch[name] = {
@@ -828,11 +904,12 @@ const adapters = {
 	responses: [responses, responsesModel],
 } as const;
 // The request is aborted as the observer sees the last event of a held body:
-// the SDK's next body read then throws an AbortError, which its Stream
-// swallows, so the adapter's loop ends and its post-loop checks decide the
+// the SDK's Stream, which races its next body read against the signal, then
+// simply ends, so the adapter's loop ends and its post-loop checks decide the
 // message. Responses checks for a terminal event before its abort guard.
 const eventCount = (body: string) =>
 	body.split("\n\n").filter((e) => e.startsWith("data: ") && !e.startsWith("data: [DONE]")).length;
+const doneHeldBodies = { completions: dispatch["blank-line-dispatch"], responses: `${responsesBodies.completed}data: [DONE]\n\n` };
 const heldCases: Record<string, Record<string, string>> = {
 	completions: {
 		"abort-held": `data: ${A}\n\n`,
@@ -861,6 +938,10 @@ for (const [adapter, [api, model]] of Object.entries(adapters)) {
 			{ abortOnEvent: eventCount(heldBody) },
 		];
 	}
+	// A body that ends in [DONE] and is then held open, with no abort: the SDK
+	// reads nothing after [DONE], so the stream ends while the server still
+	// holds the connection.
+	cases["done-then-held"] = [{ status: 200, contentType: "text/event-stream", body: doneHeldBodies[adapter as keyof typeof doneHeldBodies], hold: true }, {}];
 	for (const [name, [reply, hooks]] of Object.entries(cases)) {
 		out.hooks[`${adapter}/${name}`] = {
 			adapter,

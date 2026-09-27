@@ -289,6 +289,14 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
 
+		// The SDK fetches with undici unless the caller hands pi its own fetch:
+		// the body then fails as undici's does (fetchBody), "terminated" for a
+		// connection that drops mid-body.
+		var respBody io.Reader = resp.Body
+		if _, custom := customHTTPClient(opts.HTTPClient); !custom {
+			respBody = fetchBody{ctx, resp.Body}
+		}
+
 		var textBuilder *blockBuilder
 		// pi ensureToolCallBlock keeps BOTH maps (openai-completions.ts:229-265):
 		// lookup by stream index when the delta carries one, falling back to id,
@@ -439,7 +447,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 		// parsed value, by exact key, each of whatever type it holds, with pi's
 		// own guards (typeof, Array.isArray, truthiness) and JS's coercions where
 		// pi concatenates or computes.
-		err = iterateOpenAISSE(resp.Body, ctx, onEvent, func(chunk any) error {
+		err = iterateOpenAISSE(respBody, ctx, onEvent, func(chunk any) error {
 			// OpenAI documents ChatCompletionChunk.id as the unique chat completion
 			// identifier shared by every chunk in a streamed completion.
 			// pi: `output.responseId ||= chunk.id`.

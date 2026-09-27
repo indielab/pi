@@ -23,7 +23,7 @@ import (
 
 // streamAbortCaptureFile is written by testdata/stream-abort/capture.mts,
 // which streams pi's adapters from source at the named sha.
-const streamAbortCaptureFile = "testdata/stream-abort/stream-abort-49681e1b7.json"
+const streamAbortCaptureFile = "testdata/stream-abort/stream-abort-2b0a123de.json"
 
 // streamAbortRun is one row of the capture: how pi's adapter ended a stream
 // whose signal aborted once the request was on its way, or whose connection
@@ -173,6 +173,29 @@ func (b *abortingBody) Read(p []byte) (int, error) {
 
 func (b *abortingBody) Close() error { return nil }
 
+// hangingBody is a custom client's body that delivers segment on its first
+// read; its next read aborts the request as it starts and then blocks until
+// release is closed, whatever the request's context does: a body that ignores
+// the cancellation.
+type hangingBody struct {
+	segment string
+	read    bool
+	cancel  context.CancelFunc
+	release chan struct{}
+}
+
+func (b *hangingBody) Read(p []byte) (int, error) {
+	if !b.read {
+		b.read = true
+		return copy(p, b.segment), nil
+	}
+	b.cancel()
+	<-b.release
+	return 0, io.EOF
+}
+
+func (b *hangingBody) Close() error { return nil }
+
 // abortingDoer is a custom client that aborts the request and then rejects
 // it with err.
 type abortingDoer struct {
@@ -302,7 +325,11 @@ func drain(stream *ai.AssistantMessageEventStream) ([]string, *ai.AssistantMessa
 // drops mid-body, with no abort, fails the read with undici's TypeError
 // "terminated". A custom fetch is pi's caller's: its rejection and its body's
 // errors are its own, abort or no abort, and a body that ignores the abort is
-// read on to its end by pi-messages, which never checks the signal.
+// read on to its end by pi-messages, which never checks the signal. The openai
+// SDK (7.19.0) checks its signal before every line and races each body read
+// against it, so both openai loops dispatch nothing after the abort — not what
+// the read in hand still holds — and end on a custom body that ignores it,
+// whether that body delivers on or hangs.
 func TestStreamAbortMatchesPi(t *testing.T) {
 	for _, run := range loadStreamAbortCapture(t) {
 		t.Run(run.API+"/"+run.Mode, func(t *testing.T) {
@@ -363,6 +390,12 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 				opts.HTTPClient = heldDoer{io.NopCloser(&readsReader{reads: slices.Clone(run.Segments)})}
 			case "a custom fetch's body fails once the signal aborts":
 				opts.HTTPClient = heldDoer{&abortingBody{segment: run.Segments[0], cancel: cancel, err: errors.New(run.CustomBodyError)}}
+			case "a custom fetch's body hangs, ignoring an abort while a read is pending":
+				// The body's next read would wait past the test; the openai SDK
+				// races it against the signal.
+				release := make(chan struct{})
+				defer close(release)
+				opts.HTTPClient = heldDoer{&hangingBody{segment: run.Segments[0], cancel: cancel, release: release}}
 			case "an abort while an error body is read", "an abort while a retryable error body is read":
 				// The server answers the run's status (with its retry-after)
 				// and the start of the body and holds; the abort lands 100ms

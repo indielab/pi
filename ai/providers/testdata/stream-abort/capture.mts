@@ -3,22 +3,30 @@
 // behind TestStreamAbortMatchesPi in this package.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> stream-abort-49681e1b7.json 49681e1b7
+//   e.g. ... capture.mts <dir> stream-abort-2b0a123de.json 2b0a123de
 //
 // <extraction> holds `git archive <sha> packages/ai package-lock.json` from the
 // upstream clone, plus a node_modules resolving pi-ai's dependencies (the npm
 // build's). The script refuses to write unless each SDK it runs
 // (@anthropic-ai/sdk, openai, @google/genai) resolves to the version AND
-// integrity the sha's package-lock.json locks; pi-messages calls node's own
+// integrity the sha's package-lock.json locks at the path it resolved to:
+// packages/ai/node_modules/<name> for a copy the lockfile nests for pi-ai,
+// node_modules/<name> otherwise. Since ab30693d6 it nests openai 7.19.0 there
+// (the root keeps 6.40.0): unpack `npm pack openai@7.19.0` (check its sha512
+// against the lockfile) to packages/ai/node_modules/openai and record that
+// integrity in packages/ai/node_modules/.package-lock.json under
+// "node_modules/openai", as npm records an installed package; pi-messages calls node's own
 // fetch.
 //
 // A raw TCP server answers every request 200, text/event-stream, chunked, and
 // writes each of the run's segments as one HTTP chunk, which reaches the
 // adapter as one body read (undici reads one chunk at a time); then it holds
-// the connection open. The anthropic-messages and pi-messages adapters run
-// every mode; openai-completions and openai-responses run the two error-body
-// modes and the no-response ones, google-generative-ai those and "an abort
-// from the callback on the last event of a body already complete". Modes:
+// the connection open. The anthropic-messages, openai-completions,
+// openai-responses and pi-messages adapters run every mode (the SDK adapters'
+// request modes are abort-before-response's, and their error-body drop is
+// K18's); google-generative-ai runs the error-body modes, the no-response ones
+// and "an abort from the callback on the last event of a body already
+// complete". Modes:
 //   - "an abort while a read is pending": the signal aborts 150ms after the
 //     first segment is written, while the adapter waits on its next read;
 //   - "an abort from the callback with events left in its read": the
@@ -68,7 +76,13 @@
 //     whatever the signal; the callback aborts on the first event); "a custom
 //     fetch's body fails once the signal aborts" (the first segment, then a
 //     read that waits for the abort, 150ms later, and fails with
-//     customBodyError).
+//     customBodyError);
+//   - "a custom fetch's body hangs, ignoring an abort while a read is
+//     pending" (the openai adapters only): the body delivers the first
+//     segment, and its next read never settles; the signal aborts 150ms
+//     later, while the adapter waits on that read. openai 7.19.0 races each
+//     body read against the signal, so the stream still ends; the other
+//     adapters' pi would wait on that read forever.
 // Recorded per run: the status and segments the server wrote, the event types
 // onProviderStreamEvent received, the stream's event types, and the final
 // stopReason, errorMessage, content and diagnostic types.
@@ -97,9 +111,17 @@ for (const name of ["@anthropic-ai/sdk", "openai", "@google/genai"]) {
 	let root = dir;
 	while (path.basename(root) !== "node_modules") root = path.dirname(root);
 	const installed = JSON.parse(fs.readFileSync(path.join(root, ".package-lock.json"), "utf8")).packages[`node_modules/${name}`];
-	const locked = lock.packages[`node_modules/${name}`];
-	if (locked.version !== version || locked.integrity !== installed?.integrity) {
-		console.error(`${name} mismatch: ${sha} locks ${locked.version} ${locked.integrity}, resolved ${version} ${installed?.integrity}`);
+	// The lockfile entry for the path it resolved to: pi-ai's own nested copy
+	// (packages/ai/node_modules/<name>, as openai is since ab30693d6) or the
+	// root one (node_modules/<name>). Where the lockfile nests a copy for
+	// pi-ai, pi-ai must resolve that one.
+	const resolvedKey = path.relative(extraction, dir);
+	const key = resolvedKey.startsWith("..") || path.isAbsolute(resolvedKey) ? `node_modules/${name}` : resolvedKey;
+	const nestedKey = `packages/ai/node_modules/${name}`;
+	const locked = lock.packages[key];
+	if ((lock.packages[nestedKey] && key !== nestedKey) || locked?.version !== version || locked.integrity !== installed?.integrity) {
+		const want = lock.packages[nestedKey] ? nestedKey : key;
+		console.error(`${name} mismatch: ${sha} locks ${lock.packages[want]?.version} ${lock.packages[want]?.integrity} at ${want}, resolved ${version} ${installed?.integrity} at ${key}`);
 		process.exit(1);
 	}
 	sdks.push(`${name} ${version} ${locked.integrity}`);
@@ -131,7 +153,8 @@ type Mode =
 	| "a custom fetch rejects with an AbortError of its own"
 	| "a custom fetch rejects once the signal aborts"
 	| "a custom fetch's body ignores an abort from the callback"
-	| "a custom fetch's body fails once the signal aborts";
+	| "a custom fetch's body fails once the signal aborts"
+	| "a custom fetch's body hangs, ignoring an abort while a read is pending";
 const streamModes: Mode[] = [
 	"an abort while a read is pending",
 	"an abort from the callback with events left in its read",
@@ -166,6 +189,7 @@ const customRejectsOnAbort: Mode = "a custom fetch rejects once the signal abort
 const customBodyIgnoresAbort: Mode = "a custom fetch's body ignores an abort from the callback";
 const customBodyFailsOnAbort: Mode = "a custom fetch's body fails once the signal aborts";
 const customAbortModes = [customRejectsOnAbort, customBodyIgnoresAbort, customBodyFailsOnAbort];
+const customBodyHangs: Mode = "a custom fetch's body hangs, ignoring an abort while a read is pending";
 
 const anthropicEvent = (event: string, data: unknown) => `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
 // A data-only event, as pi-messages and google send them.
@@ -219,16 +243,34 @@ const adapters = [
 		provider: "openai",
 		id: "gpt-4o",
 		module: await load("api/openai-completions.ts"),
-		modes: [errorBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes],
-		segments: [],
+		modes: [...streamModes, completeBody, errorBody, drops, customBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes, ...customAbortModes, customBodyHangs],
+		segments: [
+			dataEvent({ id: "c1", choices: [{ index: 0, delta: { content: "in" } }] }) +
+				dataEvent({ id: "c1", choices: [{ index: 0, delta: { content: " " } }] }) +
+				dataEvent({ id: "c1", choices: [{ index: 0, delta: { content: "hand" } }] }),
+			dataEvent({ id: "c1", choices: [{ index: 0, delta: { content: " and more" } }] }),
+		],
+		finish: dataEvent({ id: "c1", choices: [{ index: 0, delta: {}, finish_reason: "stop" }] }) + "data: [DONE]\n\n",
 	},
 	{
 		api: "openai-responses",
 		provider: "openai",
 		id: "gpt-5-mini",
 		module: await load("api/openai-responses.ts"),
-		modes: [errorBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes],
-		segments: [],
+		modes: [...streamModes, completeBody, errorBody, drops, customBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes, ...customAbortModes, customBodyHangs],
+		segments: [
+			dataEvent({ type: "response.output_item.added", output_index: 0, item: { type: "message", id: "msg_1", role: "assistant", content: [] } }) +
+				dataEvent({ type: "response.content_part.added", output_index: 0, part: { type: "output_text", text: "" } }) +
+				dataEvent({ type: "response.output_text.delta", output_index: 0, delta: "in hand" }),
+			dataEvent({ type: "response.output_text.delta", output_index: 0, delta: " and more" }),
+		],
+		finish:
+			dataEvent({
+				type: "response.output_item.done",
+				output_index: 0,
+				item: { type: "message", id: "msg_1", role: "assistant", content: [{ type: "output_text", text: "in hand and more" }] },
+			}) +
+			dataEvent({ type: "response.completed", response: { id: "resp_1", status: "completed", usage: { input_tokens: 1, output_tokens: 2, total_tokens: 3 } } }),
 	},
 	{
 		api: "google-generative-ai",
@@ -314,7 +356,8 @@ for (const a of adapters) {
 			mode !== customBody &&
 			!noResponseModes.includes(mode) &&
 			!sdkNoResponseModes.includes(mode) &&
-			!customAbortModes.includes(mode);
+			!customAbortModes.includes(mode) &&
+			mode !== customBodyHangs;
 		dropAfterWrite = mode === drops || mode === errorBodyDrops;
 		const controller = new AbortController();
 		onSegmentWritten =
@@ -364,6 +407,18 @@ for (const a of adapters) {
 					pull(c) {
 						if (next < whole.length) c.enqueue(new TextEncoder().encode(whole[next++]));
 						else c.close();
+					},
+				});
+				return new Response(body, eventStream);
+			},
+			[customBodyHangs]: async () => {
+				let sent = false;
+				const body = new ReadableStream({
+					pull(c) {
+						if (sent) return new Promise<void>(() => {});
+						sent = true;
+						c.enqueue(new TextEncoder().encode(a.segments[0]));
+						setTimeout(() => controller.abort(), 150);
 					},
 				});
 				return new Response(body, eventStream);
@@ -437,6 +492,7 @@ for (const a of adapters) {
 			...(mode === timesOut ? { timeoutMs } : {}),
 			...(mode === customBodyIgnoresAbort ? { status: 200, segments: whole } : {}),
 			...(mode === customBodyFailsOnAbort ? { status: 200, segments: a.segments.slice(0, 1), customBodyError } : {}),
+			...(mode === customBodyHangs ? { status: 200, segments: a.segments.slice(0, 1) } : {}),
 			observed,
 			events,
 			stopReason: msg.stopReason,

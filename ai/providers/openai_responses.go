@@ -430,6 +430,14 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
 
+		// The SDK fetches with undici unless the caller hands pi its own fetch:
+		// the body then fails as undici's does (fetchBody), "terminated" for a
+		// connection that drops mid-body.
+		var respBody io.Reader = resp.Body
+		if _, custom := customHTTPClient(opts.HTTPClient); !custom {
+			respBody = fetchBody{ctx, resp.Body}
+		}
+
 		var builders []*blockBuilder
 		// outputSlots maps an event's output_index to the in-flight block for
 		// that output item. Tracking by output_index (instead of a single
@@ -714,7 +722,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		if opts.OnProviderStreamEvent != nil {
 			onEvent = func(data any) error { return opts.OnProviderStreamEvent(data, model) }
 		}
-		err = iterateOpenAISSE2(resp.Body, ctx, onEvent, func(ev responsesEvent) error {
+		err = iterateOpenAISSE2(respBody, ctx, onEvent, func(ev responsesEvent) error {
 			switch ev.Type {
 			case "response.created":
 				// pi: `output.responseId = event.response.id`, which throws on a

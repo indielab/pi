@@ -1,6 +1,8 @@
 {
-	"sha": "002fc8385",
-	"openai": "6.40.0",
+	"sha": "2b0a123de",
+	"openai": "7.19.0",
+	"openaiIntegrity": "sha512-MX2s3u2L5racTO0CC/SWpCOasJQBCJrqLKXK+l82cAhdeF8mPMBEe/gxMm0ZFa2xpKpOFLRjxv5afYEZbBXmbQ==",
+	"node": "v26.4.0",
 	"dispatch": {
 		"blank-line-dispatch": {
 			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
@@ -25,10 +27,13 @@
 						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
 						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
-					"threw": {
-						"name": "TypeError",
-						"message": "terminated"
-					}
+					"threw": null
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -104,6 +109,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -157,162 +168,30 @@
 			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n",
 			"sdk": {
 				"yields": [
-					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-				],
-				"threw": null,
-				"aborted": {
-					"yields": [
-						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-					],
-					"threw": null
-				},
-				"readFailed": {
-					"yields": [
-						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-					],
-					"threw": {
-						"name": "TypeError",
-						"message": "terminated"
-					}
-				}
-			},
-			"completions": {
-				"observed": [
-					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-				],
-				"sameModel": true,
-				"onResponseCalls": 1,
-				"stopReason": "error",
-				"errorMessage": "Stream ended without finish_reason",
-				"text": "x",
-				"responseId": "a",
-				"rawStopReason": "",
-				"usage": {
-					"input": "0",
-					"output": "0",
-					"cacheRead": "0",
-					"cacheWrite": "0",
-					"reasoning": "undefined:",
-					"totalTokens": "0"
-				},
-				"toolCalls": [],
-				"thinking": []
-			},
-			"responses": {
-				"observed": [
-					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-				],
-				"sameModel": true,
-				"onResponseCalls": 1,
-				"stopReason": "error",
-				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
-				"text": "",
-				"responseId": "",
-				"rawStopReason": "",
-				"usage": {
-					"input": "0",
-					"output": "0",
-					"cacheRead": "0",
-					"cacheWrite": "0",
-					"reasoning": "undefined:",
-					"totalTokens": "0"
-				},
-				"toolCalls": [],
-				"thinking": []
-			}
-		},
-		"unterminated-no-newline": {
-			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}",
-			"sdk": {
-				"yields": [
-					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-				],
-				"threw": null,
-				"aborted": {
-					"yields": [
-						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-					],
-					"threw": null
-				},
-				"readFailed": {
-					"yields": [
-						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-					],
-					"threw": {
-						"name": "TypeError",
-						"message": "terminated"
-					}
-				}
-			},
-			"completions": {
-				"observed": [
-					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-				],
-				"sameModel": true,
-				"onResponseCalls": 1,
-				"stopReason": "error",
-				"errorMessage": "Stream ended without finish_reason",
-				"text": "x",
-				"responseId": "a",
-				"rawStopReason": "",
-				"usage": {
-					"input": "0",
-					"output": "0",
-					"cacheRead": "0",
-					"cacheWrite": "0",
-					"reasoning": "undefined:",
-					"totalTokens": "0"
-				},
-				"toolCalls": [],
-				"thinking": []
-			},
-			"responses": {
-				"observed": [
-					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
-				],
-				"sameModel": true,
-				"onResponseCalls": 1,
-				"stopReason": "error",
-				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
-				"text": "",
-				"responseId": "",
-				"rawStopReason": "",
-				"usage": {
-					"input": "0",
-					"output": "0",
-					"cacheRead": "0",
-					"cacheWrite": "0",
-					"reasoning": "undefined:",
-					"totalTokens": "0"
-				},
-				"toolCalls": [],
-				"thinking": []
-			}
-		},
-		"done-prefix": {
-			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]extra\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\n",
-			"sdk": {
-				"yields": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
 				"threw": null,
 				"aborted": {
 					"yields": [
-						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
-						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 					],
 					"threw": null
 				},
 				"readFailed": {
 					"yields": [
-						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
-						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 					],
 					"threw": {
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -362,6 +241,253 @@
 				"thinking": []
 			}
 		},
+		"unterminated-no-newline": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"done-prefix": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]extra\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": {
+					"name": "SyntaxError",
+					"message": "Error reading response: malformed server-sent event JSON."
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Error reading response: malformed server-sent event JSON."
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Error reading response: malformed server-sent event JSON."
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"done-trailing-space": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE] \n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": {
+					"name": "SyntaxError",
+					"message": "Error reading response: malformed server-sent event JSON."
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Error reading response: malformed server-sent event JSON."
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Error reading response: malformed server-sent event JSON."
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
 		"done-exact-first": {
 			"sse": "data: [DONE]\n\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
 			"sdk": {
@@ -373,10 +499,11 @@
 				},
 				"readFailed": {
 					"yields": [],
-					"threw": {
-						"name": "TypeError",
-						"message": "terminated"
-					}
+					"threw": null
+				},
+				"abortedOnFirst": {
+					"yields": [],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -428,7 +555,7 @@
 				],
 				"threw": {
 					"name": "SyntaxError",
-					"message": "Unexpected token 'D', \"[DONE\" is not valid JSON"
+					"message": "Error reading response: malformed server-sent event JSON."
 				},
 				"aborted": {
 					"yields": [
@@ -436,7 +563,7 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Unexpected token 'D', \"[DONE\" is not valid JSON"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
 				},
 				"readFailed": {
@@ -445,8 +572,14 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Unexpected token 'D', \"[DONE\" is not valid JSON"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -456,7 +589,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Unexpected token 'D', \"[DONE\" is not valid JSON",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -478,7 +611,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Unexpected token 'D', \"[DONE\" is not valid JSON",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -521,6 +654,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -584,19 +723,195 @@
 				"aborted": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
-						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}"
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
 					"threw": null
 				},
 				"readFailed": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
-						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}"
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
 					"threw": {
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "xy",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"lf-crlf-separators": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\r\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\r\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\r\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "xy",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"crlf-lf-separators": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\r\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\r\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\r\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"threw": null,
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": null
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "TypeError",
+						"message": "terminated"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -660,19 +975,27 @@
 				"aborted": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
-						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}"
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
 					"threw": null
 				},
 				"readFailed": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
-						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}"
+						"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
 					"threw": {
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -748,6 +1071,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"m\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"joined\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -824,6 +1153,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"event\":\"thread.message\",\"data\":{\"id\":\"t\"}}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -899,6 +1234,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -972,6 +1313,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1045,6 +1392,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1121,6 +1474,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1175,14 +1534,752 @@
 		"event-named-error": {
 			"sse": "event: error\ndata: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
 			"sdk": {
+				"yields": [],
+				"threw": {
+					"name": "APIError",
+					"message": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"error": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				},
+				"aborted": {
+					"yields": [],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"error": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					}
+				},
+				"readFailed": {
+					"yields": [],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"error": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"error": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					}
+				}
+			},
+			"completions": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-with-error": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: error\ndata: {\"error\":{\"message\":\"inner\",\"metadata\":{\"raw\":\"r2\"}}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "inner",
+					"error": "{\"message\":\"inner\",\"metadata\":{\"raw\":\"r2\"}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "inner",
+						"error": "{\"message\":\"inner\",\"metadata\":{\"raw\":\"r2\"}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "inner",
+						"error": "{\"message\":\"inner\",\"metadata\":{\"raw\":\"r2\"}}"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "inner\nr2",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "inner",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-null-error": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: error\ndata: {\"error\":null,\"message\":\"m\"}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "m",
+					"error": "{\"error\":null,\"message\":\"m\"}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "m",
+						"error": "{\"error\":null,\"message\":\"m\"}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "m",
+						"error": "{\"error\":null,\"message\":\"m\"}"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "m",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "m",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-falsy-error": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: error\ndata: {\"error\":false,\"message\":\"m\"}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "(no status code or body)",
+					"error": "false"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "(no status code or body)",
+						"error": "false"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "(no status code or body)",
+						"error": "false"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "(no status code or body)",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "(no status code or body)",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-metadata-raw": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: error\ndata: {\"message\":\"m\",\"metadata\":{\"raw\":\"r\"}}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "m",
+					"error": "{\"message\":\"m\",\"metadata\":{\"raw\":\"r\"}}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "m",
+						"error": "{\"message\":\"m\",\"metadata\":{\"raw\":\"r\"}}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "m",
+						"error": "{\"message\":\"m\",\"metadata\":{\"raw\":\"r\"}}"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "m\nr",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "m",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-null": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: error\ndata: null\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "(no status code or body)",
+					"error": "null"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "(no status code or body)",
+						"error": "null"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "(no status code or body)",
+						"error": "null"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "(no status code or body)",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "(no status code or body)",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-string": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: error\ndata: \"boom\"\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "\"boom\"",
+					"error": "\"boom\""
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "\"boom\"",
+						"error": "\"boom\""
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "\"boom\"",
+						"error": "\"boom\""
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "\"boom\"",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "\"boom\"",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-array": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: error\ndata: [1,{\"message\":\"m\"}]\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "[1,{\"message\":\"m\"}]",
+					"error": "[1,{\"message\":\"m\"}]"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "[1,{\"message\":\"m\"}]",
+						"error": "[1,{\"message\":\"m\"}]"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "[1,{\"message\":\"m\"}]",
+						"error": "[1,{\"message\":\"m\"}]"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "[1,{\"message\":\"m\"}]",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "[1,{\"message\":\"m\"}]",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-unparseable": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: error\ndata: {oops\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "SyntaxError",
+					"message": "Error reading response: malformed server-sent event JSON."
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Error reading response: malformed server-sent event JSON."
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "SyntaxError",
+						"message": "Error reading response: malformed server-sent event JSON."
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-case": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: Error\ndata: {\"message\":\"m\"}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
 				"yields": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"message\":\"m\"}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
 				"threw": null,
 				"aborted": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"message\":\"m\"}",
 						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
 					"threw": null
@@ -1190,17 +2287,25 @@
 				"readFailed": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+						"{\"message\":\"m\"}",
 						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
 					"threw": {
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
 				"observed": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"message\":\"m\"}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
 				"sameModel": true,
@@ -1224,12 +2329,96 @@
 			"responses": {
 				"observed": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"message\":\"m\"}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
 				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"text": "",
+				"responseId": "",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"event-named-error-responses-shape": {
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\nevent: error\ndata: {\"type\":\"error\",\"code\":\"rate_limit_exceeded\",\"message\":\"slow down\",\"param\":null,\"sequence_number\":1}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n",
+			"sdk": {
+				"yields": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"threw": {
+					"name": "APIError",
+					"message": "slow down",
+					"error": "{\"type\":\"error\",\"code\":\"rate_limit_exceeded\",\"message\":\"slow down\",\"param\":null,\"sequence_number\":1}"
+				},
+				"aborted": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "slow down",
+						"error": "{\"type\":\"error\",\"code\":\"rate_limit_exceeded\",\"message\":\"slow down\",\"param\":null,\"sequence_number\":1}"
+					}
+				},
+				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "slow down",
+						"error": "{\"type\":\"error\",\"code\":\"rate_limit_exceeded\",\"message\":\"slow down\",\"param\":null,\"sequence_number\":1}"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
+				}
+			},
+			"completions": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "slow down",
+				"text": "x",
+				"responseId": "a",
+				"rawStopReason": "",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			},
+			"responses": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "error",
+				"errorMessage": "slow down",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -1269,6 +2458,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1345,6 +2540,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"event\":\"thread.message\",\"data\":{\"id\":\"t\",\"error\":{\"message\":\"not thrown\"}}}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1438,6 +2639,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"5"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1526,6 +2733,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1606,6 +2819,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1683,6 +2902,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"z\":1,\"id\":\"k\",\"a\":{\"y\":[{\"q\":1,\"b\":2}],\"x\":null},\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<&>\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1762,6 +2987,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"x\":null,\"y\":null,\"z\":0,\"w\":[null,{\"v\":null}],\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1839,6 +3070,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"1\":\"y\",\"2\":\"x\",\"4294967294\":4,\"z\":1,\"id\":\"k\",\"-1\":0,\"01\":2,\"4294967295\":3,\"choices\":[{\"index\":0,\"delta\":{\"content\":\"i\"},\"logprobs\":{\"1\":2,\"2\":1}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1918,6 +3155,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"code\":502,\"metadata\":{\"raw\":\"upstream exploded\",\"provider_name\":\"p\"}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -1995,6 +3238,12 @@
 						"message": "boom: upstream exploded",
 						"error": "{\"message\":\"boom: upstream exploded\",\"metadata\":{\"raw\":\"upstream exploded\"}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2072,6 +3321,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":5}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2149,6 +3404,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":{\"a\":1}}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2226,6 +3487,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":[1,[2,null],\"x\"]}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2303,6 +3570,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":true}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2380,6 +3653,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":\"\"}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2457,6 +3736,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":0}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2534,6 +3819,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":false}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2611,6 +3902,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"metadata\":{\"raw\":null}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2688,6 +3985,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"metadata\":\"raw\"}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2765,6 +4068,12 @@
 						"message": "{\"code\":\"x\",\"type\":\"y\"}",
 						"error": "{\"code\":\"x\",\"type\":\"y\"}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2842,6 +4151,12 @@
 						"message": "{\"b\":1,\"a\":2}",
 						"error": "{\"message\":{\"b\":1,\"a\":2}}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2919,6 +4234,12 @@
 						"message": "42",
 						"error": "{\"message\":42}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -2996,6 +4317,12 @@
 						"message": "{\"message\":\"\",\"code\":1}",
 						"error": "{\"message\":\"\",\"code\":1}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -3073,6 +4400,12 @@
 						"message": "café </script> \"q\"",
 						"error": "{\"message\":\"café </script> \\\"q\\\"\"}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -3150,6 +4483,12 @@
 						"message": "\"boom\"",
 						"error": "\"boom\""
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -3227,6 +4566,12 @@
 						"message": "7",
 						"error": "7"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -3304,6 +4649,12 @@
 						"message": "true",
 						"error": "true"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -3381,6 +4732,12 @@
 						"message": "{}",
 						"error": "{}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -3458,6 +4815,12 @@
 						"message": "[]",
 						"error": "[]"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -3535,6 +4898,12 @@
 						"message": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}",
 						"error": "{\"1\":\"y\",\"2\":\"x\",\"b\":1,\"code\":1.5e+21}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -3588,14 +4957,32 @@
 				"yields": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 				],
-				"threw": null,
+				"threw": {
+					"name": "APIError",
+					"message": "upstream: FetchRequestCanceledException",
+					"error": "{\"message\":\"upstream: FetchRequestCanceledException\"}"
+				},
 				"aborted": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 					],
-					"threw": null
+					"threw": {
+						"name": "APIError",
+						"message": "upstream: FetchRequestCanceledException",
+						"error": "{\"message\":\"upstream: FetchRequestCanceledException\"}"
+					}
 				},
 				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "upstream: FetchRequestCanceledException",
+						"error": "{\"message\":\"upstream: FetchRequestCanceledException\"}"
+					}
+				},
+				"abortedOnFirst": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 					],
@@ -3609,7 +4996,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Stream ended without finish_reason",
+				"errorMessage": "upstream: FetchRequestCanceledException",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -3631,7 +5018,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"errorMessage": "upstream: FetchRequestCanceledException",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -3653,14 +5040,32 @@
 				"yields": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 				],
-				"threw": null,
+				"threw": {
+					"name": "APIError",
+					"message": "\"FetchRequestCanceledException\"",
+					"error": "\"FetchRequestCanceledException\""
+				},
 				"aborted": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 					],
-					"threw": null
+					"threw": {
+						"name": "APIError",
+						"message": "\"FetchRequestCanceledException\"",
+						"error": "\"FetchRequestCanceledException\""
+					}
 				},
 				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "\"FetchRequestCanceledException\"",
+						"error": "\"FetchRequestCanceledException\""
+					}
+				},
+				"abortedOnFirst": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 					],
@@ -3674,7 +5079,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Stream ended without finish_reason",
+				"errorMessage": "\"FetchRequestCanceledException\"",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -3696,7 +5101,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"errorMessage": "\"FetchRequestCanceledException\"",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -3718,14 +5123,32 @@
 				"yields": [
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 				],
-				"threw": null,
+				"threw": {
+					"name": "APIError",
+					"message": "{\"cause\":\"FetchRequestCanceledException\"}",
+					"error": "{\"message\":{\"cause\":\"FetchRequestCanceledException\"}}"
+				},
 				"aborted": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 					],
-					"threw": null
+					"threw": {
+						"name": "APIError",
+						"message": "{\"cause\":\"FetchRequestCanceledException\"}",
+						"error": "{\"message\":{\"cause\":\"FetchRequestCanceledException\"}}"
+					}
 				},
 				"readFailed": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "{\"cause\":\"FetchRequestCanceledException\"}",
+						"error": "{\"message\":{\"cause\":\"FetchRequestCanceledException\"}}"
+					}
+				},
+				"abortedOnFirst": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 					],
@@ -3739,7 +5162,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Stream ended without finish_reason",
+				"errorMessage": "{\"cause\":\"FetchRequestCanceledException\"}",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -3761,7 +5184,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"errorMessage": "{\"cause\":\"FetchRequestCanceledException\"}",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -3784,18 +5207,36 @@
 					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 				],
-				"threw": null,
+				"threw": {
+					"name": "APIError",
+					"message": "FetchRequestCanceledException",
+					"error": "{\"message\":\"FetchRequestCanceledException\"}"
+				},
 				"aborted": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
-					"threw": null
+					"threw": {
+						"name": "APIError",
+						"message": "FetchRequestCanceledException",
+						"error": "{\"message\":\"FetchRequestCanceledException\"}"
+					}
 				},
 				"readFailed": {
 					"yields": [
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+					],
+					"threw": {
+						"name": "APIError",
+						"message": "FetchRequestCanceledException",
+						"error": "{\"message\":\"FetchRequestCanceledException\"}"
+					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
 					],
 					"threw": null
 				}
@@ -3807,8 +5248,8 @@
 				],
 				"sameModel": true,
 				"onResponseCalls": 1,
-				"stopReason": "stop",
-				"errorMessage": "",
+				"stopReason": "error",
+				"errorMessage": "FetchRequestCanceledException",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "stop",
@@ -3831,7 +5272,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"errorMessage": "FetchRequestCanceledException",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -3877,6 +5318,12 @@
 						"message": "boom",
 						"error": "{\"message\":\"boom\",\"code\":\"FetchRequestCanceledException\"}"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -3960,6 +5407,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"n\",\"error\":null}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4044,6 +5497,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"Error\":{\"message\":\"boom\"}}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4115,10 +5574,13 @@
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
-					"threw": {
-						"name": "TypeError",
-						"message": "terminated"
-					}
+					"threw": null
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4176,7 +5638,7 @@
 				],
 				"threw": {
 					"name": "SyntaxError",
-					"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+					"message": "Error reading response: malformed server-sent event JSON."
 				},
 				"aborted": {
 					"yields": [
@@ -4184,7 +5646,7 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
 				},
 				"readFailed": {
@@ -4193,8 +5655,14 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4204,7 +5672,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -4226,7 +5694,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -4250,7 +5718,7 @@
 				],
 				"threw": {
 					"name": "SyntaxError",
-					"message": "Unexpected end of JSON input"
+					"message": "Error reading response: malformed server-sent event JSON."
 				},
 				"aborted": {
 					"yields": [
@@ -4258,7 +5726,7 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Unexpected end of JSON input"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
 				},
 				"readFailed": {
@@ -4267,8 +5735,14 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Unexpected end of JSON input"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4278,7 +5752,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Unexpected end of JSON input",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -4300,7 +5774,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Unexpected end of JSON input",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -4324,7 +5798,7 @@
 				],
 				"threw": {
 					"name": "SyntaxError",
-					"message": "Bad control character in string literal in JSON at position 53 (line 1 column 54)"
+					"message": "Error reading response: malformed server-sent event JSON."
 				},
 				"aborted": {
 					"yields": [
@@ -4332,7 +5806,7 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Bad control character in string literal in JSON at position 53 (line 1 column 54)"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
 				},
 				"readFailed": {
@@ -4341,8 +5815,14 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Bad control character in string literal in JSON at position 53 (line 1 column 54)"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4352,7 +5832,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Bad control character in string literal in JSON at position 53 (line 1 column 54)",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -4374,7 +5854,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Bad control character in string literal in JSON at position 53 (line 1 column 54)",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -4398,7 +5878,7 @@
 				],
 				"threw": {
 					"name": "SyntaxError",
-					"message": "Bad escaped character in JSON at position 54 (line 1 column 55)"
+					"message": "Error reading response: malformed server-sent event JSON."
 				},
 				"aborted": {
 					"yields": [
@@ -4406,7 +5886,7 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Bad escaped character in JSON at position 54 (line 1 column 55)"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
 				},
 				"readFailed": {
@@ -4415,8 +5895,14 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Bad escaped character in JSON at position 54 (line 1 column 55)"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4426,7 +5912,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Bad escaped character in JSON at position 54 (line 1 column 55)",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -4448,7 +5934,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Bad escaped character in JSON at position 54 (line 1 column 55)",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -4472,7 +5958,7 @@
 				],
 				"threw": {
 					"name": "SyntaxError",
-					"message": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON"
+					"message": "Error reading response: malformed server-sent event JSON."
 				},
 				"aborted": {
 					"yields": [
@@ -4480,7 +5966,7 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
 				},
 				"readFailed": {
@@ -4489,8 +5975,14 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4500,7 +5992,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -4522,7 +6014,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Unexpected token '}', ...\"[],\"n\":nul}\" is not valid JSON",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -4546,7 +6038,7 @@
 				],
 				"threw": {
 					"name": "SyntaxError",
-					"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+					"message": "Error reading response: malformed server-sent event JSON."
 				},
 				"aborted": {
 					"yields": [
@@ -4554,7 +6046,7 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
 				},
 				"readFailed": {
@@ -4563,8 +6055,14 @@
 					],
 					"threw": {
 						"name": "SyntaxError",
-						"message": "Expected property name or '}' in JSON at position 1 (line 1 column 2)"
+						"message": "Error reading response: malformed server-sent event JSON."
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4574,7 +6072,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "x",
 				"responseId": "a",
 				"rawStopReason": "",
@@ -4596,7 +6094,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "Expected property name or '}' in JSON at position 1 (line 1 column 2)",
+				"errorMessage": "Error reading response: malformed server-sent event JSON.",
 				"text": "",
 				"responseId": "",
 				"rawStopReason": "",
@@ -4632,10 +6130,13 @@
 						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
 						"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
 					],
-					"threw": {
-						"name": "TypeError",
-						"message": "terminated"
-					}
+					"threw": null
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4709,6 +6210,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4782,6 +6289,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�y\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4855,6 +6368,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -4928,6 +6447,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -5001,6 +6526,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x����y\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -5074,6 +6605,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x��y\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -5147,6 +6684,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x���y\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -5220,6 +6763,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"id\":\"u\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x�€y\"}}]}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -5296,6 +6845,12 @@
 						"name": "TypeError",
 						"message": "terminated"
 					}
+				},
+				"abortedOnFirst": {
+					"yields": [
+						"{\"event\":\"thread.m�\",\"data\":{\"id\":\"t\"}}"
+					],
+					"threw": null
 				}
 			},
 			"completions": {
@@ -8878,8 +10433,8 @@
 				],
 				"sameModel": true,
 				"onResponseCalls": 1,
-				"stopReason": "stop",
-				"errorMessage": "",
+				"stopReason": "error",
+				"errorMessage": "FetchRequestCanceledException",
 				"text": "hi",
 				"responseId": "resp_1",
 				"rawStopReason": "completed",
@@ -8908,7 +10463,7 @@
 				"sameModel": true,
 				"onResponseCalls": 1,
 				"stopReason": "error",
-				"errorMessage": "OpenAI Responses stream ended before a terminal response event",
+				"errorMessage": "FetchRequestCanceledException",
 				"text": "hi",
 				"responseId": "resp_1",
 				"rawStopReason": "",
@@ -9155,6 +10710,37 @@
 				"thinking": []
 			}
 		},
+		"completions/done-then-held": {
+			"adapter": "completions",
+			"sse": "data: {\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}\n\ndata: {\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}\n\ndata: {\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n",
+			"status": 200,
+			"hold": true,
+			"abortOnEvent": 0,
+			"outcome": {
+				"observed": [
+					"{\"id\":\"a\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"x\"}}]}",
+					"{\"id\":\"b\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"y\"}}]}",
+					"{\"id\":\"f\",\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
+				"text": "xy",
+				"responseId": "a",
+				"rawStopReason": "stop",
+				"usage": {
+					"input": "0",
+					"output": "0",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "undefined:",
+					"totalTokens": "0"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
 		"responses/callback-throws": {
 			"adapter": "responses",
 			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\n",
@@ -9346,6 +10932,40 @@
 				"onResponseCalls": 1,
 				"stopReason": "aborted",
 				"errorMessage": "Request was aborted",
+				"text": "hi",
+				"responseId": "resp_1",
+				"rawStopReason": "completed",
+				"usage": {
+					"input": "5",
+					"output": "1",
+					"cacheRead": "0",
+					"cacheWrite": "0",
+					"reasoning": "0",
+					"totalTokens": "6"
+				},
+				"toolCalls": [],
+				"thinking": []
+			}
+		},
+		"responses/done-then-held": {
+			"adapter": "responses",
+			"sse": "data: {\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}\n\ndata: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}\n\ndata: {\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}\n\ndata: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}\n\ndata: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}\n\ndata: [DONE]\n\n",
+			"status": 200,
+			"hold": true,
+			"abortOnEvent": 0,
+			"outcome": {
+				"observed": [
+					"{\"type\":\"response.created\",\"sequence_number\":0,\"response\":{\"id\":\"resp_1\"}}",
+					"{\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[]}}",
+					"{\"type\":\"response.content_part.added\",\"output_index\":0,\"part\":{\"type\":\"output_text\",\"text\":\"\"}}",
+					"{\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":\"hi\"}",
+					"{\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"message\",\"id\":\"msg_1\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"hi\"}]}}",
+					"{\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"status\":\"completed\",\"usage\":{\"input_tokens\":5,\"output_tokens\":1,\"total_tokens\":6}}}"
+				],
+				"sameModel": true,
+				"onResponseCalls": 1,
+				"stopReason": "stop",
+				"errorMessage": "",
 				"text": "hi",
 				"responseId": "resp_1",
 				"rawStopReason": "completed",

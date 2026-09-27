@@ -22,10 +22,10 @@ import (
 
 // Where pi trims, it trims with String.prototype.trim, which strips U+FEFF and
 // keeps U+0085 — the reverse of strings.TrimSpace. Every expectation here is
-// pi's own, captured under node at 7140838fd by
+// pi's own, captured under node at 2b0a123de (openai 7.19.0) by
 // testdata/jstrim/capture-jstrim.mts; the contexts below are that script's.
 
-const jstrimCaptureFile = "testdata/jstrim/jstrim-7140838fd.json"
+const jstrimCaptureFile = "testdata/jstrim/jstrim-2b0a123de.json"
 
 const (
 	jsBOM = "\ufeff" // blank to JavaScript, not to strings.TrimSpace
@@ -272,7 +272,8 @@ func TestJSTrimStreamDecoding(t *testing.T) {
 			return StreamSimplePiMessages(context.Background(), model, userHi, opts("test-key")).Result()
 		},
 	}
-	// syntaxErrorText are the decoders that fail with V8's SyntaxError text.
+	// syntaxErrorText are the decoders whose parse failure text the port
+	// reproduces: the openai SDK's own SyntaxError text.
 	syntaxErrorText := map[string]bool{"completions": true, "responses": true}
 	for api, cases := range c.Streams {
 		if run[api] == nil {

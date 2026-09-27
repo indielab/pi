@@ -24,9 +24,10 @@ import (
 )
 
 // openaiStreamCaptureFile is what testdata/openai-stream/capture.mts recorded
-// from pi's source at 002fc8385 and the openai SDK its lockfile pins: how the
+// from pi's source at 2b0a123de and the openai SDK its lockfile pins for pi-ai
+// (7.19.0, nested under packages/ai since ab30693d6): how the
 // SDK's stream iterator and pi's two openai adapters read the same SSE bodies.
-const openaiStreamCaptureFile = "testdata/openai-stream/openai-stream-002fc8385.json"
+const openaiStreamCaptureFile = "testdata/openai-stream/openai-stream-2b0a123de.json"
 
 type openaiStreamOutcome struct {
 	Observed        []string `json:"observed"`
@@ -71,10 +72,13 @@ type openaiStreamRow struct {
 	SDK       *struct {
 		openaiSDKReading
 		// Aborted and ReadFailed are the body read to its end and then
-		// failing: with an AbortError, as a cancelled request's read does, and
-		// with TypeError "terminated".
-		Aborted    openaiSDKReading `json:"aborted"`
-		ReadFailed openaiSDKReading `json:"readFailed"`
+		// failing, while the stream's signal is live: with an AbortError, as
+		// a custom fetch's body can throw one, and with TypeError
+		// "terminated". AbortedOnFirst is the body read whole with the
+		// stream's own signal aborted as its first item is yielded.
+		Aborted        openaiSDKReading `json:"aborted"`
+		ReadFailed     openaiSDKReading `json:"readFailed"`
+		AbortedOnFirst openaiSDKReading `json:"abortedOnFirst"`
 	} `json:"sdk"`
 	Completions *openaiStreamOutcome `json:"completions"`
 	Responses   *openaiStreamOutcome `json:"responses"`
@@ -133,8 +137,8 @@ func loadOpenAIStreamCapture(t *testing.T) openaiStreamCapture {
 	if err := json.Unmarshal(data, &c); err != nil {
 		t.Fatalf("%s: %v; rerun capture.mts", openaiStreamCaptureFile, err)
 	}
-	if c.OpenAI != "6.40.0" {
-		t.Fatalf("%s was captured with openai %s; 002fc8385's package-lock.json locks 6.40.0", openaiStreamCaptureFile, c.OpenAI)
+	if c.OpenAI != "7.19.0" {
+		t.Fatalf("%s was captured with openai %s; 2b0a123de's package-lock.json locks 7.19.0 for pi-ai", openaiStreamCaptureFile, c.OpenAI)
 	}
 	return c
 }
@@ -357,25 +361,27 @@ var openaiStreamReads = map[string]func(string) io.Reader{
 
 // Both loops read a body into exactly the items the openai SDK's stream
 // iterator yields — blank-line dispatch, joined multi-line data, every line
-// ending wherever the reads split it, a "[DONE]" prefix ending the stream, no
-// dispatch of an event the body ends inside, "thread.*" events wrapped — and
-// fail where the SDK throws: on an item carrying an error, with its APIError
-// message, and on data JSON.parse rejects, with V8's SyntaxError message.
+// ending wherever the reads split it, only an exact "[DONE]" ending the
+// stream, an event the body ends inside dispatched at its end, "thread.*"
+// events wrapped — and fail where the SDK throws: on an item carrying an error
+// or an event named "error", with its APIError message, and on data JSON.parse
+// rejects, with the SDK's own SyntaxError text.
 func TestOpenAIStreamReadsLikeTheSDK(t *testing.T) {
 	c := loadOpenAIStreamCapture(t)
 	for name, row := range c.Dispatch {
 		for read, reader := range openaiStreamReads {
 			t.Run(name+"/"+read, func(t *testing.T) {
-				readOpenAIStreamLikeTheSDK(t, nil, reader(row.body(t)), row.SDK.openaiSDKReading, nil)
+				readOpenAIStreamLikeTheSDK(t, nil, reader(row.body(t)), row.SDK.openaiSDKReading, nil, nil)
 			})
 		}
 	}
 }
 
 // An event's data is read as JSON.parse reads it, in one pass: accepted where
-// node's JSON.parse accepts it, and otherwise failing with V8's SyntaxError
-// message, over every row of jstext's JSON.parse capture.
-func TestOpenAIStreamJSONParsesLikeV8(t *testing.T) {
+// node's JSON.parse accepts it, over every row of jstext's JSON.parse capture,
+// and otherwise failing with the SDK's own SyntaxError text, whatever
+// JSON.parse's reason (openai 7.19.0's Stream no longer rethrows V8's error).
+func TestOpenAIStreamJSONParsesLikeTheSDK(t *testing.T) {
 	data, err := os.ReadFile("../../internal/jstext/testdata/json-parse-errors-node.json")
 	if err != nil {
 		t.Fatal(err)
@@ -392,8 +398,8 @@ func TestOpenAIStreamJSONParsesLikeV8(t *testing.T) {
 		switch {
 		case threw == nil && err != nil:
 			t.Errorf("openaiStreamJSON(%q): %v; JSON.parse accepts it", text, err)
-		case threw != nil && (err == nil || err.Error() != *threw):
-			t.Errorf("openaiStreamJSON(%q) = %#v, %v; JSON.parse throws %q", text, value, err, *threw)
+		case threw != nil && (err == nil || err.Error() != "Error reading response: malformed server-sent event JSON."):
+			t.Errorf("openaiStreamJSON(%q) = %#v, %v; JSON.parse throws %q, so the SDK throws its malformed-JSON SyntaxError", text, value, err, *threw)
 		}
 	}
 }
@@ -474,12 +480,13 @@ func TestOpenAIStreamLineLimitSaysItIsThePorts(t *testing.T) {
 
 // The line splitter ends lines where the SDK's LineDecoder does wherever the
 // reads cut a line ending: "\r\n" is one line ending even when a read ends
-// between its two bytes, so a "\r" at the end of what has been read waits for
-// the next one. The reads above never reach the splitter cut that way, since
-// readOpenAISSE hands it iterSSEChunks' pieces, which end at an event
-// separator; its scanner meets the cut where its buffer ends inside a piece,
-// in an event of 64 KiB or more. Here the splitter gets the capture's chunks
-// one per read, as the LineDecoder did.
+// between its two bytes — a "\r" that ends what has been read ends its line at
+// once, and a "\n" beginning the next read is skipped. readOpenAISSE hands the
+// splitter iterSSEChunks' pieces, and a piece can end in a "\r" whose "\n"
+// begins the next one (findDoubleNewlineIndex counts a "\r" at the end as a
+// whole line ending); its scanner also meets the cut where its buffer ends
+// inside a piece, in an event of 64 KiB or more. Here the splitter gets the
+// capture's chunks one per read, as the LineDecoder did.
 func TestOpenAISSELinesSplitLikeTheSDK(t *testing.T) {
 	c := loadOpenAIStreamCapture(t)
 	if len(c.Lines) == 0 {
@@ -488,7 +495,8 @@ func TestOpenAISSELinesSplitLikeTheSDK(t *testing.T) {
 	for name, row := range c.Lines {
 		t.Run(name, func(t *testing.T) {
 			scanner := bufio.NewScanner(&openaiChunkedBody{chunks: slices.Clone(row.Chunks)})
-			scanner.Split(scanOpenAISSELines)
+			var lines openaiSSELines
+			scanner.Split(lines.split)
 			var got []string
 			for scanner.Scan() {
 				got = append(got, scanner.Text())
@@ -517,21 +525,43 @@ func (b *openaiChunkedBody) Read(p []byte) (int, error) {
 	return n, nil
 }
 
-// A cancelled request's failed body read ends the reading where the SDK's
-// does and without an error: the SDK's Stream swallows the AbortError, so pi's
-// adapter goes on to its post-loop checks. Everything read before it is still
-// dispatched — the SDK looks at the signal only through that read — except
-// what its iterSSEChunks held back past the last event separator and a line
-// its LineDecoder had not yet ended, which only the body's end flushes.
-func TestOpenAIStreamAbortedReadEndsLikeTheSDK(t *testing.T) {
+// A body read that fails with an abort of the body's own while the request is
+// live — context.Canceled from a custom client's body, the Go stand-in for the
+// AbortError a custom fetch's body throws — ends the reading without an error:
+// the SDK's Stream swallows a transport abort, so pi's adapter goes on to its
+// post-loop checks. Everything read before it is dispatched, except what its
+// iterSSEChunks held back past the last event separator, which only the
+// body's end would have passed on.
+func TestOpenAIStreamAbortErrorReadEndsLikeTheSDK(t *testing.T) {
 	c := loadOpenAIStreamCapture(t)
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
 	for name, row := range c.Dispatch {
 		for read, reader := range openaiStreamReads {
 			t.Run(name+"/"+read, func(t *testing.T) {
-				body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(ctx.Err()))
-				readOpenAIStreamLikeTheSDK(t, ctx, body, row.SDK.Aborted, nil)
+				body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(context.Canceled))
+				readOpenAIStreamLikeTheSDK(t, context.Background(), body, row.SDK.Aborted, nil, nil)
+			})
+		}
+	}
+}
+
+// Once the request's context is done the reading ends at once, and without an
+// error: the SDK checks its signal before every line and races every read
+// against it, so nothing is dispatched after the item the abort came on — not
+// even what has already been read. Here the context is cancelled as the first
+// item is yielded, as the capture aborts the Stream's signal.
+func TestOpenAIStreamAbortEndsTheReadingLikeTheSDK(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	for name, row := range c.Dispatch {
+		for read, reader := range openaiStreamReads {
+			t.Run(name+"/"+read, func(t *testing.T) {
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				onItem := func(n int) {
+					if n == 1 {
+						cancel()
+					}
+				}
+				readOpenAIStreamLikeTheSDK(t, ctx, reader(row.body(t)), row.SDK.AbortedOnFirst, nil, onItem)
 			})
 		}
 	}
@@ -547,7 +577,7 @@ func TestOpenAIStreamFailedReadLikeTheSDK(t *testing.T) {
 		for read, reader := range openaiStreamReads {
 			t.Run(name+"/"+read, func(t *testing.T) {
 				body := io.MultiReader(reader(row.body(t)), iotest.ErrReader(errTerminated))
-				readOpenAIStreamLikeTheSDK(t, context.Background(), body, row.SDK.ReadFailed, errTerminated)
+				readOpenAIStreamLikeTheSDK(t, context.Background(), body, row.SDK.ReadFailed, errTerminated, nil)
 			})
 		}
 	}
@@ -556,7 +586,9 @@ func TestOpenAIStreamFailedReadLikeTheSDK(t *testing.T) {
 // readOpenAIStreamLikeTheSDK iterates body and compares the items and the
 // error with what the SDK made of it. readErr, when set, is the error the
 // body's read fails with, which stands for the SDK's TypeError "terminated".
-func readOpenAIStreamLikeTheSDK(t *testing.T, ctx context.Context, body io.Reader, want openaiSDKReading, readErr error) {
+// onItem, when set, is called with the count of items yielded so far, as each
+// is yielded.
+func readOpenAIStreamLikeTheSDK(t *testing.T, ctx context.Context, body io.Reader, want openaiSDKReading, readErr error, onItem func(n int)) {
 	t.Helper()
 	var got []string
 	err := iterateOpenAIStream(body, ctx, func(item openaiStreamItem) error {
@@ -565,6 +597,9 @@ func readOpenAIStreamLikeTheSDK(t *testing.T, ctx context.Context, body io.Reade
 			t.Fatalf("yielded item %#v has no JSON form: %v", item.value, err)
 		}
 		got = append(got, text)
+		if onItem != nil {
+			onItem(len(got))
+		}
 		return nil
 	})
 	switch {
@@ -619,6 +654,25 @@ func TestOpenAIStreamAbortLikePi(t *testing.T) {
 	}
 }
 
+// A body that ends in "[DONE]" and is then held open ends the stream there,
+// with no abort: the SDK reads nothing after "[DONE]" (it breaks out of its
+// loop and cancels the body), so neither adapter waits on the connection the
+// server still holds.
+func TestOpenAIStreamDoneEndsTheReadingLikePi(t *testing.T) {
+	c := loadOpenAIStreamCapture(t)
+	for _, adapter := range []string{"completions", "responses"} {
+		t.Run(adapter, func(t *testing.T) {
+			row, ok := c.Hooks[adapter+"/done-then-held"]
+			if !ok || !row.Hold || row.AbortOnEvent != 0 {
+				t.Fatalf("%s has no held, non-aborting hooks row %s/done-then-held; rerun capture.mts", openaiStreamCaptureFile, adapter)
+			}
+			got := runOpenAIStreamAdapter(t, adapter, row.Status, row.SSE, openaiStreamHooks{hold: true})
+			compareOpenAIStreamObserved(t, got, row.Outcome)
+			compareOpenAIStreamEnding(t, got, row.Outcome)
+		})
+	}
+}
+
 // pi awaits onResponse only once the SDK has a 2xx response, and a throw from it
 // fails the stream in both adapters.
 func TestOpenAIStreamOnResponseLikePi(t *testing.T) {
@@ -662,7 +716,8 @@ func compareOpenAIStreamObserved(t *testing.T, got, want openaiStreamOutcome) {
 // Both adapters hand OnProviderStreamEvent every item pi's onProviderStreamEvent
 // receives (upstream 002fc8385), before normalizing it: chunks with no choices,
 // null, scalars and arrays, events the loop ignores, the event it fails on —
-// and nothing the SDK does not yield (an error item, anything after [DONE]).
+// and nothing the SDK does not yield (an error item, an event named "error",
+// anything after [DONE]).
 func TestOpenAIStreamObservesLikePi(t *testing.T) {
 	c := loadOpenAIStreamCapture(t)
 	type run struct {
