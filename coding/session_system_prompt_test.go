@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -238,6 +239,45 @@ func TestSessionRunPrintDeclaresPrompt(t *testing.T) {
 	head, ok := sess.History()[0].(ai.SystemMessage)
 	if !ok || head.Sections.Len() == 0 {
 		t.Fatalf("RunPrint must declare the sectioned prompt, history roles %v", messageRoles(sess.History()))
+	}
+}
+
+// uiNotice is an app-defined, UI-only message, which agent.AgentMessage
+// invites and ConvertToLlm drops before the provider.
+type uiNotice struct{ Text string }
+
+func (uiNotice) MessageRole() ai.Role { return "notice" }
+
+// Session.Record writes what pi's _handleAgentEvent persists on message_end —
+// system, user, assistant and toolResult messages — and no other role, so an
+// app's UI-only message stays out of the session file
+// (agent-session.ts:925-945 at 2b0a123de).
+func TestSessionRecordSkipsUIOnlyMessages(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	reg := providers.RegisterFauxProvider(providers.RegisterFauxProviderOptions{})
+	defer reg.Unregister()
+	cwd := t.TempDir()
+	sess := NewSession(SessionOptions{Model: reg.GetModel(), Cwd: cwd, Tools: CreateAllTools(cwd)})
+	rec, err := StartSession(cwd, reg.GetModel(), "off")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.Record(rec)
+	reg.SetResponses([]providers.FauxResponseStep{
+		providers.FauxStatic(providers.FauxAssistantMessage(ai.ContentList{
+			providers.FauxToolCall("ls", map[string]any{}, "c1"),
+		}, ai.StopToolUse)),
+		fauxText("ok"),
+	})
+	prompts := []agent.AgentMessage{uiNotice{Text: "indexing"}, ai.NewUserText("hi", 1)}
+	if _, err := sess.RunMessages(t.Context(), prompts); err != nil {
+		t.Fatal(err)
+	}
+	rec.Close()
+
+	want := []string{"session", "model_change", "thinking_level_change", "system", "user", "assistant", "toolResult", "assistant"}
+	if got := readSessionFileRoles(t, rec.Path()); !slices.Equal(got, want) {
+		t.Fatalf("session file records = %v, want %v", got, want)
 	}
 }
 

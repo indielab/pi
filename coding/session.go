@@ -378,6 +378,11 @@ func (s *Session) recorder() *SessionRecorder {
 // The write is guarded because bash commands read the recorder concurrently for
 // their PI_SESSION_ID/PI_SESSION_FILE metadata. Assigning the exported Recorder
 // field directly bypasses that guard — use this method.
+//
+// Like pi's _handleAgentEvent (agent-session.ts:925-945), it persists system,
+// user, assistant and toolResult messages and no other role, so an app's
+// UI-only message stays out of the file. pi also writes its own custom
+// messages as custom_message entries; the port has no such message type.
 func (s *Session) Record(r *SessionRecorder) {
 	s.recMu.Lock()
 	s.Recorder = r
@@ -386,7 +391,11 @@ func (s *Session) Record(r *SessionRecorder) {
 		return
 	}
 	s.Agent.Subscribe(func(ctx context.Context, e agent.AgentEvent) error {
-		if e.Type == agent.EvMessageEnd {
+		if e.Type != agent.EvMessageEnd {
+			return nil
+		}
+		switch e.Message.MessageRole() {
+		case ai.RoleSystem, ai.RoleUser, ai.RoleAssistant, ai.RoleToolResult:
 			r.RecordMessage(e.Message)
 		}
 		return nil
