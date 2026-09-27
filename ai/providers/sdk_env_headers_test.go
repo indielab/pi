@@ -9,12 +9,14 @@ import (
 )
 
 // The vendor SDK clients read headers of their own from the process
-// environment when pi constructs them, once per stream: openai 6.40.0 reads
-// OPENAI_ORG_ID, OPENAI_PROJECT_ID and OPENAI_CUSTOM_HEADERS, and
-// @anthropic-ai/sdk 0.124.0 reads ANTHROPIC_CUSTOM_HEADERS. Every want here was
-// measured on pi's wire: 8676a0dcd's src under node v26.4.0 with the SDK
-// versions its package-lock names, against a raw socket, with the variables
-// set in process.env.
+// environment when pi constructs them, once per stream: openai (7.19.0 since
+// ab30693d6, as 6.40.0 did) reads OPENAI_ORG_ID, OPENAI_PROJECT_ID and
+// OPENAI_CUSTOM_HEADERS, and @anthropic-ai/sdk 0.124.0 reads
+// ANTHROPIC_CUSTOM_HEADERS. Every want here was measured on pi's wire:
+// 8676a0dcd's src under node v26.4.0 with the SDK versions its package-lock
+// names, against a raw socket, with the variables set in process.env, and the
+// openai rows again at 2b0a123de under openai 7.19.0, which moves only the text
+// of a refused name.
 
 // String.prototype.trim removes a BOM and keeps a NEL, where Go's
 // strings.TrimSpace does the reverse; a kept NEL is sent as its Latin-1 byte.
@@ -161,8 +163,10 @@ func TestOpenAIClientFoldsCustomHeadersEnv(t *testing.T) {
 			err: byteStringError(0, cjk)},
 		{name: "a value with no header line still folds", env: custom("nocolon"), headers: ai.ProviderHeaders{"X-B": strPtr(string(rune(cjk)))},
 			err: byteStringError(0, cjk)},
-		{name: "empty name", env: custom(": v"), err: invalidNameError(true, "")},
-		{name: "refused name", env: custom("bad name: v"), err: invalidNameError(true, "bad name")},
+		{name: "empty name", env: custom(": v"), err: invalidNameError("openai-completions", "")},
+		{name: "refused name", env: custom("bad name: v"), err: invalidNameError("openai-completions", "bad name")},
+		// openai checks a name against the token grammar before it converts it.
+		{name: "name above U+00FF", env: custom("X-" + string(rune(0x100)) + ": v"), err: invalidNameError("openai-completions", "X-"+string(rune(0x100)))},
 		{name: "refused LF in pi's object", env: custom("X-A: v"), headers: ai.ProviderHeaders{"X-B": strPtr("a\nb")}, err: invalidValueError("a\nb")},
 		{name: "ahead of the org header", env: map[string]string{"OPENAI_ORG_ID": "org-" + string(rune(cjk)), "OPENAI_CUSTOM_HEADERS": "X-A: " + string(rune(0x100))},
 			err: byteStringError(0, 0x100)},
@@ -203,7 +207,8 @@ func TestAnthropicClientSpreadsCustomHeadersEnv(t *testing.T) {
 		{name: "OAuth identity in its own slot", env: custom("User-Agent: env"), key: "sk-ant-oat-x",
 			want: map[string]string{"user-agent": "claude-cli/" + claudeCodeVersion}},
 		{name: "refused value at request time", env: custom("X-A: " + string(rune(cjk))), err: byteStringError(0, cjk), payloads: 1},
-		{name: "empty name at request time", env: custom(": v"), err: invalidNameError(true, ""), payloads: 1},
+		{name: "empty name at request time", env: custom(": v"), err: invalidNameError("anthropic-messages", ""), payloads: 1},
+		{name: "refused name at request time", env: custom("bad name: v"), err: invalidNameError("anthropic-messages", "bad name"), payloads: 1},
 		{name: "OPENAI_CUSTOM_HEADERS is not anthropic's", env: map[string]string{"OPENAI_CUSTOM_HEADERS": "X-A: v"}, want: map[string]string{"x-a": ""}},
 	} {
 		t.Run(row.name, func(t *testing.T) { row.run(t, "anthropic-messages") })

@@ -49,7 +49,9 @@ import (
 // normalizes a value, it refuses a name that is not an HTTP token and a value
 // holding a NUL, CR or LF, with a TypeError of its own (see checkHeaderToken,
 // normalizeHeaderValue), where net/http fails the round trip with its text and
-// the retry loop tries it again. Every name and value is converted and checked
+// the retry loop tries it again. openai's own buildHeaders tests each name
+// against the token grammar before a Headers ever sees it, with a message of
+// its own (openaiHeaderName). Every name and value is converted and checked
 // here, in the order pi's Headers sees them, so the same input fails with the
 // same message, at once, or is sent as the same bytes.
 //
@@ -188,18 +190,41 @@ func (o *headerObject) mergeStrings(source map[string]string) {
 // in the last slot deletes).
 //
 // It fails where the SDK's buildHeaders throws, before anything is sent: slot
-// by slot, on the name and then on the value. buildHeaders deletes a name from
-// its Headers before it first appends one, and a marker is that delete alone,
-// so the name is checked, and refused, by Headers.delete.
-func (o *headerObject) applyAsDefaultHeaders(h http.Header) error { return o.fold(h, nil) }
+// by slot, on the name (checkName, the SDK's own check of it) and then on the
+// value.
+func (o *headerObject) applyAsDefaultHeaders(h http.Header, checkName headerNameCheck) error {
+	return o.fold(h, nil, checkName)
+}
+
+// headerNameCheck is how an SDK's buildHeaders refuses the name of an entry of
+// a bundle it folds, a marker's included: nil for a name it takes.
+type headerNameCheck func(name string) error
+
+// undiciDeleteHeaderName is @anthropic-ai/sdk 0.124.0's name check (and openai
+// 6's): buildHeaders deletes a name from its Headers before it first appends
+// one, and a marker is that delete alone, so undici's Headers.delete converts
+// the name and refuses one that is not a token.
+func undiciDeleteHeaderName(name string) error { return checkHeaderName("Headers.delete", name) }
+
+// openaiHeaderName is openai 7.19.0's name check: its buildHeaders tests every
+// name against the token grammar itself, before anything converts it, so a
+// name with a character above U+00FF fails with this text too, not with the
+// ByteString conversion's.
+func openaiHeaderName(name string) error {
+	if !isHTTPToken(name) {
+		return fmt.Errorf("Header name must be a valid HTTP token [\"%s\"]", name)
+	}
+	return nil
+}
 
 // fold is buildHeaders' loop over one plain-object bundle (see
-// applyAsDefaultHeaders). When nulls is not nil it also keeps the Headers'
-// `nulls`: the names a marker left deleted, by canonical key, which a later
-// fold over the result deletes again (see builtHeaders).
-func (o *headerObject) fold(h http.Header, nulls map[string]bool) error {
+// applyAsDefaultHeaders), each name checked by checkName. When nulls is not
+// nil it also keeps the Headers' `nulls`: the names a marker left deleted, by
+// canonical key, which a later fold over the result deletes again (see
+// builtHeaders).
+func (o *headerObject) fold(h http.Header, nulls map[string]bool, checkName headerNameCheck) error {
 	for _, name := range o.names {
-		if err := checkHeaderName("Headers.delete", name); err != nil {
+		if err := checkName(name); err != nil {
 			return err
 		}
 		key := http.CanonicalHeaderKey(name)
@@ -223,7 +248,7 @@ func (o *headerObject) fold(h http.Header, nulls map[string]bool) error {
 // reads it: pi's header object, or the Headers a client built from it at
 // construction (builtHeaders).
 type defaultHeaders interface {
-	applyAsDefaultHeaders(h http.Header) error
+	applyAsDefaultHeaders(h http.Header, checkName headerNameCheck) error
 }
 
 // builtHeaders is what buildHeaders returns: a Headers object, every value in
@@ -236,18 +261,21 @@ type builtHeaders struct {
 	nulls  map[string]bool
 }
 
-// buildDefaultHeaders is buildHeaders over plain-object bundles, in order.
-func buildDefaultHeaders(bundles ...*headerObject) (builtHeaders, error) {
+// buildDefaultHeaders is buildHeaders over plain-object bundles, in order,
+// each name checked by checkName.
+func buildDefaultHeaders(checkName headerNameCheck, bundles ...*headerObject) (builtHeaders, error) {
 	b := builtHeaders{header: http.Header{}, nulls: map[string]bool{}}
 	for _, o := range bundles {
-		if err := o.fold(b.header, b.nulls); err != nil {
+		if err := o.fold(b.header, b.nulls, checkName); err != nil {
 			return builtHeaders{}, err
 		}
 	}
 	return b, nil
 }
 
-func (b builtHeaders) applyAsDefaultHeaders(h http.Header) error {
+// applyAsDefaultHeaders writes the built Headers onto h; every name in it was
+// checked when it was built.
+func (b builtHeaders) applyAsDefaultHeaders(h http.Header, _ headerNameCheck) error {
 	for key, values := range b.header {
 		h[key] = slices.Clone(values)
 	}
@@ -258,7 +286,7 @@ func (b builtHeaders) applyAsDefaultHeaders(h http.Header) error {
 }
 
 // sdkHeaders is one request's headers as a vendor SDK's buildHeaders folds
-// them together (openai 6.40.0 and @anthropic-ai/sdk 0.124.0,
+// them together (openai 7.19.0 and @anthropic-ai/sdk 0.124.0,
 // client.buildHeaders), bundle by bundle in this order:
 //
 //	[own, auth, defaults, body, request]
@@ -292,6 +320,9 @@ type sdkHeaders struct {
 	// request is the per-request `headers` option: the anthropic-beta header
 	// the beta namespace lifts out of the params.
 	request []recordEntry
+	// checkName is the SDK's check of a name in defaults: the bundles it
+	// writes itself carry names it takes.
+	checkName headerNameCheck
 }
 
 // jsonBody is the SDKs' body bundle for the JSON params every adapter sends.
@@ -317,7 +348,7 @@ func (s sdkHeaders) apply(h http.Header) error {
 			h.Set(e.name, e.value)
 		}
 	}
-	if err := s.defaults.applyAsDefaultHeaders(h); err != nil {
+	if err := s.defaults.applyAsDefaultHeaders(h, s.checkName); err != nil {
 		return err
 	}
 	body, err := headerValues(s.body)
@@ -349,7 +380,7 @@ func headerValues(entries []recordEntry) ([]recordEntry, error) {
 // openAIClientHeaders is the headers openai's client sends with every request
 // pi makes through it (see sdkHeaders), given pi's object o and the api key.
 // pi builds the client once per stream, in createClient, before the params and
-// onPayload, and openai 6.40.0's constructor reads the environment then:
+// onPayload, and openai 7.19.0's constructor reads the environment then:
 //
 //   - OPENAI_ORG_ID and OPENAI_PROJECT_ID become the OpenAI-Organization and
 //     OpenAI-Project headers of its own bundle. pi passes neither option, so
@@ -361,10 +392,11 @@ func headerValues(entries []recordEntry) ([]recordEntry, error) {
 func openAIClientHeaders(o *headerObject, apiKey string) (sdkHeaders, error) {
 	s := sdkHeaders{
 		// Accept is application/json whether or not the request streams.
-		own:      []recordEntry{{"accept", "application/json"}},
-		auth:     []recordEntry{{"authorization", "Bearer " + apiKey}},
-		defaults: o,
-		body:     jsonBody,
+		own:       []recordEntry{{"accept", "application/json"}},
+		auth:      []recordEntry{{"authorization", "Bearer " + apiKey}},
+		defaults:  o,
+		body:      jsonBody,
+		checkName: openaiHeaderName,
 	}
 	if org, ok := sdkEnv("OPENAI_ORG_ID"); ok {
 		s.own = append(s.own, recordEntry{"openai-organization", org})
@@ -373,7 +405,7 @@ func openAIClientHeaders(o *headerObject, apiKey string) (sdkHeaders, error) {
 		s.own = append(s.own, recordEntry{"openai-project", project})
 	}
 	if parsed, ok := sdkCustomHeaders("OPENAI_CUSTOM_HEADERS"); ok {
-		built, err := buildDefaultHeaders(parsed, o)
+		built, err := buildDefaultHeaders(openaiHeaderName, parsed, o)
 		if err != nil {
 			return sdkHeaders{}, err
 		}

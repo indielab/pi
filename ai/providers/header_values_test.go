@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/sky-valley/pi/ai"
@@ -25,7 +26,9 @@ import (
 // (packages/ai/src/api/*.ts) run under node v26.4.0 with openai 6.40.0,
 // @anthropic-ai/sdk 0.124.0 and @google/genai 2.21.0 — the versions
 // package-lock.json locks at that sha — against a raw socket that recorded the
-// header lines as sent.
+// header lines as sent. openai 7.19.0 (pi-ai's since ab30693d6, measured at
+// 2b0a123de) builds its headers the same way but for header names, which its
+// buildHeaders checks against the token grammar itself (invalidNameError).
 
 // wireAdapter drives one adapter against baseURL.
 type wireAdapter struct {
@@ -341,15 +344,23 @@ func TestHeaderValuesAreByteStringsLikeFetch(t *testing.T) {
 
 // A header name is converted as a value is. A marker's name is converted only
 // where the marker reaches a Headers: the SDKs delete the name from theirs,
-// while a record drops the marker before any Headers sees it.
+// while a record drops the marker before any Headers sees it. The openai SDK
+// refuses such a name itself before any Headers converts it (see
+// invalidNameError).
 func TestHeaderNamesAreByteStringsLikeFetch(t *testing.T) {
 	name := "X-" + string(rune(cjk))
+	want := func(adapter wireAdapter) string {
+		if strings.HasPrefix(adapter.name, "openai-") {
+			return invalidNameError(adapter.name, name)
+		}
+		return byteStringError(2, cjk)
+	}
 	for _, adapter := range wireAdapters() {
 		t.Run(adapter.name+"/value", func(t *testing.T) {
 			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
 				APIKey: "test-key", Headers: ai.ProviderHeaders{name: strPtr("v")},
 			}})
-			wantNotSent(t, h, final, byteStringError(2, cjk))
+			wantNotSent(t, h, final, want(adapter))
 		})
 		t.Run(adapter.name+"/marker", func(t *testing.T) {
 			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
@@ -361,7 +372,7 @@ func TestHeaderNamesAreByteStringsLikeFetch(t *testing.T) {
 				}
 				return
 			}
-			wantNotSent(t, h, final, byteStringError(2, cjk))
+			wantNotSent(t, h, final, want(adapter))
 		})
 	}
 }
@@ -526,16 +537,21 @@ func invalidValueError(value string) string {
 	return fmt.Sprintf("Headers.append: \"%s\" is an invalid header value.", value)
 }
 
-// invalidNameError is the TypeError undici's Headers throws for a name that is
-// not an HTTP token. It names the method that refused the name: Headers.delete
-// on the SDK path, whose buildHeaders deletes a name before it first appends
-// one, and Headers.append on the record paths.
-func invalidNameError(sdk bool, name string) string {
-	op := "Headers.append"
-	if sdk {
-		op = "Headers.delete"
+// invalidNameError is the TypeError a name that is not an HTTP token fails
+// adapter's request with. openai 7.19.0's buildHeaders checks every name
+// against the token grammar itself, before anything converts it, so a name
+// with a character above U+00FF fails there too. The other adapters leave it
+// to undici's Headers, whose TypeError names the method that refused the
+// name: Headers.delete on anthropic's SDK path, whose buildHeaders deletes a
+// name before it first appends one, and Headers.append on the record paths.
+func invalidNameError(adapter, name string) string {
+	switch adapter {
+	case "openai-completions", "openai-responses":
+		return fmt.Sprintf("Header name must be a valid HTTP token [\"%s\"]", name)
+	case "anthropic-messages":
+		return fmt.Sprintf("Headers.delete: \"%s\" is an invalid header name.", name)
 	}
-	return fmt.Sprintf("%s: \"%s\" is an invalid header name.", op, name)
+	return fmt.Sprintf("Headers.append: \"%s\" is an invalid header name.", name)
 }
 
 // sdkPath reports whether adapter hands its headers to a vendor SDK as
@@ -568,29 +584,47 @@ func TestHeaderValuesAreRefusedLikeFetch(t *testing.T) {
 }
 
 func TestHeaderNamesAreRefusedLikeFetch(t *testing.T) {
+	aboveLatin1 := "X-" + string(rune(0x100))
+	// wantAboveLatin1 is what a name holding U+0100 fails with: openai's own
+	// check refuses it before undici converts it (see invalidNameError).
+	wantAboveLatin1 := func(adapter wireAdapter) string {
+		if strings.HasPrefix(adapter.name, "openai-") {
+			return invalidNameError(adapter.name, aboveLatin1)
+		}
+		return byteStringError(2, 0x100)
+	}
 	for _, adapter := range wireAdapters() {
-		for _, name := range []string{"", "X A", "X-" + string(rune(0xe9))} {
+		for _, name := range []string{"", "X A", "X-" + string(rune(0xe9)), aboveLatin1} {
 			t.Run(adapter.name+"/"+name, func(t *testing.T) {
 				h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
 					APIKey: "test-key", Headers: ai.ProviderHeaders{name: strPtr("v")},
 				}})
-				wantNotSent(t, h, final, invalidNameError(sdkPath(adapter), name))
+				want := invalidNameError(adapter.name, name)
+				if name == aboveLatin1 {
+					want = wantAboveLatin1(adapter)
+				}
+				wantNotSent(t, h, final, want)
 			})
 		}
 		// A marker's name reaches a Headers only on the SDK path.
-		t.Run(adapter.name+"/marker", func(t *testing.T) {
-			name := "X-" + string(rune(0xe9))
-			h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
-				APIKey: "test-key", Headers: ai.ProviderHeaders{name: nil},
-			}})
-			if !sdkPath(adapter) {
-				if final.StopReason == ai.StopError || h == nil {
-					t.Fatalf("stream = %s %q, want the request sent", final.StopReason, final.ErrorMessage)
+		for _, name := range []string{"X-" + string(rune(0xe9)), aboveLatin1} {
+			t.Run(adapter.name+"/marker "+name, func(t *testing.T) {
+				h, final := runWire(t, adapter, ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{
+					APIKey: "test-key", Headers: ai.ProviderHeaders{name: nil},
+				}})
+				if !sdkPath(adapter) {
+					if final.StopReason == ai.StopError || h == nil {
+						t.Fatalf("stream = %s %q, want the request sent", final.StopReason, final.ErrorMessage)
+					}
+					return
 				}
-				return
-			}
-			wantNotSent(t, h, final, invalidNameError(true, name))
-		})
+				want := invalidNameError(adapter.name, name)
+				if name == aboveLatin1 {
+					want = wantAboveLatin1(adapter)
+				}
+				wantNotSent(t, h, final, want)
+			})
+		}
 	}
 }
 
@@ -652,7 +686,7 @@ func TestHeaderRefusalsFollowPisOrder(t *testing.T) {
 				invalidValueError("a\nb")},
 			{"refused name, then a value that does not convert",
 				ai.ProviderHeaders{"X A": strPtr("v"), "X-C": strPtr(string(rune(cjk)))},
-				invalidNameError(sdkPath(adapter), "X A")},
+				invalidNameError(adapter.name, "X A")},
 		} {
 			if adapter.name == "pi-messages" {
 				tc.want = byteStringError(0, cjk)

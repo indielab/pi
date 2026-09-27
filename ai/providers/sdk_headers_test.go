@@ -16,7 +16,8 @@ import (
 // the defaultHeaders bundle (see sdkHeaders). Every want here was measured on
 // pi's wire: 8676a0dcd's src under node v26.4.0 with openai 6.40.0 and
 // @anthropic-ai/sdk 0.124.0 (the versions its package-lock names), against a
-// raw socket.
+// raw socket; openai 7.19.0 (pi-ai's since ab30693d6) folds the same bundles
+// in the same order, re-measured at 2b0a123de.
 
 // sdkAdapters are the adapters whose headers a vendor SDK folds.
 var sdkAdapters = []string{"openai-completions", "openai-responses", "anthropic-messages"}

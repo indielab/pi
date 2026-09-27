@@ -475,7 +475,7 @@ func TestHeaderObjectCaseCollisionIsDeterministic(t *testing.T) {
 		h := http.Header{}
 		o := &headerObject{}
 		o.merge(headers)
-		if err := o.applyAsDefaultHeaders(h); err != nil {
+		if err := o.applyAsDefaultHeaders(h, undiciDeleteHeaderName); err != nil {
 			t.Fatal(err)
 		}
 		if got := h.Get("authorization"); got != "Bearer x" {

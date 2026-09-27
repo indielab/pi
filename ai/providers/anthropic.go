@@ -2028,7 +2028,7 @@ func anthropicClientHeaders(model *ai.Model, opts *AnthropicOptions, oauth bool,
 	// marker here suppresses any of them.
 	o.merge(opts.Headers)
 
-	return sdkHeaders{own: anthropicOwnHeaders, auth: auth, defaults: o, body: jsonBody}
+	return sdkHeaders{own: anthropicOwnHeaders, auth: auth, defaults: o, body: jsonBody, checkName: undiciDeleteHeaderName}
 }
 
 // anthropicOwnHeaders is the bundle @anthropic-ai/sdk's buildHeaders writes for
