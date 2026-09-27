@@ -364,12 +364,10 @@ func StreamSimpleAnthropic(ctx context.Context, model *ai.Model, req ai.Transcri
 	if opts != nil {
 		base = opts.StreamOptions
 	}
-	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens),
-	// samplingParams = model defaults with the request's merged over them.
+	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens).
 	// Anthropic ignores samplingParams when building its body, exactly like pi.
 	baseMaxTokens := ai.ClampMaxTokensToContext(model, req, ai.SimpleMaxTokensDefault(model, opts))
 	base.MaxTokens = &baseMaxTokens
-	base.SamplingParams = ai.MergeSamplingParams(model, opts)
 	aopts := AnthropicOptions{StreamOptions: base}
 	if opts != nil {
 		// The unified option carries only pi's "auto"/"none"; buildParams wraps a

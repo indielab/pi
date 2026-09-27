@@ -1305,7 +1305,7 @@ type StreamOptions struct {
 	// body as-is, after the named request fields, so keys here override them.
 	// They let custom OpenAI-compatible servers (llama.cpp, vLLM, SGLang, …)
 	// receive parameters pi does not model, e.g. top_p, top_k, min_p,
-	// repetition_penalty. StreamSimple merges them over Model.SamplingParams per
+	// repetition_penalty. The adapter merges them over Model.SamplingParams per
 	// key. Only the OpenAI-compatible adapters (completions, responses) apply
 	// them; other APIs ignore them.
 	SamplingParams            map[string]any

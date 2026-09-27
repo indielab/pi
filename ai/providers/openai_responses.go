@@ -244,11 +244,11 @@ func StreamSimpleOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Tr
 			}
 		}
 	}
-	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens),
-	// samplingParams = model defaults with the request's merged over them.
+	// pi buildBaseOptions: maxTokens = clamp(options?.maxTokens ?? model.maxTokens).
+	// The request's samplingParams pass through as they are; buildResponsesParams
+	// merges them over the model's (upstream c01f687e5).
 	mt := ai.ClampMaxTokensToContext(model, req, ai.SimpleMaxTokensDefault(model, opts))
 	o.MaxTokens = &mt
-	o.SamplingParams = ai.MergeSamplingParams(model, opts)
 	return StreamOpenAIResponses(ctx, model, req, o)
 }
 
@@ -1064,6 +1064,8 @@ func buildResponsesParams(model *ai.Model, req ai.TranscriptContext, opts *OpenA
 	}
 
 	// Last so custom keys override the named request fields (upstream 25a2c8dc).
+	// Per-request keys override model defaults (upstream c01f687e5).
+	maps.Copy(params, model.SamplingParams)
 	maps.Copy(params, opts.SamplingParams)
 
 	return params, nil
