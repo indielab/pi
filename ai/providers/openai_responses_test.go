@@ -994,8 +994,10 @@ func TestResponsesReasoningTokens(t *testing.T) {
 	}
 }
 
-// D2: flex halves cost, priority doubles it (×2.5 for the exact id gpt-5.5),
-// and the response-reported service tier wins over the requested option.
+// D2: flex halves cost, priority and fast double it (×2.5 for the exact id
+// gpt-5.5), and the response-reported service tier wins over the requested
+// option. "fast" is Fast mode's name for priority processing: GPT-6 models
+// report it even when "priority" was requested (upstream a6ca86102).
 func TestResponsesServiceTierPricing(t *testing.T) {
 	costModel := func(id string) *ai.Model {
 		return &ai.Model{ID: id, Api: ai.APIOpenAIResponses, Provider: "openai", Reasoning: true,
@@ -1021,6 +1023,9 @@ func TestResponsesServiceTierPricing(t *testing.T) {
 		{"gpt-5.5-priority-x2.5", costModel("gpt-5.5"), &OpenAIResponsesOptions{ServiceTier: "priority"}, "", base * 2.5},
 		{"response-tier-wins", costModel("gpt-5"), &OpenAIResponsesOptions{ServiceTier: "priority"}, `"service_tier":"default",`, base},
 		{"response-flex-without-option", costModel("gpt-5"), &OpenAIResponsesOptions{}, `"service_tier":"flex",`, base * 0.5},
+		{"response-fast-for-requested-priority", costModel("gpt-6-luna"), &OpenAIResponsesOptions{ServiceTier: "priority"}, `"service_tier":"fast",`, base * 2},
+		{"fast-doubles", costModel("gpt-6-luna"), &OpenAIResponsesOptions{ServiceTier: "fast"}, `"service_tier":"fast",`, base * 2},
+		{"gpt-5.5-fast-x2.5", costModel("gpt-5.5"), &OpenAIResponsesOptions{ServiceTier: "fast"}, "", base * 2.5},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

@@ -221,7 +221,8 @@ type OpenAIResponsesOptions struct {
 	ReasoningEffort  string
 	ReasoningSummary string
 	// ServiceTier is OpenAI's service_tier request param ("auto", "default",
-	// "flex", "priority"); it also scales cost (flex ×0.5, priority ×2).
+	// "fast", "flex", "priority"); it also scales cost (flex ×0.5, priority
+	// and fast ×2).
 	ServiceTier string
 	// ToolChoice mirrors pi's OpenAIResponsesOptions.toolChoice: the Responses
 	// API tool_choice param ("auto"|"none"|"required" or an object). Sent
@@ -1441,13 +1442,14 @@ func appendSystemToolAdditions(items []any, tools []ai.Tool, seed string, compat
 }
 
 // serviceTierCostMultiplier ports getServiceTierCostMultiplier
-// (openai-responses.ts:279-291): flex halves cost, priority doubles it
-// (×2.5 for the exact model id "gpt-5.5").
+// (openai-responses.ts:367-380): flex halves cost, priority doubles it (×2.5
+// for the exact model id "gpt-5.5"), and so does "fast", Fast mode's name for
+// priority processing that GPT-6 models report (upstream a6ca86102).
 func serviceTierCostMultiplier(model *ai.Model, serviceTier string) float64 {
 	switch serviceTier {
 	case "flex":
 		return 0.5
-	case "priority":
+	case "priority", "fast":
 		if model.ID == "gpt-5.5" {
 			return 2.5
 		}
@@ -1458,7 +1460,7 @@ func serviceTierCostMultiplier(model *ai.Model, serviceTier string) float64 {
 }
 
 // applyResponsesServiceTierPricing ports applyServiceTierPricing
-// (openai-responses.ts:293-306).
+// (openai-responses.ts:382-395).
 func applyResponsesServiceTierPricing(usage *ai.Usage, serviceTier string, model *ai.Model) {
 	multiplier := serviceTierCostMultiplier(model, serviceTier)
 	if multiplier == 1 {
