@@ -514,6 +514,64 @@ func TestLaterSessionEntriesAppend(t *testing.T) {
 	}
 }
 
+// Only a user or assistant message creates the file: a system message or a
+// tool result alone stays in memory like the setup entries, and is written
+// with them once the conversation starts (pi _hasConversation).
+func TestNonConversationMessagesStayOffDisk(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+
+	rec, err := StartSession(cwd, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rec.Close()
+	rec.RecordMessage(ai.NewSystemText("sys", 1))
+	rec.RecordMessage(ai.ToolResultMessage{ToolCallID: "call_1", ToolName: "read", Content: ai.ContentList{ai.TextContent{Text: "out"}}, Timestamp: 2})
+	if _, err := os.Stat(rec.Path()); !os.IsNotExist(err) {
+		t.Fatalf("a system message and a tool result must not create the file, stat err=%v", err)
+	}
+
+	rec.RecordMessage(ai.NewUserText("first question", 3))
+	want := []string{"session", "system", "toolResult", "user"}
+	if got := readSessionFileRoles(t, rec.Path()); !slices.Equal(got, want) {
+		t.Fatalf("session file records = %v, want %v", got, want)
+	}
+}
+
+// Once an entry is on disk the recorder lets go of it: pending holds only the
+// entries of a session that has no file yet, for a new session and a resumed
+// one alike.
+func TestSessionRecorderKeepsNoWrittenEntries(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+
+	rec, err := StartSession(cwd, &ai.Model{Provider: "anthropic", ID: "claude-sonnet-4-5"}, "off")
+	if err != nil {
+		t.Fatal(err)
+	}
+	rec.RecordMessage(ai.NewUserText("first question", 1))
+	rec.RecordMessage(&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "first answer"}}, StopReason: ai.StopStop, Timestamp: 2})
+	if n := len(rec.pending); n != 0 {
+		t.Fatalf("new session recorder still holds %d written entries", n)
+	}
+	rec.Close()
+
+	resumed, err := ResumeSession(rec.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close()
+	resumed.RecordMessage(ai.NewUserText("second question", 3))
+	if n := len(resumed.pending); n != 0 {
+		t.Fatalf("resumed session recorder still holds %d written entries", n)
+	}
+	want := []string{"session", "model_change", "thinking_level_change", "user", "assistant", "user"}
+	if got := readSessionFileRoles(t, rec.Path()); !slices.Equal(got, want) {
+		t.Fatalf("session file records = %v, want %v", got, want)
+	}
+}
+
 // TestStartSessionReturnsAnErrorWhenNoIDCanBeMinted pins the shape of the
 // failure pi has here: uuidv7() throws a catchable RangeError, and StartSession
 // already reports its other failures (no agent dir, MkdirAll) as errors. A

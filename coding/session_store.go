@@ -424,7 +424,7 @@ type SessionRecorder struct {
 	lastID          string
 	file            *os.File
 	byID            map[string]bool
-	pending         []map[string]any
+	pending         []map[string]any // entries held back until the file exists
 	flushed         bool
 	hasConversation bool
 	createFn        func() (*os.File, error)
@@ -465,7 +465,7 @@ func StartSession(cwd string, model *ai.Model, thinkingLevel ...string) (*Sessio
 			return os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY|os.O_APPEND, 0o644)
 		},
 	}
-	r.buffer(map[string]any{
+	r.persist(map[string]any{
 		"type": "session", "version": CurrentSessionVersion, "id": id, "timestamp": ts, "cwd": resolved,
 	})
 	if model != nil {
@@ -560,56 +560,34 @@ func writeLine(f *os.File, entry map[string]any) {
 	_, _ = f.Write(append(data, '\n'))
 }
 
-// buffer records an entry and persists it per pi's _persist policy: writes are
-// withheld until the buffered entries contain a user or assistant message
-// (pi _hasConversation); once they do, the whole buffer is flushed atomically
-// and later entries append.
-func (r *SessionRecorder) buffer(entry map[string]any) {
-	r.pending = append(r.pending, entry)
-	if t, _ := entry["type"].(string); t == "message" && isConversationEntry(entry) {
-		r.hasConversation = true
-	}
-	r.persist()
-}
-
-func (r *SessionRecorder) persist() {
-	if !r.flushed {
-		if !r.hasConversation {
-			// Setup entries alone never reach disk (the file is not even
-			// created); the flush writes every pending entry.
-			return
+// persist writes entry per pi's _persist(entry): until the session has a user
+// or assistant message (pi _hasConversation) entries are held back and the
+// file is not even created; the entry that completes the conversation flushes
+// them all atomically, and every later entry is appended on its own.
+func (r *SessionRecorder) persist(entry map[string]any) {
+	if r.flushed {
+		if r.file != nil {
+			writeLine(r.file, entry)
 		}
-		f, err := r.createFn()
-		if err != nil {
-			return
-		}
-		r.file = f
-		for _, e := range r.pending {
-			writeLine(f, e)
-		}
-		r.flushed = true
 		return
 	}
-	// Already flushed: append just the most recent entry.
-	if r.file != nil && len(r.pending) > 0 {
-		writeLine(r.file, r.pending[len(r.pending)-1])
+	r.pending = append(r.pending, entry)
+	if !r.hasConversation {
+		return
 	}
-}
-
-// isConversationEntry reports whether a message entry carries a user or an
-// assistant message.
-func isConversationEntry(entry map[string]any) bool {
-	raw, ok := entry["message"].(json.RawMessage)
-	if !ok {
-		return false
+	f, err := r.createFn()
+	if err != nil {
+		// The entries stay pending and the next one retries the create, as
+		// pi's next _persist does; pi also throws the error out of
+		// appendMessage, which the recorder has no way to return.
+		return
 	}
-	var head struct {
-		Role string `json:"role"`
+	r.file = f
+	for _, e := range r.pending {
+		writeLine(f, e)
 	}
-	if json.Unmarshal(raw, &head) != nil {
-		return false
-	}
-	return head.Role == "user" || head.Role == "assistant"
+	r.pending = nil
+	r.flushed = true
 }
 
 func (r *SessionRecorder) appendEntry(entry map[string]any) string {
@@ -623,7 +601,7 @@ func (r *SessionRecorder) appendEntry(entry map[string]any) string {
 	}
 	entry["timestamp"] = isoNow()
 	r.lastID = id
-	r.buffer(entry)
+	r.persist(entry)
 	return id
 }
 
@@ -650,6 +628,9 @@ func (r *SessionRecorder) RecordMessage(m agent.AgentMessage) string {
 	raw, err := json.Marshal(m)
 	if err != nil {
 		return ""
+	}
+	if role := m.MessageRole(); role == ai.RoleUser || role == ai.RoleAssistant {
+		r.hasConversation = true
 	}
 	return r.appendEntry(map[string]any{"type": "message", "message": json.RawMessage(raw)})
 }
