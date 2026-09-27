@@ -46,10 +46,10 @@ func truncateErrorText(text string, maxChars int) string {
 // field-probing half is N/A — the #5763 "opaque, no body" bug cannot occur. Its
 // other half is observable, though: for the openai SDK, a parsed `error` object
 // REPLACES the SDK's message in what the user sees. formatResponsesHTTPError
-// ports that composition against a captured oracle; this function keeps the
-// port's own `<Label> API error <status>: <msg>` shape for the completions,
-// google and anthropic call sites (docs/UPSTREAM.md D20 and K18) and applies
-// 6fbeba51's 4000-char cap to the body-derived message.
+// and formatCompletionsHTTPError port that composition against a captured
+// oracle; this function keeps the port's own `<Label> API error <status>:
+// <msg>` shape for the google and anthropic call sites (docs/UPSTREAM.md K18)
+// and applies 6fbeba51's 4000-char cap to the body-derived message.
 func formatProviderError(label string, status int, body []byte) error {
 	msg := strings.TrimSpace(string(body))
 	var parsed struct {
@@ -70,15 +70,15 @@ func formatProviderError(label string, status int, body []byte) error {
 }
 
 // formatResponsesHTTPError ports the error message pi's OpenAI Responses
-// provider surfaces for a non-2xx HTTP response — the openai-responses.ts catch
-// (198-201): formatProviderError(normalizeProviderError(err), prefix), where err
-// is the openai SDK's APIError and the prefix names the provider, "OpenAI" for
-// provider "openai" and the id verbatim otherwise (upstream 0c7bb7c5c, #9298: a
-// Grok 403 used to read as an OpenAI error).
+// provider surfaces for a non-2xx HTTP response — the openai-responses.ts
+// catch: formatProviderError(normalizeProviderError(err), prefix), where err is
+// the openai SDK's APIError (openaiStatusError) and the prefix names the
+// provider, "OpenAI" for provider "openai" and the id verbatim otherwise
+// (upstream 0c7bb7c5c, #9298: a Grok 403 used to read as an OpenAI error).
 //
 // Composition, byte-exact to the captured oracle in testdata/httperror: the
-// SDK message is `${status} ${msg}` (openaiSDKErrorMessage); when the body's
-// `error` member is a non-empty JSON object, its JSON.stringify form, capped at
+// SDK message is `${status} ${msg}`; when the APIError's `error` is a
+// non-empty plain object, its JSON.stringify form, capped at
 // maxProviderErrorBodyChars, replaces the message unless the message already
 // contains it (error-body.ts messageCarriesBody). So
 // `{"error":{"message":"blocked"}}` reads `xai API error (403): {"message":"blocked"}`
@@ -88,64 +88,111 @@ func formatResponsesHTTPError(provider string, status int, body []byte) error {
 	if provider == "openai" {
 		label = "OpenAI"
 	}
-	message := openaiSDKErrorMessage(status, body)
-	if errBody := responsesErrorBody(body); errBody != "" && !strings.Contains(message, errBody) {
+	e := newOpenAIStatusError(body)
+	message := e.message(status)
+	if errBody := e.body(); errBody != "" && !strings.Contains(message, errBody) {
 		return fmt.Errorf("%s API error (%d): %s", label, status, errBody)
 	}
 	return fmt.Errorf("%s API error (%d): %s", label, status, message)
 }
 
-// responsesErrorBody ports the body half of pi's normalizeProviderError for the
-// openai SDK's APIError (error-body.ts pickBodyText/extractBody): the parsed
-// body's `error` member when it is a non-empty plain object, stringified the way
-// JSON.stringify does and capped at maxProviderErrorBodyChars. Every other
-// shape — a string, array, empty or null `error`, no `error` key, a non-object
-// or non-JSON body — yields "" (pi: undefined), and the SDK message stands.
-func responsesErrorBody(body []byte) string {
-	var top map[string]json.RawMessage
-	if json.Unmarshal(stripBOM(body), &top) != nil {
+// formatCompletionsHTTPError ports the error message pi's openai-completions
+// provider surfaces for a non-2xx HTTP response — its catch:
+// formatProviderError(normalizeProviderError(err)) with no prefix, so
+// `${status}: ${body}` where formatResponsesHTTPError has its label, and the
+// SDK's message as it is otherwise — and then its append of the APIError's
+// error.metadata.raw (some OpenRouter upstreams put detail there): on a line of
+// its own, as String() writes it, when it is truthy and the message does not
+// already contain it (upstream 6fbeba51's guard).
+func formatCompletionsHTTPError(status int, body []byte) error {
+	e := newOpenAIStatusError(body)
+	message := e.message(status)
+	if errBody := e.body(); errBody != "" && !strings.Contains(message, errBody) {
+		message = fmt.Sprintf("%d: %s", status, errBody)
+	}
+	raw := rawOptional(rawOptional(e.error)["metadata"])["raw"]
+	if !rawTruthy(raw) {
+		return errors.New(message)
+	}
+	// An object with its own toString member has no String() (see
+	// rawToString): pi's catch block throws inside itself there and its
+	// stream never ends (D84); the port leaves raw out.
+	if text, err := rawToString(raw); err == nil && !strings.Contains(message, text) {
+		message += "\n" + text
+	}
+	return errors.New(message)
+}
+
+// openaiStatusError is the openai client's APIError for a non-2xx response
+// (client.makeStatusError over APIError.generate, openai 7.19.0): error is its
+// `error` as JSON text, nil for undefined, and text the message makeMessage
+// falls back to when that is falsy.
+//
+// The client reads the body as fetch's text() (one leading BOM dropped,
+// stripBOM) and parses it as JSON: a value that does not parse, or parses to
+// a falsy one, leaves the raw text as the message (`errJSON ? undefined :
+// errText`). openai 7 then takes an object or array whose own `error` is null
+// or absent for the error itself (`{error: body}`); any other value's `error`
+// member is the error — undefined for a string, a number or true.
+type openaiStatusError struct {
+	error json.RawMessage
+	text  string
+}
+
+func newOpenAIStatusError(body []byte) openaiStatusError {
+	body = stripBOM(body)
+	if !json.Valid(body) || !rawTruthy(body) {
+		return openaiStatusError{text: string(body)}
+	}
+	switch jsonValueKind(body) {
+	case '{':
+		if member := rawOptional(body)["error"]; !rawNullish(member) {
+			return openaiStatusError{error: member}
+		}
+		return openaiStatusError{error: body}
+	case '[':
+		return openaiStatusError{error: body}
+	}
+	return openaiStatusError{}
+}
+
+// message is APIError.makeMessage's text for this error at status: the
+// error's detail (openaiSDKErrorDetail), else the raw text, as
+// `${status} ${msg}`, or `${status} status code (no body)` when both are
+// empty. Nothing here is capped — pi's cap applies to the body half only.
+func (e openaiStatusError) message(status int) string {
+	msg := openaiSDKErrorDetail(e.error)
+	if msg == "" {
+		msg = e.text
+	}
+	if msg == "" {
+		return fmt.Sprintf("%d status code (no body)", status)
+	}
+	return fmt.Sprintf("%d %s", status, msg)
+}
+
+// body is the body half of pi's normalizeProviderError for this error
+// (error-body.ts pickBodyText/extractBody): the APIError's `error` when it is a
+// non-empty plain object, stringified the way JSON.stringify does and capped
+// at maxProviderErrorBodyChars. Every other value — a string, an array, an
+// empty object, null or undefined — yields "" (pi: undefined), and the SDK
+// message stands.
+func (e openaiStatusError) body() string {
+	if len(rawOptional(e.error)) == 0 {
 		return ""
 	}
-	raw, ok := top["error"]
-	if !ok {
-		return ""
-	}
-	var members map[string]json.RawMessage
-	if json.Unmarshal(raw, &members) != nil || len(members) == 0 {
-		return ""
-	}
-	text, ok := jsStringify(raw)
+	text, ok := jsStringify(e.error)
 	if !ok {
 		return ""
 	}
 	return truncateErrorText(text, maxProviderErrorBodyChars)
 }
 
-// openaiSDKErrorMessage replicates openai SDK APIError.makeMessage plus the
-// client's body handling: the body is parsed as JSON and, when the parsed value
-// is truthy, `error` is its `error` member (so only an object body can carry
-// one); the message is error.message (JSON.stringify'd when not a string), else
-// JSON.stringify(error) when error is truthy, else the raw body text — which
-// the client also passes through when the body was not JSON or parsed to a
-// falsy value (`errJSON ? undefined : errText`). Nothing here is capped — pi's
-// cap applies to the body half only (see responsesErrorBody). Stringification
-// goes through jsStringify so key order and escaping are JavaScript's, not
-// encoding/json's.
+// openaiSDKErrorMessage is the openai SDK's APIError message for a non-2xx
+// response with body: the message pi's retryProviderRequest quotes when it
+// refuses a server's retry delay.
 func openaiSDKErrorMessage(status int, body []byte) string {
-	body = stripBOM(body)
-	var msg string
-	if !json.Valid(body) || !rawTruthy(body) {
-		msg = string(body)
-	} else {
-		var top map[string]json.RawMessage
-		if json.Unmarshal(body, &top) == nil {
-			msg = openaiSDKErrorDetail(top["error"])
-		}
-	}
-	if msg == "" {
-		return fmt.Sprintf("%d status code (no body)", status)
-	}
-	return fmt.Sprintf("%d %s", status, msg)
+	return newOpenAIStatusError(body).message(status)
 }
 
 // openaiSDKErrorDetail is the text openai SDK APIError.makeMessage builds from

@@ -51,7 +51,7 @@ func TestFormatProviderErrorTruncation(t *testing.T) {
 // (error-body.ts extractBody), which formatResponsesHTTPError applies when the
 // stringified `error` object replaces the message. Measured: oracle rows
 // str-error-long (message path, untruncated) and obj-long-message (body path,
-// truncated) in testdata/httperror/pi-ai-0.85.1.json.
+// truncated) in testdata/httperror/pi-ai-src-2b0a123de.json.
 func TestOpenAISDKErrorMessageNotCapped(t *testing.T) {
 	long := strings.Repeat("y", 5000)
 	if got, want := openaiSDKErrorMessage(429, []byte(`{"error":"`+long+`"}`)), `429 "`+long+`"`; got != want {
@@ -85,7 +85,9 @@ func TestOpenAISDKErrorMessage(t *testing.T) {
 		{400, `{"error":{"message":"a</b\u2028\u0001\"q\""}}`, "400 a</b\u2028\u0001\"q\""},              // a string message is used raw
 		{400, `{"error":"boom"}`, `400 "boom"`},                                                          // string error → JSON.stringify(error)
 		{400, `{"error":""}`, "400 status code (no body)"},                                               // falsy error, JSON body → no message
-		{400, `{"detail":"x"}`, "400 status code (no body)"},                                             // JSON body without error field
+		{400, `{"detail":"x"}`, `400 {"detail":"x"}`},                                                    // openai 7: a body without `error` is the error itself (oracle row no-error-key)
+		{400, `{"error":null,"message":"m"}`, "400 m"},                                                   // and so is one whose `error` is null (null-error-with-message)
+		{400, `[1,2]`, "400 [1,2]"},                                                                      // an array is too (array)
 		{500, "plain text", "500 plain text"},                                                            // non-JSON body → raw text
 		{503, "", "503 status code (no body)"},                                                           // empty body
 		{503, "   ", "503    "},                                                                          // whitespace body isn't valid JSON → raw text

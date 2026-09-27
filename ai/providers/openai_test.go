@@ -1049,24 +1049,6 @@ func TestOpenAIOnPayloadReplacement(t *testing.T) {
 
 // ---- C11 sweep ----
 
-func TestOpenAIErrorMetadataRawAppended(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusBadRequest)
-		io.WriteString(w, `{"error":{"message":"bad request","metadata":{"raw":"upstream detail"}}}`)
-	}))
-	defer server.Close()
-	model := openAIModel(func(m *ai.Model) { m.BaseURL = server.URL })
-	final := StreamOpenAICompletions(context.Background(), model, ai.NormalizeContext(baseReq()),
-		&OpenAIOptions{StreamOptions: ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "k"}}}).
-		Result()
-	if final.StopReason != ai.StopError {
-		t.Fatalf("expected error stop, got %s", final.StopReason)
-	}
-	if !strings.HasSuffix(final.ErrorMessage, "\nupstream detail") {
-		t.Fatalf("metadata.raw must be appended after a newline, got %q", final.ErrorMessage)
-	}
-}
-
 func TestOpenAIHeaderPrecedence(t *testing.T) {
 	// pi createClient: model.headers first, session affinity OVERRIDES them,
 	// options.headers merge last.
@@ -1315,24 +1297,23 @@ func runOpenAIHTTPError(t *testing.T, status int, body string) *ai.AssistantMess
 		Result()
 }
 
-// TestOpenRouterMetadataRawDedup locks upstream 6fbeba51's guard: error.metadata.raw
-// is appended only when it is not already present in the surfaced message, to
-// avoid double-printing.
-func TestOpenRouterMetadataRawDedup(t *testing.T) {
-	// Distinct raw vs message → appended on its own line.
-	got := runOpenAIHTTPError(t, 502,
-		`{"error":{"message":"upstream failed","metadata":{"raw":"backend timeout"}}}`).ErrorMessage
-	if got != "OpenAI API error 502: upstream failed\nbackend timeout" {
-		t.Fatalf("distinct raw not appended cleanly: %q", got)
-	}
-	// raw is a substring of the surfaced message → NOT re-appended (the guard).
-	got = runOpenAIHTTPError(t, 502,
-		`{"error":{"message":"backend timeout occurred","metadata":{"raw":"backend timeout"}}}`).ErrorMessage
-	if strings.Count(got, "backend timeout") != 1 {
-		t.Fatalf("raw double-printed despite guard: %q", got)
-	}
-	if got != "OpenAI API error 502: backend timeout occurred" {
-		t.Fatalf("guard mutated message: %q", got)
+// TestCompletionsHTTPErrorMatchesPi drives every captured body through the
+// completions adapter and compares the terminal ErrorMessage with pi's byte
+// for byte. pi's catch (openai-completions.ts) is the Responses composition
+// with no prefix — `${status}: ${body}` when the APIError's `error` is a
+// non-empty plain object whose JSON.stringify form (capped at 4000 UTF-16
+// units) the SDK's message does not already contain, the SDK's message
+// otherwise — and then error.metadata.raw, read off the APIError's `error`,
+// on a line of its own unless the message already contains its String()
+// (upstream 6fbeba51's guard).
+func TestCompletionsHTTPErrorMatchesPi(t *testing.T) {
+	for _, row := range loadHTTPErrorOracle(t) {
+		t.Run(row.Name, func(t *testing.T) {
+			want := row.ErrorMessage["openai-completions"]
+			if got := runOpenAIHTTPError(t, row.Status, row.Body).ErrorMessage; got != want {
+				t.Fatalf("error message = %q, want pi's %q", got, want)
+			}
+		})
 	}
 }
 

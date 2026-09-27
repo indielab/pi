@@ -689,11 +689,6 @@ func TestOpenAIStreamOnResponseLikePi(t *testing.T) {
 				if got.OnResponseCalls != want.OnResponseCalls {
 					t.Errorf("onResponse ran %d times, pi %d", got.OnResponseCalls, want.OnResponseCalls)
 				}
-				if adapter == "completions" && row.Status != http.StatusOK {
-					// The completions HTTP error text is the port's own
-					// (docs/UPSTREAM.md D20); only how the stream ended is pi's.
-					want.ErrorMessage = got.ErrorMessage
-				}
 				compareOpenAIStreamEnding(t, got, want)
 			})
 		}

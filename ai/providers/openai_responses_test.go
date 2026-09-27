@@ -1346,39 +1346,57 @@ func responsesHTTPError(t *testing.T, provider string, status int, body string) 
 }
 
 // httpErrorOracleRow is one row of pi's own errorMessage for a non-2xx body,
-// captured from the published build by testdata/httperror/capture.mjs. Goldens
-// come from pi, never from what the porter believed.
+// captured by testdata/httperror/capture.mjs: from pi-ai's src at 2b0a123de
+// (openai 7.19.0), which no published build ships yet, until the first one
+// that does replaces it. Goldens come from pi, never from what the porter
+// believed.
 type httpErrorOracleRow struct {
 	Name         string            `json:"name"`
 	Status       int               `json:"status"`
 	Body         string            `json:"body"`
 	ErrorMessage map[string]string `json:"errorMessage"`
+	// RetryAfter and MaxRetries are what a failFast row's 429 carried and the
+	// stream's maxRetries.
+	RetryAfter string `json:"retryAfter"`
+	MaxRetries int    `json:"maxRetries"`
 }
 
-func loadHTTPErrorOracle(t *testing.T) []httpErrorOracleRow {
+// httpErrorOracleFile is capture.mjs's output.
+const httpErrorOracleFile = "pi-ai-src-2b0a123de.json"
+
+func loadHTTPErrorCapture(t *testing.T) (rows, failFast []httpErrorOracleRow) {
 	t.Helper()
-	data, err := os.ReadFile(filepath.Join("testdata", "httperror", "pi-ai-0.86.1.json"))
+	data, err := os.ReadFile(filepath.Join("testdata", "httperror", httpErrorOracleFile))
 	if err != nil {
 		t.Fatalf("read oracle: %v", err)
 	}
 	var doc struct {
-		Rows []httpErrorOracleRow `json:"rows"`
+		Rows     []httpErrorOracleRow `json:"rows"`
+		FailFast []httpErrorOracleRow `json:"failFast"`
 	}
 	if err := json.Unmarshal(data, &doc); err != nil {
 		t.Fatalf("decode oracle: %v", err)
 	}
-	if len(doc.Rows) == 0 {
-		t.Fatal("oracle has no rows")
+	if len(doc.Rows) == 0 || len(doc.FailFast) == 0 {
+		t.Fatalf("%s has no rows or no failFast rows; re-capture it", httpErrorOracleFile)
 	}
-	return doc.Rows
+	return doc.Rows, doc.FailFast
+}
+
+func loadHTTPErrorOracle(t *testing.T) []httpErrorOracleRow {
+	t.Helper()
+	rows, _ := loadHTTPErrorCapture(t)
+	return rows
 }
 
 // TestResponsesHTTPErrorMatchesPi drives every captured body through the
 // adapter and compares the terminal ErrorMessage with pi's byte for byte. pi's
 // composition (openai-responses.ts catch -> error-body.ts): the openai SDK's
-// APIError message is `${status} ${msg}`; when the body's `error` member is a
-// non-empty JSON object, its JSON.stringify form (capped at 4000 UTF-16 units)
-// REPLACES that message unless the message already contains it.
+// APIError message is `${status} ${msg}`; when the APIError's `error` is a
+// non-empty plain object — the body's `error` member, or since openai 7 the
+// whole body when that member is absent or null — its JSON.stringify form
+// (capped at 4000 UTF-16 units) REPLACES that message unless the message
+// already contains it.
 func TestResponsesHTTPErrorMatchesPi(t *testing.T) {
 	for _, row := range loadHTTPErrorOracle(t) {
 		t.Run(row.Name, func(t *testing.T) {
@@ -1418,8 +1436,8 @@ func TestResponsesHTTPErrorFormat(t *testing.T) {
 // Responses provider "OpenAI", so this test asserted the label from source and
 // borrowed one oracle row for the tail. 0.86.1 ships it, and the re-captured
 // oracle carries an `openai-responses/xai` column for every row, so the whole
-// table is the oracle now: 35 rows against the build instead of one row against
-// a hand-written string. It is the only column the re-capture moved.
+// table is the oracle now: every row against pi instead of one row against a
+// hand-written string. It is the only column the 0.86.1 re-capture moved.
 //
 // `opencode` has no captured column and stays source-derived: same branch, a
 // third provider id, asserting that the label is the id verbatim rather than
@@ -1440,6 +1458,53 @@ func TestResponsesHTTPErrorNamesProvider(t *testing.T) {
 	if got, want := responsesHTTPError(t, "opencode", 403, body),
 		`opencode API error (403): {"message":"blocked"}`; got != want {
 		t.Fatalf("opencode error message = %q, want %q", got, want)
+	}
+}
+
+// TestHTTPErrorFailFastMatchesPi: a 429 asking for a retry delay past
+// maxRetryDelayMs (120s against the 60s default) under maxRetries 1 fails at
+// once, and pi's retryProviderRequest quotes the SDK error's message:
+// `Server requested 120s retry delay (max: 60s). ${error.message}`. For the
+// openai loops that message follows openai 7's makeStatusError, which takes a
+// JSON object or array body without a non-null `error` for the error itself;
+// anthropic's SDK takes the whole body as it always did.
+func TestHTTPErrorFailFastMatchesPi(t *testing.T) {
+	_, failFast := loadHTTPErrorCapture(t)
+	req := ai.NormalizeContext(ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}})
+	for _, row := range failFast {
+		for column, want := range row.ErrorMessage {
+			t.Run(row.Name+"/"+column, func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					w.Header().Set("Retry-After", row.RetryAfter)
+					w.WriteHeader(row.Status)
+					io.WriteString(w, row.Body)
+				}))
+				defer server.Close()
+				opts := ai.StreamOptions{ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "sk", MaxRetries: row.MaxRetries}}
+				var final *ai.AssistantMessage
+				switch column {
+				case "openai-responses", "openai-responses/xai":
+					m := *reasoningModel()
+					m.Provider, m.BaseURL = "openai", server.URL
+					if column == "openai-responses/xai" {
+						m.Provider = "xai"
+					}
+					final = StreamOpenAIResponses(context.Background(), &m, req, &OpenAIResponsesOptions{StreamOptions: opts}).Result()
+				case "openai-completions":
+					m := &ai.Model{ID: "gpt-test", Api: ai.APIOpenAICompletions, Provider: "openai", BaseURL: server.URL}
+					final = StreamOpenAICompletions(context.Background(), m, req, &OpenAIOptions{StreamOptions: opts}).Result()
+				case "anthropic-messages":
+					m := anthropicUAModel()
+					m.BaseURL = server.URL
+					final = StreamAnthropic(context.Background(), m, req, &AnthropicOptions{StreamOptions: opts}).Result()
+				default:
+					t.Fatalf("no Go adapter for column %s", column)
+				}
+				if final.StopReason != ai.StopError || final.ErrorMessage != want {
+					t.Fatalf("stream = %s %q, want pi's %q", final.StopReason, final.ErrorMessage, want)
+				}
+			})
+		}
 	}
 }
 

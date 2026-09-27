@@ -260,21 +260,7 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 				fail(err)
 				return
 			}
-			err = formatProviderError("OpenAI", resp.StatusCode, data)
-			// Some providers via OpenRouter give additional information in
-			// error.metadata.raw; pi appends it to the error message.
-			// Upstream 6fbeba51 guarded this against double-printing once
-			// normalizeProviderError started stringifying the whole body into
-			// the message: `if (rawMetadata && !errorMessage.includes(raw))`.
-			// Go surfaces only the parsed .error.message (not the full body
-			// object), so raw is generally not already present and the guard is
-			// near-latent; we port it anyway for structural parity and to cover
-			// the case where raw happens to be a substring of the surfaced
-			// message (e.g. a provider that echoes raw into .error.message).
-			if raw := openRouterErrorRaw(data); raw != "" && !strings.Contains(err.Error(), raw) {
-				err = fmt.Errorf("%s\n%s", err.Error(), raw)
-			}
-			fail(err)
+			fail(formatCompletionsHTTPError(resp.StatusCode, data))
 			return
 		}
 		// pi awaits onResponse once the SDK has a 2xx response — for any other
@@ -735,22 +721,6 @@ func StreamOpenAICompletions(ctx context.Context, model *ai.Model, req ai.Transc
 	}()
 
 	return stream
-}
-
-// openRouterErrorRaw extracts error.metadata.raw from a provider error body
-// (pi appends it to errorMessage; some OpenRouter upstreams put detail there).
-func openRouterErrorRaw(body []byte) string {
-	var parsed struct {
-		Error struct {
-			Metadata struct {
-				Raw string `json:"raw"`
-			} `json:"metadata"`
-		} `json:"error"`
-	}
-	if json.Unmarshal(body, &parsed) != nil {
-		return ""
-	}
-	return parsed.Error.Metadata.Raw
 }
 
 func buildOpenAIParams(model *ai.Model, req ai.TranscriptContext, opts *OpenAIOptions) (map[string]any, error) {
