@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -413,21 +414,46 @@ func TestUUIDv7SequenceExhaustion(t *testing.T) {
 	}
 }
 
-// TestStartedUnusedSessionAbsentFromDisk verifies a session that records no
-// assistant message never touches disk: no file, and it is invisible to
-// ListSessions (pi _persist withholds writes until the first assistant message).
-func TestStartedUnusedSessionAbsentFromDisk(t *testing.T) {
+// readSessionFileRoles mirrors pi's test utility of the same name: one label
+// per record in a session file, the message role for message entries and the
+// entry type otherwise.
+func readSessionFileRoles(t *testing.T, path string) []string {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read session file: %v", err)
+	}
+	var roles []string
+	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		var record struct {
+			Type    string `json:"type"`
+			Message *struct {
+				Role string `json:"role"`
+			} `json:"message"`
+		}
+		if err := json.Unmarshal([]byte(line), &record); err != nil {
+			t.Fatalf("parse %q: %v", line, err)
+		}
+		if record.Message != nil && record.Message.Role != "" {
+			roles = append(roles, record.Message.Role)
+		} else {
+			roles = append(roles, record.Type)
+		}
+	}
+	return roles
+}
+
+// A session with only setup entries stays in memory: no file, and it is
+// invisible to ListSessions (pi _persist, upstream ff72faba2).
+func TestSessionWithOnlySetupEntriesAbsentFromDisk(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	cwd := t.TempDir()
 
-	rec, err := StartSession(cwd, nil)
+	rec, err := StartSession(cwd, &ai.Model{Provider: "anthropic", ID: "claude-sonnet-4-5"}, "off")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Record a user message and a thinking-level change — but no assistant message.
-	rec.RecordMessage(ai.NewUserText("hello", 1))
-	rec.RecordThinkingLevel("medium")
-	rec.Close()
+	defer rec.Close()
 
 	if _, err := os.Stat(rec.Path()); !os.IsNotExist(err) {
 		t.Fatalf("session file should not exist yet, stat err=%v", err)
@@ -435,21 +461,56 @@ func TestStartedUnusedSessionAbsentFromDisk(t *testing.T) {
 	if infos := ListSessions(cwd, ""); len(infos) != 0 {
 		t.Fatalf("ListSessions should be empty, got %+v", infos)
 	}
+}
 
-	// Once an assistant message arrives, the whole buffer flushes atomically.
-	rec.RecordMessage(&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "hi"}}, StopReason: ai.StopStop, Timestamp: 2})
-	if _, err := os.Stat(rec.Path()); err != nil {
-		t.Fatalf("session file should exist after assistant message: %v", err)
+// The first user message creates the file, so the prompt survives a first
+// turn that never produces an assistant message (pi #10000).
+func TestFirstUserMessageCreatesSessionFile(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+
+	rec, err := StartSession(cwd, &ai.Model{Provider: "anthropic", ID: "claude-sonnet-4-5"})
+	if err != nil {
+		t.Fatal(err)
 	}
-	data, _ := os.ReadFile(rec.Path())
-	// All buffered entries (header + user + thinking + assistant) are present.
-	for _, want := range []string{`"type":"session"`, `"hello"`, `"thinking_level_change"`, `"role":"assistant"`} {
-		if !strings.Contains(string(data), want) {
-			t.Fatalf("flushed file missing %q:\n%s", want, data)
-		}
+	defer rec.Close()
+	rec.RecordMessage(ai.NewUserText("first question", 1))
+
+	want := []string{"session", "model_change", "user"}
+	if got := readSessionFileRoles(t, rec.Path()); !slices.Equal(got, want) {
+		t.Fatalf("session file records = %v, want %v", got, want)
+	}
+	messages, err := LoadSessionMessages(rec.Path())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("reopened session has %d messages, want 1", len(messages))
 	}
 	if infos := ListSessions(cwd, ""); len(infos) != 1 {
-		t.Fatalf("ListSessions should now show 1 session, got %+v", infos)
+		t.Fatalf("ListSessions should show 1 session, got %+v", infos)
+	}
+}
+
+// Characterization: once the file exists, each later entry is appended to it
+// once. pi appends a custom entry between the messages; the recorder has no
+// custom entries, so a thinking-level change stands in for it.
+func TestLaterSessionEntriesAppend(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	cwd := t.TempDir()
+
+	rec, err := StartSession(cwd, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rec.Close()
+	rec.RecordMessage(ai.NewUserText("first question", 1))
+	rec.RecordThinkingLevel("medium")
+	rec.RecordMessage(&ai.AssistantMessage{Content: ai.ContentList{ai.TextContent{Text: "first answer"}}, StopReason: ai.StopStop, Timestamp: 2})
+
+	want := []string{"session", "user", "thinking_level_change", "assistant"}
+	if got := readSessionFileRoles(t, rec.Path()); !slices.Equal(got, want) {
+		t.Fatalf("session file records = %v, want %v", got, want)
 	}
 }
 

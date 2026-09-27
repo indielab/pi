@@ -412,25 +412,27 @@ type SessionInfo struct {
 // SessionRecorder appends an agent transcript to a JSONL session file, matching
 // pi's append-only format (header + linear message/model/thinking entries).
 //
-// Writes are withheld until the first assistant message is recorded (pi
-// _persist): a started-but-unused session leaves no file on disk. Pending
-// entries are buffered and flushed atomically on the first assistant message.
+// A new session's file is created only once the session has a user or
+// assistant message (pi _persist, upstream ff72faba2): setup entries alone
+// (model, thinking level) stay buffered, so a started-but-unused session
+// leaves no file on disk, while the first prompt survives a first turn that
+// never completes. The buffered entries are flushed atomically then.
 type SessionRecorder struct {
-	mu       sync.Mutex
-	path     string
-	id       string
-	lastID   string
-	file     *os.File
-	byID     map[string]bool
-	pending  []map[string]any
-	flushed  bool
-	hasAsst  bool
-	createFn func() (*os.File, error)
+	mu              sync.Mutex
+	path            string
+	id              string
+	lastID          string
+	file            *os.File
+	byID            map[string]bool
+	pending         []map[string]any
+	flushed         bool
+	hasConversation bool
+	createFn        func() (*os.File, error)
 }
 
 // StartSession creates a new session for cwd and buffers the header plus an
 // initial model entry. The session file is created lazily on the first recorded
-// assistant message.
+// user or assistant message.
 //
 // When thinkingLevel is given, a thinking_level_change entry is recorded after
 // the model_change, matching pi's createAgentSession for new sessions
@@ -485,7 +487,7 @@ func StartSession(cwd string, model *ai.Model, thinkingLevel ...string) (*Sessio
 // file is rewritten in place, as pi's _loadEntries does), the leaf is the
 // file's last entry (new entries branch from it), and the manager is marked
 // flushed so every subsequent entry appends to the file immediately (no
-// withhold-until-assistant buffering).
+// withhold-until-conversation buffering).
 func ResumeSession(path string) (*SessionRecorder, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -540,8 +542,7 @@ func ResumeSession(path string) (*SessionRecorder, error) {
 		lastID:  lastID,
 		file:    f,
 		byID:    byID,
-		flushed: true,
-		hasAsst: true, // resumed sessions append immediately (pi flushed=true)
+		flushed: true, // resumed sessions append immediately
 	}, nil
 }
 
@@ -560,26 +561,24 @@ func writeLine(f *os.File, entry map[string]any) {
 }
 
 // buffer records an entry and persists it per pi's _persist policy: writes are
-// withheld until the buffered entries contain an assistant message; once that
-// happens the whole buffer is flushed atomically and later entries append.
+// withheld until the buffered entries contain a user or assistant message
+// (pi _hasConversation); once they do, the whole buffer is flushed atomically
+// and later entries append.
 func (r *SessionRecorder) buffer(entry map[string]any) {
 	r.pending = append(r.pending, entry)
-	if t, _ := entry["type"].(string); t == "message" {
-		if isAssistantEntry(entry) {
-			r.hasAsst = true
-		}
+	if t, _ := entry["type"].(string); t == "message" && isConversationEntry(entry) {
+		r.hasConversation = true
 	}
 	r.persist()
 }
 
 func (r *SessionRecorder) persist() {
-	if !r.hasAsst {
-		// No assistant message yet: nothing reaches disk (the file is not even
-		// created). Subsequent flush will write every pending entry.
-		r.flushed = false
-		return
-	}
 	if !r.flushed {
+		if !r.hasConversation {
+			// Setup entries alone never reach disk (the file is not even
+			// created); the flush writes every pending entry.
+			return
+		}
 		f, err := r.createFn()
 		if err != nil {
 			return
@@ -597,7 +596,9 @@ func (r *SessionRecorder) persist() {
 	}
 }
 
-func isAssistantEntry(entry map[string]any) bool {
+// isConversationEntry reports whether a message entry carries a user or an
+// assistant message.
+func isConversationEntry(entry map[string]any) bool {
 	raw, ok := entry["message"].(json.RawMessage)
 	if !ok {
 		return false
@@ -608,7 +609,7 @@ func isAssistantEntry(entry map[string]any) bool {
 	if json.Unmarshal(raw, &head) != nil {
 		return false
 	}
-	return head.Role == "assistant"
+	return head.Role == "user" || head.Role == "assistant"
 }
 
 func (r *SessionRecorder) appendEntry(entry map[string]any) string {
