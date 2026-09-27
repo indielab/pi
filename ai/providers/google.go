@@ -505,7 +505,9 @@ func StreamGoogle(ctx context.Context, model *ai.Model, req ai.TranscriptContext
 		// No OnResponse: pi hands the request to the @google/genai client,
 		// which owns the fetch, and its google adapter never calls onResponse.
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			data, err := readSDKErrorBody(ctx, respBody)
+			// Read through fetch, so a connection that drops mid-body fails
+			// the stream "terminated", as @google/genai's rejected read does.
+			data, err := readFetchErrorBody(ctx, fetchBody{ctx, respBody})
 			if err != nil {
 				fail(err)
 				return

@@ -221,6 +221,28 @@ func (d heldDoer) Do(req *http.Request) (*http.Response, error) {
 	}, nil
 }
 
+// errorBodyDoer answers every request status, application/json, with
+// retryAfter (when set) and body: a custom fetch's error response.
+type errorBodyDoer struct {
+	status     int
+	retryAfter string
+	body       io.ReadCloser
+}
+
+func (d errorBodyDoer) Do(req *http.Request) (*http.Response, error) {
+	header := http.Header{"Content-Type": {"application/json"}}
+	if d.retryAfter != "" {
+		header.Set("Retry-After", d.retryAfter)
+	}
+	return &http.Response{
+		StatusCode: d.status,
+		Status:     fmt.Sprintf("%d %s", d.status, http.StatusText(d.status)),
+		Header:     header,
+		Body:       d.body,
+		Request:    req,
+	}, nil
+}
+
 // streamAbortAdapter streams the capture's model for api from baseURL.
 func streamAbortAdapter(t *testing.T, ctx context.Context, api, baseURL string, opts ai.StreamOptions) *ai.AssistantMessageEventStream {
 	t.Helper()
@@ -461,9 +483,18 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 				// A custom client is pi's custom fetch: its body's own error is
 				// the stream's.
 				opts.HTTPClient = heldDoer{io.NopCloser(io.MultiReader(strings.NewReader(run.Segments[0]), iotest.ErrReader(errors.New(run.CustomBodyError))))}
-			case "the connection drops mid-body", "the connection drops while an error body is read":
-				// The server writes the head and one chunk, then closes the
-				// connection inside the chunked body.
+			case "a custom fetch's retryable error body fails mid-body":
+				// The SDK quotes its body read's own error, read as it is.
+				opts.MaxRetries = run.MaxRetries
+				opts.HTTPClient = errorBodyDoer{
+					status:     run.Status,
+					retryAfter: run.RetryAfter,
+					body:       io.NopCloser(io.MultiReader(strings.NewReader(run.Segments[0]), iotest.ErrReader(errors.New(run.CustomBodyError)))),
+				}
+			case "the connection drops mid-body", "the connection drops while an error body is read", "the connection drops while a retryable error body is read":
+				// The server writes the head (with the run's retry-after) and
+				// one chunk, then closes the connection inside the chunked body.
+				opts.MaxRetries = run.MaxRetries
 				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					io.Copy(io.Discard, r.Body)
 					conn, rw, err := w.(http.Hijacker).Hijack()
@@ -476,8 +507,12 @@ func TestStreamAbortMatchesPi(t *testing.T) {
 					if run.Status != http.StatusOK {
 						contentType = "application/json"
 					}
-					fmt.Fprintf(rw, "HTTP/1.1 %d %s\r\nContent-Type: %s\r\nTransfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n",
-						run.Status, http.StatusText(run.Status), contentType, len(run.Segments[0]), run.Segments[0])
+					retryAfter := ""
+					if run.RetryAfter != "" {
+						retryAfter = "Retry-After: " + run.RetryAfter + "\r\n"
+					}
+					fmt.Fprintf(rw, "HTTP/1.1 %d %s\r\nContent-Type: %s\r\n%sTransfer-Encoding: chunked\r\n\r\n%x\r\n%s\r\n",
+						run.Status, http.StatusText(run.Status), contentType, retryAfter, len(run.Segments[0]), run.Segments[0])
 					rw.Flush()
 				}))
 				defer server.Close()

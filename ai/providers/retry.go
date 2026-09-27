@@ -350,18 +350,42 @@ var errRequestAborted = errors.New("Request aborted")
 // retry loop's.
 var errRequestWasAborted = errors.New("Request was aborted")
 
-// readSDKErrorBody reads the body of the non-2xx response an SDK adapter
-// (anthropic, both openai loops, google) fails with. The SDKs throw their
-// error only once they have read that body, and pi's retryProviderRequest
-// catches it and checks the signal first thing, so a request aborted by then
-// — during the read included — ends errRequestAborted, whatever the body
-// said.
+// readSDKErrorBody reads the body of the non-2xx response anthropic or an
+// openai loop fails with, as their SDKs do (sdkErrorText). The SDKs throw
+// their error only once they have read that body, and pi's
+// retryProviderRequest catches it and checks the signal first thing, so a
+// request aborted by then — during the read included — ends
+// errRequestAborted, whatever the body said.
 func readSDKErrorBody(ctx context.Context, body io.Reader) ([]byte, error) {
-	data, _ := io.ReadAll(body)
+	data := sdkErrorText(body)
 	if ctx != nil && ctx.Err() != nil {
 		return nil, errRequestAborted
 	}
 	return data, nil
+}
+
+// sdkErrorText is the text openai and @anthropic-ai/sdk parse a non-2xx
+// response's body from: `await response.text().catch((err) =>
+// castToError(err).message)`. A read that fails leaves its error's message —
+// undici's "terminated" when the connection drops mid-body (fetchBody) — in
+// place of what had arrived.
+func sdkErrorText(body io.Reader) []byte {
+	data, err := io.ReadAll(body)
+	if err != nil {
+		return []byte(err.Error())
+	}
+	return data
+}
+
+// readFetchErrorBody is readSDKErrorBody for @google/genai, which reads a
+// non-2xx response's body with no catch: a read that fails rejects, and its
+// error is the stream's.
+func readFetchErrorBody(ctx context.Context, body io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(body)
+	if ctx != nil && ctx.Err() != nil {
+		return nil, errRequestAborted
+	}
+	return data, err
 }
 
 // undiciFetchError is what fetch rejects with when a request sent through
@@ -590,14 +614,14 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 			continue
 		}
 		if (resp.StatusCode < 200 || resp.StatusCode >= 300) && aborted() {
-			readAndCloseBody(resp)
+			readAndCloseBody(ctx, resp, cfg.httpClient == nil)
 			return nil, errRequestAborted
 		}
 		if shouldRetryResponse(resp) && attempt < attempts-1 {
 			// The body is only needed to quote the provider in a fail-fast
 			// error, so render it lazily.
 			var providerMsg string
-			body := readAndCloseBody(resp)
+			body := readAndCloseBody(ctx, resp, cfg.httpClient == nil)
 			// The SDK throws once it has read the body, and pi's catch
 			// checks the signal before it reads a retry delay.
 			if aborted() {
@@ -623,17 +647,22 @@ func sendWithRetry(ctx context.Context, build func() (*http.Request, error), cfg
 	return nil, fmt.Errorf("request failed after %d attempts", attempts)
 }
 
-// readAndCloseBody consumes and closes a retryable response body, returning what
-// it read so a fail-fast error can quote the provider's message. The 1 MiB cap
-// matches the volume the previous discard-only drain read, so connection reuse
-// is unchanged.
-func readAndCloseBody(resp *http.Response) []byte {
+// readAndCloseBody consumes and closes a retryable response body, returning the
+// text its SDK parses (sdkErrorText) so a fail-fast error can quote the
+// provider's message; own is whether the port's own client sent the request,
+// whose body is read as undici's (fetchBody). The 1 MiB cap matches the volume
+// the previous discard-only drain read, so connection reuse is unchanged.
+func readAndCloseBody(ctx context.Context, resp *http.Response, own bool) []byte {
 	if resp == nil || resp.Body == nil {
 		return nil
 	}
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	var body io.Reader = resp.Body
+	if own {
+		body = fetchBody{ctx, body}
+	}
+	text := sdkErrorText(io.LimitReader(body, 1<<20))
 	_ = resp.Body.Close()
-	return body
+	return text
 }
 
 func sleepCtx(ctx context.Context, d time.Duration) bool {

@@ -23,10 +23,10 @@
 // adapter as one body read (undici reads one chunk at a time); then it holds
 // the connection open. The anthropic-messages, openai-completions,
 // openai-responses and pi-messages adapters run every mode (the SDK adapters'
-// request modes are abort-before-response's, and their error-body drop is
-// K18's); google-generative-ai runs the error-body modes, the no-response ones
-// and "an abort from the callback on the last event of a body already
-// complete". Modes:
+// request modes are abort-before-response's, and anthropic's error-body drop
+// is K18's); google-generative-ai runs the error-body modes but the retryable
+// drop, the no-response ones and "an abort from the callback on the last event
+// of a body already complete". Modes:
 //   - "an abort while a read is pending": the signal aborts 150ms after the
 //     first segment is written, while the adapter waits on its next read;
 //   - "an abort from the callback with events left in its read": the
@@ -53,11 +53,18 @@
 //     aborted before the call or 150ms into it;
 //   - "the connection drops mid-body": no abort; the server destroys the
 //     socket 100ms after the first segment, inside the chunked body;
-//   - "the connection drops while an error body is read" (pi-messages only;
-//     the SDK adapters' error text is K18's): the same after a 500's start;
+//   - "the connection drops while an error body is read" (all but anthropic,
+//     whose error text is K18's): the same after a 500's start;
+//   - "the connection drops while a retryable error body is read" (the SDK
+//     adapters, whose fail-fast error quotes their SDK's message): the same
+//     after the start of a 429 carrying retry-after: 120, under maxRetries 1;
 //   - "a custom fetch's body fails mid-body": the caller's options.fetch
 //     answers 200 with a body that delivers the first segment and then fails
 //     with its own error (customBodyError); no server is involved;
+//   - "a custom fetch's retryable error body fails mid-body" (the SDK
+//     adapters): options.fetch answers 429 with retry-after: 120 and a body
+//     that delivers the start of the error body and then fails with
+//     customBodyError, under maxRetries 1;
 //   - "the request gets no response: ...": the connection is refused (port
 //     1), also at a /timeout path (the SDKs test a rejection's text for
 //     /timed? ?out/i, and undici's does not hold the URL), the server
@@ -141,7 +148,9 @@ type Mode =
 	| "an abort before the response arrives"
 	| "the connection drops mid-body"
 	| "the connection drops while an error body is read"
+	| "the connection drops while a retryable error body is read"
 	| "a custom fetch's body fails mid-body"
+	| "a custom fetch's retryable error body fails mid-body"
 	| "the request gets no response: the connection is refused"
 	| "the request gets no response: the connection is refused at a /timeout path"
 	| "the request gets no response: the server closes the connection"
@@ -167,7 +176,9 @@ const retryableErrorBody: Mode = "an abort while a retryable error body is read"
 const requestModes: Mode[] = ["an already-aborted signal", "an abort before the response arrives"];
 const drops: Mode = "the connection drops mid-body";
 const errorBodyDrops: Mode = "the connection drops while an error body is read";
+const retryableErrorBodyDrops: Mode = "the connection drops while a retryable error body is read";
 const customBody: Mode = "a custom fetch's body fails mid-body";
+const customRetryableErrorBody: Mode = "a custom fetch's retryable error body fails mid-body";
 const customBodyError = "the custom fetch's body failed";
 const refused: Mode = "the request gets no response: the connection is refused";
 const closes: Mode = "the request gets no response: the server closes the connection";
@@ -202,7 +213,7 @@ const adapters = [
 		provider: "anthropic",
 		id: "claude-sonnet-4-5",
 		module: await load("api/anthropic-messages.ts"),
-		modes: [...streamModes, completeBody, errorBody, drops, customBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes, ...customAbortModes],
+		modes: [...streamModes, completeBody, errorBody, drops, customBody, retryableErrorBody, retryableErrorBodyDrops, customRetryableErrorBody, ...noResponseModes, ...sdkNoResponseModes, ...customAbortModes],
 		segments: [
 			anthropicEvent("message_start", {
 				type: "message_start",
@@ -243,7 +254,7 @@ const adapters = [
 		provider: "openai",
 		id: "gpt-4o",
 		module: await load("api/openai-completions.ts"),
-		modes: [...streamModes, completeBody, errorBody, drops, customBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes, ...customAbortModes, customBodyHangs],
+		modes: [...streamModes, completeBody, errorBody, drops, errorBodyDrops, customBody, retryableErrorBody, retryableErrorBodyDrops, customRetryableErrorBody, ...noResponseModes, ...sdkNoResponseModes, ...customAbortModes, customBodyHangs],
 		segments: [
 			dataEvent({ id: "c1", choices: [{ index: 0, delta: { content: "in" } }] }) +
 				dataEvent({ id: "c1", choices: [{ index: 0, delta: { content: " " } }] }) +
@@ -257,7 +268,7 @@ const adapters = [
 		provider: "openai",
 		id: "gpt-5-mini",
 		module: await load("api/openai-responses.ts"),
-		modes: [...streamModes, completeBody, errorBody, drops, customBody, retryableErrorBody, ...noResponseModes, ...sdkNoResponseModes, ...customAbortModes, customBodyHangs],
+		modes: [...streamModes, completeBody, errorBody, drops, errorBodyDrops, customBody, retryableErrorBody, retryableErrorBodyDrops, customRetryableErrorBody, ...noResponseModes, ...sdkNoResponseModes, ...customAbortModes, customBodyHangs],
 		segments: [
 			dataEvent({ type: "response.output_item.added", output_index: 0, item: { type: "message", id: "msg_1", role: "assistant", content: [] } }) +
 				dataEvent({ type: "response.content_part.added", output_index: 0, part: { type: "output_text", text: "" } }) +
@@ -277,7 +288,7 @@ const adapters = [
 		provider: "google",
 		id: "gemini-2.5-flash",
 		module: await load("api/google-generative-ai.ts"),
-		modes: [completeBody, errorBody, retryableErrorBody, ...noResponseModes],
+		modes: [completeBody, errorBody, errorBodyDrops, retryableErrorBody, ...noResponseModes],
 		segments: [
 			dataEvent({ candidates: [{ content: { parts: [{ text: "in hand" }], role: "model" } }] }),
 			dataEvent({
@@ -342,9 +353,10 @@ const baseUrlFor = (mode: Mode) => {
 const runs = [];
 for (const a of adapters) {
 	for (const mode of a.modes) {
-		const errorStatus = mode === errorBody || mode === errorBodyDrops || mode === retryableErrorBody;
-		status = mode === retryableErrorBody ? "429 Too Many Requests" : errorStatus ? "500 Internal Server Error" : "200 OK";
-		extraHead = mode === retryableErrorBody ? "retry-after: 120\r\n" : "";
+		const retryable = mode === retryableErrorBody || mode === retryableErrorBodyDrops || mode === customRetryableErrorBody;
+		const errorStatus = retryable || mode === errorBody || mode === errorBodyDrops;
+		status = retryable ? "429 Too Many Requests" : errorStatus ? "500 Internal Server Error" : "200 OK";
+		extraHead = retryable ? "retry-after: 120\r\n" : "";
 		segments = errorStatus
 			? [errorBodyStart]
 			: mode === "an abort from the callback with the next read already in" || mode === completeBody
@@ -354,11 +366,12 @@ for (const a of adapters) {
 		answer =
 			!requestModes.includes(mode) &&
 			mode !== customBody &&
+			mode !== customRetryableErrorBody &&
 			!noResponseModes.includes(mode) &&
 			!sdkNoResponseModes.includes(mode) &&
 			!customAbortModes.includes(mode) &&
 			mode !== customBodyHangs;
-		dropAfterWrite = mode === drops || mode === errorBodyDrops;
+		dropAfterWrite = mode === drops || mode === errorBodyDrops || mode === retryableErrorBodyDrops;
 		const controller = new AbortController();
 		onSegmentWritten =
 			mode === "an abort while a read is pending" || mode === errorBody || mode === retryableErrorBody
@@ -393,6 +406,19 @@ for (const a of adapters) {
 			return new Response(body, { status: 200, headers: { "content-type": "text/event-stream" } });
 		};
 		const eventStream = { status: 200, headers: { "content-type": "text/event-stream" } };
+		// A custom fetch answers 429 with retry-after: 120 and a body that
+		// delivers the start of the error and then fails with its own error.
+		const customRetryableErrorFetch = async () => {
+			let sent = false;
+			const body = new ReadableStream({
+				pull(c) {
+					if (sent) c.error(new Error(customBodyError));
+					else c.enqueue(new TextEncoder().encode(errorBodyStart));
+					sent = true;
+				},
+			});
+			return new Response(body, { status: 429, headers: { "content-type": "application/json", "retry-after": "120" } });
+		};
 		// The whole stream as the ignoring body delivers it, one read each.
 		const whole = [...a.segments, (a as { finish?: string }).finish ?? ""];
 		// The custom fetches that meet an abort: one that rejects once the
@@ -447,8 +473,9 @@ for (const a of adapters) {
 		const out = a.module.stream(model, { messages: [{ role: "user", content: "hi", timestamp: 1 }] }, {
 			apiKey: "test-api-key",
 			signal: controller.signal,
-			...(mode === retryableErrorBody ? { maxRetries: 1 } : {}),
+			...(retryable ? { maxRetries: 1 } : {}),
 			...(mode === customBody ? { fetch: customFetch } : {}),
+			...(mode === customRetryableErrorBody ? { fetch: customRetryableErrorFetch } : {}),
 			...(customAbortFetches[mode] ? { fetch: customAbortFetches[mode] } : {}),
 			...(mode === customRejects || mode === customRejectsTimedOut
 				? {
@@ -484,8 +511,9 @@ for (const a of adapters) {
 			api: a.api,
 			mode,
 			...(answer ? { status: Number.parseInt(status), segments } : {}),
-			...(mode === retryableErrorBody ? { retryAfter: "120", maxRetries: 1 } : {}),
+			...(retryable ? { retryAfter: "120", maxRetries: 1 } : {}),
 			...(mode === customBody ? { status: 200, segments: a.segments.slice(0, 1), customBodyError } : {}),
+			...(mode === customRetryableErrorBody ? { status: 429, segments: [errorBodyStart], customBodyError } : {}),
 			...(mode === badHeader ? { headers: { "x-test": badHeaderValue } } : {}),
 			...(mode === customRejects || mode === customRejectsOnAbort ? { customFetchError } : {}),
 			...(mode === customRejectsTimedOut ? { customFetchError: customTimeoutError } : {}),

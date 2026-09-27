@@ -409,8 +409,15 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			return
 		}
 		defer resp.Body.Close()
+		// The SDK fetches with undici unless the caller hands pi its own fetch:
+		// the body then fails as undici's does (fetchBody), "terminated" for a
+		// connection that drops mid-body.
+		var respBody io.Reader = resp.Body
+		if _, custom := customHTTPClient(opts.HTTPClient); !custom {
+			respBody = fetchBody{ctx, resp.Body}
+		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			data, err := readSDKErrorBody(ctx, resp.Body)
+			data, err := readSDKErrorBody(ctx, respBody)
 			if err != nil {
 				fail(err)
 				return
@@ -429,14 +436,6 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		}
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
-
-		// The SDK fetches with undici unless the caller hands pi its own fetch:
-		// the body then fails as undici's does (fetchBody), "terminated" for a
-		// connection that drops mid-body.
-		var respBody io.Reader = resp.Body
-		if _, custom := customHTTPClient(opts.HTTPClient); !custom {
-			respBody = fetchBody{ctx, resp.Body}
-		}
 
 		var builders []*blockBuilder
 		// outputSlots maps an event's output_index to the in-flight block for

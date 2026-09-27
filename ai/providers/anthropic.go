@@ -692,9 +692,14 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 			return
 		}
 		defer resp.Body.Close()
+		// The SDK fetches with undici unless the caller hands pi its own fetch.
+		var respBody io.Reader = resp.Body
+		if _, custom := customHTTPClient(opts.HTTPClient); !custom {
+			respBody = fetchBody{ctx, resp.Body}
+		}
 
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-			data, err := readSDKErrorBody(ctx, resp.Body)
+			data, err := readSDKErrorBody(ctx, respBody)
 			if err != nil {
 				fail(err)
 				return
@@ -713,12 +718,6 @@ func StreamAnthropic(ctx context.Context, model *ai.Model, req ai.TranscriptCont
 		}
 
 		stream.Push(ai.AssistantMessageEvent{Type: ai.EventStart, Partial: output.Clone()})
-
-		// The SDK fetches with undici unless the caller hands pi its own fetch.
-		var respBody io.Reader = resp.Body
-		if _, custom := customHTTPClient(opts.HTTPClient); !custom {
-			respBody = fetchBody{ctx, resp.Body}
-		}
 
 		// blocks is pi's `output.content` as its handler holds it: each block's
 		// builder with the two fields pi deletes on content_block_stop — the
