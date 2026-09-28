@@ -1,5 +1,5 @@
 {
-	"sha": "2b0a123de",
+	"sha": "6f7551516",
 	"defaultModelPerProvider": {
 		"amazon-bedrock": "us.anthropic.claude-opus-4-6-v1",
 		"ant-ling": "Ring-2.6-1T",
@@ -26,7 +26,7 @@
 		"moonshotai": "kimi-k2.6",
 		"moonshotai-cn": "kimi-k2.6",
 		"huggingface": "moonshotai/Kimi-K2.6",
-		"fireworks": "accounts/fireworks/models/kimi-k2p6",
+		"fireworks": "accounts/fireworks/models/kimi-k3",
 		"together": "moonshotai/Kimi-K2.6",
 		"baseten": "zai-org/GLM-5.2",
 		"opencode": "kimi-k2.6",
