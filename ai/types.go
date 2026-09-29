@@ -910,10 +910,10 @@ type ToolResultMessage struct {
 	ToolName   string      `json:"toolName"`
 	Content    ContentList `json:"content"` // TextContent | ImageContent
 	Details    any         `json:"details,omitempty"`
-	// Usage is what executing the tool cost, when whoever executed it accounted
-	// for that. pi has carried it since 2026-05-04 and no pi code path sets it;
-	// it is an affordance for SDK callers, and the server bridge puts it on the
-	// wire when it is there (pi: ToolResultMessage.usage, optional).
+	// Usage is what executing the tool cost, when the tool accounted for that
+	// (pi: ToolResultMessage.usage, optional). The agent loop sets it from the
+	// tool's AgentToolResult.Usage, as pi's has since 2fd386840, and the server
+	// bridge puts it on the wire when it is there.
 	Usage *Usage `json:"usage,omitempty"`
 	// NestedCalls records the calls this tool made to other tools, a codemode
 	// script's for example (pi ToolResultMessage.nestedCalls, upstream

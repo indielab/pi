@@ -56,7 +56,11 @@ func TestLoopRecordsRequestedThinkingLevel(t *testing.T) {
 				}
 				return nil
 			})
-			_ = a.Prompt(context.Background(), "hi")
+			// A failed response ends the run without an error from Prompt;
+			// any error here is the harness, not the case under test.
+			if err := a.Prompt(context.Background(), "hi"); err != nil {
+				t.Fatal(err)
+			}
 
 			msgs := a.State().Messages
 			final, ok := msgs[len(msgs)-1].(*ai.AssistantMessage)

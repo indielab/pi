@@ -929,7 +929,7 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 			ai.Opt("timeout", ai.Number("Timeout in seconds (optional, no default timeout)")),
 		),
 		ConstrainedSampling: preferStrictToolSampling,
-		OutputSchema:        bashOutputSchema,
+		OutputSchema:        bashOutputSchema(),
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			command := config.commandPrefix + argStr(params, "command")
 			// pi resolveTimeoutMs (bash.ts) validates the timeout before spawning:
@@ -1024,7 +1024,7 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 			structured := BashToolOutput{
 				Output:          text,
 				ExitCode:        *exitCode,
-				WallTimeSeconds: bashWallTimeSeconds(float64(time.Since(startedAt)) / float64(time.Millisecond)),
+				WallTimeSeconds: bashWallTimeSeconds(time.Since(startedAt)),
 			}
 			// Upstream 8562bcf66: a non-zero exit is an error result, not a
 			// thrown error, so it keeps its details and structured content. pi's
@@ -1055,16 +1055,20 @@ type BashToolOutput struct {
 	WallTimeSeconds float64 `json:"wall_time_seconds"`
 }
 
-// bashOutputSchema is the shell tools' OutputSchema (pi bashOutputSchema).
-var bashOutputSchema = ai.Object(
-	ai.Prop("output", ai.String("Combined stdout and stderr, truncated like the model-facing output")),
-	ai.Prop("exit_code", ai.Number()),
-	ai.Prop("wall_time_seconds", ai.Number()),
-)
+// bashOutputSchema is the shell tools' OutputSchema (pi bashOutputSchema),
+// built per tool like Parameters, since a Schema can be modified in place.
+func bashOutputSchema() *ai.Schema {
+	return ai.Object(
+		ai.Prop("output", ai.String("Combined stdout and stderr, truncated like the model-facing output")),
+		ai.Prop("exit_code", ai.Number()),
+		ai.Prop("wall_time_seconds", ai.Number()),
+	)
+}
 
 // bashWallTimeSeconds is pi's Math.round(elapsedMs / 100) / 10: the wall
 // time in tenths of a second.
-func bashWallTimeSeconds(elapsedMs float64) float64 {
+func bashWallTimeSeconds(elapsed time.Duration) float64 {
+	elapsedMs := float64(elapsed) / float64(time.Millisecond)
 	return float64(jsRound(elapsedMs/100)) / 10
 }
 

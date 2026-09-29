@@ -82,8 +82,8 @@ type AgentOptions struct {
 	// to the stream options. See ai.StreamOptions.OnProviderStreamEvent.
 	OnProviderStreamEvent func(data any, model *ai.Model) error
 
-	BeforeToolCall  func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
-	AfterToolCall   func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+	BeforeToolCall  BeforeToolCallFunc
+	AfterToolCall   AfterToolCallFunc
 	FinishTurn      FinishTurnFunc
 	PrepareRequest  PrepareRequestFunc
 	PrepareNextTurn func(c AgentTurnContext) *AgentLoopTurnUpdate
@@ -136,8 +136,8 @@ type Agent struct {
 	// Agent.onProviderStreamEvent).
 	OnProviderStreamEvent func(data any, model *ai.Model) error
 
-	BeforeToolCall  func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
-	AfterToolCall   func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+	BeforeToolCall  BeforeToolCallFunc
+	AfterToolCall   AfterToolCallFunc
 	FinishTurn      FinishTurnFunc
 	PrepareRequest  PrepareRequestFunc
 	PrepareNextTurn func(c AgentTurnContext) *AgentLoopTurnUpdate

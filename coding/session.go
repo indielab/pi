@@ -101,9 +101,9 @@ type SessionOptions struct {
 	// executes. Return {Block:true, Reason:...} to deny it (the loop emits an
 	// error tool result). This is the native equivalent of pi's tool_call
 	// extension hook — use it for permission gates, path protection, etc.
-	BeforeToolCall func(ctx context.Context, c agent.BeforeToolCallContext) *agent.BeforeToolCallResult
+	BeforeToolCall agent.BeforeToolCallFunc
 	// AfterToolCall runs after a tool finishes; return overrides for the result.
-	AfterToolCall func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult
+	AfterToolCall agent.AfterToolCallFunc
 
 	// Compaction, when non-nil, installs automatic context-window compaction.
 	// Use &DefaultCompactionSettings for pi's defaults.
@@ -640,10 +640,7 @@ func (s *Session) projectForcedPrompt(_ context.Context, transformed []agent.Age
 // it after the tool_result extension hook — so images the hook injects or
 // replaces are normalized too. When there is no hook result and normalization
 // changed nothing, the tool result is left untouched.
-func withToolResultImageNormalization(
-	hook func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult,
-	resize imageResizeFn,
-) func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult {
+func withToolResultImageNormalization(hook agent.AfterToolCallFunc, resize imageResizeFn) agent.AfterToolCallFunc {
 	return func(ctx context.Context, c agent.AfterToolCallContext) *agent.AfterToolCallResult {
 		var hookResult *agent.AfterToolCallResult
 		if hook != nil {

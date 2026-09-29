@@ -448,12 +448,6 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			contentIndex int
 		}
 		outputSlots := map[int]*responsesOutputSlot{}
-		// unfinishedToolCalls holds the tool call blocks whose output_item.done
-		// has not arrived — pi's partialJson / customInput scratch buffers,
-		// which it deletes when the call finishes. A slot map entry cannot
-		// stand in for it: an event without output_index lands every item on
-		// one key, so a later item replaces an earlier, still open one.
-		unfinishedToolCalls := map[*blockBuilder]bool{}
 		// reasoningBlocksByID indexes reasoning blocks by their item id so a
 		// terminal response.completed can backfill a missing encrypted_content
 		// onto the persisted signature (port of upstream 1f0dbc00). Azure OpenAI
@@ -574,7 +568,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				return nil
 			}
 			if b.kind == "toolCall" {
-				unfinishedToolCalls[b] = true
+				b.unfinished = true
 			}
 			builders = append(builders, b)
 			slot := &responsesOutputSlot{block: b, contentIndex: len(builders) - 1}
@@ -890,7 +884,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 					if ev.Item.Namespace != "" {
 						slot.block.toolNamespace = ev.Item.Namespace
 					}
-					delete(unfinishedToolCalls, slot.block)
+					slot.block.unfinished = false
 					materialize()
 					tc := slot.block.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: slot.contentIndex, ToolCall: &tc, Partial: output.Clone()})
@@ -910,7 +904,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 					if ev.Item.Namespace != "" {
 						slot.block.toolNamespace = ev.Item.Namespace
 					}
-					delete(unfinishedToolCalls, slot.block)
+					slot.block.unfinished = false
 					materialize()
 					tc := slot.block.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: slot.contentIndex, ToolCall: &tc, Partial: output.Clone()})
@@ -957,7 +951,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		// processResponsesStream, so it precedes the abort guard too.
 		if output.StopReason == ai.StopToolUse {
 			for _, b := range builders {
-				if unfinishedToolCalls[b] {
+				if b.unfinished {
 					fail(fmt.Errorf("OpenAI Responses stream completed with an unfinished tool call: %s (%s)", b.toolName, b.toolID))
 					return
 				}

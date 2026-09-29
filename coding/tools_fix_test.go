@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
@@ -380,11 +381,14 @@ func TestBashNonZeroExitIsAnErrorResultWithStructuredContent(t *testing.T) {
 // The wall time is pi's Math.round(ms / 100) / 10: tenths of a second.
 func TestBashWallTimeSeconds(t *testing.T) {
 	for _, tc := range []struct {
-		ms   float64
-		want float64
-	}{{0, 0}, {49.9, 0}, {50, 0.1}, {149.99, 0.1}, {150, 0.2}, {1234, 1.2}, {1250, 1.3}} {
-		if got := bashWallTimeSeconds(tc.ms); got != tc.want {
-			t.Errorf("bashWallTimeSeconds(%v) = %v, want %v", tc.ms, got, tc.want)
+		elapsed time.Duration
+		want    float64
+	}{
+		{0, 0}, {49900 * time.Microsecond, 0}, {50 * time.Millisecond, 0.1}, {149990 * time.Microsecond, 0.1},
+		{150 * time.Millisecond, 0.2}, {1234 * time.Millisecond, 1.2}, {1250 * time.Millisecond, 1.3},
+	} {
+		if got := bashWallTimeSeconds(tc.elapsed); got != tc.want {
+			t.Errorf("bashWallTimeSeconds(%v) = %v, want %v", tc.elapsed, got, tc.want)
 		}
 	}
 }

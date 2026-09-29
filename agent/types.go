@@ -80,12 +80,16 @@ type AgentToolResult struct {
 }
 
 // AgentToolCallOutcome is the final outcome of a tool call after its hooks ran
-// (upstream 8562bcf66): what the loop records for a model-issued call, and what
-// RunToolCall returns for a call made from inside another tool.
+// (upstream 8562bcf66, pi's FinalizedToolCallOutcome): what the loop records
+// for a model-issued call, and what RunToolCall returns for a call made from
+// inside another tool.
 type AgentToolCallOutcome struct {
 	ToolCall ai.ToolCall
 	Result   AgentToolResult
-	IsError  bool
+	// IsError is the final verdict, after AfterToolCall — the one the tool
+	// result message carries. Result.IsError is only what the tool itself
+	// reported, and an AfterToolCall override can make the two differ.
+	IsError bool
 }
 
 // ToolUpdateFunc streams partial tool results during execution.
@@ -171,6 +175,14 @@ type BeforeToolCallResult struct {
 	// Ignored unless Block is set.
 	Terminate bool
 }
+
+// BeforeToolCallFunc runs before a tool executes, once its arguments are
+// validated. A result that blocks the call turns it into an error tool result.
+type BeforeToolCallFunc func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
+
+// AfterToolCallFunc runs after a tool executes. Its result overrides parts of
+// the finalized tool result.
+type AfterToolCallFunc func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
 
 // AfterToolCallContext is passed to AfterToolCall.
 type AfterToolCallContext struct {
@@ -338,8 +350,8 @@ type AgentLoopConfig struct {
 	// GetApiKey resolves an API key per call (for expiring OAuth tokens).
 	GetApiKey func(provider string) string
 
-	BeforeToolCall func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
-	AfterToolCall  func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+	BeforeToolCall BeforeToolCallFunc
+	AfterToolCall  AfterToolCallFunc
 	// FinishTurn is called after the assistant message and all tool-result
 	// messages have been emitted, immediately before turn_end. TurnEnd ends the
 	// run without polling the queues or preparing another request. On a normal

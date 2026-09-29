@@ -2019,6 +2019,23 @@ data: {"type":"response.completed","response":{"id":"resp_no_output_index","stat
 `,
 			want: "OpenAI Responses stream completed with an unfinished tool call: bash (call_a|fc_a)",
 		},
+		{
+			// pi walks output.content, so of several open calls the error
+			// names the first in content order.
+			name: "several unfinished calls",
+			sse: `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"bash","arguments":""}}
+
+data: {"type":"response.output_item.added","output_index":1,"item":{"type":"function_call","id":"fc_2","call_id":"call_2","name":"read","arguments":""}}
+
+data: {"type":"response.output_item.added","output_index":2,"item":{"type":"function_call","id":"fc_3","call_id":"call_3","name":"edit","arguments":""}}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"bash","arguments":"{}"}}
+
+data: {"type":"response.completed","response":{"id":"resp_several","status":"completed"}}
+
+`,
+			want: "OpenAI Responses stream completed with an unfinished tool call: read (call_2|fc_2)",
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -1077,6 +1077,12 @@ type blockBuilder struct {
 	// grammar is set on custom (grammar-constrained) tool calls, whose raw input
 	// is re-synthesized into JSON deltas instead of being parsed from partialJSON.
 	grammar *grammarInputBuffer
+	// unfinished marks an OpenAI Responses tool call whose output_item.done has
+	// not arrived — pi's partialJson / customInput scratch buffers, which it
+	// deletes when the call finishes (upstream 1b2aa0ca0). The slot map cannot
+	// stand in for it: an event without output_index lands every item on one
+	// key, so a later item replaces an earlier, still open one.
+	unfinished bool
 }
 
 func (b *blockBuilder) toContent() ai.Content {
