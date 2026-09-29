@@ -209,6 +209,8 @@ func updateDecoder[O opTuple](d *jsonstrict.Decoder) func(any) (ServiceProviderU
 		switch kind {
 		case "state":
 			return jsonstrict.DecodeMember[StateUpdate[O]](d, rest)
+		case "reset":
+			return jsonstrict.DecodeMember[ResetUpdate[O]](d, rest)
 		case "unavailable":
 			return jsonstrict.DecodeMember[UnavailableUpdate[O]](d, rest)
 		case "replaced":
@@ -218,7 +220,7 @@ func updateDecoder[O opTuple](d *jsonstrict.Decoder) func(any) (ServiceProviderU
 		case "closed":
 			return jsonstrict.DecodeMember[ClosedUpdate[O]](d, rest)
 		}
-		return nil, jsonstrict.Errorf("update type must be one of state, unavailable, replaced, spawned or closed, got %q", kind)
+		return nil, jsonstrict.Errorf("update type must be one of state, reset, unavailable, replaced, spawned or closed, got %q", kind)
 	}
 }
 

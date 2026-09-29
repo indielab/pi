@@ -538,3 +538,55 @@ func TestParsedValuesAreComplete(t *testing.T) {
 		t.Error("parsed empty catalogue is nil, want an empty slice")
 	}
 }
+
+// Upstream 35180b9df (service-wire.test.ts "validates explicit resets and
+// restarts path dictionaries at the new baseline"), its parser half: a
+// "reset" update carries a full subscription snapshot that rebaselines every
+// state, so each state member must be exactly one root replacement. Both
+// grammars accept it — a replacement encodes to itself — and marshal it back
+// byte for byte; the codec half (restarting path dictionaries) belongs to the
+// state codec, which is not ported yet.
+func TestValidatesExplicitResets(t *testing.T) {
+	reset := `{"type":"reset","snapshot":{"serviceId":"pi.states","mode":"singleton","instances":[{"members":[{"name":"state","kind":"state","sequence":103,"ops":[["r",{"after":103}]]}]}]}}`
+	decoded, err := ParseServiceProviderUpdate(tree(t, reset))
+	if err != nil {
+		t.Fatalf("ParseServiceProviderUpdate: %v", err)
+	}
+	want := ResetUpdate[delta.Op]{Snapshot: ServiceSubscriptionSnapshot[delta.Op]{
+		ServiceID: "pi.states",
+		Mode:      Singleton,
+		Instances: []ServiceInstanceSnapshot[delta.Op]{{
+			Members: []ServiceMemberSnapshot[delta.Op]{
+				StateSnapshot[delta.Op]{Name: "state", Sequence: 103, Ops: []delta.Op{delta.Replace{Value: map[string]any{"after": float64(103)}}}},
+			},
+		}},
+	}}
+	if !reflect.DeepEqual(decoded, want) {
+		t.Errorf("decoded reset = %#v, want %#v", decoded, want)
+	}
+	if got := encode(t, decoded); got != reset {
+		t.Errorf("decoded reset marshals to %s, want %s", got, reset)
+	}
+	wire, err := ParseWireServiceProviderUpdate(tree(t, reset))
+	if err != nil {
+		t.Fatalf("ParseWireServiceProviderUpdate: %v", err)
+	}
+	if got := encode(t, wire); got != reset {
+		t.Errorf("wire reset marshals to %s, want %s", got, reset)
+	}
+
+	for name, parse := range map[string]func(any) error{
+		"decoded": func(v any) error { _, err := ParseServiceProviderUpdate(v); return err },
+		"wire":    func(v any) error { _, err := ParseWireServiceProviderUpdate(v); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			withExtra := strings.Replace(reset, `{"type":"reset",`, `{"type":"reset","extra":true,`, 1)
+			wantServiceValueError(t, parse(tree(t, withExtra)), "service provider update", `"extra"`)
+			wantServiceValueError(t, parse(tree(t, `{"type":"reset","snapshot":{}}`)), "service provider update")
+			notRoot := `{"type":"reset","snapshot":{"serviceId":"pi.states","mode":"singleton","instances":[{"members":[{"name":"state","kind":"state","sequence":103,"ops":[["s",["before"],103]]}]}]}}`
+			wantServiceValueError(t, parse(tree(t, notRoot)), "service provider update", "full root replacements")
+			twoOps := `{"type":"reset","snapshot":{"serviceId":"pi.states","mode":"singleton","instances":[{"members":[{"name":"state","kind":"state","sequence":103,"ops":[["r",1],["r",2]]}]}]}}`
+			wantServiceValueError(t, parse(tree(t, twoOps)), "service provider update", "full root replacements")
+		})
+	}
+}

@@ -2,6 +2,7 @@ package chord
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/sky-valley/pi/chord/delta"
@@ -208,9 +209,9 @@ func (s ServiceSubscriptionSnapshot[O]) MarshalJSON() ([]byte, error) {
 }
 
 // ServiceProviderUpdate is one change a provider pushes to a subscription
-// after its snapshot. It is sealed to [StateUpdate], [UnavailableUpdate],
-// [ReplacedUpdate], [SpawnedUpdate] and [ClosedUpdate], each of which
-// marshals with its "type" discriminator first.
+// after its snapshot. It is sealed to [StateUpdate], [ResetUpdate],
+// [UnavailableUpdate], [ReplacedUpdate], [SpawnedUpdate] and [ClosedUpdate],
+// each of which marshals with its "type" discriminator first.
 //
 // O is the operation grammar, as for [ServiceMemberSnapshot]: every arm
 // carries it so that an update belongs to exactly one stream.
@@ -228,6 +229,14 @@ type StateUpdate[O opTuple] struct {
 	Member   string                  `json:"member"`
 	Sequence int                     `json:"sequence"`
 	Ops      []O                     `json:"ops"`
+}
+
+// ResetUpdate is {"type": "reset", "snapshot": ...}: a full rebaseline of the
+// subscription after its delivery buffer overflowed (upstream 35180b9df).
+// Every state in the snapshot is a root replacement at its new sequence, and
+// a reader restarts its path dictionaries there.
+type ResetUpdate[O opTuple] struct {
+	Snapshot ServiceSubscriptionSnapshot[O] `json:"snapshot"`
 }
 
 // UnavailableUpdate is {"type": "unavailable"}: the singleton's implementation
@@ -253,6 +262,7 @@ type ClosedUpdate[O opTuple] struct {
 }
 
 func (StateUpdate[O]) update(O)       {}
+func (ResetUpdate[O]) update(O)       {}
 func (UnavailableUpdate[O]) update(O) {}
 func (ReplacedUpdate[O]) update(O)    {}
 func (SpawnedUpdate[O]) update(O)     {}
@@ -275,6 +285,31 @@ func (u StateUpdate[O]) Validate() error {
 	}
 	if err := validateOps(u.Ops); err != nil {
 		return fmt.Errorf("state update %w", err)
+	}
+	return nil
+}
+
+// Validate checks the snapshot and that it rebaselines every state: each
+// state member carries exactly one op, a root replacement.
+func (u ResetUpdate[O]) Validate() error {
+	if err := u.Snapshot.Validate(); err != nil {
+		return fmt.Errorf("reset update snapshot: %w", err)
+	}
+	for _, instance := range u.Snapshot.Instances {
+		for _, member := range instance.Members {
+			var ops []O
+			switch state := member.(type) {
+			case StateSnapshot[O]:
+				ops = state.Ops
+			case *StateSnapshot[O]:
+				ops = state.Ops
+			default:
+				continue
+			}
+			if len(ops) != 1 || !delta.IsReplace(ops[0]) {
+				return errors.New("Service reset must contain full root replacements")
+			}
+		}
 	}
 	return nil
 }
@@ -314,6 +349,13 @@ func (u StateUpdate[O]) MarshalJSON() ([]byte, error) {
 		Sequence int                     `json:"sequence"`
 		Ops      []O                     `json:"ops"`
 	}{"state", u.Instance, u.Member, u.Sequence, nonNil(u.Ops)})
+}
+
+func (u ResetUpdate[O]) MarshalJSON() ([]byte, error) {
+	return marshalJSON(struct {
+		Type     string                         `json:"type"`
+		Snapshot ServiceSubscriptionSnapshot[O] `json:"snapshot"`
+	}{"reset", u.Snapshot})
 }
 
 func (UnavailableUpdate[O]) MarshalJSON() ([]byte, error) {
