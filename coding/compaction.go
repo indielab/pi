@@ -1162,29 +1162,42 @@ func detailsItem(v any) fileListItem {
 }
 
 // extractFileOpsFromMessage collects file paths from read/write/edit tool calls
-// in an assistant message (port of utils.ts extractFileOpsFromMessage).
+// in an assistant message, or from the nested calls recorded on a tool result
+// (port of utils.ts extractFileOpsFromMessage; the nested calls since upstream
+// 8562bcf66).
 func extractFileOpsFromMessage(m agent.AgentMessage, ops *fileOps) {
+	if trm, ok := messageAsToolResult(m); ok {
+		// Calls made from codemode scripts are recorded on the script's result.
+		if trm.NestedCalls != nil {
+			for _, call := range trm.NestedCalls.Calls {
+				addFileOp(call.Name, call.Arguments, ops)
+			}
+		}
+		return
+	}
 	am, ok := messageAsAssistant(m)
 	if !ok {
 		return
 	}
 	for _, c := range am.Content {
-		tc, ok := c.(ai.ToolCall)
-		if !ok {
-			continue
+		if tc, ok := c.(ai.ToolCall); ok {
+			addFileOp(tc.Name, tc.Arguments, ops)
 		}
-		path, _ := tc.Arguments["path"].(string)
-		if path == "" {
-			continue
-		}
-		switch tc.Name {
-		case "read":
-			ops.read.add(filePath(path))
-		case "write":
-			ops.written.add(filePath(path))
-		case "edit":
-			ops.edited.add(filePath(path))
-		}
+	}
+}
+
+func addFileOp(toolName string, args map[string]any, ops *fileOps) {
+	path, _ := args["path"].(string)
+	if path == "" {
+		return
+	}
+	switch toolName {
+	case "read":
+		ops.read.add(filePath(path))
+	case "write":
+		ops.written.add(filePath(path))
+	case "edit":
+		ops.edited.add(filePath(path))
 	}
 }
 

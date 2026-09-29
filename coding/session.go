@@ -892,6 +892,16 @@ func messageAsAssistant(m agent.AgentMessage) (*ai.AssistantMessage, bool) {
 	return nil, false
 }
 
+func messageAsToolResult(m agent.AgentMessage) (*ai.ToolResultMessage, bool) {
+	switch v := m.(type) {
+	case *ai.ToolResultMessage:
+		return v, true
+	case ai.ToolResultMessage:
+		return &v, true
+	}
+	return nil, false
+}
+
 // addUsage accumulates token counts and cost into dst.
 func addUsage(dst *ai.Usage, u ai.Usage) {
 	dst.Input += u.Input

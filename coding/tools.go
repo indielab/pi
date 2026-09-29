@@ -929,6 +929,7 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 			ai.Opt("timeout", ai.Number("Timeout in seconds (optional, no default timeout)")),
 		),
 		ConstrainedSampling: preferStrictToolSampling,
+		OutputSchema:        bashOutputSchema,
 		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate agent.ToolUpdateFunc) (agent.AgentToolResult, error) {
 			command := config.commandPrefix + argStr(params, "command")
 			// pi resolveTimeoutMs (bash.ts) validates the timeout before spawning:
@@ -956,6 +957,7 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 			if hasTimeout {
 				execTimeout = timeout
 			}
+			startedAt := time.Now()
 			exitCode, execErr := ops.Exec(ctx, command, cwd, BashExecOptions{
 				OnData:         func(p []byte) { u.Write(p) },
 				TimeoutSeconds: execTimeout,
@@ -1018,18 +1020,52 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 				text, _ := formatOutput("(no output)")
 				return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, "Command terminated without an exit code"))
 			}
-			if *exitCode != 0 {
-				text, _ := formatOutput("(no output)")
-				return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, fmt.Sprintf("Command exited with code %d", *exitCode)))
-			}
 			text, details := formatOutput("(no output)")
+			structured := BashToolOutput{
+				Output:          text,
+				ExitCode:        *exitCode,
+				WallTimeSeconds: bashWallTimeSeconds(float64(time.Since(startedAt)) / float64(time.Millisecond)),
+			}
+			// Upstream 8562bcf66: a non-zero exit is an error result, not a
+			// thrown error, so it keeps its details and structured content. pi's
+			// details stay undefined unless the output was truncated.
 			res := textResult(text)
+			if *exitCode != 0 {
+				res = textResult(appendStatus(text, fmt.Sprintf("Command exited with code %d", *exitCode)))
+				res.IsError = true
+			}
 			if details != nil {
 				res.Details = details
 			}
+			res.StructuredContent = structured
 			return res, nil
 		},
 	}
+}
+
+// BashToolOutput is a shell tool's structured content (pi bash.ts
+// BashToolOutput, upstream 8562bcf66): the result for programmatic callers
+// such as a script that calls tools. A non-zero exit is an error result for
+// the model, but a script still gets this value.
+type BashToolOutput struct {
+	// Output is the combined stdout and stderr, truncated like the
+	// model-facing output and without its status line.
+	Output          string  `json:"output"`
+	ExitCode        int     `json:"exit_code"`
+	WallTimeSeconds float64 `json:"wall_time_seconds"`
+}
+
+// bashOutputSchema is the shell tools' OutputSchema (pi bashOutputSchema).
+var bashOutputSchema = ai.Object(
+	ai.Prop("output", ai.String("Combined stdout and stderr, truncated like the model-facing output")),
+	ai.Prop("exit_code", ai.Number()),
+	ai.Prop("wall_time_seconds", ai.Number()),
+)
+
+// bashWallTimeSeconds is pi's Math.round(elapsedMs / 100) / 10: the wall
+// time in tenths of a second.
+func bashWallTimeSeconds(elapsedMs float64) float64 {
+	return float64(jsRound(elapsedMs/100)) / 10
 }
 
 const bashUpdateThrottle = 100 * time.Millisecond

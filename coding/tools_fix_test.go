@@ -333,19 +333,66 @@ func TestGrepLimitClampedToOne(t *testing.T) {
 
 func TestBashNoOutputOnNonZeroExit(t *testing.T) {
 	dir := t.TempDir()
-	_, err := run(t, bashTool(dir, nil), map[string]any{"command": "exit 3"})
-	if err == nil {
-		t.Fatal("expected error")
+	res, err := run(t, bashTool(dir, nil), map[string]any{"command": "exit 3"})
+	if err != nil || !res.IsError {
+		t.Fatalf("a non-zero exit must be an error result (upstream 8562bcf66), got IsError=%v err=%v", res.IsError, err)
 	}
 	// pi: formatOutput substitutes "(no output)" then appendStatus.
-	if got, want := err.Error(), "(no output)\n\nCommand exited with code 3"; got != want {
+	if got, want := resultText(res), "(no output)\n\nCommand exited with code 3"; got != want {
 		t.Fatalf("nonzero-exit error text\n got: %q\nwant: %q", got, want)
 	}
 }
 
-// pi a8b3dd199 (#9577) 'should reject signal-killed commands while preserving
-// partial output': a signal termination is 128 + the signal number, so the
-// command FAILS and the output produced before the signal is kept.
+// Upstream 8562bcf66 (tools.test.ts "should report non-zero exit codes as
+// error results with structured content"): a non-zero exit is an error result
+// rather than a thrown error, so it keeps its structured content — the
+// output as the model sees it before the status line, the exit code and the
+// wall time — and a success carries the same record.
+func TestBashNonZeroExitIsAnErrorResultWithStructuredContent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses POSIX sh")
+	}
+	dir := t.TempDir()
+	res, err := run(t, bashTool(dir, nil), map[string]any{"command": "echo out; exit 3"})
+	if err != nil || !res.IsError {
+		t.Fatalf("got IsError=%v err=%v, want an error result", res.IsError, err)
+	}
+	if got, want := resultText(res), "out\n\n\nCommand exited with code 3"; got != want {
+		t.Fatalf("text\n got: %q\nwant: %q", got, want)
+	}
+	out, ok := res.StructuredContent.(BashToolOutput)
+	if !ok || out.Output != "out\n" || out.ExitCode != 3 || out.WallTimeSeconds < 0 {
+		t.Fatalf("structured content = %#v, want {output: \"out\\n\", exit_code: 3, wall_time_seconds: >= 0}", res.StructuredContent)
+	}
+	if res.Details != nil {
+		t.Fatalf("details = %#v, want none for untruncated output (pi's undefined)", res.Details)
+	}
+
+	ok2, err := run(t, bashTool(dir, nil), map[string]any{"command": "echo fine"})
+	if err != nil || ok2.IsError {
+		t.Fatalf("success got IsError=%v err=%v", ok2.IsError, err)
+	}
+	if out, ok := ok2.StructuredContent.(BashToolOutput); !ok || out.Output != "fine\n" || out.ExitCode != 0 {
+		t.Fatalf("success structured content = %#v, want {output: \"fine\\n\", exit_code: 0}", ok2.StructuredContent)
+	}
+}
+
+// The wall time is pi's Math.round(ms / 100) / 10: tenths of a second.
+func TestBashWallTimeSeconds(t *testing.T) {
+	for _, tc := range []struct {
+		ms   float64
+		want float64
+	}{{0, 0}, {49.9, 0}, {50, 0.1}, {149.99, 0.1}, {150, 0.2}, {1234, 1.2}, {1250, 1.3}} {
+		if got := bashWallTimeSeconds(tc.ms); got != tc.want {
+			t.Errorf("bashWallTimeSeconds(%v) = %v, want %v", tc.ms, got, tc.want)
+		}
+	}
+}
+
+// pi a8b3dd199 (#9577), renamed by 8562bcf66 'should report signal-killed
+// commands as errors while preserving partial output': a signal termination is
+// 128 + the signal number, so the command FAILS — an error result since
+// 8562bcf66 — and the output produced before the signal is kept.
 func TestBashSignalKilledFails(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses POSIX signals")
@@ -359,27 +406,27 @@ func TestBashSignalKilledFails(t *testing.T) {
 		{signal: "TERM", exit: 143},
 	} {
 		t.Run(tt.signal, func(t *testing.T) {
-			_, err := run(t, bashTool(dir, nil), map[string]any{
+			res, err := run(t, bashTool(dir, nil), map[string]any{
 				"command": "printf 'before-kill\n'; kill -" + tt.signal + " $$",
 			})
-			if err == nil {
-				t.Fatal("a signal-killed command must fail")
+			if err != nil || !res.IsError {
+				t.Fatalf("a signal-killed command must be an error result, got IsError=%v err=%v", res.IsError, err)
 			}
 			// pi asserts this with a whitespace-tolerant regex, so the port
 			// does too: the blank-line convention between output and status is
 			// appendStatus's, pinned elsewhere, and not what this case is about.
 			want := regexp.MustCompile(fmt.Sprintf(`before-kill\s+Command exited with code %d$`, tt.exit))
-			if got := err.Error(); !want.MatchString(got) {
+			if got := resultText(res); !want.MatchString(got) {
 				t.Fatalf("signal-killed error text %q does not match %v", got, want)
 			}
 		})
 	}
 	// With no output at all, "(no output)" still applies.
-	_, err := run(t, bashTool(dir, nil), map[string]any{"command": "kill -KILL $$"})
-	if err == nil {
-		t.Fatal("a signal-killed command must fail")
+	res, err := run(t, bashTool(dir, nil), map[string]any{"command": "kill -KILL $$"})
+	if err != nil || !res.IsError {
+		t.Fatalf("a signal-killed command must be an error result, got IsError=%v err=%v", res.IsError, err)
 	}
-	if got, want := err.Error(), "(no output)\n\nCommand exited with code 137"; got != want {
+	if got, want := resultText(res), "(no output)\n\nCommand exited with code 137"; got != want {
 		t.Fatalf("no-output signal error text\n got: %q\nwant: %q", got, want)
 	}
 }

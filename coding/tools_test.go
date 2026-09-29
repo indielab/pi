@@ -130,11 +130,14 @@ func TestBashTool(t *testing.T) {
 	}
 }
 
+// A non-zero exit is an error result since upstream 8562bcf66, which replaced
+// pi's "should handle command errors" (a rejection) with the error-result test
+// TestBashNonZeroExitIsAnErrorResultWithStructuredContent ports.
 func TestBashNonZeroExit(t *testing.T) {
 	dir := t.TempDir()
-	_, err := run(t, bashTool(dir, nil), map[string]any{"command": "exit 3"})
-	if err == nil || !strings.Contains(err.Error(), "code 3") {
-		t.Fatalf("expected exit code 3 error, got %v", err)
+	r, err := run(t, bashTool(dir, nil), map[string]any{"command": "exit 3"})
+	if err != nil || !r.IsError || !strings.Contains(resultText(r), "code 3") {
+		t.Fatalf("expected an exit code 3 error result, got %+v, err %v", r, err)
 	}
 }
 

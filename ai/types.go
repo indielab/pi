@@ -914,9 +914,50 @@ type ToolResultMessage struct {
 	// for that. pi has carried it since 2026-05-04 and no pi code path sets it;
 	// it is an affordance for SDK callers, and the server bridge puts it on the
 	// wire when it is there (pi: ToolResultMessage.usage, optional).
-	Usage     *Usage `json:"usage,omitempty"`
-	IsError   bool   `json:"isError"`
-	Timestamp int64  `json:"timestamp"`
+	Usage *Usage `json:"usage,omitempty"`
+	// NestedCalls records the calls this tool made to other tools, a codemode
+	// script's for example (pi ToolResultMessage.nestedCalls, upstream
+	// 8562bcf66). It is kept for the session record and not sent to the model.
+	NestedCalls *NestedToolCalls `json:"nestedCalls,omitempty"`
+	IsError     bool             `json:"isError"`
+	Timestamp   int64            `json:"timestamp"`
+}
+
+// NestedToolCalls is the bounded record of the calls a tool made to other
+// tools (upstream 8562bcf66). Results are not recorded.
+type NestedToolCalls struct {
+	Calls []NestedToolCallRecord `json:"calls"`
+	// Complete is false when calls were dropped, arguments omitted, or calls
+	// had not finished.
+	Complete bool `json:"complete"`
+}
+
+// NestedToolCallStatus is how a nested tool call ended.
+type NestedToolCallStatus string
+
+const (
+	NestedToolCallOK    NestedToolCallStatus = "ok"
+	NestedToolCallError NestedToolCallStatus = "error"
+	// NestedToolCallUnfinished marks a call still running when the calling
+	// tool finished.
+	NestedToolCallUnfinished NestedToolCallStatus = "unfinished"
+)
+
+// NestedToolCallRecord is one call a tool made to another tool (upstream
+// 8562bcf66). Its fields are in the order pi's recorder writes them.
+type NestedToolCallRecord struct {
+	ID     string               `json:"id"`
+	Name   string               `json:"name"`
+	Status NestedToolCallStatus `json:"status"`
+	// Arguments is omitted when over the size limits; ArgumentsBytes then gives
+	// their UTF-8 size as JSON. A call with no arguments records {}, which
+	// omitzero keeps.
+	Arguments      map[string]any `json:"arguments,omitzero"`
+	ArgumentsBytes int            `json:"argumentsBytes,omitempty"`
+	// DurationMs is unset while the call is unfinished; a call can take 0ms.
+	DurationMs *int64 `json:"durationMs,omitempty"`
+	// Error is the call's error text, truncated.
+	Error string `json:"error,omitempty"`
 }
 
 func (ToolResultMessage) MessageRole() Role { return RoleToolResult }

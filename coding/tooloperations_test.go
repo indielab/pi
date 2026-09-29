@@ -256,9 +256,9 @@ func TestShellToolNonZeroExitIsReported(t *testing.T) {
 	three := 3
 	ops := fakeShellOps("oops\n", &three, nil)
 	tool := shellToolOps("/nowhere", bashShellConfig, nil, &ops)
-	_, err := tool.Execute(context.Background(), "1", map[string]any{"command": "x"}, nil)
-	if err == nil || !strings.Contains(err.Error(), "Command exited with code 3") {
-		t.Fatalf("err = %v, want exit code 3", err)
+	res, err := tool.Execute(context.Background(), "1", map[string]any{"command": "x"}, nil)
+	if err != nil || !res.IsError || resultText(res) != "oops\n\n\nCommand exited with code 3" {
+		t.Fatalf("got %+v, err %v, want an error result reporting exit code 3", res, err)
 	}
 }
 
