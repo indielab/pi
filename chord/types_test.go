@@ -134,6 +134,10 @@ func TestTypeValidators(t *testing.T) {
 		{StateSnapshot[delta.Op]{Name: "s", Sequence: -1}, "sequence"},
 		{StateSnapshot[delta.Op]{Name: "s", Ops: []delta.Op{delta.Set{}}}, "ops[0]"},
 		{StateSnapshot[delta.Op]{Name: "s", Ops: []delta.Op{nil}}, "ops[0] is nil"},
+		// A typed nil is a nil too: the guard reports it rather than
+		// dereferencing it.
+		{StateSnapshot[delta.Op]{Name: "s", Ops: []delta.Op{(*delta.Replace)(nil)}}, "ops[0] is nil"},
+		{ServiceInstanceSnapshot[delta.Op]{Members: []ServiceMemberSnapshot[delta.Op]{(*StateSnapshot[delta.Op])(nil)}}, "members[0] is nil"},
 		{ServiceInstanceSnapshot[delta.Op]{Instance: &ServiceInstanceAddress{Key: "k"}}, "instance: generation"},
 		{ServiceInstanceSnapshot[delta.Op]{Members: []ServiceMemberSnapshot[delta.Op]{nil}}, "members[0] is nil"},
 		{ServiceInstanceSnapshot[delta.Op]{Members: []ServiceMemberSnapshot[delta.Op]{MethodSnapshot[delta.Op]{}}}, "members[0]: name"},

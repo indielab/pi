@@ -3,6 +3,7 @@ package chord
 import (
 	"encoding/json"
 	"fmt"
+	"reflect"
 
 	"github.com/sky-valley/pi/chord/delta"
 )
@@ -166,7 +167,7 @@ func (s ServiceInstanceSnapshot[O]) Validate() error {
 		}
 	}
 	for i, member := range s.Members {
-		if member == nil {
+		if isNil(member) {
 			return fmt.Errorf("members[%d] is nil; a member is a MethodSnapshot or a StateSnapshot", i)
 		}
 		if err := member.Validate(); err != nil {
@@ -454,7 +455,7 @@ func validateOps[O opTuple](ops []O) error {
 	for i, op := range ops {
 		// An O is an interface value, and a nil one has nothing to validate
 		// with; catch it here rather than as a nil dereference inside.
-		if any(op) == nil {
+		if isNil(op) {
 			return fmt.Errorf("ops[%d] is nil; every op is a value delta.ParseOp or delta.ParseWireOp returns", i)
 		}
 		if err := op.Validate(); err != nil {
@@ -462,6 +463,18 @@ func validateOps[O opTuple](ops []O) error {
 		}
 	}
 	return nil
+}
+
+// isNil reports whether v is nil or holds a nil pointer. The guards that use
+// it exist to report a nil instead of dereferencing it, and a typed nil —
+// a (*delta.Replace)(nil) op, a (*StateSnapshot[O])(nil) member — slips past
+// a plain `== nil`, whose value methods then panic.
+func isNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	rv := reflect.ValueOf(v)
+	return rv.Kind() == reflect.Pointer && rv.IsNil()
 }
 
 // nonNil is how a nil slice marshals: as the empty array pi's parsers require,
