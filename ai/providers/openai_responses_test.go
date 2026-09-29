@@ -1979,6 +1979,57 @@ data: {"type":"response.output_item.done","item":{"type":"message","id":"msg_1",
 	}
 }
 
+// Upstream 1b2aa0ca0 (openai-responses-terminal-event.test.ts): a completed
+// stream whose tool call never received output_item.done fails instead of
+// handing the agent a call it would run with cut-off or mixed-up arguments.
+func TestResponsesUnfinishedToolCallFailsStream(t *testing.T) {
+	cases := []struct {
+		name, sse, want string
+	}{
+		{
+			name: "no output_item.done",
+			sse: `data: {"type":"response.output_item.added","sequence_number":0,"output_index":0,"item":{"type":"function_call","id":"fc_1","call_id":"call_1","name":"bash","arguments":""}}
+
+data: {"type":"response.function_call_arguments.delta","sequence_number":1,"output_index":0,"item_id":"fc_1","delta":"{\"command\":\"rm -rf /tmp/build"}
+
+data: {"type":"response.completed","sequence_number":2,"response":{"id":"resp_unfinished","status":"completed"}}
+
+`,
+			want: "OpenAI Responses stream completed with an unfinished tool call: bash (call_1|fc_1)",
+		},
+		{
+			// pi #9974: llama.cpp omits output_index from every event and sends
+			// both done events after all deltas, so the second call's slot
+			// replaces the first's and call_a is never finished.
+			name: "parallel calls without output_index",
+			sse: `data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":""}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_a","delta":"{\"command\":\"echo a\"}"}
+
+data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_b","call_id":"call_b","name":"bash","arguments":""}}
+
+data: {"type":"response.function_call_arguments.delta","item_id":"fc_b","delta":"{\"command\":\"echo b\"}"}
+
+data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":"{\"command\":\"echo a\"}"}}
+
+data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_b","call_id":"call_b","name":"bash","arguments":"{\"command\":\"echo b\"}"}}
+
+data: {"type":"response.completed","response":{"id":"resp_no_output_index","status":"completed"}}
+
+`,
+			want: "OpenAI Responses stream completed with an unfinished tool call: bash (call_a|fc_a)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			final := runResponsesSSE(t, reasoningModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, tc.sse)
+			if final.StopReason != ai.StopError || final.ErrorMessage != tc.want {
+				t.Fatalf("stream ended %s %q, want error %q", final.StopReason, final.ErrorMessage, tc.want)
+			}
+		})
+	}
+}
+
 // Upstream openai-responses-terminal-event.test.ts (002fc8385), "forwards
 // parsed provider stream events in order": each event reaches the observer
 // with the stream's model, in stream order — response.reasoning_text.delta
