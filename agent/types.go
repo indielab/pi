@@ -57,6 +57,11 @@ type AgentToolResult struct {
 	Content ai.ContentList
 	// Details is arbitrary structured data for logs/UI.
 	Details any
+	// Usage is what executing the tool cost, when the tool accounted for it (a
+	// tool that calls a model itself, e.g.). It is carried onto the tool result
+	// message and is not part of the main LLM context accounting (pi
+	// AgentToolResult.usage, upstream 2fd386840).
+	Usage *ai.Usage
 	// Terminate hints that the agent should stop after the current tool batch.
 	// Early termination only happens when every finalized result sets this.
 	Terminate bool
@@ -159,7 +164,9 @@ type AfterToolCallResult struct {
 	Details    any
 	HasDetails bool
 	IsError    *bool
-	Terminate  *bool
+	// Usage replaces the tool result's usage when set (pi `usage ?? result.usage`).
+	Usage     *ai.Usage
+	Terminate *bool
 }
 
 // AgentTurnContext describes a turn that has just completed. It is passed to

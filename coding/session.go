@@ -667,6 +667,7 @@ func withToolResultImageNormalization(
 			out.Details = hookResult.Details
 			out.HasDetails = hookResult.HasDetails
 			out.IsError = hookResult.IsError
+			out.Usage = hookResult.Usage
 			out.Terminate = hookResult.Terminate
 		}
 		return &out
