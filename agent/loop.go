@@ -347,6 +347,22 @@ func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config
 	}
 
 	response := fn(ctx, config.Model, llmCtx, opts)
+	// Record the requested level, whichever stream function answered
+	// (upstream 540e174c7: config.reasoning ?? "off"). Like pi's Object.assign
+	// it lands on the result itself, before any copy of it is emitted.
+	thinkingLevel := ai.ModelThinkingLevel(config.Reasoning)
+	if thinkingLevel == "" {
+		thinkingLevel = ai.ModelThinkingLevel(ThinkOff)
+	}
+	result := func() *ai.AssistantMessage {
+		final := response.Result()
+		// Nil only for a stream that ended with no terminal event, which pi's
+		// result() never resolves for; do not turn that into a panic here.
+		if final != nil {
+			final.ThinkingLevel = thinkingLevel
+		}
+		return final
+	}
 
 	var partial *ai.AssistantMessage
 	addedPartial := false
@@ -370,7 +386,7 @@ func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config
 			}
 
 		case ai.EventDone, ai.EventError:
-			final := response.Result()
+			final := result()
 			if addedPartial {
 				agentCtx.Messages[len(agentCtx.Messages)-1] = final
 			} else {
@@ -382,7 +398,7 @@ func streamAssistantResponse(ctx context.Context, agentCtx *AgentContext, config
 		}
 	}
 
-	final := response.Result()
+	final := result()
 	if addedPartial {
 		agentCtx.Messages[len(agentCtx.Messages)-1] = final
 	} else {

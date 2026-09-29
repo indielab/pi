@@ -864,10 +864,15 @@ type AssistantMessage struct {
 	// see the Anthropic managed-effort path, which reads it back off the
 	// transcript. Absent (empty) on legacy transcripts and on every provider that
 	// does not manage effort, which is exactly pi's `undefined`.
-	ProviderThinkingLevel string       `json:"providerThinkingLevel,omitempty"`
-	Diagnostics           []Diagnostic `json:"diagnostics,omitempty"`
-	Usage                 Usage        `json:"usage"`
-	StopReason            StopReason   `json:"stopReason"`
+	ProviderThinkingLevel string `json:"providerThinkingLevel,omitempty"`
+	// ThinkingLevel is the pi thinking level the agent loop requested for this
+	// response (pi `thinkingLevel?: ModelThinkingLevel`, upstream 540e174c7):
+	// "off" when it requested none. Empty outside the agent loop and on legacy
+	// transcripts, which is pi's `undefined`.
+	ThinkingLevel ModelThinkingLevel `json:"thinkingLevel,omitempty"`
+	Diagnostics   []Diagnostic       `json:"diagnostics,omitempty"`
+	Usage         Usage              `json:"usage"`
+	StopReason    StopReason         `json:"stopReason"`
 	// Deferred is the handle to redeem when StopReason is StopDeferred.
 	Deferred     *DeferredHandle `json:"deferred,omitempty"`
 	ErrorMessage string          `json:"errorMessage,omitempty"`
