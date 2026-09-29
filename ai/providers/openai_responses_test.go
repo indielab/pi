@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -2045,6 +2046,142 @@ data: {"type":"response.completed","response":{"id":"resp_several","status":"com
 			}
 		})
 	}
+}
+
+// pi's processResponsesStream keys its output slots by event.output_index in
+// a Map, which compares keys by SameValueZero: an absent index (undefined), a
+// null, a 0 and a "0" are four different slots. Collapsing the first three to
+// 0 decides success and failure differently since 1b2aa0ca0 fails a stream
+// with an open call. Expectations are pi's own outcomes, from running pi's
+// openai-responses stream at 4259686d9 over these bodies.
+func TestResponsesSlotsKeyOutputIndexAsPiDoes(t *testing.T) {
+	type call struct {
+		id   string
+		args map[string]any
+	}
+	echo := func(s string) map[string]any { return map[string]any{"command": "echo " + s} }
+	cases := []struct {
+		name, sse   string
+		stop        ai.StopReason
+		errorText   string
+		calls       int // tool call blocks in the final message, open ones included
+		wantToolUse []call
+	}{
+		{
+			name: "a 0 and an absent index are two slots",
+			sse: `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":""}}
+
+data: {"type":"response.output_item.added","item":{"type":"function_call","id":"fc_b","call_id":"call_b","name":"bash","arguments":""}}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":"{\"command\":\"echo a\"}"}}
+
+data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_b","call_id":"call_b","name":"bash","arguments":"{\"command\":\"echo b\"}"}}
+
+data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
+
+`,
+			stop:        ai.StopToolUse,
+			calls:       2,
+			wantToolUse: []call{{"call_a|fc_a", echo("a")}, {"call_b|fc_b", echo("b")}},
+		},
+		{
+			name: "a 0 and a null index are two slots",
+			sse: `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":""}}
+
+data: {"type":"response.output_item.added","output_index":null,"item":{"type":"function_call","id":"fc_b","call_id":"call_b","name":"bash","arguments":""}}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":"{\"command\":\"echo a\"}"}}
+
+data: {"type":"response.output_item.done","output_index":null,"item":{"type":"function_call","id":"fc_b","call_id":"call_b","name":"bash","arguments":"{\"command\":\"echo b\"}"}}
+
+data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
+
+`,
+			stop:        ai.StopToolUse,
+			calls:       2,
+			wantToolUse: []call{{"call_a|fc_a", echo("a")}, {"call_b|fc_b", echo("b")}},
+		},
+		{
+			// The done event without an index opens a new slot of its own and
+			// finishes that, leaving the call at index 0 open.
+			name: "a done without the index its call was added under",
+			sse: `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":""}}
+
+data: {"type":"response.function_call_arguments.delta","output_index":0,"item_id":"fc_a","delta":"{\"command\":\"echo a\"}"}
+
+data: {"type":"response.output_item.done","item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":"{\"command\":\"echo a\"}"}}
+
+data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
+
+`,
+			stop:      ai.StopError,
+			errorText: "OpenAI Responses stream completed with an unfinished tool call: bash (call_a|fc_a)",
+			calls:     2,
+		},
+		{
+			// The done event is processed, not dropped: its "0" opens a slot of
+			// its own.
+			name: "a string index is not the number",
+			sse: `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":""}}
+
+data: {"type":"response.output_item.done","output_index":"0","item":{"type":"function_call","id":"fc_a","call_id":"call_a","name":"bash","arguments":"{\"command\":\"echo a\"}"}}
+
+data: {"type":"response.completed","response":{"id":"r","status":"completed"}}
+
+`,
+			stop:      ai.StopError,
+			errorText: "OpenAI Responses stream completed with an unfinished tool call: bash (call_a|fc_a)",
+			calls:     2,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			final := runResponsesSSE(t, reasoningModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, tc.sse)
+			if final.StopReason != tc.stop || final.ErrorMessage != tc.errorText {
+				t.Fatalf("stream ended %s %q, want %s %q", final.StopReason, final.ErrorMessage, tc.stop, tc.errorText)
+			}
+			var got []call
+			for _, c := range final.Content {
+				if tcall, ok := c.(ai.ToolCall); ok {
+					got = append(got, call{tcall.ID, tcall.Arguments})
+				}
+			}
+			if len(got) != tc.calls {
+				t.Fatalf("%d tool call blocks, want pi's %d: %+v", len(got), tc.calls, got)
+			}
+			if tc.stop == ai.StopToolUse && !reflect.DeepEqual(got, tc.wantToolUse) {
+				t.Fatalf("tool calls = %+v, want %+v", got, tc.wantToolUse)
+			}
+		})
+	}
+}
+
+// pi's backfill of a reasoning item's encrypted_content (upstream 1f0dbc00)
+// rewrites the block in place, so a stream that then fails — an incomplete
+// response stopped by the content filter — still carries the backfilled
+// signature on its error message, as pi's does at 4259686d9.
+func TestResponsesBackfilledSignatureReachesTheErrorMessage(t *testing.T) {
+	sse := `data: {"type":"response.output_item.added","output_index":0,"item":{"type":"reasoning","id":"rs_1","summary":[]}}
+
+data: {"type":"response.output_item.done","output_index":0,"item":{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"t"}]}}
+
+data: {"type":"response.incomplete","response":{"id":"r","status":"incomplete","incomplete_details":{"reason":"content_filter"},"output":[{"type":"reasoning","id":"rs_1","encrypted_content":"ENC"}]}}
+
+`
+	final := runResponsesSSE(t, reasoningModel(), ai.Context{Messages: []ai.Message{ai.NewUserText("hi", 1)}}, sse)
+	if final.StopReason != ai.StopError || final.ErrorMessage != "Response incomplete: content_filter" {
+		t.Fatalf("stream ended %s %q, want the content-filter error", final.StopReason, final.ErrorMessage)
+	}
+	want := `{"type":"reasoning","id":"rs_1","summary":[{"type":"summary_text","text":"t"}],"encrypted_content":"ENC"}`
+	for _, c := range final.Content {
+		if th, ok := c.(ai.ThinkingContent); ok {
+			if th.ThinkingSignature != want {
+				t.Fatalf("thinking signature = %s, want %s", th.ThinkingSignature, want)
+			}
+			return
+		}
+	}
+	t.Fatal("no thinking block on the error message")
 }
 
 // Upstream openai-responses-terminal-event.test.ts (002fc8385), "forwards

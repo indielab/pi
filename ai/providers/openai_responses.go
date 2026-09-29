@@ -447,7 +447,8 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			block        *blockBuilder
 			contentIndex int
 		}
-		outputSlots := map[int]*responsesOutputSlot{}
+		// Keyed by slotKey: event.output_index as pi's Map compares it.
+		outputSlots := map[any]*responsesOutputSlot{}
 		// reasoningBlocksByID indexes reasoning blocks by their item id so a
 		// terminal response.completed can backfill a missing encrypted_content
 		// onto the persisted signature (port of upstream 1f0dbc00). Azure OpenAI
@@ -477,8 +478,8 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		}
 		// getSlot returns the slot for outputIndex only if it exists AND its
 		// block kind matches the requested kind (port of pi's getSlot<TType>).
-		getSlot := func(outputIndex int, kind string) *responsesOutputSlot {
-			slot := outputSlots[outputIndex]
+		getSlot := func(key any, kind string) *responsesOutputSlot {
+			slot := outputSlots[key]
 			if slot != nil && slot.block.kind == kind {
 				return slot
 			}
@@ -523,7 +524,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 		// createSlot appends a new block for item and records the slot with its
 		// stable contentIndex, emitting the matching *_start event. Returns nil
 		// for item types that have no streaming block.
-		createSlot := func(outputIndex int, item responsesItem) *responsesOutputSlot {
+		createSlot := func(key any, item responsesItem) *responsesOutputSlot {
 			var b *blockBuilder
 			var startEvent ai.EventType
 			switch item.Type {
@@ -572,17 +573,17 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			}
 			builders = append(builders, b)
 			slot := &responsesOutputSlot{block: b, contentIndex: len(builders) - 1}
-			outputSlots[outputIndex] = slot
+			outputSlots[key] = slot
 			materialize()
 			stream.Push(ai.AssistantMessageEvent{Type: startEvent, ContentIndex: slot.contentIndex, Partial: output.Clone()})
 			return slot
 		}
 		// getOrCreateSlot returns the existing slot for outputIndex or creates one.
-		getOrCreateSlot := func(outputIndex int, item responsesItem) *responsesOutputSlot {
-			if slot := outputSlots[outputIndex]; slot != nil {
+		getOrCreateSlot := func(key any, item responsesItem) *responsesOutputSlot {
+			if slot := outputSlots[key]; slot != nil {
 				return slot
 			}
-			return createSlot(outputIndex, item)
+			return createSlot(key, item)
 		}
 
 		// sawTerminalResponseEvent tracks whether a terminal response event
@@ -660,6 +661,10 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			if err := backfillReasoningSignatures(jsGet(response, "output")); err != nil {
 				return err
 			}
+			// pi rewrites the block in place, so whatever ends the stream —
+			// done, or an error such as a content-filtered incomplete — carries
+			// the backfilled signature.
+			materialize()
 			if id := jsGet(response, "id"); jsTruthy(id) {
 				output.ResponseID = jsStringField(id)
 			}
@@ -737,9 +742,9 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				if ev.Item == nil {
 					return nil
 				}
-				createSlot(ev.OutputIndex, *ev.Item)
+				createSlot(ev.slotKey(), *ev.Item)
 			case "response.reasoning_summary_text.delta":
-				slot := getSlot(ev.OutputIndex, "thinking")
+				slot := getSlot(ev.slotKey(), "thinking")
 				if slot == nil {
 					return nil
 				}
@@ -747,7 +752,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: slot.contentIndex, Delta: ev.Delta, Partial: output.Clone()})
 			case "response.reasoning_summary_part.done":
-				slot := getSlot(ev.OutputIndex, "thinking")
+				slot := getSlot(ev.slotKey(), "thinking")
 				if slot == nil {
 					return nil
 				}
@@ -755,7 +760,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: slot.contentIndex, Delta: "\n\n", Partial: output.Clone()})
 			case "response.reasoning_text.delta":
-				slot := getSlot(ev.OutputIndex, "thinking")
+				slot := getSlot(ev.slotKey(), "thinking")
 				if slot == nil {
 					return nil
 				}
@@ -763,7 +768,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingDelta, ContentIndex: slot.contentIndex, Delta: ev.Delta, Partial: output.Clone()})
 			case "response.output_text.delta":
-				slot := getSlot(ev.OutputIndex, "text")
+				slot := getSlot(ev.slotKey(), "text")
 				if slot == nil {
 					return nil
 				}
@@ -771,7 +776,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: slot.contentIndex, Delta: ev.Delta, Partial: output.Clone()})
 			case "response.refusal.delta":
-				slot := getSlot(ev.OutputIndex, "text")
+				slot := getSlot(ev.slotKey(), "text")
 				if slot == nil {
 					return nil
 				}
@@ -779,7 +784,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextDelta, ContentIndex: slot.contentIndex, Delta: ev.Delta, Partial: output.Clone()})
 			case "response.function_call_arguments.delta":
-				slot := getSlot(ev.OutputIndex, "toolCall")
+				slot := getSlot(ev.slotKey(), "toolCall")
 				if slot == nil || slot.block.grammar != nil {
 					return nil
 				}
@@ -788,7 +793,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				materialize()
 				stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallDelta, ContentIndex: slot.contentIndex, Delta: ev.Delta, Partial: output.Clone()})
 			case "response.function_call_arguments.done":
-				slot := getSlot(ev.OutputIndex, "toolCall")
+				slot := getSlot(ev.slotKey(), "toolCall")
 				if slot == nil || slot.block.grammar != nil {
 					return nil
 				}
@@ -806,13 +811,13 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 					}
 				}
 			case "response.custom_tool_call_input.delta":
-				slot := getSlot(ev.OutputIndex, "toolCall")
+				slot := getSlot(ev.slotKey(), "toolCall")
 				if slot == nil || slot.block.grammar == nil {
 					return nil
 				}
 				return appendGrammarInput(slot, grammarInput(slot.block)+ev.Delta, false)
 			case "response.custom_tool_call_input.done":
-				slot := getSlot(ev.OutputIndex, "toolCall")
+				slot := getSlot(ev.slotKey(), "toolCall")
 				if slot == nil || slot.block.grammar == nil {
 					return nil
 				}
@@ -825,7 +830,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 				// getOrCreateSlot mirrors pi's new design: a done without a
 				// prior added still materializes the block (and its *_start
 				// event) before finalizing (port of 8c9dbffa).
-				slot := getOrCreateSlot(ev.OutputIndex, *ev.Item)
+				slot := getOrCreateSlot(ev.slotKey(), *ev.Item)
 				switch {
 				case ev.Item.Type == "reasoning" && slot != nil && slot.block.kind == "thinking":
 					summaryText := joinPartsText(ev.Item.Summary, "\n\n")
@@ -854,7 +859,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 					}
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventThinkingEnd, ContentIndex: slot.contentIndex, Content: slot.block.thinking.String(), Partial: output.Clone()})
-					delete(outputSlots, ev.OutputIndex)
+					delete(outputSlots, ev.slotKey())
 				case ev.Item.Type == "message" && slot != nil && slot.block.kind == "text":
 					// Rebuild final text from item.content (output_text or refusal).
 					var sb strings.Builder
@@ -870,7 +875,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 					textSigs[slot.contentIndex] = encodeTextSignatureV1(ev.Item.ID, ev.Item.Phase)
 					materialize()
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventTextEnd, ContentIndex: slot.contentIndex, Content: slot.block.text.String(), Partial: output.Clone()})
-					delete(outputSlots, ev.OutputIndex)
+					delete(outputSlots, ev.slotKey())
 				case ev.Item.Type == "function_call" && slot != nil && slot.block.kind == "toolCall" && slot.block.grammar == nil:
 					// pi 8c9dbffa: parseStreamingJson(item.arguments || partialJson || "{}")
 					// — the done event's item.arguments wins over the scratch buffer.
@@ -888,7 +893,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 					materialize()
 					tc := slot.block.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: slot.contentIndex, ToolCall: &tc, Partial: output.Clone()})
-					delete(outputSlots, ev.OutputIndex)
+					delete(outputSlots, ev.slotKey())
 				case ev.Item.Type == "custom_tool_call" && slot != nil && slot.block.grammar != nil:
 					// pi: item.input ?? the input accumulated so far.
 					finalInput := grammarInput(slot.block)
@@ -908,7 +913,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 					materialize()
 					tc := slot.block.toContent().(ai.ToolCall)
 					stream.Push(ai.AssistantMessageEvent{Type: ai.EventToolCallEnd, ContentIndex: slot.contentIndex, ToolCall: &tc, Partial: output.Clone()})
-					delete(outputSlots, ev.OutputIndex)
+					delete(outputSlots, ev.slotKey())
 				}
 			case "response.completed", "response.incomplete":
 				// Upstream cd95c274: response.incomplete finalizes usage/cost/
@@ -1664,10 +1669,9 @@ type responsesEvent struct {
 	Delta     string `json:"delta"`
 	Arguments string `json:"arguments"`
 	// Input carries response.custom_tool_call_input.done's final raw input.
-	Input       string                `json:"input"`
-	OutputIndex int                   `json:"output_index"`
-	Part        *responsesContentPart `json:"part"`
-	Item        *responsesItem        `json:"item"`
+	Input string                `json:"input"`
+	Part  *responsesContentPart `json:"part"`
+	Item  *responsesItem        `json:"item"`
 	// JS is the event as JSON.parse made it (ai.DecodeOrderedValue's
 	// shapes). The handlers for the events that end the stream —
 	// response.created's id, response.completed/incomplete/failed and error —
@@ -1677,6 +1681,20 @@ type responsesEvent struct {
 	// (case-insensitive keys, and a mistyped member drops the event); only
 	// the other events use them.
 	JS any `json:"-"`
+}
+
+// slotKey is event.output_index as pi's outputSlots Map reads it, by
+// SameValueZero: an absent index (undefined), a null, a 0 and a "0" are four
+// keys, as they are four slots in pi. It is read from the event as JSON.parse
+// made it — a typed int would read absent and null as 0, and drop the whole
+// event over a string. An index no JSON primitive can be (an object or an
+// array) is a key of its own that no later event matches, as a fresh object's
+// identity would be.
+func (ev responsesEvent) slotKey() any {
+	if key, ok := jsMapKey(jsGet(ev.JS, "output_index")); ok {
+		return key
+	}
+	return new(struct{ unmatched bool })
 }
 
 type responsesItem struct {
