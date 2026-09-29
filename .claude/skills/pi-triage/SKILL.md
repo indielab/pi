@@ -62,12 +62,15 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      | `packages/ai/src` | `ai/`, `ai/providers/` | **OUT:** only `cli.ts` (E1). `amazon-bedrock` and `openai-codex` are IN scope with open dependency consults (queue entries 9 and 10) as of 2026-08-27 — do NOT mark them `n/a`. Azure, Mistral, Vertex, Radius, images and `auth/oauth/**` are IN as of 2026-08-27 — most are QUEUED, see below |
      | `packages/ai/scripts` | `ai/models_catalog.json` **at the next release regen** | generator-only; verdict is `port-but-CATALOG-ONLY`. Includes `openrouter-catalog.ts` and `model-data.ts` (`generate-image-models.ts` was deleted by `a328aa89a`; images and classifiers now come out of `generate-models.ts`) |
      | `packages/agent/src` | `agent/` (harness deltas land per the chosen shape — default `coding/`) | `harness/**` and `search/**` are IN scope, FUNDED and draining as QUEUED (entry 8) — backlog them, never `n/a`, and **never escalate them again** (2026-08-27). **But split the commit by hunk before you queue it:** parts of that tree are already SHIPPED, so a hunk there can be an ordinary `port`. Today `harness/types.ts`'s `FileSystem`/`ExecutionEnv` and `harness/env/nodejs.ts`'s `NodeExecutionEnv` are `coding/execenv.go` (slice 8b-i), and 2026-09-09 parked-then-recovered a portable delta (`openTextLineReader`) under a heading that said the Go code did not exist |
+     | `packages/coding-agent/src/extensions` | Scope queue 21-23 (no Go base yet) | **2026-09-29 ruling:** `mcp/**`, `codemode/**`, `tool-search/**` are IN as Go SDK features — root-exported and wired into `createAgentSession` — except their host files `mcp/ui.ts`, `mcp/cli.ts` + `cli.lazy.ts`, `codemode/renderer.ts` (E1). `mcp/index.ts` splits by HUNK. `llama/**` is E1 (only `main.ts` loads it; not root-exported). A NEW built-in: check the root export before judging it |
+     | `packages/mcp`, `packages/codemode` | Scope queue 21, 22 | 2026-09-29, IN — published packages. codemode's `quickjs-wasi` → wazero in a submodule (pre-decided) |
+     | `packages/durable` | Scope queue 8 | IN, QUEUED — the Pico kernel moved here from `packages/agent/src/pico` on 2026-09-18 |
      | `packages/protocol/src` | `protocol/`, `protocol/cbor/` | 2026-08-01. Byte-golden to a PEER: CBOR + frame layout |
      | `packages/client/src` | `client/` | 2026-08-01 |
      | `packages/server/src` | `server/`, `server/unix/`, `server/internal/servertest/` | 2026-08-01. Both of that ruling's carve-outs are stale and NOT to be re-applied: `server/src/legacy/**` no longer exists (`05bf9df65`), and `server/src/testing/**` IS ported |
      | `packages/telemetry` | `telemetry/` | 2026-08-06, **runtime half only** — the schema/type-inference half (`defineTelemetrySchema`, `Infer*`, `SchemaTelemetrySpan`) is `n/a` and shares `src/index.ts` with the ported half, so this one must be split by HUNK |
      | `packages/session-backends` | — | 2026-08-07: IN scope but QUEUED |
-     | `packages/coding-agent/src/{core,client,utils,server}` | `coding/` (`src/server/` is the harness factory — queue entry 8) | **OUT** (E1, and this list must match the ledger's out-table exactly): `core/extensions/**`, `core/export-html/**`, `core/settings-manager.ts`, `core/prompt-templates.ts`, `core/agent-session-runtime.ts` + the session-reload / `/new` lifecycle, `core/model-registry.ts`, `core/resolve-config-value.ts`, `core/radius.ts`, `core/resource-loader.ts` source-info accessors, `core/provider-composer.ts`, `core/model-config.ts`, `migrations.ts`. **Partly ported, split by HUNK, never diffstat-dispatched:** `core/model-resolver.ts`, `core/package-manager.ts`, `core/trust-manager.ts`, `core/model-runtime.ts` (its `Models` contract is `ai.Models`, 2026-09-24). `core/remote-catalog-provider.ts` is Scope queue row 19. The trust *decision and gate* are IN (2026-08-27); the trust prompt, selector and store are host. **Also split by HUNK, inside the IN-scope queued tree:** `core/session-manager.ts` — its static discovery surface (`DefaultSessionDir`, `ListSessions`, `LatestSession`, `FindSessionByID`, the header reader, id generation, migrations) is `coding/session_store.go`, the class itself is Scope queue entry 12; a hunk on the shipped half is an ordinary `port`, never an entry-12 append (2026-09-16: the draft parked `findById` and the adversarial pass caught it). Two hunks land in `ai/providers/` instead: `utils/pi-user-agent.ts` -> `pi_user_agent.go`, `core/provider-attribution.ts` -> `attribution.go` |
+     | `packages/coding-agent/src/{core,client,utils,server}` | `coding/` (`src/server/` is the harness factory — queue entry 8) | **OUT** (E1, and this list must match the ledger's out-table exactly): `core/extensions/**`, `core/export-html/**`, `core/settings-manager.ts`, `core/prompt-templates.ts`, `core/agent-session-runtime.ts` + the session-reload / `/new` lifecycle, `core/model-registry.ts`, `core/resolve-config-value.ts`, `core/radius.ts`, `core/resource-loader.ts` source-info accessors, `core/provider-composer.ts`, `core/model-config.ts`, `migrations.ts`, `core/keybindings.ts`, `core/tools/renderers/**`, and the `builtin:<name>` extension resolution (`source-info.ts`'s `BUILTIN_PATH_PREFIX`, `package-manager.ts`'s and `resource-loader.ts`'s built-in extension halves). **Partly ported, split by HUNK, never diffstat-dispatched:** `core/model-resolver.ts`, `core/package-manager.ts`, `core/trust-manager.ts`, `core/model-runtime.ts` (its `Models` contract is `ai.Models`, 2026-09-24). `core/remote-catalog-provider.ts` is Scope queue row 19. The trust *decision and gate* are IN (2026-08-27); the trust prompt, selector and store are host. **Also split by HUNK, inside the IN-scope queued tree:** `core/session-manager.ts` — its static discovery surface (`DefaultSessionDir`, `ListSessions`, `LatestSession`, `FindSessionByID`, the header reader, id generation, migrations) is `coding/session_store.go`, the class itself is Scope queue entry 12; a hunk on the shipped half is an ordinary `port`, never an entry-12 append (2026-09-16: the draft parked `findById` and the adversarial pass caught it). Two hunks land in `ai/providers/` instead: `utils/pi-user-agent.ts` -> `pi_user_agent.go`, `core/provider-attribution.ts` -> `attribution.go` |
 
      `utils/` is judged **by its consumer, not its path** — in scope only when a
      ported core file consumes it.
@@ -106,7 +109,10 @@ first-parent change: a merged PR is ONE unit, analyzed via `git diff <sha>^1..<s
      session-reload / `/new` lifecycle, `core/model-registry.ts`,
      `core/resolve-config-value.ts`, `core/radius.ts`, `core/resource-loader.ts`
      source-info accessors, `core/provider-composer.ts`, `core/model-config.ts`,
-     `migrations.ts`, `bun/**`, `package-manager-cli.ts`.
+     `migrations.ts`, `bun/**`, `package-manager-cli.ts`, `core/keybindings.ts`,
+     `core/tools/renderers/**`, `extensions/llama/**`, the `builtin:<name>`
+     extension resolution, and the built-ins' host files `extensions/mcp/ui.ts`,
+     `extensions/mcp/cli.ts` + `cli.lazy.ts`, `extensions/codemode/renderer.ts`.
 
      `core/model-registry.ts`, `core/resolve-config-value.ts`, `core/radius.ts`
      and the `core/resource-loader.ts` accessors are E1's **only-consumers**
@@ -191,6 +197,11 @@ hide behavior). A change that is 90% TUI but moves one constant in
 `coding-agent/src/core` is `port` (for that constant).
 
 Specific rulings (from pilot runs — keep appending):
+- **A built-in extension is IN when pi root-exports it for SDK use**
+  (2026-09-29: mcp, codemode, tool-search), and E1 when only `main.ts` loads
+  it (llama). Its logic is mirrored file for file under the Scope queue row, so
+  a hunk there is `port` (or `port-but-QUEUED` until the row's base lands),
+  its UI/CLI files are E1, and `extensions/mcp/index.ts` is read by hunk.
 - **Release commits are `port`**: they regenerate `packages/ai/src/models.generated.ts`,
   which IS ported surface (→ `ai/models_catalog.json`, regenerated from the
   matching npm build). The version bump/changelog parts are noise; ALSO note
