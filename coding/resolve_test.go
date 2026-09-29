@@ -258,7 +258,7 @@ func TestResolveModelCustomIDFallbackInvalidSuffix(t *testing.T) {
 // still has passes TestDefaultModelsExistInCatalog. Re-capture at every
 // re-pin, and point file at the capture for the new pin.
 func TestDefaultModelPerProviderMatchesPi(t *testing.T) {
-	const file = "testdata/defaultmodels/default-models-6f7551516.json"
+	const file = "testdata/defaultmodels/default-models-e1787702d.json"
 	data, err := os.ReadFile(file)
 	if err != nil {
 		t.Fatalf("read %s: %v (regenerate it with testdata/defaultmodels/capture.mjs)", file, err)
