@@ -18,7 +18,7 @@ import (
 // and records what they return. npm 0.85.1 predates the sectioned prompt, so
 // these are src captures: re-verify them against the first build that ships it.
 
-const systemPromptCaptureFile = "testdata/systemprompt/systemprompt-16292398a.json"
+const systemPromptCaptureFile = "testdata/systemprompt/systemprompt-4259686d9.json"
 
 // sectionPairs is a JS object written as [name, value] pairs, so its key order
 // survives JSON.
@@ -404,7 +404,7 @@ func TestBuildSystemPromptUpstreamCases(t *testing.T) {
 		prompt := mustBuildSystemPrompt(t, BuildSystemPromptOptions{Cwd: cwd})
 		for _, want := range []string{
 			"- When reading pi docs or examples, resolve docs/... under Additional docs and examples/... under Examples, not the current working directory",
-			"environment variables (docs/environment-variables.md)",
+			"environment variables (docs/environment-variables.md), MCP servers (docs/mcp.md)",
 		} {
 			if !strings.Contains(prompt, want) {
 				t.Fatalf("missing %q:\n%s", want, prompt)
