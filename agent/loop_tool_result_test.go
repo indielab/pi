@@ -76,3 +76,144 @@ func TestLoopCarriesToolResultUsage(t *testing.T) {
 		}
 	})
 }
+
+// runToolCall tools, ported from agent-loop.test.ts (upstream 8562bcf66).
+var (
+	runEcho = AgentTool{
+		Name:         "echo",
+		Label:        "Echo",
+		Description:  "Echo tool",
+		Parameters:   ai.Object(ai.Prop("value", ai.String())),
+		OutputSchema: ai.Object(ai.Prop("value", ai.String())),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			if onUpdate != nil {
+				onUpdate(AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "partial"}}, Details: map[string]any{}})
+			}
+			value, _ := params["value"].(string)
+			return AgentToolResult{
+				Content:           ai.ContentList{ai.TextContent{Text: value}},
+				Details:           map[string]any{},
+				StructuredContent: map[string]any{"value": value},
+			}, nil
+		},
+	}
+	runFailing = AgentTool{
+		Name:        "failing",
+		Label:       "Failing",
+		Description: "Returns an error result",
+		Parameters:  ai.Object(),
+		Execute: func(ctx context.Context, id string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error) {
+			return AgentToolResult{Content: ai.ContentList{ai.TextContent{Text: "bad"}}, Details: map[string]any{"partial": true}, IsError: true}, nil
+		},
+	}
+)
+
+func runCall(id, name string, args map[string]any) ai.ToolCall {
+	return ai.ToolCall{ID: id, Name: name, Arguments: args}
+}
+
+func outcomeText(o AgentToolCallOutcome) string { return textOfContent(o.Result.Content) }
+
+// agent-loop.test.ts "validates, runs the hooks, and reports failures as
+// error outcomes".
+func TestRunToolCallValidatesRunsHooksAndReportsFailures(t *testing.T) {
+	var hookCalls []string
+	var updates []AgentToolResult
+	opts := RunToolCallOptions{
+		ToolCallHooks: ToolCallHooks{
+			BeforeToolCall: func(_ context.Context, c BeforeToolCallContext) *BeforeToolCallResult {
+				hookCalls = append(hookCalls, "before "+c.ToolCall.ID)
+				if c.Args["value"] == "blocked" {
+					return &BeforeToolCallResult{Block: true, Reason: "nope"}
+				}
+				return nil
+			},
+			AfterToolCall: func(_ context.Context, c AfterToolCallContext) *AfterToolCallResult {
+				hookCalls = append(hookCalls, "after "+c.ToolCall.ID)
+				return nil
+			},
+		},
+		Tools:            []AgentTool{runEcho, runFailing},
+		AssistantMessage: &ai.AssistantMessage{},
+		Context:          &AgentContext{},
+		OnUpdate:         func(partial AgentToolResult) { updates = append(updates, partial) },
+	}
+	ctx := context.Background()
+
+	a := RunToolCall(ctx, runCall("a", "echo", map[string]any{"value": "a"}), opts)
+	if a.ToolCall.ID != "a" || a.IsError || !reflect.DeepEqual(a.Result.StructuredContent, map[string]any{"value": "a"}) {
+		t.Errorf("echo a = %+v, want a success with structured content {value: a}", a)
+	}
+	if b := RunToolCall(ctx, runCall("b", "echo", map[string]any{"value": map[string]any{"nested": true}}), opts); !b.IsError {
+		t.Errorf("invalid arguments = %+v, want an error outcome", b)
+	}
+	if c := RunToolCall(ctx, runCall("c", "echo", map[string]any{"value": "blocked"}), opts); !c.IsError || outcomeText(c) != "nope" {
+		t.Errorf("blocked call = %+v, want error outcome \"nope\"", c)
+	}
+	if d := RunToolCall(ctx, runCall("d", "missing", map[string]any{}), opts); !d.IsError || outcomeText(d) != "Tool missing not found" {
+		t.Errorf("unknown tool = %+v, want error outcome \"Tool missing not found\"", d)
+	}
+	// Error results keep their details.
+	if e := RunToolCall(ctx, runCall("e", "failing", map[string]any{}), opts); !e.IsError || !reflect.DeepEqual(e.Result.Details, map[string]any{"partial": true}) {
+		t.Errorf("isError result = %+v, want an error outcome keeping details {partial: true}", e)
+	}
+	wantUpdates := []AgentToolResult{{Content: ai.ContentList{ai.TextContent{Text: "partial"}}, Details: map[string]any{}}}
+	if !reflect.DeepEqual(updates, wantUpdates) {
+		t.Errorf("updates = %+v, want %+v", updates, wantUpdates)
+	}
+	// Validation failures and unknown tools never reach the hooks; blocked calls skip afterToolCall.
+	if want := []string{"before a", "after a", "before c", "before e", "after e"}; !reflect.DeepEqual(hookCalls, want) {
+		t.Errorf("hook calls = %q, want %q", hookCalls, want)
+	}
+}
+
+// agent-loop.test.ts "lets afterToolCall replace structured content and drops
+// it when only content is replaced".
+func TestRunToolCallAfterToolCallStructuredContent(t *testing.T) {
+	redacted := ai.ContentList{ai.TextContent{Text: "redacted"}}
+	cases := []struct {
+		name  string
+		after AfterToolCallResult
+		want  any
+	}{
+		{"content replaced alone drops it", AfterToolCallResult{Content: redacted, HasContent: true}, nil},
+		{"replaced", AfterToolCallResult{StructuredContent: map[string]any{"value": "replaced"}}, map[string]any{"value": "replaced"}},
+		{"replaced with content", AfterToolCallResult{Content: redacted, HasContent: true, StructuredContent: map[string]any{"value": "both"}}, map[string]any{"value": "both"}},
+		{"untouched by a details override", AfterToolCallResult{Details: map[string]any{"note": "kept"}, HasDetails: true}, map[string]any{"value": "original"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			after := tc.after
+			outcome := RunToolCall(context.Background(), runCall("x", "echo", map[string]any{"value": "original"}), RunToolCallOptions{
+				ToolCallHooks: ToolCallHooks{AfterToolCall: func(context.Context, AfterToolCallContext) *AfterToolCallResult {
+					return &after
+				}},
+				Tools:            []AgentTool{runEcho},
+				AssistantMessage: &ai.AssistantMessage{},
+				Context:          &AgentContext{},
+			})
+			if !reflect.DeepEqual(outcome.Result.StructuredContent, tc.want) {
+				t.Fatalf("structured content = %#v, want %#v", outcome.Result.StructuredContent, tc.want)
+			}
+		})
+	}
+}
+
+// Upstream 8562bcf66: in a model-issued call too, a result with IsError is an
+// error tool result that keeps its details, and the tool_execution_end event
+// carries the structured content (the message does not record it).
+func TestLoopToolResultIsErrorKeepsDetails(t *testing.T) {
+	trm, end := runToolTurn(t, runFailing, map[string]any{}, nil)
+	if !trm.IsError || textOfContent(trm.Content) != "bad" || !reflect.DeepEqual(trm.Details, map[string]any{"partial": true}) {
+		t.Fatalf("tool result message = %+v, want an error result \"bad\" keeping details {partial: true}", trm)
+	}
+	if !end.IsError {
+		t.Fatalf("tool_execution_end isError = false, want true")
+	}
+
+	_, end = runToolTurn(t, runEcho, map[string]any{"value": "v"}, nil)
+	result, _ := end.Result.(AgentToolResult)
+	if !reflect.DeepEqual(result.StructuredContent, map[string]any{"value": "v"}) {
+		t.Fatalf("tool_execution_end structured content = %#v, want {value: v}", end.Result)
+	}
+}

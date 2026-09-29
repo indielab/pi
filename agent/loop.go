@@ -518,14 +518,14 @@ func failToolCallsFromTruncatedMessage(toolCalls []ai.ToolCall, emit EventSink) 
 	for _, tc := range toolCalls {
 		mustEmit(emit, AgentEvent{Type: EvToolExecutionStart, ToolCallID: tc.ID, ToolName: tc.Name, Args: tc.Arguments})
 		fo := finalizedOutcome{
-			toolCall: tc,
+			ToolCall: tc,
 			// %s, not %q: pi interpolates the name into a template literal
 			// unescaped, so a name containing " or \ must pass through raw.
-			result: errorToolResult(fmt.Sprintf(
+			Result: errorToolResult(fmt.Sprintf(
 				`Tool call "%s" was not executed: the response hit the output token limit, so its arguments may be truncated. Re-issue the tool call with complete arguments.`,
 				tc.Name,
 			)),
-			isError: true,
+			IsError: true,
 		}
 		emitToolExecutionEnd(fo, emit)
 		trm := createToolResultMessage(fo)
@@ -550,18 +550,16 @@ func executeToolCalls(ctx context.Context, current *AgentContext, msg *ai.Assist
 	return executeToolCallsParallel(ctx, current, msg, toolCalls, config, emit)
 }
 
-type finalizedOutcome struct {
-	toolCall ai.ToolCall
-	result   AgentToolResult
-	isError  bool
-}
+// finalizedOutcome is pi's FinalizedToolCallOutcome, an alias of the exported
+// AgentToolCallOutcome since upstream 8562bcf66.
+type finalizedOutcome = AgentToolCallOutcome
 
 func shouldTerminateBatch(calls []finalizedOutcome) bool {
 	if len(calls) == 0 {
 		return false
 	}
 	for _, c := range calls {
-		if !c.result.Terminate {
+		if !c.Result.Terminate {
 			return false
 		}
 	}
@@ -575,13 +573,13 @@ func executeToolCallsSequential(ctx context.Context, current *AgentContext, msg 
 	for _, tc := range toolCalls {
 		mustEmit(emit, AgentEvent{Type: EvToolExecutionStart, ToolCallID: tc.ID, ToolName: tc.Name, Args: tc.Arguments})
 
-		prep := prepareToolCall(ctx, current, msg, tc, config)
+		prep := prepareToolCall(ctx, current, msg, tc, config.toolCallHooks(), current.Tools)
 		var fo finalizedOutcome
 		if prep.immediate != nil {
-			fo = finalizedOutcome{toolCall: tc, result: prep.immediate.result, isError: prep.immediate.isError}
+			fo = finalizedOutcome{ToolCall: tc, Result: prep.immediate.result, IsError: prep.immediate.isError}
 		} else {
-			executed := executePreparedToolCall(ctx, *prep.prepared, emit)
-			fo = finalizeExecutedToolCall(ctx, current, msg, *prep.prepared, executed, config)
+			executed := executePreparedToolCall(ctx, *prep.prepared, emitToolExecutionUpdate(prep.prepared.toolCall, emit))
+			fo = finalizeExecutedToolCall(ctx, current, msg, *prep.prepared, executed, config.toolCallHooks())
 		}
 
 		emitToolExecutionEnd(fo, emit)
@@ -625,9 +623,9 @@ func executeToolCallsParallel(ctx context.Context, current *AgentContext, msg *a
 
 		// prepareToolCall runs the BeforeToolCall hook; the prepare loop is
 		// already sequential (matches pi), so Before hooks never interleave.
-		prep := prepareToolCall(ctx, current, msg, tc, config)
+		prep := prepareToolCall(ctx, current, msg, tc, config.toolCallHooks(), current.Tools)
 		if prep.immediate != nil {
-			fo := finalizedOutcome{toolCall: tc, result: prep.immediate.result, isError: prep.immediate.isError}
+			fo := finalizedOutcome{ToolCall: tc, Result: prep.immediate.result, IsError: prep.immediate.isError}
 			emitToolExecutionEnd(fo, safeEmit)
 			slots = append(slots, slot{immediate: &fo})
 			if aborted(ctx) {
@@ -638,7 +636,7 @@ func executeToolCallsParallel(ctx context.Context, current *AgentContext, msg *a
 		prepared := *prep.prepared
 		slots = append(slots, slot{toolCall: prepared.toolCall, thunk: func() finalizedOutcome {
 			// Tool execution runs in parallel, OUTSIDE the lock (pi's Promise.all).
-			executed := executePreparedToolCall(ctx, prepared, safeEmit)
+			executed := executePreparedToolCall(ctx, prepared, emitToolExecutionUpdate(prepared.toolCall, safeEmit))
 			// Finalization runs the AfterToolCall hook and reads/writes shared
 			// context; serialize it so hook bodies cannot interleave (pi
 			// single-thread). The critical section is func-scoped with a deferred
@@ -650,13 +648,13 @@ func executeToolCallsParallel(ctx context.Context, current *AgentContext, msg *a
 			func() {
 				serialMu.Lock()
 				defer serialMu.Unlock()
-				fo = finalizeExecutedToolCall(ctx, current, msg, prepared, executed, config)
+				fo = finalizeExecutedToolCall(ctx, current, msg, prepared, executed, config.toolCallHooks())
 				emitErr = emit(AgentEvent{
 					Type:       EvToolExecutionEnd,
-					ToolCallID: fo.toolCall.ID,
-					ToolName:   fo.toolCall.Name,
-					Result:     fo.result,
-					IsError:    fo.isError,
+					ToolCallID: fo.ToolCall.ID,
+					ToolName:   fo.ToolCall.Name,
+					Result:     fo.Result,
+					IsError:    fo.IsError,
 				})
 			}()
 			if emitErr != nil {
@@ -694,7 +692,7 @@ func executeToolCallsParallel(ctx context.Context, current *AgentContext, msg *a
 			continue
 		}
 		if batchAborted {
-			fo := finalizedOutcome{toolCall: s.toolCall, result: errorToolResult("Operation aborted"), isError: true}
+			fo := finalizedOutcome{ToolCall: s.toolCall, Result: errorToolResult("Operation aborted"), IsError: true}
 			// Emit exactly as a thunk would, but never unwind straight out of this
 			// loop: a listener error here must still let the already-spawned tool
 			// goroutines be joined at wg.Wait below, so it is routed through the
@@ -754,8 +752,11 @@ type prepareResult struct {
 	prepared  *preparedToolCall
 }
 
-func prepareToolCall(ctx context.Context, current *AgentContext, msg *ai.AssistantMessage, tc ai.ToolCall, config AgentLoopConfig) (res prepareResult) {
-	tool, ok := findTool(current.Tools, tc.Name)
+// prepareToolCall resolves tc against tools — the context's tools for a
+// model-issued call, the caller's for RunToolCall (upstream 8562bcf66) — and
+// runs argument preparation, schema validation and BeforeToolCall.
+func prepareToolCall(ctx context.Context, current *AgentContext, msg *ai.AssistantMessage, tc ai.ToolCall, hooks ToolCallHooks, tools []AgentTool) (res prepareResult) {
+	tool, ok := findTool(tools, tc.Name)
 	if !ok {
 		return prepareResult{immediate: &immediateOutcome{result: errorToolResult("Tool " + tc.Name + " not found"), isError: true}}
 	}
@@ -784,8 +785,8 @@ func prepareToolCall(ctx context.Context, current *AgentContext, msg *ai.Assista
 		return prepareResult{immediate: &immediateOutcome{result: errorToolResult(err.Error()), isError: true}}
 	}
 
-	if config.BeforeToolCall != nil {
-		before := config.BeforeToolCall(ctx, BeforeToolCallContext{
+	if hooks.BeforeToolCall != nil {
+		before := hooks.BeforeToolCall(ctx, BeforeToolCallContext{
 			AssistantMessage: msg,
 			ToolCall:         tc,
 			Args:             validated,
@@ -814,7 +815,74 @@ func prepareToolCall(ctx context.Context, current *AgentContext, msg *ai.Assista
 	return prepareResult{prepared: &preparedToolCall{toolCall: tc, tool: tool, args: validated}}
 }
 
-func executePreparedToolCall(ctx context.Context, prepared preparedToolCall, emit EventSink) immediateOutcome {
+// ToolCallHooks are the BeforeToolCall and AfterToolCall hooks of
+// AgentLoopConfig (pi's Pick<AgentLoopConfig, "beforeToolCall" |
+// "afterToolCall">, upstream 8562bcf66).
+type ToolCallHooks struct {
+	BeforeToolCall func(ctx context.Context, c BeforeToolCallContext) *BeforeToolCallResult
+	AfterToolCall  func(ctx context.Context, c AfterToolCallContext) *AfterToolCallResult
+}
+
+func (c AgentLoopConfig) toolCallHooks() ToolCallHooks {
+	return ToolCallHooks{BeforeToolCall: c.BeforeToolCall, AfterToolCall: c.AfterToolCall}
+}
+
+// toolUpdateSink receives a running tool's partial results. An error it
+// returns is a listener failure, raised once the tool has settled.
+type toolUpdateSink func(partial AgentToolResult) error
+
+// emitToolExecutionUpdate sends a model-issued call's partial results out as
+// tool_execution_update events.
+func emitToolExecutionUpdate(toolCall ai.ToolCall, emit EventSink) toolUpdateSink {
+	return func(partial AgentToolResult) error {
+		return emit(AgentEvent{
+			Type:          EvToolExecutionUpdate,
+			ToolCallID:    toolCall.ID,
+			ToolName:      toolCall.Name,
+			Args:          toolCall.Arguments,
+			PartialResult: partial,
+		})
+	}
+}
+
+// RunToolCallOptions configures RunToolCall.
+type RunToolCallOptions struct {
+	ToolCallHooks
+	// Tools are the tools the call resolves against.
+	Tools []AgentTool
+	// AssistantMessage is passed to the hooks as the message that issued the call.
+	AssistantMessage *ai.AssistantMessage
+	// Context is passed to the hooks as the current agent context.
+	Context *AgentContext
+	// OnUpdate receives the tool's partial results; nil drops them.
+	OnUpdate ToolUpdateFunc
+}
+
+// RunToolCall runs one tool call through the same steps as a model-issued call
+// (upstream 8562bcf66): argument preparation, schema validation,
+// BeforeToolCall, execution and AfterToolCall. It emits no events and adds no
+// messages. A tool that calls other tools uses it so the hooks — permission
+// checks, for example — apply to those calls too.
+//
+// Tool failures never escape: an unknown tool, a validation error, a blocked
+// call and a failing tool all come back as an outcome with IsError set.
+// Cancelling ctx aborts the call as pi's signal does.
+func RunToolCall(ctx context.Context, toolCall ai.ToolCall, opts RunToolCallOptions) AgentToolCallOutcome {
+	prep := prepareToolCall(ctx, opts.Context, opts.AssistantMessage, toolCall, opts.ToolCallHooks, opts.Tools)
+	if prep.immediate != nil {
+		return AgentToolCallOutcome{ToolCall: toolCall, Result: prep.immediate.result, IsError: prep.immediate.isError}
+	}
+	onUpdate := func(partial AgentToolResult) error {
+		if opts.OnUpdate != nil {
+			opts.OnUpdate(partial)
+		}
+		return nil
+	}
+	executed := executePreparedToolCall(ctx, *prep.prepared, onUpdate)
+	return finalizeExecutedToolCall(ctx, opts.Context, opts.AssistantMessage, *prep.prepared, executed, opts.ToolCallHooks)
+}
+
+func executePreparedToolCall(ctx context.Context, prepared preparedToolCall, onUpdate toolUpdateSink) immediateOutcome {
 	// pi buffers tool_execution_update emit promises and awaits them only after
 	// execute settles (agent-loop.ts:633-654): a listener error never interrupts
 	// the tool mid-flight; it surfaces afterwards and rejects the run. We mirror
@@ -828,21 +896,14 @@ func executePreparedToolCall(ctx context.Context, prepared preparedToolCall, emi
 	// tool_execution_update events. acceptingUpdates is guarded by updateMu so
 	// the check and the post-settlement flip are race-free.
 	acceptingUpdates := true
-	onUpdate := func(partial AgentToolResult) {
+	update := func(partial AgentToolResult) {
 		updateMu.Lock()
 		if !acceptingUpdates {
 			updateMu.Unlock()
 			return
 		}
 		updateMu.Unlock()
-		err := emit(AgentEvent{
-			Type:          EvToolExecutionUpdate,
-			ToolCallID:    prepared.toolCall.ID,
-			ToolName:      prepared.toolCall.Name,
-			Args:          prepared.toolCall.Arguments,
-			PartialResult: partial,
-		})
-		if err != nil {
+		if err := onUpdate(partial); err != nil {
 			updateMu.Lock()
 			if updateEmitErr == nil {
 				updateEmitErr = err
@@ -865,11 +926,12 @@ func executePreparedToolCall(ctx context.Context, prepared preparedToolCall, emi
 				out = immediateOutcome{result: errorToolResult(panicMessage(r)), isError: true}
 			}
 		}()
-		result, err := prepared.tool.Execute(ctx, prepared.toolCall.ID, prepared.args, onUpdate)
+		result, err := prepared.tool.Execute(ctx, prepared.toolCall.ID, prepared.args, update)
 		if err != nil {
 			return immediateOutcome{result: errorToolResult(err.Error()), isError: true}
 		}
-		return immediateOutcome{result: result, isError: false}
+		// Upstream 8562bcf66: a tool can report a failure without throwing.
+		return immediateOutcome{result: result, isError: result.IsError}
 	}()
 
 	// pi daab056a (#5573): stop accepting updates the moment execute() settles
@@ -889,11 +951,11 @@ func executePreparedToolCall(ctx context.Context, prepared preparedToolCall, emi
 	return outcome
 }
 
-func finalizeExecutedToolCall(ctx context.Context, current *AgentContext, msg *ai.AssistantMessage, prepared preparedToolCall, executed immediateOutcome, config AgentLoopConfig) finalizedOutcome {
+func finalizeExecutedToolCall(ctx context.Context, current *AgentContext, msg *ai.AssistantMessage, prepared preparedToolCall, executed immediateOutcome, hooks ToolCallHooks) finalizedOutcome {
 	result := executed.result
 	isError := executed.isError
 
-	if config.AfterToolCall != nil {
+	if hooks.AfterToolCall != nil {
 		// pi wraps afterToolCall in try/catch; a throw (panic) becomes an error
 		// tool result, not a run failure (agent-loop.ts:676-701).
 		func() {
@@ -906,7 +968,7 @@ func finalizeExecutedToolCall(ctx context.Context, current *AgentContext, msg *a
 					isError = true
 				}
 			}()
-			after := config.AfterToolCall(ctx, AfterToolCallContext{
+			after := hooks.AfterToolCall(ctx, AfterToolCallContext{
 				AssistantMessage: msg,
 				ToolCall:         prepared.toolCall,
 				Args:             prepared.args,
@@ -914,10 +976,18 @@ func finalizeExecutedToolCall(ctx context.Context, current *AgentContext, msg *a
 				IsError:          isError,
 				Context:          current,
 			})
-			// pi rebuilds `result = {...result, content, details, usage, terminate}`; the
+			// pi rebuilds `result = {...result, content, details, usage, terminate}`
+			// and then sets or deletes structuredContent; the
 			// spread preserves fields the after-hook does not override. Go mutates
 			// `result` in place, which preserves them the same way.
 			if after != nil {
+				// Structured content not replaced along with the content may no
+				// longer match it (upstream 8562bcf66).
+				structuredContent := after.StructuredContent
+				if structuredContent == nil && !after.HasContent {
+					structuredContent = result.StructuredContent
+				}
+				result.StructuredContent = structuredContent
 				if after.HasContent {
 					result.Content = after.Content
 				}
@@ -937,7 +1007,7 @@ func finalizeExecutedToolCall(ctx context.Context, current *AgentContext, msg *a
 		}()
 	}
 
-	return finalizedOutcome{toolCall: prepared.toolCall, result: result, isError: isError}
+	return finalizedOutcome{ToolCall: prepared.toolCall, Result: result, IsError: isError}
 }
 
 func errorToolResult(message string) AgentToolResult {
@@ -947,21 +1017,21 @@ func errorToolResult(message string) AgentToolResult {
 func emitToolExecutionEnd(fo finalizedOutcome, emit EventSink) {
 	mustEmit(emit, AgentEvent{
 		Type:       EvToolExecutionEnd,
-		ToolCallID: fo.toolCall.ID,
-		ToolName:   fo.toolCall.Name,
-		Result:     fo.result,
-		IsError:    fo.isError,
+		ToolCallID: fo.ToolCall.ID,
+		ToolName:   fo.ToolCall.Name,
+		Result:     fo.Result,
+		IsError:    fo.IsError,
 	})
 }
 
 func createToolResultMessage(fo finalizedOutcome) ai.ToolResultMessage {
 	return ai.ToolResultMessage{
-		ToolCallID: fo.toolCall.ID,
-		ToolName:   fo.toolCall.Name,
-		Content:    fo.result.Content,
-		Details:    fo.result.Details,
-		Usage:      fo.result.Usage,
-		IsError:    fo.isError,
+		ToolCallID: fo.ToolCall.ID,
+		ToolName:   fo.ToolCall.Name,
+		Content:    fo.Result.Content,
+		Details:    fo.Result.Details,
+		Usage:      fo.Result.Usage,
+		IsError:    fo.IsError,
 		Timestamp:  nowMillis(),
 	}
 }

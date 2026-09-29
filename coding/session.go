@@ -660,7 +660,17 @@ func withToolResultImageNormalization(
 		}
 
 		out := agent.AfterToolCallResult{Content: normalized, HasContent: true}
+		// Returned content drops structured content the result does not also
+		// carry, so pass the tool's own on — unless the hook replaced the
+		// content without supplying its own, which pi's tool_result runner
+		// drops as no longer matching (upstream 8562bcf66).
+		out.StructuredContent = c.Result.StructuredContent
 		if hookResult != nil {
+			if hookResult.StructuredContent != nil {
+				out.StructuredContent = hookResult.StructuredContent
+			} else if hookResult.HasContent {
+				out.StructuredContent = nil
+			}
 			// Everything the hook decided other than content is passed through
 			// verbatim, including Terminate (pi's extension hook has no terminate,
 			// but the SDK's own AfterToolCall does).

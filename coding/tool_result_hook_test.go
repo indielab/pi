@@ -2,6 +2,7 @@ package coding
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"github.com/sky-valley/pi/agent"
@@ -21,5 +22,37 @@ func TestToolResultHookPassesUsageThrough(t *testing.T) {
 	})
 	if out == nil || out.Usage != patched {
 		t.Fatalf("hook usage dropped: got %+v", out)
+	}
+}
+
+// pi agent-session.ts afterToolCall returns content, so it also returns the
+// structured content to keep (upstream 8562bcf66): the tool's own, unless the
+// tool_result hook replaced the content without supplying its own.
+func TestToolResultHookKeepsStructuredContent(t *testing.T) {
+	original := map[string]any{"value": "original"}
+	replaced := map[string]any{"value": "replaced"}
+	redacted := ai.ContentList{ai.TextContent{Text: "redacted"}}
+	cases := []struct {
+		name string
+		hook *agent.AfterToolCallResult
+		want any
+	}{
+		{"hook changes details only", &agent.AfterToolCallResult{Details: map[string]any{"note": 1}, HasDetails: true}, original},
+		{"hook replaces content", &agent.AfterToolCallResult{Content: redacted, HasContent: true}, nil},
+		{"hook replaces structured content", &agent.AfterToolCallResult{StructuredContent: replaced}, replaced},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			wrapped := withToolResultImageNormalization(func(context.Context, agent.AfterToolCallContext) *agent.AfterToolCallResult {
+				return tc.hook
+			}, nil)
+			out := wrapped(context.Background(), agent.AfterToolCallContext{Result: agent.AgentToolResult{
+				Content:           ai.ContentList{ai.TextContent{Text: "ok"}},
+				StructuredContent: original,
+			}})
+			if out == nil || !reflect.DeepEqual(out.StructuredContent, tc.want) {
+				t.Fatalf("structured content = %+v, want %#v", out, tc.want)
+			}
+		})
 	}
 }

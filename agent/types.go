@@ -57,14 +57,35 @@ type AgentToolResult struct {
 	Content ai.ContentList
 	// Details is arbitrary structured data for logs/UI.
 	Details any
+	// StructuredContent is a machine-readable result matching the tool's
+	// OutputSchema, for programmatic callers such as a script that calls tools
+	// (pi AgentToolResult.structuredContent, upstream 8562bcf66). It is not sent
+	// to the model — Content stays the model-facing result — and not recorded on
+	// the tool result message. nil is pi's undefined; pi's ?? treats a JSON null
+	// as absent too, so nothing distinguishes the two.
+	StructuredContent any
 	// Usage is what executing the tool cost, when the tool accounted for it (a
 	// tool that calls a model itself, e.g.). It is carried onto the tool result
 	// message and is not part of the main LLM context accounting (pi
 	// AgentToolResult.usage, upstream 2fd386840).
 	Usage *ai.Usage
+	// IsError reports a failure without returning an error (upstream 8562bcf66):
+	// the model sees Content as an error result, as it would a returned error,
+	// but Details and StructuredContent are kept for the UI and programmatic
+	// callers.
+	IsError bool
 	// Terminate hints that the agent should stop after the current tool batch.
 	// Early termination only happens when every finalized result sets this.
 	Terminate bool
+}
+
+// AgentToolCallOutcome is the final outcome of a tool call after its hooks ran
+// (upstream 8562bcf66): what the loop records for a model-issued call, and what
+// RunToolCall returns for a call made from inside another tool.
+type AgentToolCallOutcome struct {
+	ToolCall ai.ToolCall
+	Result   AgentToolResult
+	IsError  bool
 }
 
 // ToolUpdateFunc streams partial tool results during execution.
@@ -95,8 +116,13 @@ type AgentTool struct {
 	// because its AgentTool extends Tool; Go has to forward it explicitly, and
 	// asAITool is the only path from a tool to the provider request.
 	ConstrainedSampling *ai.ConstrainedSamplingConfig
-	// Execute runs the tool. Return an error on failure (the loop converts it to
-	// an error tool result) rather than encoding errors in Content.
+	// OutputSchema is the JSON Schema of StructuredContent in successful results
+	// (upstream 8562bcf66). A tool that declares it should always set
+	// StructuredContent.
+	OutputSchema *ai.Schema
+	// Execute runs the tool. On failure, return an error (the loop converts it
+	// to an error tool result) or a result with IsError set; do not only
+	// describe the failure in Content.
 	Execute func(ctx context.Context, toolCallID string, params map[string]any, onUpdate ToolUpdateFunc) (AgentToolResult, error)
 }
 
@@ -163,7 +189,12 @@ type AfterToolCallResult struct {
 	HasContent bool
 	Details    any
 	HasDetails bool
-	IsError    *bool
+	// StructuredContent replaces the structured content when set. Replacing
+	// Content without it drops the structured content, which may no longer
+	// match the content; return it along with Content to keep it (upstream
+	// 8562bcf66).
+	StructuredContent any
+	IsError           *bool
 	// Usage replaces the tool result's usage when set (pi `usage ?? result.usage`).
 	Usage     *ai.Usage
 	Terminate *bool
