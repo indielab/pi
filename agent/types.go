@@ -61,8 +61,11 @@ type AgentToolResult struct {
 	// OutputSchema, for programmatic callers such as a script that calls tools
 	// (pi AgentToolResult.structuredContent, upstream 8562bcf66). It is not sent
 	// to the model — Content stays the model-facing result — and not recorded on
-	// the tool result message. nil is pi's undefined; pi's ?? treats a JSON null
-	// as absent too, so nothing distinguishes the two.
+	// the tool result message. nil is pi's undefined. pi also carries a JSON
+	// null as a value (its tool_result event and codemode test
+	// `=== undefined`); here that is a json.RawMessage("null"), which, being
+	// non-nil, is present everywhere — including as an AfterToolCall
+	// replacement, where pi's `??` would skip a null.
 	StructuredContent any
 	// Usage is what executing the tool cost, when the tool accounted for it (a
 	// tool that calls a model itself, e.g.). It is carried onto the tool result

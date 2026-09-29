@@ -914,13 +914,15 @@ type ToolResultMessage struct {
 	// (pi: ToolResultMessage.usage, optional). The agent loop sets it from the
 	// tool's AgentToolResult.Usage, as pi's has since 2fd386840, and the server
 	// bridge puts it on the wire when it is there.
-	Usage *Usage `json:"usage,omitempty"`
+	Usage     *Usage `json:"usage,omitempty"`
+	IsError   bool   `json:"isError"`
+	Timestamp int64  `json:"timestamp"`
 	// NestedCalls records the calls this tool made to other tools, a codemode
 	// script's for example (pi ToolResultMessage.nestedCalls, upstream
 	// 8562bcf66). It is kept for the session record and not sent to the model.
+	// pi attaches it at message_start, after the message was built, so it is
+	// the last key.
 	NestedCalls *NestedToolCalls `json:"nestedCalls,omitempty"`
-	IsError     bool             `json:"isError"`
-	Timestamp   int64            `json:"timestamp"`
 }
 
 // NestedToolCalls is the bounded record of the calls a tool made to other
@@ -949,11 +951,14 @@ type NestedToolCallRecord struct {
 	ID     string               `json:"id"`
 	Name   string               `json:"name"`
 	Status NestedToolCallStatus `json:"status"`
-	// Arguments is omitted when over the size limits; ArgumentsBytes then gives
-	// their UTF-8 size as JSON. A call with no arguments records {}, which
-	// omitzero keeps.
-	Arguments      map[string]any `json:"arguments,omitzero"`
-	ArgumentsBytes int            `json:"argumentsBytes,omitempty"`
+	// Arguments are the call's arguments as JSON, exactly as recorded. pi
+	// records JSON.parse(JSON.stringify(args)) before validating them, so they
+	// need not be an object — a script's tools.bash("ls") records "ls" — and
+	// raw bytes keep every shape, a null, and pi's key order through a session
+	// round trip. Nil (omitted) when over the size limits; ArgumentsBytes then
+	// gives their UTF-8 size as JSON.
+	Arguments      json.RawMessage `json:"arguments,omitzero"`
+	ArgumentsBytes int             `json:"argumentsBytes,omitempty"`
 	// DurationMs is unset while the call is unfinished; a call can take 0ms.
 	DurationMs *int64 `json:"durationMs,omitempty"`
 	// Error is the call's error text, truncated.

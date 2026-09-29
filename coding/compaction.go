@@ -1170,7 +1170,7 @@ func extractFileOpsFromMessage(m agent.AgentMessage, ops *fileOps) {
 		// Calls made from codemode scripts are recorded on the script's result.
 		if trm.NestedCalls != nil {
 			for _, call := range trm.NestedCalls.Calls {
-				addFileOp(call.Name, call.Arguments, ops)
+				addFileOp(call.Name, nestedCallArgs(call.Arguments), ops)
 			}
 		}
 		return
@@ -1184,6 +1184,18 @@ func extractFileOpsFromMessage(m agent.AgentMessage, ops *fileOps) {
 			addFileOp(tc.Name, tc.Arguments, ops)
 		}
 	}
+}
+
+// nestedCallArgs reads a nested call's recorded arguments as an object. pi's
+// reader is `typeof args?.path === "string"`, so arguments of any other shape
+// — a string, an array, a null, or none — carry no file operation: the failed
+// decode leaves args nil, which is exactly that.
+func nestedCallArgs(raw json.RawMessage) map[string]any {
+	var args map[string]any
+	if json.Unmarshal(raw, &args) != nil {
+		return nil
+	}
+	return args
 }
 
 func addFileOp(toolName string, args map[string]any, ops *fileOps) {
