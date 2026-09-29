@@ -37,6 +37,9 @@ func TestTypeJSONGoldens(t *testing.T) {
 		{StateUpdate[delta.Op]{Member: "m", Sequence: 1}, `{"type":"state","member":"m","sequence":1,"ops":[]}`},
 		{StateUpdate[delta.Op]{Instance: &address, Member: "m", Sequence: 2, Ops: []delta.Op{set}},
 			`{"type":"state","instance":{"key":"k","generation":1},"member":"m","sequence":2,"ops":[["s",["value"],1]]}`},
+		{ResetUpdate[delta.Op]{Snapshot: ServiceSubscriptionSnapshot[delta.Op]{ServiceID: "s", Mode: Singleton, Instances: []ServiceInstanceSnapshot[delta.Op]{{
+			Members: []ServiceMemberSnapshot[delta.Op]{MethodSnapshot[delta.Op]{Name: "m"}, StateSnapshot[delta.Op]{Name: "s", Sequence: 2, Ops: []delta.Op{delta.Replace{Value: 1}}}},
+		}}}}, `{"type":"reset","snapshot":{"serviceId":"s","mode":"singleton","instances":[{"members":[{"name":"m","kind":"method"},{"name":"s","kind":"state","sequence":2,"ops":[["r",1]]}]}]}}`},
 		{UnavailableUpdate[delta.Op]{}, `{"type":"unavailable"}`},
 		{ReplacedUpdate[delta.Op]{}, `{"type":"replaced","snapshot":{"members":[]}}`},
 		{SpawnedUpdate[delta.Op]{Instance: ServiceInstanceSnapshot[delta.Op]{Instance: &address}},
@@ -99,6 +102,10 @@ func TestTypeValidators(t *testing.T) {
 		ServiceSubscriptionSnapshot[delta.Op]{ServiceID: "s", Mode: Keyed},
 		StateUpdate[delta.Op]{Member: "m", Sequence: 1},
 		StateUpdate[delta.WireOp]{Instance: &address, Member: "m", Sequence: 1, Ops: []delta.WireOp{delta.WireDelete{}}},
+		ResetUpdate[delta.Op]{Snapshot: ServiceSubscriptionSnapshot[delta.Op]{ServiceID: "s", Mode: Keyed}},
+		ResetUpdate[delta.WireOp]{Snapshot: ServiceSubscriptionSnapshot[delta.WireOp]{ServiceID: "s", Mode: Keyed, Instances: []ServiceInstanceSnapshot[delta.WireOp]{
+			{Instance: &address, Members: []ServiceMemberSnapshot[delta.WireOp]{MethodSnapshot[delta.WireOp]{Name: "m"}, &StateSnapshot[delta.WireOp]{Name: "s", Ops: []delta.WireOp{delta.Replace{}}}}},
+		}}},
 		UnavailableUpdate[delta.Op]{},
 		ReplacedUpdate[delta.Op]{},
 		SpawnedUpdate[delta.Op]{Instance: ServiceInstanceSnapshot[delta.Op]{Instance: &address}},
@@ -138,6 +145,12 @@ func TestTypeValidators(t *testing.T) {
 		{StateUpdate[delta.Op]{Instance: &ServiceInstanceAddress{Key: "k"}, Member: "m", Sequence: 1}, "state update instance: generation"},
 		{StateUpdate[delta.Op]{Member: "m", Sequence: 1, Ops: []delta.Op{delta.Truncate{Path: delta.Path{delta.Key("s")}, Count: -1}}}, "state update ops[0]"},
 		{ReplacedUpdate[delta.Op]{Snapshot: ServiceInstanceSnapshot[delta.Op]{Instance: &ServiceInstanceAddress{}}}, "replacement update snapshot: instance"},
+		{ResetUpdate[delta.Op]{Snapshot: ServiceSubscriptionSnapshot[delta.Op]{Mode: Singleton}}, "reset update snapshot: serviceId"},
+		// The snapshot's own checks run first: a nil op is reported as such,
+		// not as a missing replacement.
+		{ResetUpdate[delta.Op]{Snapshot: resetOf(StateSnapshot[delta.Op]{Name: "s", Ops: []delta.Op{nil}})}, "ops[0] is nil"},
+		{ResetUpdate[delta.Op]{Snapshot: resetOf(&StateSnapshot[delta.Op]{Name: "s", Ops: []delta.Op{delta.Set{Path: delta.Path{delta.Key("a")}, Value: 1}}})}, "instances[0]: members[0]: a reset must contain full root replacements"},
+		{ResetUpdate[delta.Op]{Snapshot: resetOf(MethodSnapshot[delta.Op]{Name: "m"}, StateSnapshot[delta.Op]{Name: "s"})}, "members[1]: a reset must contain full root replacements, one [\"r\", value] op per state; got 0 ops"},
 		{SpawnedUpdate[delta.Op]{Instance: ServiceInstanceSnapshot[delta.Op]{Members: []ServiceMemberSnapshot[delta.Op]{nil}}}, "spawn update instance: members[0]"},
 		{ClosedUpdate[delta.Op]{}, "close update instance: key"},
 		{ServiceCall{ServiceID: "", Member: "m"}, "serviceId"},
@@ -168,4 +181,9 @@ func TestSealsBindToOneGrammar(t *testing.T) {
 	if _, ok := any(member).(ServiceMemberSnapshot[delta.Op]); ok {
 		t.Error("a wire StateSnapshot satisfies the decoded union")
 	}
+}
+
+// resetOf is a singleton subscription snapshot holding members.
+func resetOf(members ...ServiceMemberSnapshot[delta.Op]) ServiceSubscriptionSnapshot[delta.Op] {
+	return ServiceSubscriptionSnapshot[delta.Op]{ServiceID: "s", Mode: Singleton, Instances: []ServiceInstanceSnapshot[delta.Op]{{Members: members}}}
 }

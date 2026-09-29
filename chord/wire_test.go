@@ -3,6 +3,7 @@ package chord
 import (
 	"encoding/json"
 	"errors"
+	"os"
 	"reflect"
 	"strings"
 	"testing"
@@ -413,6 +414,9 @@ func TestParsersRejectAtEveryLevel(t *testing.T) {
 		{"state fractional sequence", `{"type":"state","member":"state","sequence":1.5,"ops":[]}`, "sequence"},
 		{"state empty member", `{"type":"state","member":"","sequence":1,"ops":[]}`, "member"},
 		{"state bad op", `{"type":"state","member":"state","sequence":1,"ops":[["s",["__proto__"],1]]}`, "ops[0]"},
+		{"reset missing snapshot", `{"type":"reset"}`, `"snapshot"`},
+		{"reset snapshot extra key", `{"type":"reset","snapshot":{"serviceId":"s","mode":"keyed","instances":[],"extra":1}}`, `"extra"`},
+		{"reset non-root state", `{"type":"reset","snapshot":{"serviceId":"s","mode":"singleton","instances":[{"members":[{"name":"m","kind":"method"},{"name":"s","kind":"state","sequence":1,"ops":[]}]}]}}`, "instances[0]: members[1]: a reset must contain full root replacements"},
 		{"unavailable extra key", `{"type":"unavailable","extra":true}`, `"extra"`},
 		{"replaced missing snapshot", `{"type":"replaced"}`, `"snapshot"`},
 		{"replaced snapshot extra key", `{"type":"replaced","snapshot":{"members":[],"extra":1}}`, `"extra"`},
@@ -588,5 +592,116 @@ func TestValidatesExplicitResets(t *testing.T) {
 			twoOps := `{"type":"reset","snapshot":{"serviceId":"pi.states","mode":"singleton","instances":[{"members":[{"name":"state","kind":"state","sequence":103,"ops":[["r",1],["r",2]]}]}]}}`
 			wantServiceValueError(t, parse(tree(t, twoOps)), "service provider update", "full root replacements")
 		})
+	}
+}
+
+// Upstream 35180b9df, against pi itself. The oracle,
+// testdata/reset/reset-35180b9df.json, was captured from pi's own
+// packages/chord/src at that sha by testdata/reset/capture.mts (node v26.4.0;
+// its header says how). "real" holds the resets pi's RemoteServiceProvider
+// sends when a subscription's delivery buffer overflows — with method
+// members, several states, keyed instances, and no instances at all — and
+// "table" holds pi's two parsers' verdicts on 46 literals.
+func TestResetUpdatesMatchPi(t *testing.T) {
+	data, err := os.ReadFile("testdata/reset/reset-35180b9df.json")
+	if err != nil {
+		t.Fatalf("read oracle: %v (regenerate it with testdata/reset/capture.mts)", err)
+	}
+	type verdict struct {
+		OK    bool   `json:"ok"`
+		Error string `json:"error"`
+	}
+	var oracle struct {
+		Real []struct {
+			Name    string `json:"name"`
+			Decoded string `json:"decoded"`
+			Wire    string `json:"wire"`
+		} `json:"real"`
+		Table []struct {
+			Name    string  `json:"name"`
+			Literal string  `json:"literal"`
+			Decoded verdict `json:"decoded"`
+			Wire    verdict `json:"wire"`
+		} `json:"table"`
+	}
+	if err := json.Unmarshal(data, &oracle); err != nil {
+		t.Fatal(err)
+	}
+	if len(oracle.Real) != 4 || len(oracle.Table) != 46 {
+		t.Fatalf("oracle holds %d resets and %d rows, want 4 and 46", len(oracle.Real), len(oracle.Table))
+	}
+	// canonical re-encodes JSON with sorted keys and no HTML escaping.
+	canonical := func(s string) string {
+		var v any
+		if err := json.Unmarshal([]byte(s), &v); err != nil {
+			t.Fatalf("bad JSON %s: %v", s, err)
+		}
+		var b strings.Builder
+		enc := json.NewEncoder(&b)
+		enc.SetEscapeHTML(false)
+		if err := enc.Encode(v); err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSuffix(b.String(), "\n")
+	}
+	parsers := []struct {
+		grammar string
+		parse   func(any) (json.Marshaler, error)
+	}{
+		{"decoded", func(v any) (json.Marshaler, error) { return ParseServiceProviderUpdate(v) }},
+		{"wire", func(v any) (json.Marshaler, error) { return ParseWireServiceProviderUpdate(v) }},
+	}
+
+	for _, reset := range oracle.Real {
+		for i, p := range parsers {
+			want := reset.Decoded
+			if i == 1 {
+				want = reset.Wire
+			}
+			t.Run(reset.Name+" "+p.grammar, func(t *testing.T) {
+				update, err := p.parse(tree(t, want))
+				if err != nil {
+					t.Fatalf("pi sent it, the port refuses it: %v", err)
+				}
+				if _, ok := update.(interface{ update(delta.Op) }); !ok && i == 0 {
+					t.Fatalf("parsed as %T, want a decoded ResetUpdate", update)
+				}
+				got := encode(t, update)
+				// The one difference allowed is the recorded ruling on decoded
+				// key order (UPSTREAM.md: do NOT make the decoder
+				// order-preserving): a replacement's object payload comes back
+				// with its keys sorted, where pi keeps insertion order.
+				if got != want && (canonical(got) != canonical(want) || canonical(want) == want) {
+					t.Errorf("re-marshals to\n %s\nwant pi's\n %s", got, want)
+				}
+			})
+		}
+	}
+
+	const rule = "full root replacements"
+	for _, row := range oracle.Table {
+		for i, p := range parsers {
+			want := row.Decoded
+			if i == 1 {
+				want = row.Wire
+			}
+			t.Run(row.Name+" "+p.grammar, func(t *testing.T) {
+				_, err := p.parse(tree(t, row.Literal))
+				if want.OK {
+					if err != nil {
+						t.Fatalf("pi accepts it, the port refuses it: %v", err)
+					}
+					return
+				}
+				if err == nil {
+					t.Fatalf("pi refuses it (%q), the port accepts it", want.Error)
+				}
+				// The texts are the port's own (ServiceValueError never
+				// crosses the wire); what must agree is which check fires.
+				if piRule, portRule := strings.Contains(want.Error, rule), strings.Contains(err.Error(), rule); piRule != portRule {
+					t.Fatalf("pi refuses it with %q, the port with %q: they disagree on whether the reset rule fired", want.Error, err)
+				}
+			})
+		}
 	}
 }

@@ -2,7 +2,6 @@ package chord
 
 import (
 	"encoding/json"
-	"errors"
 	"fmt"
 
 	"github.com/sky-valley/pi/chord/delta"
@@ -93,6 +92,10 @@ type ServiceMemberSnapshot[O opTuple] interface {
 	json.Marshaler
 	Validate() error
 	member(O)
+	// stateOps is a state member's ops and true; a method has neither. It is
+	// pi's `kind === "state"` asked of the member itself, so it holds for a
+	// pointer or an embedding type as the methods above do.
+	stateOps() ([]O, bool)
 }
 
 // MethodSnapshot is {"name": ..., "kind": "method"}: a member invoked through
@@ -112,6 +115,9 @@ type StateSnapshot[O opTuple] struct {
 
 func (MethodSnapshot[O]) member(O) {}
 func (StateSnapshot[O]) member(O)  {}
+
+func (MethodSnapshot[O]) stateOps() ([]O, bool)  { return nil, false }
+func (s StateSnapshot[O]) stateOps() ([]O, bool) { return s.Ops, true }
 
 // Validate requires a non-empty name.
 func (m MethodSnapshot[O]) Validate() error { return checkID("name", m.Name) }
@@ -295,23 +301,27 @@ func (u ResetUpdate[O]) Validate() error {
 	if err := u.Snapshot.Validate(); err != nil {
 		return fmt.Errorf("reset update snapshot: %w", err)
 	}
-	for _, instance := range u.Snapshot.Instances {
-		for _, member := range instance.Members {
-			var ops []O
-			switch state := member.(type) {
-			case StateSnapshot[O]:
-				ops = state.Ops
-			case *StateSnapshot[O]:
-				ops = state.Ops
-			default:
-				continue
-			}
-			if len(ops) != 1 || !delta.IsReplace(ops[0]) {
-				return errors.New("Service reset must contain full root replacements")
+	for i, instance := range u.Snapshot.Instances {
+		for j, member := range instance.Members {
+			ops, isState := member.stateOps()
+			if isState && (len(ops) != 1 || !delta.IsReplace(ops[0])) {
+				return fmt.Errorf("reset update snapshot: instances[%d]: members[%d]: a reset must contain full root replacements, one [\"r\", value] op per state; got %s", i, j, describeOps(ops))
 			}
 		}
 	}
 	return nil
+}
+
+// describeOps names what a reset's state carried instead of one replacement.
+func describeOps[O opTuple](ops []O) string {
+	if len(ops) != 1 {
+		return fmt.Sprintf("%d ops", len(ops))
+	}
+	data, err := ops[0].MarshalJSON()
+	if err != nil {
+		return "1 op that is not a replacement"
+	}
+	return "the op " + string(data)
 }
 
 // Validate always succeeds: the update carries nothing.
@@ -468,6 +478,7 @@ var (
 	_ ServiceMemberSnapshot[delta.Op]     = StateSnapshot[delta.Op]{}
 	_ ServiceMemberSnapshot[delta.WireOp] = MethodSnapshot[delta.WireOp]{}
 	_ ServiceProviderUpdate[delta.Op]     = StateUpdate[delta.Op]{}
+	_ ServiceProviderUpdate[delta.WireOp] = ResetUpdate[delta.WireOp]{}
 	_ ServiceProviderUpdate[delta.WireOp] = UnavailableUpdate[delta.WireOp]{}
 	_ ServiceProviderUpdate[delta.WireOp] = ReplacedUpdate[delta.WireOp]{}
 	_ ServiceProviderUpdate[delta.Op]     = SpawnedUpdate[delta.Op]{}
