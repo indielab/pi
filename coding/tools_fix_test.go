@@ -449,6 +449,37 @@ func TestBashStructuredContentUpTo1MiB(t *testing.T) {
 	os.Remove(out.FullOutputPath)
 }
 
+// When the full output cannot be saved, the shell tool fails the call with the
+// cause and how to fix it, and that error comes first: pi's finishOutput
+// awaits closeTempFile before it looks at an abort or a timeout (D90).
+func TestBashFailsWhenTheFullOutputCannotBeSaved(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses seq")
+	}
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+	dir := t.TempDir()
+	for _, tc := range []struct{ name, command string }{
+		{"the command succeeds", "seq 1 3000"},
+		{"the command times out", "seq 1 3000; sleep 5"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := map[string]any{"command": tc.command}
+			if strings.Contains(tc.command, "sleep") {
+				params["timeout"] = 1
+			}
+			_, err := run(t, bashTool(dir, nil), params)
+			if err == nil {
+				t.Fatal("the call succeeded; it should fail when the full output cannot be saved")
+			}
+			for _, want := range []string{"could not save the full command output", "no such file or directory", "point TMPDIR"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not say %q", err, want)
+				}
+			}
+		})
+	}
+}
+
 // The wall time is pi's Math.round(ms / 100) / 10: tenths of a second.
 func TestBashWallTimeSeconds(t *testing.T) {
 	for _, tc := range []struct {

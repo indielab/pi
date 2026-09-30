@@ -3,7 +3,10 @@ package coding
 import (
 	"encoding/hex"
 	"encoding/json"
+	"errors"
+	"io/fs"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -124,4 +127,35 @@ func TestOutputAccumulatorSnapshotMatchesPi(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A temp file the output cannot be saved to fails the call where pi's
+// closeTempFile rejects with its stream's error (D90). Nothing is written after
+// the first error.
+func TestOutputAccumulatorReportsTempFileErrors(t *testing.T) {
+	t.Run("the file cannot be created", func(t *testing.T) {
+		t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "missing"))
+		acc := newOutputAccumulator(2, 1000, "pi-test")
+		acc.append([]byte("1\n2\n3\n")) // three lines pass maxLines
+		acc.finish()
+		acc.snapshot(true)
+		if err := acc.closeTempFile(); !errors.Is(err, fs.ErrNotExist) {
+			t.Fatalf("closeTempFile() = %v, want the create error (%v)", err, fs.ErrNotExist)
+		}
+	})
+	t.Run("a write fails", func(t *testing.T) {
+		t.Setenv("TMPDIR", t.TempDir())
+		acc := newOutputAccumulator(2, 1000, "pi-test")
+		acc.append([]byte("1\n2\n3\n"))
+		if acc.tempFile == nil {
+			t.Fatal("precondition: three lines should open the temp file")
+		}
+		acc.tempFile.Close() // every later write fails
+		acc.append([]byte("4\n"))
+		acc.finish()
+		acc.snapshot(true)
+		if err := acc.closeTempFile(); !errors.Is(err, os.ErrClosed) {
+			t.Fatalf("closeTempFile() = %v, want the write error (%v)", err, os.ErrClosed)
+		}
+	})
 }

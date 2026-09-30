@@ -965,7 +965,17 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 				Env:            bashCommandEnv(sessionEnv),
 			})
 
-			snap := u.finish()
+			snap, err := u.finish()
+			if err != nil {
+				// D90: pi's finishOutput awaits closeTempFile before it looks at
+				// the command's fate, so a temp file that failed replaces an
+				// abort or a timeout too. pi fails the call only when the error
+				// comes after closeTempFile attached its listener; before that,
+				// its write stream's unhandled error crashes the process or leaves
+				// the call waiting. The port always fails the call, with the cause
+				// and how to fix it.
+				return agent.AgentToolResult{}, fmt.Errorf("could not save the full command output: %w; point TMPDIR (TMP on Windows) at a writable directory with free space", err)
+			}
 			formatOutput := func(emptyText string) (string, map[string]any) {
 				text := snap.content
 				if text == "" {
@@ -1322,6 +1332,9 @@ type outputAccumulator struct {
 
 	tempFilePath string
 	tempFile     *os.File
+	// tempFileErr is the first error creating, writing or closing the temp
+	// file. Nothing is written after it, and closeTempFile returns it.
+	tempFileErr error
 }
 
 func newOutputAccumulator(maxLines, maxBytes int, prefix string) *outputAccumulator {
@@ -1355,9 +1368,7 @@ func (a *outputAccumulator) append(data []byte) {
 	a.appendDecodedText(a.decoder.Decode(data))
 	if a.tempFile != nil || a.shouldUseTempFile() {
 		a.ensureTempFile()
-		if a.tempFile != nil {
-			_, _ = a.tempFile.Write(data)
-		}
+		a.writeTempFile(data)
 	} else {
 		// Copy: os/exec reuses the write buffer.
 		a.rawChunks = append(a.rawChunks, append([]byte(nil), data...))
@@ -1454,12 +1465,17 @@ func (a *outputAccumulator) snapshot(persistIfTruncated bool) outputSnapshot {
 	return outputSnapshot{content: tr.Content, truncation: tr, fullOutputPath: a.tempFilePath}
 }
 
-func (a *outputAccumulator) closeTempFile() {
-	if a.tempFile == nil {
-		return
+// closeTempFile closes the temp file and returns the first error creating,
+// writing or closing it, as pi's closeTempFile rejects with its write stream's
+// error.
+func (a *outputAccumulator) closeTempFile() error {
+	if a.tempFile != nil {
+		if err := a.tempFile.Close(); err != nil && a.tempFileErr == nil {
+			a.tempFileErr = err
+		}
+		a.tempFile = nil
 	}
-	_ = a.tempFile.Close()
-	a.tempFile = nil
+	return a.tempFileErr
 }
 
 // readFullOutput is the complete output, for callers that can take more than
@@ -1518,18 +1534,29 @@ func (a *outputAccumulator) ensureTempFile() {
 		return
 	}
 	var rb [8]byte
-	_, _ = rand.Read(rb[:])
+	_, _ = rand.Read(rb[:]) // crypto/rand.Read never returns an error (Go 1.24)
 	// pi: `${prefix}-${16 hex chars}.log` in the OS temp dir.
 	a.tempFilePath = filepath.Join(os.TempDir(), fmt.Sprintf("%s-%x.log", a.prefix, rb))
 	f, err := os.Create(a.tempFilePath)
 	if err != nil {
+		a.tempFileErr = err
 		return
 	}
 	a.tempFile = f
 	for _, chunk := range a.rawChunks {
-		_, _ = f.Write(chunk)
+		a.writeTempFile(chunk)
 	}
 	a.rawChunks = nil
+}
+
+// writeTempFile writes data to the temp file until a write fails.
+func (a *outputAccumulator) writeTempFile(data []byte) {
+	if a.tempFile == nil || a.tempFileErr != nil {
+		return
+	}
+	if _, err := a.tempFile.Write(data); err != nil {
+		a.tempFileErr = err
+	}
 }
 
 // bashUpdater throttles partial onUpdate emits (leading + trailing edge) and
@@ -1603,15 +1630,15 @@ func (u *bashUpdater) clearTimerLocked() {
 
 // finish flushes the trailing-edge update, finalizes the accumulator, and
 // returns the final snapshot (port of bash.ts finishOutput).
-func (u *bashUpdater) finish() outputSnapshot {
+func (u *bashUpdater) finish() (outputSnapshot, error) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	u.acc.finish()
 	u.clearTimerLocked()
 	u.emitLocked()
 	snap := u.acc.snapshot(true)
-	u.acc.closeTempFile()
-	return snap
+	err := u.acc.closeTempFile()
+	return snap, err
 }
 
 // ---------------------------------------------------------------------------
