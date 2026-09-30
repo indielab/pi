@@ -26,7 +26,7 @@ func DecodeUTF8(b []byte) string {
 			i++
 			continue
 		}
-		needed, lower, upper := UTF8Lead(lead)
+		needed, lower, upper := utf8Lead(lead)
 		if needed == 0 {
 			out.WriteRune(utf8.RuneError)
 			i++
@@ -49,14 +49,14 @@ func DecodeUTF8(b []byte) string {
 	return out.String()
 }
 
-// UTF8Lead is how the Encoding Standard's UTF-8 decoder reads a byte of 0x80
+// utf8Lead is how the Encoding Standard's UTF-8 decoder reads a byte of 0x80
 // or more as the start of a sequence: needed is how many continuation bytes
 // the sequence takes, and lower and upper bound the first of them, which is
 // where overlong forms, surrogates and code points past U+10FFFF are ruled
 // out; each later one is 0x80 to 0xBF. needed is 0 for a byte no sequence
 // starts with (a continuation byte, 0xC0, 0xC1, 0xF5 and up), and for an
 // ASCII byte, which is a character on its own.
-func UTF8Lead(lead byte) (needed int, lower, upper byte) {
+func utf8Lead(lead byte) (needed int, lower, upper byte) {
 	lower, upper = 0x80, 0xBF
 	switch {
 	case lead >= 0xC2 && lead <= 0xDF:
@@ -79,12 +79,12 @@ func UTF8Lead(lead byte) (needed int, lower, upper byte) {
 	return needed, lower, upper
 }
 
-// IncompleteUTF8Suffix is the length of the incomplete sequence b ends with: a
+// incompleteUTF8Suffix is the length of the incomplete sequence b ends with: a
 // lead byte and the continuation bytes after it, when more continuation bytes
 // could still complete a valid sequence. It is 0 when b ends where a character
 // ends, or on bytes no later byte could make valid, which a decoder replaces at
 // once. A TextDecoder in stream mode holds these bytes for its next call.
-func IncompleteUTF8Suffix(b []byte) int {
+func incompleteUTF8Suffix(b []byte) int {
 	for k := 1; k <= 3 && k <= len(b); k++ {
 		lead := b[len(b)-k]
 		if lead < 0x80 {
@@ -94,7 +94,7 @@ func IncompleteUTF8Suffix(b []byte) int {
 			continue // a continuation byte: its lead is further back
 		}
 		// The bounds DecodeUTF8 reads the sequence with.
-		needed, lower, upper := UTF8Lead(lead)
+		needed, lower, upper := utf8Lead(lead)
 		if needed == 0 {
 			return 0 // a byte no sequence starts with
 		}
@@ -111,21 +111,3 @@ func IncompleteUTF8Suffix(b []byte) int {
 	}
 	return 0
 }
-
-// DecodeText is what one decode call of a fresh TextDecoder("utf-8") makes of
-// b: DecodeUTF8's text less a leading byte-order mark. With stream set it is
-// decode(b, {stream: true}), which holds an incomplete final sequence back for
-// the next call, so a decoder never called again drops it; without, that
-// sequence becomes U+FFFD.
-func DecodeText(b []byte, stream bool) string {
-	var d TextDecoder
-	text := d.Decode(b)
-	if !stream {
-		text += d.Flush()
-	}
-	return text
-}
-
-// byteOrderMark is U+FEFF in UTF-8, which a TextDecoder drops from the start
-// of its text.
-const byteOrderMark = "\xef\xbb\xbf"

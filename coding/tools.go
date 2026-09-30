@@ -1487,7 +1487,7 @@ func (a *outputAccumulator) closeTempFile() error {
 // bytes the cut left at its start.
 func (a *outputAccumulator) readFullOutput(maxBytes int) (content string, truncated bool, err error) {
 	if a.tempFilePath == "" {
-		return jstext.DecodeText(bytes.Join(a.rawChunks, nil), false), false, nil
+		return jstext.DecodeText(bytes.Join(a.rawChunks, nil)), false, nil
 	}
 	f, err := os.Open(a.tempFilePath)
 	if err != nil {
@@ -1504,7 +1504,7 @@ func (a *outputAccumulator) readFullOutput(maxBytes int) (content string, trunca
 		if err != nil {
 			return "", false, err
 		}
-		return jstext.DecodeText(data, false), false, nil
+		return jstext.DecodeText(data), false, nil
 	}
 	head := make([]byte, maxBytes/2)
 	tail := make([]byte, maxBytes-len(head))
@@ -1518,9 +1518,12 @@ func (a *outputAccumulator) readFullOutput(maxBytes int) (content string, trunca
 	for tailStart < len(tail) && tail[tailStart]&0xc0 == 0x80 {
 		tailStart++
 	}
+	// The head is decoded in stream mode and never flushed, so a character
+	// the cut splits is held back and dropped.
+	var headDecoder jstext.TextDecoder
 	omitted := size - int64(len(head)) - int64(len(tail))
 	return fmt.Sprintf("%s\n\n[... %d bytes omitted ...]\n\n%s",
-		jstext.DecodeText(head, true), omitted, jstext.DecodeText(tail[tailStart:], false)), true, nil
+		headDecoder.Decode(head), omitted, jstext.DecodeText(tail[tailStart:])), true, nil
 }
 
 func (a *outputAccumulator) getLastLineBytes() int { return a.currentLineBytes }

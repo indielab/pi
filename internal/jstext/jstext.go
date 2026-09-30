@@ -3,8 +3,8 @@
 // toLowerCase (ToLower), the text JSON.stringify writes (Stringify), the
 // UTF-16 code-unit order of < and Array.prototype.sort (CompareUTF16), how a
 // value JSON.parse returns converts (Parse, Number, NumberToString, ToString,
-// Truthy), the text a TextDecoder makes of bytes that are not UTF-8
-// (DecodeUTF8, and UTF8Lead, the sequence bounds it reads with), and how
+// Truthy), the text a TextDecoder makes of bytes (TextDecoder for a stream,
+// DecodeText for one call, DecodeUTF8 for bytes that are not UTF-8), and how
 // fetch reads header bytes (IsomorphicDecode).
 package jstext
 

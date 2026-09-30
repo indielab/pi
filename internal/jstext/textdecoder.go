@@ -22,7 +22,7 @@ func (d *TextDecoder) Decode(b []byte) string {
 		b = append(d.held, b...)
 		d.held = nil
 	}
-	cut := len(b) - IncompleteUTF8Suffix(b)
+	cut := len(b) - incompleteUTF8Suffix(b)
 	text := DecodeUTF8(b[:cut])
 	if cut < len(b) {
 		d.held = append([]byte(nil), b[cut:]...)
@@ -47,3 +47,16 @@ func (d *TextDecoder) emit(text string) string {
 	}
 	return text
 }
+
+// DecodeText is what one decode(b) of a fresh TextDecoder("utf-8") returns:
+// the stream's text, a leading byte-order mark dropped, and an incomplete
+// final sequence as U+FFFD. A single decode(b, {stream: true}) is a fresh
+// TextDecoder's Decode(b).
+func DecodeText(b []byte) string {
+	var d TextDecoder
+	return d.Decode(b) + d.Flush()
+}
+
+// byteOrderMark is U+FEFF in UTF-8, which a TextDecoder drops from the start
+// of its text.
+const byteOrderMark = "\xef\xbb\xbf"

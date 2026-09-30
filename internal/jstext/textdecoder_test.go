@@ -1,6 +1,7 @@
 package jstext
 
 import (
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"slices"
@@ -58,5 +59,60 @@ func TestTextDecoderMatchesNode(t *testing.T) {
 	}
 	if quirks == 0 {
 		t.Fatal("the capture tags no nodeQuirk rows; the split doubled byte-order mark should be one")
+	}
+}
+
+// TestDecodeTextMatchesNode replays what one decode call of a fresh node
+// TextDecoder made of each input (testdata/capture-textdecode.mjs): DecodeText
+// for decode(b), and a fresh TextDecoder's Decode for decode(b, {stream: true}).
+func TestDecodeTextMatchesNode(t *testing.T) {
+	data, err := os.ReadFile("testdata/textdecode-node.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capture struct {
+		Rows []struct {
+			Input  string `json:"input"`
+			Stream bool   `json:"stream"`
+			Text   string `json:"text"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatal(err)
+	}
+	if len(capture.Rows) < 60 {
+		t.Fatalf("only %d rows in the capture", len(capture.Rows))
+	}
+	for _, row := range capture.Rows {
+		input, err := hex.DecodeString(row.Input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got string
+		if row.Stream {
+			var d TextDecoder
+			got = d.Decode(input)
+		} else {
+			got = DecodeText(input)
+		}
+		if got != row.Text {
+			t.Errorf("% x (stream %t) = %+q, node %+q", input, row.Stream, got, row.Text)
+		}
+	}
+}
+
+// Flush ends the stream and the decoder starts over: the next stream's leading
+// byte-order mark is dropped again. node v26.4.0 decodes these calls, in order,
+// to "a", "", "\ufffd" and "b".
+func TestTextDecoderStartsOverAfterFlush(t *testing.T) {
+	var d TextDecoder
+	got := []string{
+		d.Decode([]byte("\xef\xbb\xbfa")),
+		d.Decode([]byte("\xe2\x82")),
+		d.Flush(),
+		d.Decode([]byte("\xef\xbb\xbfb")),
+	}
+	if want := []string{"a", "", "\ufffd", "b"}; !slices.Equal(got, want) {
+		t.Fatalf("got %+q, node %+q", got, want)
 	}
 }
