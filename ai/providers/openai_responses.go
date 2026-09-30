@@ -22,6 +22,30 @@ import (
 // max_output_tokens — the API rejects values below 16 (#6265).
 const openaiResponsesMinOutputTokens = 16
 
+// chatGPTUsageURL is where a Sign in with ChatGPT user checks the
+// subscription's usage (pi CHATGPT_USAGE_URL).
+const chatGPTUsageURL = "https://chatgpt.com/settings/usage"
+
+// isChatGPTSignIn reports whether a request to OpenAI itself authenticates with
+// a Sign in with ChatGPT access token (pi isChatGPTSignIn, upstream 02eed88fd):
+// OpenAI API keys start with "sk-", so any other credential sent there is such
+// a token. apiKey is the caller's option, not one resolved from the
+// environment, and the base URL is the model's own, compared exactly.
+func isChatGPTSignIn(model *ai.Model, apiKey string) bool {
+	return model.Provider == "openai" && model.BaseURL == "https://api.openai.com/v1" &&
+		apiKey != "" && !strings.HasPrefix(apiKey, "sk-")
+}
+
+// withChatGPTUsageHint points at the usage page when the subscription's usage
+// limit, which Sign in with ChatGPT shares with other apps, failed the stream.
+// pi applies it to every error its stream catches.
+func withChatGPTUsageHint(message string) string {
+	if strings.Contains(message, "subscription_sharing_usage_limit_exceeded") {
+		return message + "\nCheck your ChatGPT usage: " + chatGPTUsageURL
+	}
+	return message
+}
+
 // openaiToolCallProviders are the providers whose tool-call ids carry the
 // Responses-specific `callId|itemId` shape (port of OPENAI_TOOL_CALL_PROVIDERS).
 var openaiToolCallProviders = map[string]bool{
@@ -276,7 +300,7 @@ func StreamOpenAIResponses(ctx context.Context, model *ai.Model, req ai.Transcri
 			} else {
 				output.StopReason = ai.StopError
 			}
-			output.ErrorMessage = err.Error()
+			output.ErrorMessage = withChatGPTUsageHint(err.Error())
 			stream.Push(ai.AssistantMessageEvent{Type: ai.EventError, Reason: output.StopReason, Error: output})
 			stream.End()
 		}
@@ -1014,6 +1038,9 @@ func buildResponsesParams(model *ai.Model, req ai.TranscriptContext, opts *OpenA
 		"store":  false,
 	}
 	retention := resolveCacheRetention(opts.CacheRetention, opts.Env)
+	// Sign in with ChatGPT rejects the cache retention settings, the output
+	// token limit and the temperature; prompt_cache_key still goes.
+	omitUnsupported := isChatGPTSignIn(model, opts.APIKey)
 	// Prompt caching: route same-session requests to a stable cache key so OpenAI
 	// can reuse the cached system-prompt + tool prefix (latency/cost win).
 	if retention != ai.CacheNone && opts.SessionID != "" {
@@ -1023,14 +1050,14 @@ func buildResponsesParams(model *ai.Model, req ai.TranscriptContext, opts *OpenA
 	// independent of sessionId. Upstream 17de82d7b added the explicit-mode
 	// exclusion: a GPT-5.6+ model expresses long retention through
 	// prompt_cache_options instead, and must not send both.
-	if retention == ai.CacheLong && compat.SupportsLongCacheRetention && !compat.SupportsExplicitPromptCacheMode {
+	if !omitUnsupported && retention == ai.CacheLong && compat.SupportsLongCacheRetention && !compat.SupportsExplicitPromptCacheMode {
 		params["prompt_cache_retention"] = "24h"
 	}
 	// pi getPromptCacheOptions (upstream 17de82d7b), for models that accept
 	// prompt_cache_options at all. "none" tells a model with implicit caching to
 	// stop (upstream 241431c6 — write compaction and branch summaries must not
 	// poison the session cache); "long" is how those models spell 24h retention.
-	if compat.SupportsExplicitPromptCacheMode {
+	if !omitUnsupported && compat.SupportsExplicitPromptCacheMode {
 		switch {
 		case retention == ai.CacheNone:
 			params["prompt_cache_options"] = map[string]any{"mode": "explicit"}
@@ -1041,14 +1068,14 @@ func buildResponsesParams(model *ai.Model, req ai.TranscriptContext, opts *OpenA
 	// pi `if (options?.maxTokens && compat.supportsMaxOutputTokens)` — JS
 	// truthiness, so 0 is omitted. pi then floors the value at 16 (Math.max)
 	// since the Responses API rejects lower.
-	if opts.MaxTokens != nil && *opts.MaxTokens != 0 && compat.SupportsMaxOutputTokens {
+	if opts.MaxTokens != nil && *opts.MaxTokens != 0 && compat.SupportsMaxOutputTokens && !omitUnsupported {
 		mo := *opts.MaxTokens
 		if mo < openaiResponsesMinOutputTokens {
 			mo = openaiResponsesMinOutputTokens
 		}
 		params["max_output_tokens"] = mo
 	}
-	if opts.Temperature != nil {
+	if opts.Temperature != nil && !omitUnsupported {
 		params["temperature"] = *opts.Temperature
 	}
 	if opts.ServiceTier != "" {

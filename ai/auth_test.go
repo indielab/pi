@@ -392,6 +392,27 @@ func TestResolveStoredOAuthRefreshContextIsComposite(t *testing.T) {
 	}
 }
 
+// Upstream 02eed88fd: lazyOAuth passes login options on to the loaded flow.
+func TestLazyOAuthForwardsLoginOptions(t *testing.T) {
+	var got *LoginOptions
+	wrapper := LazyOAuth(LazyOAuthOptions{
+		Name: "Test",
+		Load: func() (*OAuthAuth, error) {
+			return &OAuthAuth{Login: func(_ context.Context, _ AuthInteraction, options *LoginOptions) (*Credential, error) {
+				got = options
+				return &Credential{Type: CredentialOAuth}, nil
+			}}, nil
+		},
+	})
+	options := &LoginOptions{GetDeviceID: func() string { return "device-1" }}
+	if _, err := wrapper.Login(context.Background(), nil, options); err != nil {
+		t.Fatal(err)
+	}
+	if got != options {
+		t.Fatalf("the loaded flow received %p, want the caller's options %p", got, options)
+	}
+}
+
 // TestLazyOAuthCarriesDescriptorFields locks upstream b0bd0ff9d
 // (IsSubscription) and a01baaae (LoginLabel): LazyOAuth carries the descriptor
 // fields onto the wrapper itself, readable without loading the implementation,
@@ -401,7 +422,7 @@ func TestResolveStoredOAuthRefreshContextIsComposite(t *testing.T) {
 func TestLazyOAuthCarriesDescriptorFields(t *testing.T) {
 	loads := 0
 	impl := &OAuthAuth{
-		Login: func(_ context.Context, _ AuthInteraction) (*Credential, error) {
+		Login: func(_ context.Context, _ AuthInteraction, _ *LoginOptions) (*Credential, error) {
 			return &Credential{Type: CredentialOAuth, Access: "logged-in"}, nil
 		},
 		Refresh: func(_ context.Context, c OAuthCredentials) (OAuthCredentials, error) {
@@ -436,7 +457,7 @@ func TestLazyOAuthCarriesDescriptorFields(t *testing.T) {
 	}
 
 	// Login, Refresh, and ToAuth route to the implementation, loading it once.
-	cred, err := wrapper.Login(context.Background(), nil)
+	cred, err := wrapper.Login(context.Background(), nil, nil)
 	if err != nil || cred == nil || cred.Access != "logged-in" {
 		t.Fatalf("Login must route to the implementation: %+v (err %v)", cred, err)
 	}

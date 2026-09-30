@@ -3,13 +3,15 @@
 // in package ai.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
-//   e.g. ... capture.mts <dir> classify-e98f287ee.json e98f287ee
+//   e.g. ... capture.mts <dir> classify-3dd803d7e.json 3dd803d7e
 //
 // <extraction> holds packages/ai at <sha> (`git archive <sha> packages/ai` from
 // the upstream clone) and a node_modules resolving pi-ai's dependencies (the npm
-// build's). The npm build 0.85.1 predates upstream e98f287ee (Azure's peak-load
-// message) and e5d18382a ("520"), so this is a src capture: re-verify it
-// against the first build that ships them (the BUILD wins).
+// build's). It is a src capture, checked against the build when a release
+// ships the source it read (the BUILD wins): classify-3dd803d7e.json was
+// captured from src at 3dd803d7e with the 0.99.1 build's node_modules, and
+// utils/retry.ts is identical at v0.99.1 (d86654abb), whose dist/utils/retry.js
+// builds both patterns with exactly these sources and flags.
 //
 // Every row records three answers: isRetryableAssistantError on the message
 // retry.test.ts would build (fauxAssistantMessage), and RegExp.prototype.test of
@@ -69,6 +71,8 @@ const bunFetchSocketClosedMessage =
 const openAIResponsesEarlyEofMessage = "OpenAI Responses stream ended before a terminal response event";
 const wrappedDnsLookupError =
 	"The pending stream has been canceled (caused by: getaddrinfo ENOTFOUND bedrock-runtime.us-east-1.amazonaws.com)";
+const chatGPTUsageLimitMessage =
+	'OpenAI API error (429): {"code":"subscription_sharing_usage_limit_exceeded","message":"Usage limit reached."}';
 const azurePeakLoadError =
 	"The system is currently experiencing high demand and cannot process your request. Your request exceeds the maximum usage size allowed during peak load. For improved capacity reliability, consider switching to Provisioned Throughput.";
 
@@ -92,6 +96,9 @@ const rows: Row[] = [
 	{ covers: "pi: not an error", content: "not an error" },
 	error("pi: retryAssistantCall non-retryable", "insufficient_quota"),
 	error("pi: retryAssistantCall transient", "terminated"),
+	error("pi: ChatGPT subscription usage limit", chatGPTUsageLimitMessage),
+	error("pi: temporary ChatGPT usage error", "subscription_sharing_usage_unavailable: Usage cannot be checked."),
+	error("pi: temporary ChatGPT user error", "subscription_sharing_user_unavailable: User cannot be loaded."),
 
 	// isRetryableAssistantError's guard: only stopReason "error" with error text.
 	{ covers: "guard: stop", stopReason: "stop", errorMessage: "overloaded" },
@@ -144,6 +151,8 @@ const rows: Row[] = [
 	error("try your request again", "please try your request again shortly"),
 	error("please retry your request", "transient failure, please retry your request"),
 	error("ResourceExhausted", "resourceexhausted"),
+	error("subscription_sharing_usage_unavailable", "SUBSCRIPTION_SHARING_USAGE_UNAVAILABLE"),
+	error("subscription_sharing_user_unavailable", "Subscription_Sharing_User_Unavailable"),
 
 	// One row per limit alternative, each beside a retryable status it must veto.
 	error("GoUsageLimitError", "GoUsageLimitError: 429"),
@@ -154,6 +163,7 @@ const rows: Row[] = [
 	error("out of budget", "out of budget 500"),
 	error("quota exceeded", "Quota Exceeded: 429"),
 	error("billing", "BILLING 502"),
+	error("subscription_sharing_usage_limit_exceeded", "Subscription_Sharing_Usage_Limit_Exceeded (429)"),
 
 	// Limit near-misses: the retryable status stands.
 	error("near-miss limit", "GoUsageLimit 429"),
@@ -163,6 +173,7 @@ const rows: Row[] = [
 	error("near-miss limit", "out-of-budget 500"),
 	error("near-miss limit", "quota exceed 429"),
 	error("near-miss limit", "bill 502"),
+	error("near-miss limit", "subscription sharing usage limit exceeded 429"),
 
 	// Retryable near-misses.
 	error("near-miss", "model refused to answer"),
@@ -173,6 +184,7 @@ const rows: Row[] = [
 	error("near-miss", "status 5200"),
 	error("near-miss", "too many request"),
 	error("near-miss", "service not available"),
+	error("near-miss", "subscription_sharing_usage unavailable"),
 	error("near-miss", "server-side error"),
 	error("near-miss", "provider returned an error"),
 	error("near-miss", "ECONNREFUSED 127.0.0.1:443"),

@@ -632,8 +632,9 @@ type Models interface {
 
 	// Login runs a provider-owned login flow and persists its returned
 	// credential (pi login). ctx cancels the flow; a mutation cancelled before
-	// it reached the store never runs.
-	Login(ctx context.Context, providerID string, authType CredentialKind, interaction AuthInteraction) (*Credential, error)
+	// it reached the store never runs. options, which may be nil, reaches an
+	// OAuth login flow (upstream 02eed88fd).
+	Login(ctx context.Context, providerID string, authType CredentialKind, interaction AuthInteraction, options *LoginOptions) (*Credential, error)
 
 	// Logout removes the stored credential for a provider (pi logout).
 	Logout(ctx context.Context, providerID string) error
@@ -1406,6 +1407,7 @@ func (m *modelsImpl) Login(
 	providerID string,
 	authType CredentialKind,
 	interaction AuthInteraction,
+	options *LoginOptions,
 ) (*Credential, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -1416,8 +1418,10 @@ func (m *modelsImpl) Login(
 	}
 	var login func(context.Context, AuthInteraction) (*Credential, error)
 	if authType == CredentialOAuth {
-		if oauth := p.Auth().OAuth; oauth != nil {
-			login = oauth.Login
+		if oauth := p.Auth().OAuth; oauth != nil && oauth.Login != nil {
+			login = func(ctx context.Context, interaction AuthInteraction) (*Credential, error) {
+				return oauth.Login(ctx, interaction, options)
+			}
 		}
 	} else if apiKey := p.Auth().APIKey; apiKey != nil {
 		login = apiKey.Login

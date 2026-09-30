@@ -214,6 +214,16 @@ type AuthCheck struct {
 	Type   CredentialKind
 }
 
+// LoginOptions is app-supplied context for Models.Login (pi LoginOptions,
+// upstream 02eed88fd).
+type LoginOptions struct {
+	// GetDeviceID returns the stable ID of this app installation, e.g. sent to
+	// OpenAI as its agent host ID. Only login flows that need it call it, so an
+	// app can create the ID on first use, and it must return the same ID on
+	// every later call.
+	GetDeviceID func() string
+}
+
 // ApiKeyAuth is api-key auth: a stored key/provider env plus ambient sources
 // (env vars, AWS profiles, ADC files). pi models this as an object with method
 // fields; Go mirrors that as a struct of funcs (idiomatic, since instances are
@@ -261,8 +271,9 @@ type OAuthAuth struct {
 
 	// Login runs the interactive OAuth flow. Out of scope for the port
 	// (OAuth-acquisition exclusion); present for structural parity. ctx cancels
-	// the flow (pi ProviderAuthInteraction.signal, fed6009c).
-	Login func(ctx context.Context, interaction AuthInteraction) (*Credential, error)
+	// the flow (pi ProviderAuthInteraction.signal, fed6009c). options is the
+	// app-supplied context Models.Login forwards, nil when there is none.
+	Login func(ctx context.Context, interaction AuthInteraction, options *LoginOptions) (*Credential, error)
 
 	// Refresh exchanges the refresh token; returns an error on failure
 	// (invalid_grant etc.). The Models runtime runs this under the store lock.

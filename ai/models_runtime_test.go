@@ -628,6 +628,30 @@ type fakeInteraction struct{ answer string }
 func (f fakeInteraction) Prompt(AuthPrompt) (string, error) { return f.answer, nil }
 func (f fakeInteraction) Notify(AuthEvent)                  {}
 
+// Upstream 02eed88fd: Models.login hands its LoginOptions to the provider's
+// login flow, which is how Sign in with ChatGPT gets the app's device ID.
+func TestModelsLoginForwardsLoginOptions(t *testing.T) {
+	var got *LoginOptions
+	m := modelsWithEnv(nil, &CreateModelsOptions{Credentials: NewInMemoryCredentialStore()})
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID: "p",
+		Auth: ProviderAuth{OAuth: &OAuthAuth{
+			Login: func(_ context.Context, _ AuthInteraction, options *LoginOptions) (*Credential, error) {
+				got = options
+				return &Credential{Type: CredentialOAuth, Access: "a", Refresh: "r"}, nil
+			},
+		}},
+		API: stubAPI(),
+	}))
+	options := &LoginOptions{GetDeviceID: func() string { return "device-1" }}
+	if _, err := m.Login(context.Background(), "p", CredentialOAuth, fakeInteraction{}, options); err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || got.GetDeviceID == nil || got.GetDeviceID() != "device-1" {
+		t.Fatalf("the OAuth login flow received %+v, want the caller's options", got)
+	}
+}
+
 // TestModelsLoginLogout mirrors pi "runs provider login and logout through
 // the credential store".
 func TestModelsLoginLogout(t *testing.T) {
@@ -639,7 +663,7 @@ func TestModelsLoginLogout(t *testing.T) {
 		API:  stubAPI(),
 	}))
 
-	credential, err := m.Login(context.Background(), "p", CredentialAPIKey, fakeInteraction{answer: "typed-key"})
+	credential, err := m.Login(context.Background(), "p", CredentialAPIKey, fakeInteraction{answer: "typed-key"}, nil)
 	if err != nil || credential == nil || credential.Key != "typed-key" {
 		t.Fatalf("login = (%+v, %v)", credential, err)
 	}
@@ -648,12 +672,12 @@ func TestModelsLoginLogout(t *testing.T) {
 	}
 
 	// Unsupported login type errors with pi's message.
-	_, err = m.Login(context.Background(), "p", CredentialOAuth, fakeInteraction{})
+	_, err = m.Login(context.Background(), "p", CredentialOAuth, fakeInteraction{}, nil)
 	var me *ModelsError
 	if !errors.As(err, &me) || me.Code != ErrAuth || !strings.Contains(me.Message, "does not support oauth login") {
 		t.Fatalf("unsupported login should error: %v", err)
 	}
-	_, err = m.Login(context.Background(), "ghost", CredentialAPIKey, fakeInteraction{})
+	_, err = m.Login(context.Background(), "ghost", CredentialAPIKey, fakeInteraction{}, nil)
 	if !errors.As(err, &me) || me.Code != ErrProvider {
 		t.Fatalf("unknown provider login should error: %v", err)
 	}
@@ -1313,7 +1337,7 @@ func TestModelsAuthCallbacksSeeCallerContext(t *testing.T) {
 	if _, err := m.GetProviderAuth(ctx, "p1", nil); err != nil {
 		t.Fatalf("getAuth: %v", err)
 	}
-	if _, err := m.Login(ctx, "p1", CredentialAPIKey, fakeInteraction{answer: "unused"}); err != nil {
+	if _, err := m.Login(ctx, "p1", CredentialAPIKey, fakeInteraction{answer: "unused"}, nil); err != nil {
 		t.Fatalf("login: %v", err)
 	}
 

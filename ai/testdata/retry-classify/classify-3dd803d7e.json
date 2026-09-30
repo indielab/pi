@@ -1,12 +1,12 @@
 {
-	"sha": "e98f287ee",
+	"sha": "3dd803d7e",
 	"patterns": {
 		"NON_RETRYABLE_PROVIDER_LIMIT_ERROR_PATTERN": {
-			"source": "GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing",
+			"source": "GoUsageLimitError|FreeUsageLimitError|Monthly usage limit reached|available balance|insufficient_quota|out of budget|quota exceeded|billing|subscription_sharing_usage_limit_exceeded",
 			"flags": "i"
 		},
 		"RETRYABLE_PROVIDER_ERROR_PATTERN": {
-			"source": "overloaded|currently experiencing high demand|rate.?limit|too many requests|429|500|502|503|504|520|524|service.?unavailable|server.?error|internal.?error|provider.?returned.?error|exceeded request buffer limit while retrying upstream|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response|retry delay|you can retry your request|try your request again|please retry your request|ResourceExhausted",
+			"source": "overloaded|currently experiencing high demand|rate.?limit|too many requests|429|500|502|503|504|520|524|service.?unavailable|server.?error|internal.?error|provider.?returned.?error|exceeded request buffer limit while retrying upstream|network.?error|connection.?error|connection.?refused|connection.?lost|other side closed|fetch failed|getaddrinfo|ENOTFOUND|EAI_AGAIN|upstream.?connect|reset before headers|socket hang up|socket connection was closed|timed? out|timeout|terminated|websocket.?closed|websocket.?error|ended without|stream ended before message_stop|stream ended before a terminal response event|http2 request did not get a response|retry delay|you can retry your request|try your request again|please retry your request|ResourceExhausted|subscription_sharing_usage_unavailable|subscription_sharing_user_unavailable",
 			"flags": "i"
 		}
 	},
@@ -148,6 +148,30 @@
 			"covers": "pi: retryAssistantCall transient",
 			"stopReason": "error",
 			"errorMessage": "terminated",
+			"limitPattern": false,
+			"retryablePattern": true,
+			"retryable": true
+		},
+		{
+			"covers": "pi: ChatGPT subscription usage limit",
+			"stopReason": "error",
+			"errorMessage": "OpenAI API error (429): {\"code\":\"subscription_sharing_usage_limit_exceeded\",\"message\":\"Usage limit reached.\"}",
+			"limitPattern": true,
+			"retryablePattern": true,
+			"retryable": false
+		},
+		{
+			"covers": "pi: temporary ChatGPT usage error",
+			"stopReason": "error",
+			"errorMessage": "subscription_sharing_usage_unavailable: Usage cannot be checked.",
+			"limitPattern": false,
+			"retryablePattern": true,
+			"retryable": true
+		},
+		{
+			"covers": "pi: temporary ChatGPT user error",
+			"stopReason": "error",
+			"errorMessage": "subscription_sharing_user_unavailable: User cannot be loaded.",
 			"limitPattern": false,
 			"retryablePattern": true,
 			"retryable": true
@@ -534,6 +558,22 @@
 			"retryable": true
 		},
 		{
+			"covers": "subscription_sharing_usage_unavailable",
+			"stopReason": "error",
+			"errorMessage": "SUBSCRIPTION_SHARING_USAGE_UNAVAILABLE",
+			"limitPattern": false,
+			"retryablePattern": true,
+			"retryable": true
+		},
+		{
+			"covers": "subscription_sharing_user_unavailable",
+			"stopReason": "error",
+			"errorMessage": "Subscription_Sharing_User_Unavailable",
+			"limitPattern": false,
+			"retryablePattern": true,
+			"retryable": true
+		},
+		{
 			"covers": "GoUsageLimitError",
 			"stopReason": "error",
 			"errorMessage": "GoUsageLimitError: 429",
@@ -598,6 +638,14 @@
 			"retryable": false
 		},
 		{
+			"covers": "subscription_sharing_usage_limit_exceeded",
+			"stopReason": "error",
+			"errorMessage": "Subscription_Sharing_Usage_Limit_Exceeded (429)",
+			"limitPattern": true,
+			"retryablePattern": true,
+			"retryable": false
+		},
+		{
 			"covers": "near-miss limit",
 			"stopReason": "error",
 			"errorMessage": "GoUsageLimit 429",
@@ -649,6 +697,14 @@
 			"covers": "near-miss limit",
 			"stopReason": "error",
 			"errorMessage": "bill 502",
+			"limitPattern": false,
+			"retryablePattern": true,
+			"retryable": true
+		},
+		{
+			"covers": "near-miss limit",
+			"stopReason": "error",
+			"errorMessage": "subscription sharing usage limit exceeded 429",
 			"limitPattern": false,
 			"retryablePattern": true,
 			"retryable": true
@@ -713,6 +769,14 @@
 			"covers": "near-miss",
 			"stopReason": "error",
 			"errorMessage": "service not available",
+			"limitPattern": false,
+			"retryablePattern": false,
+			"retryable": false
+		},
+		{
+			"covers": "near-miss",
+			"stopReason": "error",
+			"errorMessage": "subscription_sharing_usage unavailable",
 			"limitPattern": false,
 			"retryablePattern": false,
 			"retryable": false

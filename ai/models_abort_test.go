@@ -114,7 +114,7 @@ func TestLoginReleasesAbortedCaller(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := m.Login(ctx, "stubborn", CredentialAPIKey, fakeInteraction{})
+		_, err := m.Login(ctx, "stubborn", CredentialAPIKey, fakeInteraction{}, nil)
 		done <- err
 	}()
 	<-entered

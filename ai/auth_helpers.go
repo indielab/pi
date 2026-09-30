@@ -81,12 +81,12 @@ func LazyOAuth(opts LazyOAuthOptions) *OAuthAuth {
 		Name:           opts.Name,
 		IsSubscription: opts.IsSubscription,
 		LoginLabel:     opts.LoginLabel,
-		Login: func(ctx context.Context, interaction AuthInteraction) (*Credential, error) {
+		Login: func(ctx context.Context, interaction AuthInteraction, options *LoginOptions) (*Credential, error) {
 			o, err := get()
 			if err != nil {
 				return nil, err
 			}
-			return o.Login(ctx, interaction)
+			return o.Login(ctx, interaction, options)
 		},
 		Refresh: func(ctx context.Context, credential OAuthCredentials) (OAuthCredentials, error) {
 			o, err := get()
