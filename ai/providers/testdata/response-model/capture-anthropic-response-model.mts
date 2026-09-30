@@ -3,7 +3,7 @@
 // TestAnthropicResponseModel* in this package (upstream 1283afd0d).
 //
 //   node --experimental-strip-types capture-anthropic-response-model.mts <extraction> <out.json> <sha>
-//   e.g. ... capture-anthropic-response-model.mts <dir> anthropic-response-model-95fbc0499.json 95fbc0499
+//   e.g. ... capture-anthropic-response-model.mts <dir> anthropic-response-model-d86654abb.json d86654abb
 //
 // <extraction> holds packages/ai at <sha> (`git archive <sha> packages/ai` from
 // the upstream clone), a node_modules resolving pi-ai's dependencies (the npm
@@ -24,6 +24,12 @@
 // (claude-opus-5 gained inputLimits from f5c946480's generator half). The
 // extraction also needs providers/data/.manifest.json — copy the directory
 // with `cp -R <dist>/providers/data/. <dest>`, not a *.json glob.
+//
+// Re-captured at d86654abb (v0.99.1) against the 0.99.1 build on 2026-09-30.
+// anthropic-messages.ts moved in between (the Claude Code version, provider
+// stream events, 1-hour cache writes on deltas, all ported), yet every
+// behavioural entry came back byte-identical. Only `model` moved: the catalog
+// now types every chat model, so claude-opus-5 gained "type": "chat".
 //
 // `relabeled` and `fallbackCost` are the two cases 1283afd0d added to
 // packages/ai/test/anthropic-sse-parsing.test.ts, with the suite's model,

@@ -1,5 +1,5 @@
 {
-	"sha": "95fbc0499",
+	"sha": "d86654abb",
 	"model": {
 		"id": "claude-opus-5",
 		"name": "Claude Opus 5",
@@ -47,7 +47,8 @@
 					"jpegQuality": 80
 				}
 			}
-		}
+		},
+		"type": "chat"
 	},
 	"relabeled": {
 		"message": {

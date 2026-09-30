@@ -23,6 +23,10 @@ func LoadBuiltinModels() {
 			panic("ai: embedded models_catalog.json is corrupt: " + err.Error())
 		}
 		for provider, models := range catalog {
+			// pi's getBuiltinProviders is Object.keys(MODELS): a key with no
+			// chat models (typesafe, which serves only classifiers) is still a
+			// built-in provider.
+			registerProvider(provider)
 			for id, m := range models {
 				if m.Provider == "" {
 					m.Provider = provider

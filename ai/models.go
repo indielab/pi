@@ -17,6 +17,15 @@ func RegisterModel(m *Model) {
 	modelReg[m.Provider][m.ID] = m
 }
 
+// registerProvider records a provider that may have no models yet.
+func registerProvider(provider string) {
+	modelRegMu.Lock()
+	defer modelRegMu.Unlock()
+	if modelReg[provider] == nil {
+		modelReg[provider] = map[string]*Model{}
+	}
+}
+
 // GetModel returns the registered model for provider+id, or nil.
 func GetModel(provider, id string) *Model {
 	LoadBuiltinModels()

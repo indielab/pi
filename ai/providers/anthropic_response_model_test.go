@@ -24,12 +24,13 @@ import (
 // TestAnthropicResponseModelKeepsSignedThinkingReplayable and
 // TestAnthropicResponseModelFallbackCost transliterate the two cases 1283afd0d
 // added to packages/ai/test/anthropic-sse-parsing.test.ts; the remaining cases
-// are this port's edges. Every expected message is pi's, captured under node at
-// 95fbc0499 by testdata/response-model/capture-anthropic-response-model.mts.
-// Re-captured at the 0.86.1 and 0.87.0 regens: each time the behavioural
-// entries came back identical and only the catalog model moved.
+// are this port's edges. Every expected message is pi's, captured under node by
+// testdata/response-model/capture-anthropic-response-model.mts, last at
+// d86654abb (v0.99.1) against the 0.99.1 build. Re-captured at every regen:
+// each time the behavioural entries came back identical and only the catalog
+// model moved.
 
-const anthropicResponseModelCaptureFile = "testdata/response-model/anthropic-response-model-95fbc0499.json"
+const anthropicResponseModelCaptureFile = "testdata/response-model/anthropic-response-model-d86654abb.json"
 
 // anthropicResponseModelCapture decodes one captured entry into plain JSON
 // values.

@@ -25,6 +25,15 @@ func BuiltinModels() MutableModels {
 
 	for _, providerID := range providerIDs {
 		models := GetModels(providerID)
+		if len(models) == 0 {
+			// A catalog key with no chat models serves only non-chat models:
+			// typesafe, whose classifiers pi's builtinModels registers through
+			// createProvider's "classifiers" option. Classifiers arrive with
+			// Scope queue row 3; until then the provider has nothing to serve,
+			// and CreateProvider refuses a provider with no implementation, as
+			// pi's createProvider does.
+			continue
+		}
 		// Every api the provider's models use gets an entry, so the provider
 		// always has the implementation CreateProvider requires. An api with no
 		// registered ApiProvider — this host did not import ai/providers, or

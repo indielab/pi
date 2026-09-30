@@ -304,15 +304,22 @@ func TestDefaultModelPerProviderQwenTokenPlanLimits(t *testing.T) {
 	}
 }
 
-// pi e429d90b8 also added "built-in defaults exist in generated provider
-// catalogs": every provider in the generated catalog must have a default that
-// resolves to a real catalog model, so a catalog regen can never orphan a
-// default silently again. Entries for providers absent from the catalog
-// (e.g. radius) are deliberately out of scope, as upstream iterates catalog
-// providers, not table entries.
+// Mirrors upstream model-resolver.test.ts "built-in chat providers have
+// defaults in their generated catalogs" (e429d90b8, reshaped by a328aa89a):
+// every catalog provider with chat models must have a default that resolves to
+// one of them, so a regen can never orphan a default silently, and a provider
+// with none (typesafe, which serves only classifiers) must have no chat
+// default. Like upstream it iterates the catalog's providers, not the table's
+// entries.
 func TestDefaultModelsExistInCatalog(t *testing.T) {
 	for _, provider := range ai.GetProviders() {
 		defaultID, ok := defaultModelPerProvider[provider]
+		if len(ai.GetModels(provider)) == 0 {
+			if ok {
+				t.Errorf("%s has no chat models and should have no chat default, has %q", provider, defaultID)
+			}
+			continue
+		}
 		if !ok {
 			t.Errorf("catalog provider %q has no defaultModelPerProvider entry", provider)
 			continue

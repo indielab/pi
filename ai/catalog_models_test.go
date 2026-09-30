@@ -6,8 +6,8 @@ import (
 	"testing"
 )
 
-// These mirror the catalog assertions upstream's tests make for the models the
-// 0.87.1 regen brought in, one case per upstream `it`:
+// These mirror the catalog assertions upstream's tests make for the models each
+// regen brought in, one case per upstream `it`. From the 0.87.1 regen:
 //
 //   - b4588f26a  supports-xhigh.test.ts "includes Claude Opus 5.5 with its
 //     always-on effort levels and official pricing" (with b7f4b05c7's effort map)
@@ -19,6 +19,16 @@ import (
 //     max-thinking.test.ts "exposes xhigh and max for openai-codex/%s"
 //   - 1a584a7a5  xai-responses.test.ts "includes Grok 4.7 capabilities and
 //     long-context pricing" and its supported-levels line
+//
+// From the 0.99.1 regen:
+//
+//   - c90d9ea58  supports-xhigh.test.ts "includes Claude Sonnet 5.5 with
+//     managed effort levels and official pricing"
+//   - 12c416e1a  supports-xhigh.test.ts "includes xhigh for openai-codex %s
+//     models", "does not support off for GPT-6.1 Sol" and "includes official
+//     metadata for OpenAI and Codex %s". Its max-thinking.test.ts case sends a
+//     Codex request, which waits on the Codex adapter (Scope queue row 10).
+//   - c1449660c  has no upstream test; the case asserts its generator diff.
 //
 // The expectations are upstream's own. The catalog is the published build's
 // data, so these pass exactly when that data is what pi's tests say it is.
@@ -61,6 +71,9 @@ func (c catalogCase) check(t *testing.T) {
 		t.Errorf("cost = %+v, want %+v", m.Cost, *c.cost)
 	}
 	if len(c.compat) > 0 {
+		if len(m.Compat) == 0 {
+			t.Fatalf("compat is absent, want it to carry %v", c.compat)
+		}
 		var compat map[string]any
 		if err := json.Unmarshal(m.Compat, &compat); err != nil {
 			t.Fatalf("compat %s: %v", m.Compat, err)
@@ -180,5 +193,74 @@ func TestCatalogGrok47(t *testing.T) {
 	m := GetModel("xai", "grok-4.7")
 	if !m.Reasoning || !reflect.DeepEqual(m.Input, []string{"text", "image"}) {
 		t.Errorf("reasoning = %t, input = %v; want true, [text image]", m.Reasoning, m.Input)
+	}
+}
+
+func TestCatalogClaudeSonnet55(t *testing.T) {
+	catalogCase{
+		provider: "anthropic", id: "claude-sonnet-5-5",
+		cost:          &ModelCost{Input: 2, Output: 10, CacheRead: 0.2, CacheWrite: 2.5},
+		contextWindow: 1_000_000, maxTokens: 128_000,
+		compat: map[string]any{
+			"forceAdaptiveThinking":          true,
+			"supportsMidConvoEffort":         true,
+			"supportsMidConvoSystemMessages": true,
+			"supportsMidConvoToolChanges":    true,
+			"supportsTemperature":            false,
+		},
+		levels: []ModelThinkingLevel{"low", "medium", "high", "xhigh", "max"},
+	}.check(t)
+}
+
+func TestCatalogGPT61Sol(t *testing.T) {
+	official := withLongContext(ModelCost{Input: 2, Output: 10, CacheRead: 0.1, CacheWrite: 2.5})
+	compat := map[string]any{
+		"supportsAdditionalTools":        true,
+		"supportsMidConvoSystemMessages": true,
+		"supportsOpenAIGrammarTools":     true,
+		"supportsToolSearch":             true,
+	}
+	noOff := []ModelThinkingLevel{"low", "medium", "high", "xhigh", "max"}
+	for _, c := range []catalogCase{
+		{
+			provider: "openai", id: "gpt-6.1-sol",
+			cost: official, contextWindow: 272000, maxTokens: 128000,
+			compat: compat, levels: noOff,
+		},
+		{
+			provider: "openai-codex", id: "gpt-6.1-sol",
+			cost: official, contextWindow: 272000, maxTokens: 128000,
+			compat: compat,
+			levels: []ModelThinkingLevel{"minimal", "low", "medium", "high", "xhigh", "max"},
+		},
+		{provider: "azure-openai-responses", id: "gpt-6.1-sol", levels: noOff},
+	} {
+		t.Run(c.provider+"/"+c.id, func(t *testing.T) {
+			c.check(t)
+			m := GetModel(c.provider, c.id)
+			// OpenAI and Codex reject reasoning.effort "none" for GPT-6.1 Sol:
+			// off is mapped to null, not left out.
+			if off, ok := m.ThinkingLevelMap["off"]; !ok {
+				t.Errorf("thinkingLevelMap.off is absent, want null")
+			} else if off != nil {
+				t.Errorf("thinkingLevelMap.off = %q, want null", *off)
+			}
+			if c.cost != nil && !reflect.DeepEqual(m.Input, []string{"text", "image"}) {
+				t.Errorf("input = %v, want [text image]", m.Input)
+			}
+		})
+	}
+}
+
+// c1449660c: OpenCode's qwen3.8-flash emits and accepts thinking blocks with
+// empty signatures. The Anthropic adapter reads allowEmptySignature when it
+// replays them.
+func TestCatalogQwen38FlashAllowsEmptySignature(t *testing.T) {
+	for _, provider := range []string{"opencode", "opencode-go"} {
+		c := catalogCase{
+			provider: provider, id: "qwen3.8-flash", api: APIAnthropicMessages,
+			compat: map[string]any{"allowEmptySignature": true},
+		}
+		t.Run(provider, c.check)
 	}
 }
