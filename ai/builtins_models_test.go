@@ -2,6 +2,7 @@ package ai
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"testing"
 )
@@ -101,5 +102,23 @@ func TestBuiltinAmbientProviderEnvPassthrough(t *testing.T) {
 	}
 	if res.Env["AWS_PROFILE"] != "prod" {
 		t.Fatalf("stored credential env section dropped: %+v", res.Env)
+	}
+}
+
+// A regen tripwire, not an endorsement. BuiltinModels cannot build a catalog
+// provider that has no chat models: its models are classifiers or images,
+// which wait on Scope queue row 3, while pi's builtinModels registers it. At
+// 0.99.1 that is typesafe alone. A regen that adds another such provider
+// widens the gap, and must be recorded on row 3 before this list moves.
+func TestCatalogProvidersWithoutChatModels(t *testing.T) {
+	var chatless []string
+	for _, p := range GetProviders() {
+		if len(GetModels(p)) == 0 {
+			chatless = append(chatless, p)
+		}
+	}
+	sort.Strings(chatless)
+	if want := []string{"typesafe"}; !slices.Equal(chatless, want) {
+		t.Fatalf("catalog providers with no chat models = %v, want %v; record the change on Scope queue row 3", chatless, want)
 	}
 }

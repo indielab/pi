@@ -682,6 +682,18 @@ func TestModelsLoginLogout(t *testing.T) {
 		t.Fatalf("unknown provider login should error: %v", err)
 	}
 
+	// An OAuth method without a login flow is pi's `!method?.login`: the same
+	// error, not a call through a nil function.
+	m.SetProvider(CreateProvider(CreateProviderOptions{
+		ID:   "no-flow",
+		Auth: ProviderAuth{OAuth: &OAuthAuth{Name: "No flow"}},
+		API:  stubAPI(),
+	}))
+	_, err = m.Login(context.Background(), "no-flow", CredentialOAuth, fakeInteraction{}, nil)
+	if !errors.As(err, &me) || me.Code != ErrAuth || !strings.Contains(me.Message, "does not support oauth login") {
+		t.Fatalf("an OAuth method without Login should refuse: %v", err)
+	}
+
 	if err := m.Logout(context.Background(), "p"); err != nil {
 		t.Fatalf("logout: %v", err)
 	}

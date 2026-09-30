@@ -1,7 +1,6 @@
 package providers
 
 import (
-	"context"
 	"errors"
 	"net/http"
 	"reflect"
@@ -46,7 +45,7 @@ func captureChatGPTSignInPayload(t *testing.T, apiKey string, model *ai.Model) m
 		Temperature:    &temperature,
 		CacheRetention: ai.CacheLong,
 	}}
-	StreamOpenAIResponses(context.Background(), model, ai.NormalizeContext(chatGPTSignInContext), opts).Result()
+	StreamOpenAIResponses(t.Context(), model, ai.NormalizeContext(chatGPTSignInContext), opts).Result()
 	if payload == nil {
 		t.Fatal("request payload was not captured")
 	}
@@ -115,7 +114,7 @@ func chatGPTUsageLimitError(t *testing.T, doer cannedDoer) string {
 	opts := &OpenAIResponsesOptions{StreamOptions: ai.StreamOptions{
 		ProviderRequestOptions: ai.ProviderRequestOptions{APIKey: "test", HTTPClient: doer},
 	}}
-	final := StreamOpenAIResponses(context.Background(), chatGPTSignInModel(), ai.NormalizeContext(chatGPTSignInContext), opts).Result()
+	final := StreamOpenAIResponses(t.Context(), chatGPTSignInModel(), ai.NormalizeContext(chatGPTSignInContext), opts).Result()
 	if final.StopReason != ai.StopError {
 		t.Fatalf("stopReason = %s, want error", final.StopReason)
 	}

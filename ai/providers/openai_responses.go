@@ -30,7 +30,9 @@ const chatGPTUsageURL = "https://chatgpt.com/settings/usage"
 // a Sign in with ChatGPT access token (pi isChatGPTSignIn, upstream 02eed88fd):
 // OpenAI API keys start with "sk-", so any other credential sent there is such
 // a token. apiKey is the caller's option, not one resolved from the
-// environment, and the base URL is the model's own, compared exactly.
+// environment, and the base URL is the model's own, compared exactly. An empty
+// apiKey is pi's undefined, no key; pi reads an explicit "" as a key, which a
+// Go caller cannot express.
 func isChatGPTSignIn(model *ai.Model, apiKey string) bool {
 	return model.Provider == "openai" && model.BaseURL == "https://api.openai.com/v1" &&
 		apiKey != "" && !strings.HasPrefix(apiKey, "sk-")
