@@ -78,3 +78,52 @@ func UTF8Lead(lead byte) (needed int, lower, upper byte) {
 	}
 	return needed, lower, upper
 }
+
+// IncompleteUTF8Suffix is the length of the incomplete sequence b ends with: a
+// lead byte and the continuation bytes after it, when more continuation bytes
+// could still complete a valid sequence. It is 0 when b ends where a character
+// ends, or on bytes no later byte could make valid, which a decoder replaces at
+// once. A TextDecoder in stream mode holds these bytes for its next call.
+func IncompleteUTF8Suffix(b []byte) int {
+	for k := 1; k <= 3 && k <= len(b); k++ {
+		lead := b[len(b)-k]
+		if lead < 0x80 {
+			return 0
+		}
+		if lead < 0xC0 {
+			continue // a continuation byte: its lead is further back
+		}
+		// The bounds DecodeUTF8 reads the sequence with.
+		needed, lower, upper := UTF8Lead(lead)
+		if needed == 0 {
+			return 0 // a byte no sequence starts with
+		}
+		if k-1 >= needed {
+			return 0 // the sequence is complete
+		}
+		for _, c := range b[len(b)-k+1:] {
+			if c < lower || c > upper {
+				return 0
+			}
+			lower, upper = 0x80, 0xBF
+		}
+		return k
+	}
+	return 0
+}
+
+// DecodeText is what one decode call of a fresh TextDecoder("utf-8") makes of
+// b: DecodeUTF8's text less a leading byte-order mark. With stream set it is
+// decode(b, {stream: true}), which holds an incomplete final sequence back for
+// the next call, so a decoder never called again drops it; without, that
+// sequence becomes U+FFFD.
+func DecodeText(b []byte, stream bool) string {
+	if stream {
+		b = b[:len(b)-IncompleteUTF8Suffix(b)]
+	}
+	return strings.TrimPrefix(DecodeUTF8(b), byteOrderMark)
+}
+
+// byteOrderMark is U+FEFF in UTF-8, which a TextDecoder drops from the start
+// of its text.
+const byteOrderMark = "\xef\xbb\xbf"

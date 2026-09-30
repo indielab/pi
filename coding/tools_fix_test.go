@@ -362,8 +362,8 @@ func TestBashNonZeroExitIsAnErrorResultWithStructuredContent(t *testing.T) {
 		t.Fatalf("text\n got: %q\nwant: %q", got, want)
 	}
 	out, ok := res.StructuredContent.(BashToolOutput)
-	if !ok || out.Output != "out\n" || out.ExitCode != 3 || out.WallTimeSeconds < 0 {
-		t.Fatalf("structured content = %#v, want {output: \"out\\n\", exit_code: 3, wall_time_seconds: >= 0}", res.StructuredContent)
+	if !ok || out.Output != "out\n" || out.Truncated || out.FullOutputPath != "" || out.ExitCode != 3 || out.WallTimeSeconds < 0 {
+		t.Fatalf("structured content = %#v, want {output: \"out\\n\", truncated: false, exit_code: 3, wall_time_seconds: >= 0}", res.StructuredContent)
 	}
 	if res.Details != nil {
 		t.Fatalf("details = %#v, want none for untruncated output (pi's undefined)", res.Details)
@@ -376,6 +376,77 @@ func TestBashNonZeroExitIsAnErrorResultWithStructuredContent(t *testing.T) {
 	if out, ok := ok2.StructuredContent.(BashToolOutput); !ok || out.Output != "fine\n" || out.ExitCode != 0 {
 		t.Fatalf("success structured content = %#v, want {output: \"fine\\n\", exit_code: 0}", ok2.StructuredContent)
 	}
+
+	// Upstream 1ff5b6fdd: no output is "(no output)" for the model and "" for
+	// a script.
+	empty, err := run(t, bashTool(dir, nil), map[string]any{"command": "true"})
+	if err != nil || empty.IsError {
+		t.Fatalf("empty got IsError=%v err=%v", empty.IsError, err)
+	}
+	if got := resultText(empty); got != "(no output)" {
+		t.Fatalf("empty text = %q, want (no output)", got)
+	}
+	if out, ok := empty.StructuredContent.(BashToolOutput); !ok || out.Output != "" || out.Truncated {
+		t.Fatalf("empty structured content = %#v, want {output: \"\", truncated: false}", empty.StructuredContent)
+	}
+}
+
+// Upstream 1ff5b6fdd (tools.test.ts "should return up to 1 MiB of output in
+// structured content"): a script gets the whole output up to 1 MiB, past the
+// model-facing limits, and longer output as its first and last 512 KiB.
+func TestBashStructuredContentUpTo1MiB(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("uses seq")
+	}
+	dir := t.TempDir()
+
+	// 3000 lines exceed the model-facing 2000 line limit but not 1 MiB.
+	medium, err := run(t, bashTool(dir, nil), map[string]any{"command": "seq 1 3000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(resultText(medium), "\n1\n2\n") {
+		t.Error("the model-facing text should be cut to its last lines")
+	}
+	details, _ := medium.Details.(map[string]any)
+	if tr, _ := details["truncation"].(TruncationResult); !tr.Truncated {
+		t.Errorf("details.truncation = %#v, want truncated", details["truncation"])
+	}
+	var want strings.Builder
+	for i := 1; i <= 3000; i++ {
+		want.WriteString(strconv.Itoa(i) + "\n")
+	}
+	mediumOut, _ := medium.StructuredContent.(BashToolOutput)
+	if mediumOut.Truncated || mediumOut.Output != want.String() {
+		t.Errorf("structured content truncated=%t, %d bytes; want the whole %d-byte output", mediumOut.Truncated, len(mediumOut.Output), want.Len())
+	}
+
+	// About 2 MB: the first and last 512 KiB around an omission marker.
+	large, err := run(t, bashTool(dir, nil), map[string]any{"command": "seq 1 300000"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _ := large.StructuredContent.(BashToolOutput)
+	if !out.Truncated {
+		t.Fatal("structured content should be truncated")
+	}
+	if !strings.HasPrefix(out.Output, "1\n2\n3\n") || !strings.HasSuffix(out.Output, "299999\n300000\n") {
+		t.Errorf("output should keep both ends: %q ... %q", out.Output[:20], out.Output[len(out.Output)-20:])
+	}
+	if !regexp.MustCompile(`\n\n\[\.\.\. \d+ bytes omitted \.\.\.\]\n\n`).MatchString(out.Output) {
+		t.Error("output has no omission marker")
+	}
+	if len(out.Output) >= 1024*1024+100 {
+		t.Errorf("output is %d bytes, want under 1 MiB + 100", len(out.Output))
+	}
+	largeDetails, _ := large.Details.(map[string]any)
+	if out.FullOutputPath == "" || out.FullOutputPath != largeDetails["fullOutputPath"] {
+		t.Errorf("full_output_path = %q, want details.fullOutputPath %v", out.FullOutputPath, largeDetails["fullOutputPath"])
+	}
+	if full, err := os.ReadFile(out.FullOutputPath); err != nil || !strings.HasSuffix(string(full), "300000\n") {
+		t.Errorf("the full output file should end with 300000 (err %v)", err)
+	}
+	os.Remove(out.FullOutputPath)
 }
 
 // The wall time is pi's Math.round(ms / 100) / 10: tenths of a second.

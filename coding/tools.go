@@ -25,6 +25,7 @@ import (
 
 	"github.com/sky-valley/pi/agent"
 	"github.com/sky-valley/pi/ai"
+	"github.com/sky-valley/pi/internal/jstext"
 	"golang.org/x/text/collate"
 	"golang.org/x/text/language"
 	"golang.org/x/text/unicode/norm"
@@ -1021,10 +1022,21 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 				return agent.AgentToolResult{}, fmt.Errorf("%s", appendStatus(text, "Command terminated without an exit code"))
 			}
 			text, details := formatOutput("(no output)")
+			// The wall time is taken before the full output is read, as pi
+			// takes it.
+			wallTimeSeconds := bashWallTimeSeconds(time.Since(startedAt))
+			fullOutput, fullTruncated, err := u.acc.readFullOutput(bashStructuredOutputMaxBytes)
+			if err != nil {
+				return agent.AgentToolResult{}, err
+			}
 			structured := BashToolOutput{
-				Output:          text,
+				Output:          fullOutput,
+				Truncated:       fullTruncated,
 				ExitCode:        *exitCode,
-				WallTimeSeconds: bashWallTimeSeconds(time.Since(startedAt)),
+				WallTimeSeconds: wallTimeSeconds,
+			}
+			if fullTruncated {
+				structured.FullOutputPath = snap.fullOutputPath
 			}
 			// Upstream 8562bcf66: a non-zero exit is an error result, not a
 			// thrown error, so it keeps its details and structured content. pi's
@@ -1048,18 +1060,31 @@ func shellToolOps(cwd string, config shellToolConfig, sessionEnv sessionEnvFn, c
 // such as a script that calls tools. A non-zero exit is an error result for
 // the model, but a script still gets this value.
 type BashToolOutput struct {
-	// Output is the combined stdout and stderr, truncated like the
-	// model-facing output and without its status line.
-	Output          string  `json:"output"`
+	// Output is the combined stdout and stderr, without the status line and
+	// not cut to the model-facing limits: up to 1 MiB, and longer output keeps
+	// its first and last 512 KiB around an omission marker (upstream
+	// 1ff5b6fdd). A caller decides how much of it reaches the model.
+	Output string `json:"output"`
+	// Truncated is whether Output omits part of the command output.
+	Truncated bool `json:"truncated"`
+	// FullOutputPath is the temp file with the full output, set only when
+	// Output is truncated.
+	FullOutputPath  string  `json:"full_output_path,omitempty"`
 	ExitCode        int     `json:"exit_code"`
 	WallTimeSeconds float64 `json:"wall_time_seconds"`
 }
+
+// bashStructuredOutputMaxBytes limits BashToolOutput.Output (pi
+// STRUCTURED_OUTPUT_MAX_BYTES).
+const bashStructuredOutputMaxBytes = 1024 * 1024
 
 // bashOutputSchema is the shell tools' OutputSchema (pi bashOutputSchema),
 // built per tool like Parameters, since a Schema can be modified in place.
 func bashOutputSchema() *ai.Schema {
 	return ai.Object(
-		ai.Prop("output", ai.String("Combined stdout and stderr, truncated like the model-facing output")),
+		ai.Prop("output", ai.String("Combined stdout and stderr, up to 1 MiB. Longer output keeps its first and last 512 KiB around an omission marker.")),
+		ai.Prop("truncated", ai.Boolean("Whether `output` omits part of the command output")),
+		ai.Opt("full_output_path", ai.String("Temp file with the full output, when truncated")),
 		ai.Prop("exit_code", ai.Number()),
 		ai.Prop("wall_time_seconds", ai.Number()),
 	)
@@ -1426,6 +1451,51 @@ func (a *outputAccumulator) closeTempFile() {
 	}
 	_ = a.tempFile.Close()
 	a.tempFile = nil
+}
+
+// readFullOutput is the complete output, for callers that can take more than
+// the display snapshot (pi readFullOutput, upstream 1ff5b6fdd). Call it after
+// finish and closeTempFile. Output longer than maxBytes raw bytes keeps its
+// first and last maxBytes/2 bytes around an omission marker. Each part is
+// decoded as pi's TextDecoder decodes it: the head in stream mode, so a
+// character the cut splits is dropped, and the tail after the continuation
+// bytes the cut left at its start.
+func (a *outputAccumulator) readFullOutput(maxBytes int) (content string, truncated bool, err error) {
+	if a.tempFilePath == "" {
+		return jstext.DecodeText(bytes.Join(a.rawChunks, nil), false), false, nil
+	}
+	f, err := os.Open(a.tempFilePath)
+	if err != nil {
+		return "", false, err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", false, err
+	}
+	size := info.Size()
+	if size <= int64(maxBytes) {
+		data, err := io.ReadAll(f)
+		if err != nil {
+			return "", false, err
+		}
+		return jstext.DecodeText(data, false), false, nil
+	}
+	head := make([]byte, maxBytes/2)
+	tail := make([]byte, maxBytes-len(head))
+	if n, err := f.ReadAt(head, 0); n < len(head) {
+		return "", false, err
+	}
+	if n, err := f.ReadAt(tail, size-int64(len(tail))); n < len(tail) {
+		return "", false, err
+	}
+	tailStart := 0
+	for tailStart < len(tail) && tail[tailStart]&0xc0 == 0x80 {
+		tailStart++
+	}
+	omitted := size - int64(len(head)) - int64(len(tail))
+	return fmt.Sprintf("%s\n\n[... %d bytes omitted ...]\n\n%s",
+		jstext.DecodeText(head, true), omitted, jstext.DecodeText(tail[tailStart:], false)), true, nil
 }
 
 func (a *outputAccumulator) getLastLineBytes() int { return a.currentLineBytes }

@@ -97,3 +97,35 @@ func TestDecodeUTF8KeepsValidText(t *testing.T) {
 		}
 	}
 }
+
+// TestDecodeTextMatchesNode replays what one decode call of a fresh node
+// TextDecoder made of each input (testdata/capture-textdecode.mjs), with and
+// without {stream: true}.
+func TestDecodeTextMatchesNode(t *testing.T) {
+	data, err := os.ReadFile("testdata/textdecode-node.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var capture struct {
+		Rows []struct {
+			Input  string `json:"input"`
+			Stream bool   `json:"stream"`
+			Text   string `json:"text"`
+		} `json:"rows"`
+	}
+	if err := json.Unmarshal(data, &capture); err != nil {
+		t.Fatal(err)
+	}
+	if len(capture.Rows) < 60 {
+		t.Fatalf("only %d rows in the capture", len(capture.Rows))
+	}
+	for _, row := range capture.Rows {
+		input, err := hex.DecodeString(row.Input)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := DecodeText(input, row.Stream); got != row.Text {
+			t.Errorf("DecodeText(% x, stream %t) = %+q, node %+q", input, row.Stream, got, row.Text)
+		}
+	}
+}
