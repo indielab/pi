@@ -398,6 +398,7 @@ func TestBashStructuredContentUpTo1MiB(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("uses seq")
 	}
+	t.Setenv("TMPDIR", t.TempDir()) // the full-output files land here
 	dir := t.TempDir()
 
 	// 3000 lines exceed the model-facing 2000 line limit but not 1 MiB.
@@ -446,7 +447,6 @@ func TestBashStructuredContentUpTo1MiB(t *testing.T) {
 	if full, err := os.ReadFile(out.FullOutputPath); err != nil || !strings.HasSuffix(string(full), "300000\n") {
 		t.Errorf("the full output file should end with 300000 (err %v)", err)
 	}
-	os.Remove(out.FullOutputPath)
 }
 
 // When the full output cannot be saved, the shell tool fails the call with the

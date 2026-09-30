@@ -50,6 +50,8 @@ const rows: Row[] = [
 	{ name: "invalid bytes and a cut character in the snapshot", chunks: ["61ff62", "e282"], readMax: MiB },
 	{ name: "a byte-order mark in the snapshot", chunks: ["efbbbf" + ascii("hi\n")], readMax: MiB },
 	{ name: "invalid bytes count decoded", chunks: ["ffffff"], maxBytes: 8, readMax: MiB },
+	// 8 raw bytes, 5 decoded: only the raw count passes maxBytes.
+	{ name: "a byte-order mark counts in the raw bytes", chunks: ["efbbbf" + ascii("abcde")], maxBytes: 5, readMax: MiB },
 ];
 
 const out = [];
