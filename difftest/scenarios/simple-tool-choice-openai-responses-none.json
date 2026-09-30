@@ -71,7 +71,7 @@
     ]
   },
   "options": {
-    "apiKey": "test-key",
+    "apiKey": "sk-test-key",
     "maxTokens": 1024,
     "toolChoice": "none"
   }

@@ -28,6 +28,11 @@ capture through a payload hook that halts before the first byte is sent:
 > Nothing here is sensitive: scenarios are synthetic, keys are the literal
 > `"test-key"`, and the porting internals it exercises are already public in
 > `docs/UPSTREAM.md`. Do not add a real key or a real transcript to a scenario.
+> Scenarios aimed at OpenAI's own endpoint use `"sk-test-key"`: since upstream
+> `02eed88fd`, both sides read any other credential sent there as a Sign in
+> with ChatGPT token and drop `max_output_tokens`, `temperature` and the
+> prompt-cache fields, so a plain `"test-key"` would stop covering them. The
+> `responses-chatgpt-sign-in*` scenarios send a fake token on purpose.
 
 ## Run it
 
@@ -268,8 +273,10 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 | `deepseek` | dist | `thinkingFormat: "deepseek"`, `requiresReasoningContentOnAssistantMessages` |
 | `openrouter` | dist | `thinkingFormat: "openrouter"` + `cacheControlFormat: "anthropic"` breakpoints |
 | `sampling-params` | dist | model+request `samplingParams` merged per key, applied **last** so they override named fields |
-| `sampling-params-stream` | src | the same inputs through the native `stream()` entry: the adapter merges the model's defaults, so a direct call gets them too (upstream `c01f687e5`; 0.87.1 merges only in `streamSimple`) |
-| `sampling-params-stream-responses` | src | the openai-responses twin, where a sampling key overrides `max_output_tokens` |
+| `sampling-params-stream` | dist | the same inputs through the native `stream()` entry: the adapter merges the model's defaults, so a direct call gets them too (upstream `c01f687e5`; 0.87.1 merges only in `streamSimple`) |
+| `sampling-params-stream-responses` | dist | the openai-responses twin, where a sampling key overrides `max_output_tokens` |
+| `responses-chatgpt-sign-in` | dist | a credential sent to OpenAI's own endpoint that is not an `sk-` key is a ChatGPT sign-in token: `max_output_tokens`, `temperature` and `prompt_cache_retention` are omitted, `prompt_cache_key` still sent (upstream `02eed88fd`) |
+| `responses-chatgpt-sign-in-explicit-cache` | dist | the same for a model with `supportsExplicitPromptCacheMode`: `prompt_cache_options` omitted too |
 | `baseten-thinking` | dist | `thinkingFormat: "baseten"` → `chat_template_args` + `reasoning_effort` via `thinkingLevelMap` |
 | `baseten-thinking-off` | dist | the same, thinking OFF: `omitWhenOff`, `thinkingLevelMap.off` |
 | `gemini3-tool-ids` | dist | gemini major ≥ 3 ⇒ `functionCall`/`functionResponse` carry `id` |
@@ -286,9 +293,9 @@ Both sides read the same file, so neither can quietly diverge on inputs.
 
 The `backend` column above is a snapshot. Scenarios flip `src` -> `dist` as releases
 ship the surface they cover, so re-read `scenarios/*.json` rather than this table when
-the distinction matters. **As of 2026-09-27 the suite is 63 scenarios: 61 `dist`
-and 2 `src`** — `sampling-params-stream` and `sampling-params-stream-responses`
-(`c01f687e5`), which flip to `dist` with the first release that ships it.
+the distinction matters. **As of 2026-09-30 the suite is 65 scenarios, all
+`dist`**: the last two `src` scenarios, `sampling-params-stream` and
+`sampling-params-stream-responses` (`c01f687e5`), flipped when 0.99.1 shipped it.
 
 From `9e05370b2` on, the api adapters take a normalized transcript that only
 `normalizeContext` produces. Both arms normalize the scenario's `context` before

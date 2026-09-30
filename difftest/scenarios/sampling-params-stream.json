@@ -1,7 +1,7 @@
 {
   "name": "sampling-params-stream",
-  "note": "Upstream c01f687e5 (Go 433fcdd): the samplingParams merge moved from buildBaseOptions into the adapters' buildParams, Object.assign(params, model.samplingParams, options.samplingParams), so a direct stream() gets the model's defaults too (pi #9506), request keys winning per key and both applied after the named request fields. Same inputs as sampling-params, through stream() instead of streamSimple. src: pi-ai 0.87.1 merges only in streamSimple, so its stream() sends the request's keys alone.",
-  "backend": "src",
+  "note": "Upstream c01f687e5 (Go 433fcdd): the samplingParams merge moved from buildBaseOptions into the adapters' buildParams, Object.assign(params, model.samplingParams, options.samplingParams), so a direct stream() gets the model's defaults too (pi #9506), request keys winning per key and both applied after the named request fields. Same inputs as sampling-params, through stream() instead of streamSimple. dist since the 0.99.1 re-pin: 0.99.1 is the first build that ships c01f687e5 (0.87.1 merged only in streamSimple).",
+  "backend": "dist",
   "api": "openai-completions",
   "entry": "stream",
   "model": {

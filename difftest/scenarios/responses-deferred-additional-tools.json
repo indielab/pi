@@ -234,7 +234,7 @@
     ]
   },
   "options": {
-    "apiKey": "test-key",
+    "apiKey": "sk-test-key",
     "sessionId": "session-responses-deferred-additional-tools",
     "maxTokens": 1024
   }

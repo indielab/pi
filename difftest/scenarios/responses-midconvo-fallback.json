@@ -244,7 +244,7 @@
     ]
   },
   "options": {
-    "apiKey": "test-key",
+    "apiKey": "sk-test-key",
     "sessionId": "session-responses-midconvo-fallback",
     "maxTokens": 1024
   }

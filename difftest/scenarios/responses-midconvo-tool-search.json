@@ -235,7 +235,7 @@
     ]
   },
   "options": {
-    "apiKey": "test-key",
+    "apiKey": "sk-test-key",
     "sessionId": "session-responses-midconvo-tool-search",
     "maxTokens": 1024
   }
