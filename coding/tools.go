@@ -1299,18 +1299,21 @@ type outputSnapshot struct {
 }
 
 // outputAccumulator incrementally tracks streaming output with bounded memory:
-// it keeps only a rolling tail (≤ 2× maxRollingBytes) for display snapshots
-// and streams raw chunks to a temp file once the output exceeds the limits.
+// it decodes the chunks as pi's streaming TextDecoder does, keeps only a
+// rolling tail of the text (≤ 2× maxRollingBytes) for display snapshots, and
+// streams the raw chunks to a temp file once the output exceeds the limits.
 type outputAccumulator struct {
 	maxLines        int
 	maxBytes        int
 	maxRollingBytes int
 	prefix          string
 
+	decoder               jstext.TextDecoder
 	rawChunks             [][]byte
-	tail                  []byte
+	tail                  []byte // decoded text
 	tailStartsAtLineBound bool
-	totalBytes            int
+	totalRawBytes         int
+	totalDecodedBytes     int
 	completedLines        int
 	totalLines            int
 	currentLineBytes      int
@@ -1348,7 +1351,8 @@ func (a *outputAccumulator) append(data []byte) {
 	if a.finished || len(data) == 0 {
 		return
 	}
-	a.appendText(data)
+	a.totalRawBytes += len(data)
+	a.appendDecodedText(a.decoder.Decode(data))
 	if a.tempFile != nil || a.shouldUseTempFile() {
 		a.ensureTempFile()
 		if a.tempFile != nil {
@@ -1365,26 +1369,31 @@ func (a *outputAccumulator) finish() {
 		return
 	}
 	a.finished = true
+	a.appendDecodedText(a.decoder.Flush())
 	if a.shouldUseTempFile() {
 		a.ensureTempFile()
 	}
 }
 
-func (a *outputAccumulator) appendText(data []byte) {
-	a.totalBytes += len(data)
-	a.tail = append(a.tail, data...)
+// appendDecodedText counts text the decoder produced: its UTF-8 bytes, which
+// the limits measure, and its lines.
+func (a *outputAccumulator) appendDecodedText(text string) {
+	if text == "" {
+		return
+	}
+	a.totalDecodedBytes += len(text)
+	a.tail = append(a.tail, text...)
 	if len(a.tail) > a.maxRollingBytes*2 {
 		a.trimTail()
 	}
 
-	newlines := bytes.Count(data, []byte{'\n'})
+	newlines := strings.Count(text, "\n")
 	if newlines == 0 {
-		a.currentLineBytes += len(data)
+		a.currentLineBytes += len(text)
 		a.hasOpenLine = true
 	} else {
 		a.completedLines += newlines
-		lastNL := bytes.LastIndexByte(data, '\n')
-		tailLen := len(data) - lastNL - 1
+		tailLen := len(text) - strings.LastIndexByte(text, '\n') - 1
 		a.currentLineBytes = tailLen
 		a.hasOpenLine = tailLen > 0
 	}
@@ -1420,12 +1429,12 @@ func (a *outputAccumulator) snapshotText() string {
 
 func (a *outputAccumulator) snapshot(persistIfTruncated bool) outputSnapshot {
 	tr := TruncateTail(a.snapshotText(), a.maxLines, a.maxBytes)
-	truncated := a.totalLines > a.maxLines || a.totalBytes > a.maxBytes
+	truncated := a.totalLines > a.maxLines || a.totalDecodedBytes > a.maxBytes
 	truncatedBy := ""
 	if truncated {
 		truncatedBy = tr.TruncatedBy
 		if truncatedBy == "" {
-			if a.totalBytes > a.maxBytes {
+			if a.totalDecodedBytes > a.maxBytes {
 				truncatedBy = "bytes"
 			} else {
 				truncatedBy = "lines"
@@ -1435,7 +1444,7 @@ func (a *outputAccumulator) snapshot(persistIfTruncated bool) outputSnapshot {
 	tr.Truncated = truncated
 	tr.TruncatedBy = truncatedBy
 	tr.TotalLines = a.totalLines
-	tr.TotalBytes = a.totalBytes
+	tr.TotalBytes = a.totalDecodedBytes
 	tr.MaxLines = a.maxLines
 	tr.MaxBytes = a.maxBytes
 
@@ -1501,7 +1510,7 @@ func (a *outputAccumulator) readFullOutput(maxBytes int) (content string, trunca
 func (a *outputAccumulator) getLastLineBytes() int { return a.currentLineBytes }
 
 func (a *outputAccumulator) shouldUseTempFile() bool {
-	return a.totalBytes > a.maxBytes || a.totalLines > a.maxLines
+	return a.totalRawBytes > a.maxBytes || a.totalDecodedBytes > a.maxBytes || a.totalLines > a.maxLines
 }
 
 func (a *outputAccumulator) ensureTempFile() {

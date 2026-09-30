@@ -18,7 +18,8 @@
 				"outputLines": 2,
 				"outputBytes": 11,
 				"lastLinePartial": false,
-				"tempFile": false
+				"tempFile": false,
+				"tempFileBeforeFinish": false
 			},
 			"full": {
 				"content": "hello\nworld",
@@ -38,7 +39,8 @@
 				"outputLines": 0,
 				"outputBytes": 0,
 				"lastLinePartial": false,
-				"tempFile": false
+				"tempFile": false,
+				"tempFileBeforeFinish": false
 			},
 			"full": {
 				"content": "",
@@ -60,7 +62,8 @@
 				"outputLines": 1,
 				"outputBytes": 2,
 				"lastLinePartial": false,
-				"tempFile": false
+				"tempFile": false,
+				"tempFileBeforeFinish": false
 			},
 			"full": {
 				"content": "a\n",
@@ -82,7 +85,8 @@
 				"outputLines": 1,
 				"outputBytes": 8,
 				"lastLinePartial": false,
-				"tempFile": false
+				"tempFile": false,
+				"tempFileBeforeFinish": false
 			},
 			"full": {
 				"content": "a�b�",
@@ -105,7 +109,8 @@
 				"outputLines": 1,
 				"outputBytes": 5,
 				"lastLinePartial": false,
-				"tempFile": false
+				"tempFile": false,
+				"tempFileBeforeFinish": false
 			},
 			"full": {
 				"content": "a€b",
@@ -129,7 +134,8 @@
 				"outputLines": 2,
 				"outputBytes": 3,
 				"lastLinePartial": false,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "1\n2\n3\n",
@@ -153,7 +159,8 @@
 				"outputLines": 1,
 				"outputBytes": 8,
 				"lastLinePartial": true,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "01234\n\n[... 10 bytes omitted ...]\n\nFGHIJ",
@@ -177,7 +184,8 @@
 				"outputLines": 1,
 				"outputBytes": 4,
 				"lastLinePartial": true,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "abcd\n\n[... 13 bytes omitted ...]\n\n1234",
@@ -200,7 +208,8 @@
 				"outputLines": 1,
 				"outputBytes": 5,
 				"lastLinePartial": true,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "he\n\n[... 10 bytes omitted ...]\n\ntail!",
@@ -223,7 +232,8 @@
 				"outputLines": 1,
 				"outputBytes": 5,
 				"lastLinePartial": true,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "AAAAA\n\n[... 5 bytes omitted ...]\n\nzz",
@@ -246,7 +256,8 @@
 				"outputLines": 1,
 				"outputBytes": 5,
 				"lastLinePartial": true,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "abc��\n\n[... 5 bytes omitted ...]\n\nxxxxx",
@@ -269,7 +280,8 @@
 				"outputLines": 1,
 				"outputBytes": 5,
 				"lastLinePartial": true,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "yyyyy\n\n[... 5 bytes omitted ...]\n\nabc�",
@@ -292,7 +304,8 @@
 				"outputLines": 1,
 				"outputBytes": 5,
 				"lastLinePartial": true,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "abcde\n\n[... 10 bytes omitted ...]\n\npqrstu",
@@ -315,7 +328,8 @@
 				"outputLines": 1,
 				"outputBytes": 3,
 				"lastLinePartial": true,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "01234\n\n[... 5 bytes omitted ...]\n\n",
@@ -338,7 +352,8 @@
 				"outputLines": 1,
 				"outputBytes": 8,
 				"lastLinePartial": false,
-				"tempFile": false
+				"tempFile": false,
+				"tempFileBeforeFinish": false
 			},
 			"full": {
 				"content": "a�b�",
@@ -360,7 +375,8 @@
 				"outputLines": 1,
 				"outputBytes": 3,
 				"lastLinePartial": false,
-				"tempFile": false
+				"tempFile": false,
+				"tempFileBeforeFinish": false
 			},
 			"full": {
 				"content": "hi\n",
@@ -383,7 +399,8 @@
 				"outputLines": 1,
 				"outputBytes": 6,
 				"lastLinePartial": true,
-				"tempFile": true
+				"tempFile": true,
+				"tempFileBeforeFinish": true
 			},
 			"full": {
 				"content": "���",

@@ -2330,11 +2330,11 @@ decodes the rest of a read that completes a held character with
 `ignoreBom || prefix`, a Uint8Array where the binding keeps a mark only for
 `true`. So before any text has been decoded, a mark leading that rest is dropped
 too: `EF | BB BF EF BB BF 78` reads `x`, where one read gives U+FEFF `x`. It
-touches every streaming decode in pi (anthropic, pi-messages, @google/genai), is
-node's bug rather than pi's code, and depends on the node version. The port
-follows the Standard (`utf8StreamDecoder`, and anthropic's and pi-messages'
-per-line decode); `ai/providers/testdata/text-decoder` tags these rows
-`nodeQuirk`.
+touches every streaming decode in pi (anthropic, pi-messages, @google/genai,
+coding-agent's shell OutputAccumulator), is node's bug rather than pi's code,
+and depends on the node version. The port follows the Standard
+(`jstext.TextDecoder`, and anthropic's and pi-messages' per-line decode);
+`internal/jstext/testdata/text-decoder` tags these rows `nodeQuirk`.
 
 **D88 — a custom body's openai read still pending at an abort gets 100ms.**
 openai 7.19.0 races each body read against the request's signal, and

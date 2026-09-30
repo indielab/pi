@@ -1249,7 +1249,7 @@ func googleBareJSONError(read string) error {
 
 // iterateGoogleSSE consumes the alt=sse stream the way the @google/genai SDK
 // does (processStreamResponse): each body read is decoded by a TextDecoder in
-// stream mode (utf8StreamDecoder: the stream's byte-order mark dropped,
+// stream mode (jstext.TextDecoder: the stream's byte-order mark dropped,
 // invalid UTF-8 as U+FFFD per maximal subpart, a sequence the read leaves
 // incomplete held for the next), then checked whole for a bare JSON error
 // payload (googleBareJSONError), then buffered; events are split on \n\n,
@@ -1328,11 +1328,11 @@ func iterateGoogleSSE(body io.Reader, observe func(payload any) error, handle fu
 		return handle(value)
 	}
 
-	var decoder utf8StreamDecoder
+	var decoder jstext.TextDecoder
 	for {
 		n, readErr := body.Read(buf)
 		if n > 0 {
-			read := decoder.decode(buf[:n])
+			read := decoder.Decode(buf[:n])
 			if err := googleBareJSONError(read); err != nil {
 				return err
 			}

@@ -1,7 +1,7 @@
 // Captures what node's TextDecoder("utf-8") makes of a byte stream decoded
 // one read at a time with decode(read, {stream: true}) and never flushed —
 // @google/genai's processStreamResponse — the oracle behind
-// TestUTF8StreamDecoderMatchesNode in this package.
+// TestTextDecoderMatchesNode in package jstext.
 //
 //   node capture.mts <out.json>
 //   e.g. node capture.mts text-decoder-node.json

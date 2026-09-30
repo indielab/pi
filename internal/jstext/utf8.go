@@ -118,10 +118,12 @@ func IncompleteUTF8Suffix(b []byte) int {
 // the next call, so a decoder never called again drops it; without, that
 // sequence becomes U+FFFD.
 func DecodeText(b []byte, stream bool) string {
-	if stream {
-		b = b[:len(b)-IncompleteUTF8Suffix(b)]
+	var d TextDecoder
+	text := d.Decode(b)
+	if !stream {
+		text += d.Flush()
 	}
-	return strings.TrimPrefix(DecodeUTF8(b), byteOrderMark)
+	return text
 }
 
 // byteOrderMark is U+FEFF in UTF-8, which a TextDecoder drops from the start

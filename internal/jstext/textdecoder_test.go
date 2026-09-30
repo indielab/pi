@@ -1,4 +1,4 @@
-package providers
+package jstext
 
 import (
 	"encoding/json"
@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-// TestUTF8StreamDecoderMatchesNode replays each decode node's TextDecoder made
+// TestTextDecoderMatchesNode replays each decode node's TextDecoder made
 // of a byte stream split into reads (testdata/text-decoder/capture.mts): the
 // text of every read, a byte-order mark dropped only before the stream's first
 // character, a sequence a read leaves incomplete carried into the next, and
@@ -16,7 +16,7 @@ import (
 // them. Where node's UTF-8 fast path drops a second byte-order mark (the
 // capture's nodeQuirk rows), the reads must join to the Encoding Standard's
 // text instead.
-func TestUTF8StreamDecoderMatchesNode(t *testing.T) {
+func TestTextDecoderMatchesNode(t *testing.T) {
 	data, err := os.ReadFile("testdata/text-decoder/text-decoder-node.json")
 	if err != nil {
 		t.Fatal(err)
@@ -38,11 +38,11 @@ func TestUTF8StreamDecoderMatchesNode(t *testing.T) {
 	}
 	quirks := 0
 	for _, row := range capture.Rows {
-		var d utf8StreamDecoder
+		var d TextDecoder
 		var reads []string
 		at := 0
 		for _, cut := range append(slices.Clone(row.Cuts), len(row.Input)) {
-			reads = append(reads, d.decode(row.Input[at:cut]))
+			reads = append(reads, d.Decode(row.Input[at:cut]))
 			at = cut
 		}
 		if row.NodeQuirk {

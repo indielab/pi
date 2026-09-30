@@ -1,7 +1,7 @@
 // Captures what pi's OutputAccumulator makes of shell output — the display
 // snapshot the model sees and readFullOutput, the up-to-1-MiB copy a script
-// gets — the oracle behind TestOutputAccumulatorReadFullOutputMatchesPi in
-// package coding.
+// gets — the oracle behind TestOutputAccumulatorSnapshotMatchesPi and
+// TestOutputAccumulatorReadFullOutputMatchesPi in package coding.
 //
 //   node --experimental-strip-types capture.mts <extraction> <out.json> <sha>
 //   e.g. ... capture.mts <dir> fulloutput-3dd803d7e.json 3dd803d7e
@@ -10,7 +10,8 @@
 // packages/coding-agent/src/core/tools`); output-accumulator.ts imports only
 // node builtins and truncate.ts, which imports nothing.
 //
-// Each row appends its chunks (hex), finishes, takes the bash tool's snapshot
+// Each row appends its chunks (hex), notes whether the accumulator has opened
+// a temp file yet, finishes, takes the bash tool's snapshot
 // (persistIfTruncated), closes the temp file and reads the full output with
 // readMax, as bash.ts does with 1 MiB. The rows use small limits so a few
 // bytes cross them, and cover a byte-order mark, characters cut by a chunk or
@@ -55,6 +56,10 @@ const out = [];
 for (const row of rows) {
 	const acc = new OutputAccumulator({ maxLines: row.maxLines, maxBytes: row.maxBytes, tempFilePrefix: "pi-capture" });
 	for (const chunk of row.chunks) acc.append(Buffer.from(chunk, "hex"));
+	// snapshot() without persisting names a temp file only once the
+	// accumulator has opened one, which it does as soon as the raw bytes, the
+	// decoded bytes or the lines pass its limits (shouldUseTempFile).
+	const tempFileBeforeFinish = acc.snapshot().fullOutputPath !== undefined;
 	acc.finish();
 	const snapshot = acc.snapshot({ persistIfTruncated: true });
 	await acc.closeTempFile();
@@ -72,6 +77,7 @@ for (const row of rows) {
 			outputBytes: t.outputBytes,
 			lastLinePartial: t.lastLinePartial,
 			tempFile: snapshot.fullOutputPath !== undefined,
+			tempFileBeforeFinish,
 		},
 		full,
 	});
